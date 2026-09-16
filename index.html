@@ -1175,6 +1175,7 @@ function defaultState(){
     licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[] }
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
+    mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
     contasReceberManuais: [], // { id, descricao, clienteId, valor, vencimento, recebido, dataRecebimento, obs, criadoEm }
     orcamentos: [], // { id, clienteId, data, validadeDias, observacoes, itens:[{produtoId,nome,marca,fornecedor,qtd,custo,precoVenda,origem}], status, criadoEm }
     config: {
@@ -2807,6 +2808,7 @@ function renderLinhaProduto(p){
         <div class="cell-actions">
           ${p.criadoRapido ? `<button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>` : ''}
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">Mais campos</button>
+          <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
       </td>
@@ -2835,6 +2837,7 @@ function renderLinhaProdutoCompraLocal(p){
       <td>
         <div class="cell-actions">
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
+          <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
@@ -2866,6 +2869,15 @@ function filtrarProdutosPorTexto(lista, texto){
     const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku].map(normalizarBusca).join(' ');
     return palavras.every(palavra=>textoCompleto.includes(palavra));
   });
+}
+
+// Busca produtos "parecidos" com o texto informado (mesma lógica de busca já usada
+// na tela de Produtos), excluindo opcionalmente um produto (ex: o próprio produto
+// base ao procurar duplicados dele). Usada tanto na Mesclagem de Produtos (aba
+// Produtos) quanto no aviso de possível duplicidade no Cadastro Rápido (Orçamento/Venda).
+function buscarProdutosParecidos(texto, excluirId){
+  const base = excluirId ? STATE.produtos.filter(p=>p.id!==excluirId) : STATE.produtos;
+  return filtrarProdutosPorTexto(base, texto);
 }
 
 function renderProdutos(){
@@ -3185,6 +3197,223 @@ function abrirFormProduto(id, onSalvo){
     if(document.getElementById('produtos-content')) renderProdutos();
     if(onSalvo) onSalvo(produto || STATE.produtos[STATE.produtos.length-1]);
   });
+}
+
+/* =========================================================
+   VINCULAR / MESCLAR PRODUTOS DUPLICADOS
+   Unifica dois ou mais cadastros de produto (tipicamente cadastros
+   rápidos criados em momentos diferentes para o "mesmo" item) em um
+   único cadastro. Todo o histórico de vendas, orçamentos e movimentos
+   de estoque dos produtos absorvidos é preservado (os valores já
+   registrados em cada venda/orçamento antigo não mudam — só o vínculo
+   interno com o cadastro de produto passa a apontar para o produto
+   final), o estoque atual é somado, e fica um registro em
+   STATE.mesclagensProdutos para consulta/auditoria.
+   ========================================================= */
+function abrirMesclagemProduto(produtoBaseId){
+  const produtoBase = STATE.produtos.find(p=>p.id===produtoBaseId);
+  if(!produtoBase) return;
+
+  const selecionados = new Set(); // ids dos produtos marcados para serem absorvidos
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-mesclagem-produto';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:680px;max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🔗</div>
+        <div>
+          <h3>Vincular / Mesclar Produto</h3>
+          <div class="sub">Unificar cadastros duplicados de "${escapeHtml(produtoBase.nome)}"</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>🔍 Buscar produtos parecidos para vincular</label>
+          <input type="text" id="mp-busca" value="${escapeAttr(produtoBase.nome)}" placeholder="Ex: água sanitária">
+        </div>
+        <div id="mp-lista-candidatos"></div>
+
+        <div style="background:#FAFBFC;border:1px dashed var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-top:16px;">
+          <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:8px;">Dados finais do produto unificado</div>
+          <div class="form-grid">
+            <div class="field field-full">
+              <label>Nome do Produto <span class="req">*</span></label>
+              <input type="text" id="mp-nome" required value="${escapeAttr(produtoBase.nome)}">
+            </div>
+            <div class="field">
+              <label>Marca</label>
+              <input type="text" id="mp-marca" list="dl-marcas" value="${escapeAttr(produtoBase.marca||'')}">
+            </div>
+            <div class="field">
+              <label>Fornecedor</label>
+              <select id="mp-fornecedor-id">
+                <option value="">Selecione...</option>
+                ${STATE.fornecedores.map(f=>`<option value="${f.id}" ${produtoBase.fornecedorId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="field">
+              <label>Custo Unitário (R$) <span class="req">*</span></label>
+              <input type="number" step="0.01" min="0" id="mp-custo" required value="${produtoBase.custo}">
+            </div>
+            <div class="field">
+              <label>Preço de Venda (R$) <span class="req">*</span></label>
+              <input type="number" step="0.01" min="0" id="mp-preco" required value="${produtoBase.precoVenda}">
+            </div>
+            <div class="field field-full">
+              <label>📍 Local onde é comprado</label>
+              <select id="mp-local-compra-id">
+                <option value="">Selecione...</option>
+                ${STATE.locaisCompra.map(l=>`<option value="${l.id}" ${produtoBase.localCompraId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          <div class="help-text" style="margin-top:6px;">Esses dados valem para o produto final. Se um dos produtos vinculados tiver marca/fornecedor diferente, ajuste aqui manualmente — se precisar cadastrar aquela outra marca separadamente no futuro, é só criar um produto novo.</div>
+        </div>
+
+        <div class="help-text" style="margin-top:10px;">💡 As vendas e orçamentos já registrados não mudam — continuam mostrando exatamente o que foi vendido na época. Só o relatório de sugestão de compra passa a somar a demanda de todos os produtos vinculados como uma coisa só.</div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" id="mp-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="mp-confirmar">🔗 Mesclar Selecionados</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  function renderCandidatos(){
+    const texto = document.getElementById('mp-busca').value;
+    const candidatos = buscarProdutosParecidos(texto, produtoBase.id);
+    const box = document.getElementById('mp-lista-candidatos');
+    if(candidatos.length===0){
+      box.innerHTML = `<p class="help-text" style="margin-top:8px;">Nenhum outro produto encontrado com esse termo de busca.</p>`;
+      return;
+    }
+    box.innerHTML = `
+      <div class="table-wrap" style="margin-top:8px;max-height:260px;overflow-y:auto;">
+        <table class="data-table">
+          <thead>
+            <tr><th></th><th>Produto</th><th>Marca</th><th>Fornecedor</th><th class="num">Custo</th><th class="num">Preço Venda</th><th class="num">Estoque</th></tr>
+          </thead>
+          <tbody>
+            ${candidatos.map(p=>`
+              <tr>
+                <td><input type="checkbox" class="mp-check" data-id="${p.id}" ${selecionados.has(p.id)?'checked':''}></td>
+                <td>${escapeHtml(p.nome)}${p.criadoRapido?' <span class="badge badge-warning">⚡</span>':''}</td>
+                <td>${escapeHtml(p.marca||'—')}</td>
+                <td>${escapeHtml(p.fornecedor||'—')}</td>
+                <td class="num">${fmtMoney(p.custo)}</td>
+                <td class="num">${fmtMoney(p.precoVenda)}</td>
+                <td class="num">${fmtNum(p.estoqueAtual||0)}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    box.querySelectorAll('.mp-check').forEach(chk=>{
+      chk.addEventListener('change', ()=>{
+        if(chk.checked) selecionados.add(chk.dataset.id);
+        else selecionados.delete(chk.dataset.id);
+      });
+    });
+  }
+  renderCandidatos();
+  document.getElementById('mp-busca').addEventListener('input', renderCandidatos);
+
+  document.getElementById('mp-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('mp-confirmar').addEventListener('click', ()=>{
+    if(selecionados.size===0){
+      showToast('Marque pelo menos um produto para vincular/mesclar.', 'error');
+      return;
+    }
+    const nome = document.getElementById('mp-nome').value.trim();
+    const custo = parseFloat(document.getElementById('mp-custo').value);
+    const precoVenda = parseFloat(document.getElementById('mp-preco').value);
+    if(!nome || isNaN(custo) || isNaN(precoVenda)){
+      showToast('Preencha nome, custo e preço de venda do produto final.', 'error');
+      return;
+    }
+    const fornecedorIdSelecionado = document.getElementById('mp-fornecedor-id').value || null;
+    const fornecedorSelecionado = STATE.fornecedores.find(f=>f.id===fornecedorIdSelecionado);
+    const localCompraId = document.getElementById('mp-local-compra-id').value || null;
+    const localSelecionado = STATE.locaisCompra.find(l=>l.id===localCompraId);
+    const dadosFinais = {
+      nome,
+      marca: document.getElementById('mp-marca').value.trim(),
+      fornecedorId: fornecedorIdSelecionado,
+      fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '',
+      custo, precoVenda,
+      localCompraId,
+      ondeComprado: localSelecionado ? localSelecionado.nome : ''
+    };
+    const qtdMesclados = selecionados.size;
+    mesclarProdutos(produtoBase.id, [...selecionados], dadosFinais);
+    modal.remove();
+    showToast(`${qtdMesclados} produto(s) vinculado(s) e mesclado(s) em "${nome}".`, 'success');
+  });
+}
+
+function mesclarProdutos(produtoFinalId, idsAbsorvidos, dadosFinais){
+  const produtoFinal = STATE.produtos.find(p=>p.id===produtoFinalId);
+  if(!produtoFinal) return;
+
+  const produtosAbsorvidos = STATE.produtos.filter(p=>idsAbsorvidos.includes(p.id));
+  const snapshotAbsorvidos = produtosAbsorvidos.map(p=>({
+    id: p.id, nome: p.nome, marca: p.marca, fornecedor: p.fornecedor,
+    custo: p.custo, precoVenda: p.precoVenda, estoqueAtual: p.estoqueAtual||0
+  }));
+
+  // soma o estoque de todos os produtos absorvidos no produto final
+  const estoqueSomado = produtosAbsorvidos.reduce((s,p)=>s+(p.estoqueAtual||0), 0);
+
+  // remapeia o vínculo (produtoId) do histórico já registrado para o produto final,
+  // sem alterar nenhum valor (nome/preço/qtd) já gravado em cada venda/orçamento antigo
+  let vendasAtualizadas = 0, orcamentosAtualizados = 0, movimentosAtualizados = 0;
+  STATE.vendas.forEach(v=>{
+    let tocou = false;
+    (v.itens||[]).forEach(it=>{
+      if(idsAbsorvidos.includes(it.produtoId)){ it.produtoId = produtoFinalId; tocou = true; }
+    });
+    if(tocou) vendasAtualizadas++;
+  });
+  STATE.orcamentos.forEach(o=>{
+    let tocou = false;
+    (o.itens||[]).forEach(it=>{
+      if(idsAbsorvidos.includes(it.produtoId)){ it.produtoId = produtoFinalId; tocou = true; }
+    });
+    if(tocou) orcamentosAtualizados++;
+  });
+  (STATE.movimentosEstoque||[]).forEach(m=>{
+    if(idsAbsorvidos.includes(m.produtoId)){ m.produtoId = produtoFinalId; movimentosAtualizados++; }
+  });
+
+  // aplica os dados finais escolhidos e o estoque consolidado no produto final
+  Object.assign(produtoFinal, dadosFinais);
+  produtoFinal.estoqueAtual = (produtoFinal.estoqueAtual||0) + estoqueSomado;
+
+  if(estoqueSomado!==0){
+    STATE.movimentosEstoque.push({
+      id: uid('mov'), produtoId: produtoFinal.id, tipo: 'ajuste', qtd: estoqueSomado,
+      motivo: `Estoque consolidado de ${produtosAbsorvidos.length} produto(s) mesclado(s)`,
+      refId: null, data: todayISO()
+    });
+  }
+
+  // registra a mesclagem para auditoria/consulta futura
+  STATE.mesclagensProdutos = STATE.mesclagensProdutos || [];
+  STATE.mesclagensProdutos.push({
+    id: uid('mescla'), data: todayISO(),
+    produtoFinalId, nomeFinal: dadosFinais.nome,
+    produtosAbsorvidos: snapshotAbsorvidos,
+    vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados
+  });
+
+  // remove os cadastros absorvidos (o histórico deles já foi remapeado acima)
+  STATE.produtos = STATE.produtos.filter(p=>!idsAbsorvidos.includes(p.id));
+
+  saveState();
+  if(document.getElementById('produtos-content')) renderProdutos();
 }
 
 function excluirProduto(id){
@@ -4152,6 +4381,7 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
             <label>Nome do Produto <span class="req">*</span></label>
             <input type="text" id="cr-nome" value="${escapeAttr(nomeInicial||'')}" required>
           </div>
+          <div class="field field-full" id="cr-parecidos-wrap" style="display:none;"></div>
           <div class="field">
             <label>Marca</label>
             <input type="text" id="cr-marca" placeholder="Opcional">
@@ -4194,6 +4424,38 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
   `;
   document.body.appendChild(modal);
   document.getElementById('cr-nome').focus();
+
+  // Aviso de possível duplicidade: enquanto digita o nome, mostra produtos já
+  // cadastrados parecidos, com a opção de usar um deles em vez de criar um novo
+  // cadastro (evita gerar cadastros duplicados do mesmo item ao longo do tempo).
+  const parecidosWrap = document.getElementById('cr-parecidos-wrap');
+  function atualizarParecidos(){
+    const texto = document.getElementById('cr-nome').value.trim();
+    if(texto.length<3){ parecidosWrap.style.display='none'; parecidosWrap.innerHTML=''; return; }
+    const parecidos = buscarProdutosParecidos(texto).slice(0,5);
+    if(parecidos.length===0){ parecidosWrap.style.display='none'; parecidosWrap.innerHTML=''; return; }
+    parecidosWrap.style.display='';
+    parecidosWrap.innerHTML = `
+      <div style="background:var(--warning-soft);border:1px solid var(--warning);border-radius:var(--radius-sm);padding:10px 12px;">
+        <div style="font-size:12px;font-weight:700;color:var(--ink);margin-bottom:6px;">⚠️ Já existe(m) produto(s) parecido(s) cadastrado(s):</div>
+        ${parecidos.map(p=>`
+          <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 0;">
+            <span style="font-size:13px;">${escapeHtml(p.nome)}${p.marca?` · ${escapeHtml(p.marca)}`:''} — ${fmtMoney(p.precoVenda)}</span>
+            <button type="button" class="btn btn-sm cr-usar-existente" data-id="${p.id}">Usar este</button>
+          </div>`).join('')}
+        <div class="help-text" style="margin-top:4px;">Se for o mesmo item, prefira usar um dos existentes em vez de criar mais um cadastro duplicado — depois dá pra vincular/mesclar cadastros na tela de Produtos.</div>
+      </div>`;
+    parecidosWrap.querySelectorAll('.cr-usar-existente').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const produtoExistente = STATE.produtos.find(p=>p.id===btn.dataset.id);
+        if(!produtoExistente) return;
+        modal.remove();
+        if(onCriado) onCriado(produtoExistente);
+      });
+    });
+  }
+  document.getElementById('cr-nome').addEventListener('input', atualizarParecidos);
+  atualizarParecidos();
 
   document.getElementById('cr-cancelar').addEventListener('click', ()=>modal.remove());
 
