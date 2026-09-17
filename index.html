@@ -7308,7 +7308,8 @@ function gerarPdfOrcamento(id){
 // toda vez do zero.
 function abrirOpcoesControleEntrega(id){
   const prefsSalvas = JSON.parse(localStorage.getItem('gv_prefs_controle_entrega')||'{}');
-  const comLogo = prefsSalvas.comLogo !== false; // default true
+  const comLogo = prefsSalvas.comLogo === true; // default AGORA é desmarcado
+  const comPreco = prefsSalvas.comPreco === true; // default desmarcado (só quantitativo)
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -7327,6 +7328,10 @@ function abrirOpcoesControleEntrega(id){
           <input type="checkbox" id="oce-com-logo" style="width:auto;" ${comLogo?'checked':''}>
           Mostrar logo e nome da empresa no topo
         </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink);cursor:pointer;margin-top:8px;">
+          <input type="checkbox" id="oce-com-preco" style="width:auto;" ${comPreco?'checked':''}>
+          Mostrar valor de cada item (senão mostra só a quantidade)
+        </label>
         <div class="form-actions">
           <button type="button" class="btn" id="oce-cancelar">Cancelar</button>
           <button type="button" class="btn btn-primary" id="oce-confirmar">Gerar PDF</button>
@@ -7339,7 +7344,7 @@ function abrirOpcoesControleEntrega(id){
   document.getElementById('oce-confirmar').addEventListener('click', ()=>{
     const opcoes = {
       comLogo: document.getElementById('oce-com-logo').checked,
-      comPreco: true // por enquanto sempre mostra o preço — pode virar opção depois, se pedido
+      comPreco: document.getElementById('oce-com-preco').checked
     };
     localStorage.setItem('gv_prefs_controle_entrega', JSON.stringify(opcoes));
     modal.remove();
@@ -7348,7 +7353,7 @@ function abrirOpcoesControleEntrega(id){
 }
 
 function gerarPdfControleEntrega(id, opcoes){
-  opcoes = opcoes || { comLogo: true, comPreco: true };
+  opcoes = opcoes || { comLogo: false, comPreco: false };
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
@@ -7358,11 +7363,13 @@ function gerarPdfControleEntrega(id, opcoes){
 
   // Documento pro CLIENTE conferir e assinar. A origem de coleta é
   // informação interna da loja e nunca entra aqui. Preço por item e total
-  // geral são opcionais (opcoes.comPreco) — item 4 da especificação.
+  // geral são opcionais (opcoes.comPreco) — item 4 da especificação. O nome
+  // do produto aparece puro, sem o complemento de marca (pedido do usuário).
   const linhasItens = orcamento.itens.map((it,idx)=>`
     <tr>
       <td>${idx+1}</td>
-      <td>${escapeHtml(it.nome)}${it.marca?` — ${escapeHtml(it.marca)}`:''}</td>
+      <td>${escapeHtml(it.nome)}</td>
+      <td style="text-align:center;">${escapeHtml(it.unidade||'UN')}</td>
       <td style="text-align:center;">${fmtNum(it.qtd)}</td>
       ${opcoes.comPreco ? `<td style="text-align:right;">${fmtMoney(it.precoUnit)}</td><td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>` : ''}
     </tr>
@@ -7422,9 +7429,9 @@ function gerarPdfControleEntrega(id, opcoes){
 
       <h2>Itens desta entrega</h2>
       <table>
-        <thead><tr><th>Item</th><th>Produto</th><th>Qtd</th>${opcoes.comPreco ? '<th style="text-align:right;">Vlr Unit.</th><th style="text-align:right;">Vlr Total</th>' : ''}</tr></thead>
+        <thead><tr><th>Item</th><th>Produto</th><th>Unidade</th><th>Qtd</th>${opcoes.comPreco ? '<th style="text-align:right;">Vlr Unit.</th><th style="text-align:right;">Vlr Total</th>' : ''}</tr></thead>
         <tbody>${linhasItens}</tbody>
-        ${opcoes.comPreco ? `<tfoot><tr><td colspan="4" style="text-align:right;">Total Geral</td><td style="text-align:right;">${fmtMoney(totalGeral)}</td></tr></tfoot>` : ''}
+        ${opcoes.comPreco ? `<tfoot><tr><td colspan="5" style="text-align:right;">Total Geral</td><td style="text-align:right;">${fmtMoney(totalGeral)}</td></tr></tfoot>` : ''}
       </table>
 
       ${orcamento.observacoes ? `<div class="obs"><strong>Observações:</strong> ${escapeHtml(orcamento.observacoes)}</div>` : ''}
@@ -12578,6 +12585,7 @@ function renderTabelaRepasses(){
         <div class="cell-actions">
           ${(l.descontoPct!=null||l.descontoValorFixo!=null) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="marcarRepasseComoPago('${l.vendaId}')">✓ Marcar como Pago</button>` : ''}
+          ${anexoControleEntregaBtn(l.vendaId)}
         </div>
       </td>
     </tr>
@@ -12808,6 +12816,141 @@ function marcarRepasseComoPago(vendaId){
     },
     'Confirmar Pagamento'
   );
+}
+
+/* =========================================================
+   ANEXO DO CONTROLE DE ENTREGA (escaneado/fotografado) — vinculado à
+   venda, aparece na tela de Repasses. Imagem é redimensionada e recomprimida
+   antes de salvar (localStorage tem espaço limitado); PDF é salvo direto,
+   com um limite de tamanho pra não estourar o armazenamento do navegador.
+   ========================================================= */
+function anexoControleEntregaBtn(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return '';
+  if(venda.controleEntregaAnexo){
+    return `<button class="btn btn-sm" onclick="verAnexoControleEntrega('${vendaId}')">📎 Ver Controle de Entrega</button>
+      <button class="btn btn-sm" title="Remover anexo" onclick="removerAnexoControleEntrega('${vendaId}')">🗑️</button>`;
+  }
+  return `<button class="btn btn-sm" onclick="abrirAnexoControleEntrega('${vendaId}')">📎 Anexar Controle de Entrega</button>`;
+}
+
+function verAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda || !venda.controleEntregaAnexo) return;
+  const janela = window.open('', '_blank');
+  const anexo = venda.controleEntregaAnexo;
+  const corpo = anexo.tipo==='pdf'
+    ? `<embed src="${anexo.dataUrl}" type="application/pdf" style="width:100%;height:100vh;">`
+    : `<img src="${anexo.dataUrl}" style="max-width:100%;display:block;margin:0 auto;">`;
+  janela.document.write(`<!DOCTYPE html><html><head><title>Controle de Entrega - ${escapeHtml(anexo.nomeArquivo||'')}</title></head><body style="margin:0;background:#333;">${corpo}</body></html>`);
+  janela.document.close();
+}
+
+function removerAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  confirmAction('Remover anexo', 'Isso vai remover o controle de entrega anexado a esta venda. Deseja continuar?', ()=>{
+    delete venda.controleEntregaAnexo;
+    saveState();
+    showToast('Anexo removido.', 'success');
+    renderTabelaRepasses();
+  });
+}
+
+function abrirAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-anexo-controle-entrega';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📎</div>
+        <div>
+          <h3>Anexar Controle de Entrega</h3>
+          <div class="sub">Foto ou PDF do controle já assinado pelo cliente</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field field-full">
+          <label>Arquivo (foto ou PDF)</label>
+          <input type="file" id="ace-arquivo" accept="image/*,application/pdf">
+        </div>
+        <div class="help-text" id="ace-status"></div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="ace-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ace-confirmar" disabled>Salvar Anexo</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('ace-cancelar').addEventListener('click', ()=>modal.remove());
+
+  let anexoPronto = null; // {dataUrl, nomeArquivo, tipo}
+
+  document.getElementById('ace-arquivo').addEventListener('change', (e)=>{
+    const arquivo = e.target.files[0];
+    const statusEl = document.getElementById('ace-status');
+    const btnConfirmar = document.getElementById('ace-confirmar');
+    btnConfirmar.disabled = true;
+    anexoPronto = null;
+    if(!arquivo) return;
+
+    if(arquivo.type==='application/pdf'){
+      if(arquivo.size > 4*1024*1024){
+        statusEl.innerHTML = '<span style="color:var(--negative);">PDF muito grande (máx. 4MB) — tente uma foto em vez do PDF, ou comprima o arquivo antes.</span>';
+        return;
+      }
+      const leitor = new FileReader();
+      leitor.onload = ()=>{
+        anexoPronto = { dataUrl: leitor.result, nomeArquivo: arquivo.name, tipo: 'pdf' };
+        statusEl.innerHTML = `PDF pronto pra salvar (${(arquivo.size/1024/1024).toFixed(1)}MB).`;
+        btnConfirmar.disabled = false;
+      };
+      leitor.readAsDataURL(arquivo);
+      return;
+    }
+
+    if(!arquivo.type.startsWith('image/')){
+      statusEl.innerHTML = '<span style="color:var(--negative);">Formato não suportado — envie uma foto (JPG/PNG) ou um PDF.</span>';
+      return;
+    }
+
+    // imagem: redimensiona e recomprime antes de salvar, pra não pesar no
+    // armazenamento do navegador (localStorage tem espaço limitado)
+    statusEl.textContent = 'Processando imagem...';
+    const leitorImg = new FileReader();
+    leitorImg.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const maxLargura = 1280;
+        const escala = Math.min(1, maxLargura/img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width*escala);
+        canvas.height = Math.round(img.height*escala);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+        anexoPronto = { dataUrl, nomeArquivo: arquivo.name, tipo: 'imagem' };
+        statusEl.textContent = `Imagem pronta pra salvar (${Math.round(dataUrl.length/1024)}KB).`;
+        btnConfirmar.disabled = false;
+      };
+      img.onerror = ()=>{ statusEl.innerHTML = '<span style="color:var(--negative);">Não consegui abrir essa imagem.</span>'; };
+      img.src = leitorImg.result;
+    };
+    leitorImg.readAsDataURL(arquivo);
+  });
+
+  document.getElementById('ace-confirmar').addEventListener('click', ()=>{
+    if(!anexoPronto) return;
+    venda.controleEntregaAnexo = { ...anexoPronto, criadoEm: new Date().toISOString() };
+    saveState();
+    showToast('Controle de entrega anexado.', 'success');
+    modal.remove();
+    renderTabelaRepasses();
+  });
 }
 
 function abrirFormAbatimentoRepasse(vendaId){
