@@ -13386,6 +13386,7 @@ function excluirPagamentoRepasse(id){
 }
 
 function renderTabelaRepasses(){
+  if(!document.getElementById('repasses-table-body')) return; // tela de Repasses não está aberta no momento
   let linhas = getLinhasRepasse();
   if(repasseFiltroPagador) linhas = linhas.filter(l=>l.pagadorId===repasseFiltroPagador);
   const periodo = getPeriodoFiltroRepasses();
