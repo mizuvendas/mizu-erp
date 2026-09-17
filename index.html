@@ -995,7 +995,45 @@ table.data-table{ width:100%; font-size:13px; }
             <input type="date" id="lic-busca-prazo-ate" style="padding:5px 8px;">
           </div>
         </div>
-        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">💡 "Publicado" filtra quando a compra foi divulgada no PNCP. "Prazo final p/ proposta" filtra pelo último dia pra enviar a proposta — deixe em branco pra trazer todas as que ainda estão abertas, sem se importar com o prazo exato.</div>
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;margin-top:10px;">
+          <div class="field" style="margin:0;flex:1;min-width:220px;">
+            <label style="font-size:11.5px;">Só trazer se o objeto contiver <span style="font-weight:400;color:var(--ink-faint);">(opcional — várias palavras separadas por vírgula, basta bater com uma)</span></label>
+            <input type="text" id="lic-busca-palavras-incluir" placeholder="ex: detergente, material de limpeza, higienização" style="padding:5px 8px;width:100%;">
+          </div>
+          <div class="field" style="margin:0;flex:1;min-width:220px;">
+            <label style="font-size:11.5px;">Nunca trazer se o objeto contiver <span style="font-weight:400;color:var(--ink-faint);">(opcional — várias palavras separadas por vírgula)</span></label>
+            <input type="text" id="lic-busca-palavras-excluir" placeholder="ex: reforma, obra, construção" style="padding:5px 8px;width:100%;">
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">💡 "Publicado" filtra quando a compra foi divulgada no PNCP. "Prazo final p/ proposta" filtra pelo último dia pra enviar a proposta — deixe em branco pra trazer todas as que ainda estão abertas, sem se importar com o prazo exato. As palavras-chave filtram pelo texto do objeto da compra (não distinguem maiúsculas/minúsculas nem acento).</div>
+      </div>
+
+      <div class="card" id="card-revisao-oportunidades" style="display:none;padding:12px 16px;margin-bottom:10px;">
+        <h3 style="margin-top:0;">Oportunidades para Revisar <span class="hint">selecione as que interessam e arraste pra coluna "Potencial" do funil abaixo (ou use o botão) — o resto fica aqui até você decidir</span></h3>
+        <div style="display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;align-items:center;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer;"><input type="checkbox" id="rev-selecionar-todas">Selecionar todas</label>
+          <button class="btn btn-sm btn-primary" id="rev-btn-mover-selecionadas">➡️ Mover selecionadas para Potencial</button>
+          <button class="btn btn-sm" id="rev-btn-excluir-selecionadas">🗑️ Excluir selecionadas</button>
+          <button class="btn btn-sm" id="rev-btn-excluir-resto">🗑️ Excluir todas as não selecionadas</button>
+        </div>
+        <div style="overflow-x:auto;">
+          <table class="table" id="rev-tabela" style="min-width:900px;">
+            <thead>
+              <tr>
+                <th style="width:28px;"></th>
+                <th>Objeto</th>
+                <th>Órgão</th>
+                <th>Cidade/UF</th>
+                <th>Modalidade</th>
+                <th>Valor Est.</th>
+                <th>Publicado em</th>
+                <th>Prazo final p/ proposta</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="rev-tabela-body"></tbody>
+          </table>
+        </div>
       </div>
       <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
       <div id="licitacoes-busca-resumo" style="display:none;"></div>
@@ -1220,6 +1258,7 @@ function defaultState(){
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
     licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[], origem:'manual'|'pncp', ...campos extras quando origem==='pncp', ver buscarOportunidadesPNCP() }
+    licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
@@ -15387,6 +15426,44 @@ const LICITACAO_STATUS_COLOR = {
 // Converte AAAA-MM-DD -> AAAAMMDD (formato de data exigido pela API do PNCP).
 function dataParaPNCP(iso){ return iso.replace(/-/g,''); }
 
+// Normaliza texto pra comparação de palavra-chave: minúsculo e sem acento
+// (assim "higienização" bate com "higienizacao" ou "HIGIENIZAÇÃO").
+function normalizarTextoBusca(txt){
+  return (txt||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase();
+}
+
+// Quebra "detergente, material de limpeza,, higienização" em ['detergente','material de limpeza','higienização'],
+// removendo vazios e espaços nas pontas — usado nos filtros de palavra-chave
+// incluir/excluir da busca de oportunidades (aceita várias palavras).
+function palavrasChaveDeTexto(txt){
+  return (txt||'').split(',').map(s=>s.trim()).filter(Boolean);
+}
+
+// Acha uma licitação/oportunidade pelo id em qualquer uma das duas listas —
+// já convertida em Potencial (STATE.licitacoes) ou ainda esperando revisão
+// (STATE.licitacoesRevisao). Usado no modal de detalhe, que precisa
+// funcionar pros dois casos, e na leitura automática do edital.
+function localizarLicitacaoOuRevisao(id){
+  let item = STATE.licitacoes.find(x=>x.id===id);
+  if(item) return { item, emRevisao: false };
+  item = STATE.licitacoesRevisao.find(x=>x.id===id);
+  if(item) return { item, emRevisao: true };
+  return { item: null, emRevisao: false };
+}
+
+// true se o objeto da compra bate com os filtros de palavra-chave: precisa
+// conter AO MENOS UMA das palavras de "incluir" (se a lista não for vazia) e
+// NÃO pode conter NENHUMA das palavras de "excluir".
+function objetoPassaNosFiltrosDePalavraChave(objetoCompra, palavrasIncluir, palavrasExcluir){
+  const alvo = normalizarTextoBusca(objetoCompra);
+  if(palavrasIncluir.length>0){
+    const bateAoMenosUma = palavrasIncluir.some(p=>alvo.includes(normalizarTextoBusca(p)));
+    if(!bateAoMenosUma) return false;
+  }
+  if(palavrasExcluir.some(p=>alvo.includes(normalizarTextoBusca(p)))) return false;
+  return true;
+}
+
 // Monta o link público do edital no site do PNCP a partir dos 3 campos que
 // identificam a compra (mesmo link que aparece no app oficial do PNCP).
 function linkEditalPNCP(cnpj, ano, sequencial){
@@ -15580,7 +15657,9 @@ function buscarOportunidadesPNCP(){
     .filter(m=>m.codigos.some(c=>modalidadesSelecionadas.includes(c)))
     .flatMap(m=>m.codigos.filter(c=>modalidadesSelecionadas.includes(c)));
   const combosTotal = ufs.length * codigosParaBuscar.length;
-  const filtrosData = { publicadoDe, publicadoAte, prazoDe, prazoAte, usouPadraoPublicacao };
+  const palavrasIncluir = palavrasChaveDeTexto(document.getElementById('lic-busca-palavras-incluir').value);
+  const palavrasExcluir = palavrasChaveDeTexto(document.getElementById('lic-busca-palavras-excluir').value);
+  const filtrosData = { publicadoDe, publicadoAte, prazoDe, prazoAte, usouPadraoPublicacao, palavrasIncluir, palavrasExcluir };
 
   // área grande de mais (muitos estados alcançados) = busca bem mais lenta;
   // avisa e deixa o usuário decidir se quer mesmo assim ou reduzir o raio
@@ -15637,14 +15716,30 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
 
     // dedupe por numeroControlePNCP (pode repetir entre páginas/combos) e
     // remove o que já foi importado antes (mesmo numeroControlePNCP já
-    // presente em STATE.licitacoes, não importa em qual coluna esteja hoje)
-    const jaImportados = new Set(STATE.licitacoes.filter(l=>l.numeroControlePNCP).map(l=>l.numeroControlePNCP));
+    // presente em STATE.licitacoes OU ainda esperando revisão em
+    // STATE.licitacoesRevisao, não importa em qual coluna/status esteja hoje)
+    const jaImportados = new Set([
+      ...STATE.licitacoes.filter(l=>l.numeroControlePNCP).map(l=>l.numeroControlePNCP),
+      ...STATE.licitacoesRevisao.filter(l=>l.numeroControlePNCP).map(l=>l.numeroControlePNCP)
+    ]);
     const vistos = new Set();
-    const candidatos = brutos.filter(d=>{
+    let candidatos = brutos.filter(d=>{
       if(!d.numeroControlePNCP || vistos.has(d.numeroControlePNCP) || jaImportados.has(d.numeroControlePNCP)) return false;
       vistos.add(d.numeroControlePNCP);
       return true;
     });
+
+    // filtro de palavra-chave (incluir/excluir) pelo texto do objeto da
+    // compra — aplicado ANTES do filtro de prazo/raio, pra não gastar tempo
+    // geocodificando algo que o usuário já disse que não quer ver
+    let ignoradosPorPalavraChave = 0;
+    if(filtrosData.palavrasIncluir.length>0 || filtrosData.palavrasExcluir.length>0){
+      candidatos = candidatos.filter(d=>{
+        const passa = objetoPassaNosFiltrosDePalavraChave(d.objetoCompra||'', filtrosData.palavrasIncluir, filtrosData.palavrasExcluir);
+        if(!passa) ignoradosPorPalavraChave++;
+        return passa;
+      });
+    }
 
     // filtro pelo prazo final da proposta: se o usuário preencheu "Prazo
     // final p/ proposta de/até", usa exatamente essa janela (e só mantém
@@ -15686,7 +15781,9 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
 
     console.log(`[Buscar Oportunidades PNCP] brutos=${brutos.length} candidatos(sem duplicar/já importado)=${candidatos.length} abertas(prazo não vencido)=${abertas.length} semLocalizacao=${semLocalizacaoConfirmada} dentroDoRaio=${dentroDoRaio.length}`);
 
-    // cria um cartão novo em "Potencial" pra cada oportunidade dentro do raio
+    // cria um item novo na Revisão de Oportunidades (NÃO entra direto no
+    // funil/"Potencial" — o usuário decide o que promover, ver
+    // moverRevisaoParaPotencial()) pra cada oportunidade dentro do raio
     dentroDoRaio.forEach(({d, unidade, geo, dist})=>{
       const orgaoEntidade = d.orgaoEntidade || {};
       const cnpjOrgao = orgaoEntidade.cnpj;
@@ -15700,12 +15797,12 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         orgao: orgaoEntidade.razaoSocial || '(órgão não informado)',
         objeto: d.objetoCompra || '(sem descrição)',
         numero: d.numeroCompra || '',
-        status: 'Potencial',
+        status: 'Potencial', // só passa a valer de verdade quando sair da Revisão — ver moverRevisaoParaPotencial()
         valorEstimado: d.valorTotalEstimado || 0,
         dataAbertura: (d.dataAberturaProposta||'').slice(0,10) || null,
         dataResultado: null,
         obs: '',
-        historico: [{de:null, para:'Potencial', em:new Date().toISOString()}],
+        historico: [],
         // --- campos extras, só em oportunidades vindas do PNCP ---
         origem: 'pncp',
         numeroControlePNCP: d.numeroControlePNCP,
@@ -15725,7 +15822,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         pdfLido: false,
         pdfErro: null
       };
-      STATE.licitacoes.push(licitacao);
+      STATE.licitacoesRevisao.push(licitacao);
     });
 
     saveState();
@@ -15737,10 +15834,13 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
     }
     if(brutos.length===0){
       partesResumo.push(`O PNCP não retornou nenhuma compra publicada entre ${fmtDate(filtrosData.publicadoDe)} e ${fmtDate(filtrosData.publicadoAte)} pras modalidades e estados dessa área (${ufs.join(', ')}).`);
+    }else if(dentroDoRaio.length===0){
+      partesResumo.push(`Nenhuma oportunidade nova sobrou depois dos filtros (${brutos.length} encontrada(s) no PNCP, mas todas ficaram de fora pelo raio, prazo, palavra-chave ou já tinham sido importadas antes).`);
     }else{
-      partesResumo.push(`${dentroDoRaio.length} nova(s) oportunidade(s) dentro da sua área.`);
+      partesResumo.push(`${dentroDoRaio.length} nova(s) oportunidade(s) dentro da sua área foram pra "Oportunidades para Revisar", em cima do funil — selecione as que interessam e mova pra Potencial.`);
       partesResumo.push(`(${brutos.length} encontrada(s) no PNCP ao todo, ${abertas.length} ainda com prazo aberto.)`);
     }
+    if(ignoradosPorPalavraChave>0) partesResumo.push(`${ignoradosPorPalavraChave} ignorada(s) pelo filtro de palavra-chave.`);
     if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
     if(_pncpUsouProxyCors) partesResumo.push('(Algumas consultas só funcionaram usando um proxy alternativo — o navegador bloqueou a chamada direta ao PNCP, provavelmente por CORS.)');
     if(combosComErro>0){
@@ -15950,7 +16050,134 @@ function renderLicitacoes(){
     <div id="detalhe-licitacao-container"></div>
   `;
 
+  renderRevisaoOportunidades();
   renderKanban();
+}
+
+// Seleção da tabela de Revisão de Oportunidades (ids de STATE.licitacoesRevisao
+// marcados com o checkbox) — vive só na memória, reseta ao recarregar a
+// página, igual outros "estados de trabalho" do sistema (ex: carrinhoOrcamentoAtual).
+let _revisaoSelecionados = new Set();
+// ids sendo arrastados no momento (linha da tabela de Revisão -> coluna
+// "Potencial" do funil), preenchido em dragstart e lido no drop.
+let _revisaoArrastando = [];
+
+function renderRevisaoOportunidades(){
+  const card = document.getElementById('card-revisao-oportunidades');
+  const tbody = document.getElementById('rev-tabela-body');
+  const lista = STATE.licitacoesRevisao;
+
+  // limpa da seleção qualquer id que não exista mais (foi movido/excluído)
+  const idsAtuais = new Set(lista.map(l=>l.id));
+  _revisaoSelecionados.forEach(id=>{ if(!idsAtuais.has(id)) _revisaoSelecionados.delete(id); });
+
+  if(lista.length===0){
+    card.style.display = 'none';
+    tbody.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+
+  tbody.innerHTML = lista.map(l=>{
+    const marcado = _revisaoSelecionados.has(l.id);
+    return `
+    <tr draggable="true" data-rev-id="${l.id}" style="cursor:grab;${marcado?'background:var(--bg-app);':''}">
+      <td><input type="checkbox" class="rev-check" data-id="${l.id}" ${marcado?'checked':''}></td>
+      <td style="max-width:280px;cursor:pointer;" onclick="abrirDetalheLicitacao('${l.id}')"><div style="font-weight:600;">${escapeHtml(l.objeto)}</div><div class="help-text">${l.numero?'Nº '+escapeHtml(l.numero):''}${l.modalidadeNome?(l.numero?' · ':'')+escapeHtml(l.modalidadeNome):''}</div></td>
+      <td>${escapeHtml(l.orgao||'—')}</td>
+      <td>${escapeHtml(l.municipioNome||'—')}${l.uf?'/'+escapeHtml(l.uf):''}${l.distanciaKm!=null?` <span class="help-text">(~${l.distanciaKm}km)</span>`:''}</td>
+      <td>${escapeHtml(l.modalidadeNome||'—')}</td>
+      <td>${fmtMoney(l.valorEstimado)}</td>
+      <td>${l.dataAberturaProposta?new Date(l.dataAberturaProposta).toLocaleDateString('pt-BR'):'—'}</td>
+      <td style="font-weight:600;">${l.dataEncerramentoProposta?new Date(l.dataEncerramentoProposta).toLocaleString('pt-BR'):'—'}</td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-sm" title="Ver detalhes" onclick="abrirDetalheLicitacao('${l.id}')">👁️</button>
+        <button class="btn btn-sm btn-primary" title="Mover para Potencial" onclick="moverRevisaoParaPotencial(['${l.id}'])">➡️</button>
+        <button class="btn btn-sm btn-danger" title="Excluir" onclick="excluirRevisao(['${l.id}'])">🗑️</button>
+      </td>
+    </tr>
+  `;
+  }).join('');
+
+  // seleção via checkbox individual
+  tbody.querySelectorAll('.rev-check').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      const id = chk.getAttribute('data-id');
+      if(chk.checked) _revisaoSelecionados.add(id); else _revisaoSelecionados.delete(id);
+      const tr = chk.closest('tr');
+      if(tr) tr.style.background = chk.checked ? 'var(--bg-app)' : '';
+      const master = document.getElementById('rev-selecionar-todas');
+      if(master) master.checked = _revisaoSelecionados.size===lista.length;
+    });
+  });
+
+  // arrastar linha (ou, se fizer parte da seleção atual, todas as
+  // selecionadas de uma vez) pra soltar na coluna "Potencial" do funil
+  tbody.querySelectorAll('tr[draggable="true"]').forEach(tr=>{
+    tr.addEventListener('dragstart', (ev)=>{
+      const id = tr.getAttribute('data-rev-id');
+      _revisaoArrastando = (_revisaoSelecionados.has(id) && _revisaoSelecionados.size>1) ? [..._revisaoSelecionados] : [id];
+      ev.dataTransfer.effectAllowed = 'move';
+      try{ ev.dataTransfer.setData('text/plain', _revisaoArrastando.join(',')); }catch(e){}
+    });
+  });
+
+  const masterChk = document.getElementById('rev-selecionar-todas');
+  if(masterChk){
+    masterChk.checked = _revisaoSelecionados.size===lista.length;
+    masterChk.onchange = ()=>{
+      if(masterChk.checked) lista.forEach(l=>_revisaoSelecionados.add(l.id));
+      else _revisaoSelecionados.clear();
+      renderRevisaoOportunidades();
+    };
+  }
+  document.getElementById('rev-btn-mover-selecionadas').onclick = ()=>{
+    if(_revisaoSelecionados.size===0){ showToast('Selecione ao menos uma oportunidade primeiro.', 'error'); return; }
+    moverRevisaoParaPotencial([..._revisaoSelecionados]);
+  };
+  document.getElementById('rev-btn-excluir-selecionadas').onclick = ()=>{
+    if(_revisaoSelecionados.size===0){ showToast('Selecione ao menos uma oportunidade primeiro.', 'error'); return; }
+    excluirRevisao([..._revisaoSelecionados]);
+  };
+  document.getElementById('rev-btn-excluir-resto').onclick = ()=>{
+    const naoSelecionados = lista.filter(l=>!_revisaoSelecionados.has(l.id)).map(l=>l.id);
+    if(naoSelecionados.length===0){ showToast('Não sobrou nenhuma oportunidade não selecionada pra excluir.', 'error'); return; }
+    confirmAction('Excluir não selecionadas', `Isso vai excluir ${naoSelecionados.length} oportunidade(s) que não estão marcadas — as ${_revisaoSelecionados.size} selecionada(s) ficam. Essa ação não pode ser desfeita. Continuar?`, ()=>{
+      excluirRevisao(naoSelecionados, true);
+    }, 'Excluir');
+  };
+}
+
+// Move (uma ou várias) da Revisão pra o funil de verdade, como "Potencial".
+function moverRevisaoParaPotencial(ids){
+  const movidas = [];
+  ids.forEach(id=>{
+    const idx = STATE.licitacoesRevisao.findIndex(l=>l.id===id);
+    if(idx===-1) return;
+    const [l] = STATE.licitacoesRevisao.splice(idx,1);
+    l.status = 'Potencial';
+    l.historico = [{de:null, para:'Potencial', em:new Date().toISOString()}];
+    STATE.licitacoes.push(l);
+    _revisaoSelecionados.delete(id);
+    movidas.push(l);
+  });
+  if(movidas.length===0) return;
+  saveState();
+  showToast(`${movidas.length} oportunidade(s) movida(s) para "Potencial".`, 'success');
+  renderLicitacoes();
+}
+
+// Exclui (uma ou várias) direto da Revisão, sem passar pelo funil.
+function excluirRevisao(ids, jaConfirmado){
+  const executar = ()=>{
+    STATE.licitacoesRevisao = STATE.licitacoesRevisao.filter(l=>!ids.includes(l.id));
+    ids.forEach(id=>_revisaoSelecionados.delete(id));
+    saveState();
+    showToast(`${ids.length} oportunidade(s) excluída(s) da revisão.`, 'success');
+    renderLicitacoes();
+  };
+  if(jaConfirmado){ executar(); return; }
+  confirmAction('Excluir', `Excluir ${ids.length} oportunidade(s) da revisão? Essa ação não pode ser desfeita.`, executar, 'Excluir');
 }
 
 function renderKanban(){
@@ -15965,9 +16192,11 @@ function renderKanban(){
     let items = STATE.licitacoes.filter(l=>l.status===status);
     if(filtroModalidadeCodigos) items = items.filter(l=>filtroModalidadeCodigos.includes(l.modalidadeId));
     if(filtroParticipacao) items = items.filter(l=>l.formaParticipacao===filtroParticipacao);
+    const ehPotencial = status==='Potencial';
     return `
-      <div class="kanban-col">
+      <div class="kanban-col" ${ehPotencial?'id="kanban-col-potencial" style="outline-offset:-2px;"':''}>
         <h4 style="color:${LICITACAO_STATUS_COLOR[status]}"><span>${status}</span><span>${items.length}</span></h4>
+        ${ehPotencial?'<div class="help-text" style="margin:-4px 0 6px;">💡 solte aqui as oportunidades que arrastar da tabela de Revisão acima</div>':''}
         ${items.map(l=>`
           <div class="kanban-card" onclick="abrirDetalheLicitacao('${l.id}')">
             <div class="kc-title">${escapeHtml(l.objeto)}</div>
@@ -15986,6 +16215,26 @@ function renderKanban(){
       </div>
     `;
   }).join('');
+
+  // dropzone da coluna "Potencial" — recebe o que for arrastado da tabela
+  // de Revisão de Oportunidades (ver renderRevisaoOportunidades())
+  const colPotencial = document.getElementById('kanban-col-potencial');
+  if(colPotencial){
+    colPotencial.addEventListener('dragover', (ev)=>{
+      if(_revisaoArrastando.length===0) return;
+      ev.preventDefault();
+      ev.dataTransfer.dropEffect = 'move';
+      colPotencial.style.outline = '2px dashed var(--accent, #1B4B5A)';
+    });
+    colPotencial.addEventListener('dragleave', ()=>{ colPotencial.style.outline = ''; });
+    colPotencial.addEventListener('drop', (ev)=>{
+      ev.preventDefault();
+      colPotencial.style.outline = '';
+      const ids = _revisaoArrastando.length>0 ? _revisaoArrastando : (ev.dataTransfer.getData('text/plain')||'').split(',').filter(Boolean);
+      _revisaoArrastando = [];
+      if(ids.length>0) moverRevisaoParaPotencial(ids);
+    });
+  }
 }
 
 function abrirFormLicitacao(id){
@@ -16100,7 +16349,7 @@ function abrirFormLicitacao(id){
 // são lidos corretamente — por isso o link pro edital completo sempre fica
 // disponível, pra conferência manual.
 async function extrairInfoEditalLicitacao(id){
-  const l = STATE.licitacoes.find(x=>x.id===id);
+  const { item: l } = localizarLicitacaoOuRevisao(id);
   if(!l || l.origem!=='pncp') return;
 
   if(!l.cnpjOrgao || !l.anoCompra || !l.sequencialCompra){
@@ -16219,7 +16468,7 @@ function extrairInfoDoTextoEdital(texto){
 }
 
 function abrirDetalheLicitacao(id){
-  const l = STATE.licitacoes.find(x=>x.id===id);
+  const { item: l, emRevisao } = localizarLicitacaoOuRevisao(id);
   if(!l) return;
 
   const modalAntigo = document.getElementById('modal-detalhe-licitacao');
@@ -16239,7 +16488,9 @@ function abrirDetalheLicitacao(id){
       </div>
       <div class="modal-rapido-corpo">
         <div style="margin-bottom:10px;">
-          <span class="badge" style="background:${LICITACAO_STATUS_COLOR[l.status]}22;color:${LICITACAO_STATUS_COLOR[l.status]}">${l.status}</span>
+          ${emRevisao
+            ? `<span class="badge" style="background:#8A93A022;color:#8A93A0">Ainda em revisão — não faz parte do funil</span>`
+            : `<span class="badge" style="background:${LICITACAO_STATUS_COLOR[l.status]}22;color:${LICITACAO_STATUS_COLOR[l.status]}">${l.status}</span>`}
         </div>
         <div class="form-grid">
           <div><strong>Órgão:</strong> ${escapeHtml(l.orgao)}</div>
@@ -16280,25 +16531,35 @@ function abrirDetalheLicitacao(id){
         </div>
         ` : ''}
 
-        <hr class="section-divider">
-        <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Mover para novo status:</label>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
-          ${LICITACAO_STATUS.map(s=>`<button class="btn btn-sm ${s===l.status?'btn-primary':''}" onclick="moverStatusLicitacao('${l.id}','${s}')">${s}</button>`).join('')}
-        </div>
-
-        ${l.historico && l.historico.length ? `
+        ${emRevisao ? `
           <hr class="section-divider">
-          <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Histórico:</label>
-          <div style="margin-top:8px;">
-            ${l.historico.slice().reverse().map(h=>`<div class="help-text">${new Date(h.em).toLocaleString('pt-BR')} — ${h.de?escapeHtml(h.de)+' → ':'Criada como '}${escapeHtml(h.para)}</div>`).join('')}
+          <div class="help-text">Essa oportunidade ainda está na Revisão, fora do funil. Mova pra "Potencial" quando decidir participar, ou exclua se não interessar.</div>
+          <div class="form-actions">
+            <button class="btn" id="dl-fechar">Fechar</button>
+            <button class="btn btn-primary" onclick="moverRevisaoParaPotencial(['${l.id}']); document.getElementById('modal-detalhe-licitacao').remove();">➡️ Mover para Potencial</button>
+            <button class="btn btn-danger" onclick="excluirRevisao(['${l.id}']); document.getElementById('modal-detalhe-licitacao').remove();">Excluir</button>
           </div>
-        ` : ''}
+        ` : `
+          <hr class="section-divider">
+          <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Mover para novo status:</label>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
+            ${LICITACAO_STATUS.map(s=>`<button class="btn btn-sm ${s===l.status?'btn-primary':''}" onclick="moverStatusLicitacao('${l.id}','${s}')">${s}</button>`).join('')}
+          </div>
 
-        <div class="form-actions">
-          <button class="btn" id="dl-fechar">Fechar</button>
-          <button class="btn" onclick="abrirFormLicitacao('${l.id}')">Editar Dados</button>
-          <button class="btn btn-danger" onclick="excluirLicitacao('${l.id}')">Excluir</button>
-        </div>
+          ${l.historico && l.historico.length ? `
+            <hr class="section-divider">
+            <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Histórico:</label>
+            <div style="margin-top:8px;">
+              ${l.historico.slice().reverse().map(h=>`<div class="help-text">${new Date(h.em).toLocaleString('pt-BR')} — ${h.de?escapeHtml(h.de)+' → ':'Criada como '}${escapeHtml(h.para)}</div>`).join('')}
+            </div>
+          ` : ''}
+
+          <div class="form-actions">
+            <button class="btn" id="dl-fechar">Fechar</button>
+            <button class="btn" onclick="abrirFormLicitacao('${l.id}')">Editar Dados</button>
+            <button class="btn btn-danger" onclick="excluirLicitacao('${l.id}')">Excluir</button>
+          </div>
+        `}
       </div>
     </div>
   `;
