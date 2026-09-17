@@ -734,6 +734,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="repasses" href="#">
       <span class="ic">🔁</span> Repasses (Pagador Terceiro)
     </a>
+    <a class="nav-item" data-page="haver" href="#">
+      <span class="ic">💵</span> Haver de Clientes
+    </a>
 
     <div class="nav-section-label">Relatórios</div>
     <a class="nav-item" data-page="analise-vendas" href="#">
@@ -961,6 +964,20 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="repasses-content"></div>
+    </section>
+
+    <!-- ============ HAVER DE CLIENTES ============ -->
+    <section class="page" id="page-haver">
+      <div class="page-header">
+        <div>
+          <h2>Haver de Clientes</h2>
+          <p class="subtitle">Valor que um cliente deixou/tem disponível pra usar depois — vai sendo abatido conforme ele retira itens</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="btn-registrar-haver">+ Registrar Haver</button>
+        </div>
+      </div>
+      <div id="haver-content"></div>
     </section>
 
     <!-- ============ LICITAÇÕES ============ -->
@@ -1248,6 +1265,7 @@ function defaultState(){
     mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
     contasReceberManuais: [], // { id, descricao, clienteId, valor, vencimento, recebido, dataRecebimento, obs, criadoEm }
     orcamentos: [], // { id, clienteId, data, validadeDias, observacoes, itens:[{produtoId,nome,marca,fornecedor,qtd,custo,precoVenda,origem}], status, criadoEm }
+    haveres: [], // { id, clienteId, criadoEm, historico:[{id, tipo:'credito'|'abatimento', valor, data, obs, notaFiscalAnexo:{dataUrl,nomeArquivo,tipo,criadoEm}|null, controleEntregaAnexo:{...mesmo formato}|null, criadoEm}] } — saldo único por cliente (crédito quando ele deixa dinheiro, abatimento quando usa), ver calcularSaldoHaver()
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -15470,6 +15488,367 @@ function abrirFormContaReceberManual(){
 document.getElementById('btn-nova-conta-receber').addEventListener('click', abrirFormContaReceberManual);
 
 RENDERERS.receber = renderContasReceber;
+
+/* =========================================================
+   MÓDULO: HAVER DE CLIENTES
+   Saldo único por cliente: ele deixa um valor (crédito) e, conforme
+   retira itens depois, você vai lançando abatimentos — cada abatimento
+   pode ter a nota fiscal e o controle de entrega anexados (foto ou
+   PDF), pra ficar tudo documentado junto do lançamento.
+   ========================================================= */
+
+// Lê um arquivo (foto ou PDF) e devolve, via callback, um objeto de
+// anexo pronto pra salvar — mesma lógica de compressão/limite de
+// tamanho usada no anexo de Controle de Entrega dos Repasses, só que
+// reaproveitável pra mais de um campo de arquivo no mesmo formulário.
+function lerArquivoComoAnexo(arquivo, statusEl, onPronto){
+  onPronto(null);
+  if(!arquivo){ if(statusEl) statusEl.textContent = ''; return; }
+
+  if(arquivo.type==='application/pdf'){
+    if(arquivo.size > 4*1024*1024){
+      if(statusEl) statusEl.innerHTML = '<span style="color:var(--negative);">PDF muito grande (máx. 4MB) — tente uma foto em vez do PDF, ou comprima o arquivo antes.</span>';
+      return;
+    }
+    const leitor = new FileReader();
+    leitor.onload = ()=>{
+      onPronto({ dataUrl: leitor.result, nomeArquivo: arquivo.name, tipo: 'pdf' });
+      if(statusEl) statusEl.innerHTML = `PDF pronto pra salvar (${(arquivo.size/1024/1024).toFixed(1)}MB).`;
+    };
+    leitor.readAsDataURL(arquivo);
+    return;
+  }
+
+  if(!arquivo.type.startsWith('image/')){
+    if(statusEl) statusEl.innerHTML = '<span style="color:var(--negative);">Formato não suportado — envie uma foto (JPG/PNG) ou um PDF.</span>';
+    return;
+  }
+
+  if(statusEl) statusEl.textContent = 'Processando imagem...';
+  const leitorImg = new FileReader();
+  leitorImg.onload = ()=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const maxLargura = 1280;
+      const escala = Math.min(1, maxLargura/img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width*escala);
+      canvas.height = Math.round(img.height*escala);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+      onPronto({ dataUrl, nomeArquivo: arquivo.name, tipo: 'imagem' });
+      if(statusEl) statusEl.textContent = `Imagem pronta pra salvar (${Math.round(dataUrl.length/1024)}KB).`;
+    };
+    img.onerror = ()=>{ if(statusEl) statusEl.innerHTML = '<span style="color:var(--negative);">Não consegui abrir essa imagem.</span>'; };
+    img.src = leitorImg.result;
+  };
+  leitorImg.readAsDataURL(arquivo);
+}
+
+function calcularSaldoHaver(haver){
+  let totalCredito = 0, totalAbatido = 0;
+  (haver.historico||[]).forEach(le=>{
+    if(le.tipo==='credito') totalCredito += Number(le.valor)||0;
+    else totalAbatido += Number(le.valor)||0;
+  });
+  return { saldo: totalCredito - totalAbatido, totalCredito, totalAbatido };
+}
+
+function renderHaver(){
+  const box = document.getElementById('haver-content');
+  if(!box) return;
+  const haveres = STATE.haveres || [];
+
+  if(haveres.length===0){
+    box.innerHTML = `
+      <div class="card">
+        <div class="empty-state">
+          <div class="ic">💵</div>
+          <p>Nenhum haver registrado ainda.<br>Use "+ Registrar Haver" pra guardar o valor que um cliente deixou/tem disponível pra usar depois.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const linhas = haveres.map(h=>{
+    const cliente = STATE.clientes.find(c=>c.id===h.clienteId);
+    return { haver: h, cliente, ...calcularSaldoHaver(h) };
+  }).sort((a,b)=>(a.cliente?a.cliente.nome:'').localeCompare(b.cliente?b.cliente.nome:''));
+
+  const saldoTotalGeral = linhas.reduce((acc,l)=>acc+l.saldo, 0);
+
+  box.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="kpi-label">Clientes com Haver</div><div class="kpi-value">${linhas.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Saldo total em aberto</div><div class="kpi-value ${saldoTotalGeral<0?'negative':'positive'}">${fmtMoney(saldoTotalGeral)}</div></div>
+    </div>
+    ${linhas.map(renderCardHaverCliente).join('')}
+  `;
+  ativarColapsoEmTodosCards(box);
+}
+
+function renderCardHaverCliente(l){
+  const { haver, cliente, saldo, totalCredito, totalAbatido } = l;
+  const historico = [...(haver.historico||[])].sort((a,b)=>(b.data||'').localeCompare(a.data||'') || (b.criadoEm||'').localeCompare(a.criadoEm||''));
+  return `
+    <div class="card">
+      <h3>${escapeHtml(cliente?cliente.nome:'(cliente removido)')} <span class="hint">Saldo atual: <strong style="color:${saldo<0?'var(--negative)':'var(--positive)'}">${fmtMoney(saldo)}</strong></span></h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <div style="font-size:12.5px;color:var(--ink-soft);">Total creditado: ${fmtMoney(totalCredito)} · Total abatido: ${fmtMoney(totalAbatido)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="abrirModalLancamentoHaver('${haver.id}','credito')">+ Adicionar Crédito</button>
+          <button class="btn btn-sm btn-primary" onclick="abrirModalLancamentoHaver('${haver.id}','abatimento')">− Abater (usar haver)</button>
+          <button class="btn btn-sm btn-danger" title="Excluir haver deste cliente" onclick="excluirHaver('${haver.id}')">🗑️</button>
+        </div>
+      </div>
+      ${historico.length===0 ? '<div class="help-text">Nenhum lançamento ainda.</div>' : `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr><th>Data</th><th>Tipo</th><th class="num">Valor</th><th>Observação</th><th>Anexos</th><th>Ações</th></tr>
+          </thead>
+          <tbody>
+            ${historico.map(le=>renderLinhaHistoricoHaver(haver.id, le)).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>
+  `;
+}
+
+function renderLinhaHistoricoHaver(haverId, le){
+  const ehCredito = le.tipo==='credito';
+  return `
+    <tr>
+      <td>${fmtDate(le.data)}</td>
+      <td>${ehCredito ? '<span class="badge" style="background:#DCEFE3;color:#1F7A4D;">+ Crédito</span>' : '<span class="badge" style="background:#FBE3E3;color:#B3261E;">− Abatimento</span>'}</td>
+      <td class="num" style="font-weight:600;color:${ehCredito?'var(--positive)':'var(--negative)'};">${ehCredito?'+':'−'} ${fmtMoney(le.valor)}</td>
+      <td>${escapeHtml(le.obs||'—')}</td>
+      <td>
+        ${le.notaFiscalAnexo?`<button class="btn btn-sm" onclick="verAnexoHaver('${haverId}','${le.id}','nf')">📄 NF</button>`:''}
+        ${le.controleEntregaAnexo?`<button class="btn btn-sm" onclick="verAnexoHaver('${haverId}','${le.id}','ce')">📎 Entrega</button>`:''}
+        ${(!le.notaFiscalAnexo && !le.controleEntregaAnexo)?'<span style="color:var(--ink-faint);">—</span>':''}
+      </td>
+      <td><button class="btn btn-sm btn-danger" title="Excluir lançamento" onclick="excluirLancamentoHaver('${haverId}','${le.id}')">🗑️</button></td>
+    </tr>
+  `;
+}
+
+function verAnexoHaver(haverId, lancamentoId, campo){
+  const haver = STATE.haveres.find(h=>h.id===haverId);
+  if(!haver) return;
+  const lanc = (haver.historico||[]).find(l=>l.id===lancamentoId);
+  if(!lanc) return;
+  const anexo = campo==='nf' ? lanc.notaFiscalAnexo : lanc.controleEntregaAnexo;
+  if(!anexo) return;
+  const titulo = campo==='nf' ? 'Nota Fiscal' : 'Controle de Entrega';
+  const janela = window.open('', '_blank');
+  const corpo = anexo.tipo==='pdf'
+    ? `<embed src="${anexo.dataUrl}" type="application/pdf" style="width:100%;height:100vh;">`
+    : `<img src="${anexo.dataUrl}" style="max-width:100%;display:block;margin:0 auto;">`;
+  janela.document.write(`<!DOCTYPE html><html><head><title>${titulo} - ${escapeHtml(anexo.nomeArquivo||'')}</title></head><body style="margin:0;background:#333;">${corpo}</body></html>`);
+  janela.document.close();
+}
+
+function excluirLancamentoHaver(haverId, lancamentoId){
+  const haver = STATE.haveres.find(h=>h.id===haverId);
+  if(!haver) return;
+  confirmAction('Excluir lançamento', 'Isso vai excluir esse lançamento do histórico de haver. Essa ação não pode ser desfeita. Continuar?', ()=>{
+    haver.historico = (haver.historico||[]).filter(l=>l.id!==lancamentoId);
+    saveState();
+    showToast('Lançamento excluído.', 'success');
+    renderHaver();
+  }, 'Excluir');
+}
+
+function excluirHaver(haverId){
+  const haver = STATE.haveres.find(h=>h.id===haverId);
+  if(!haver) return;
+  const cliente = STATE.clientes.find(c=>c.id===haver.clienteId);
+  confirmAction('Excluir haver', `Isso vai excluir todo o haver e o histórico de ${cliente?escapeHtml(cliente.nome):'esse cliente'}. Essa ação não pode ser desfeita. Continuar?`, ()=>{
+    STATE.haveres = STATE.haveres.filter(h=>h.id!==haverId);
+    saveState();
+    showToast('Haver excluído.', 'success');
+    renderHaver();
+  }, 'Excluir');
+}
+
+function abrirModalRegistrarHaver(){
+  const clientesSemHaver = STATE.clientes.filter(c=>!STATE.haveres.some(h=>h.clienteId===c.id));
+  if(clientesSemHaver.length===0){
+    showToast('Todos os clientes já têm um haver registrado. Use "Adicionar Crédito" no card do cliente pra lançar mais.', 'error');
+    return;
+  }
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-registrar-haver';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(480px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💵</div>
+        <div>
+          <h3>Registrar Haver</h3>
+          <div class="sub">Valor que o cliente deixou/tem disponível pra usar depois</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field field-full">
+          <label>Cliente</label>
+          <select id="hav-reg-cliente">
+            ${clientesSemHaver.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Valor</label>
+          <input type="number" id="hav-reg-valor" step="0.01" min="0.01" placeholder="0,00">
+        </div>
+        <div class="field">
+          <label>Data</label>
+          <input type="date" id="hav-reg-data" value="${todayISO()}">
+        </div>
+        <div class="field field-full">
+          <label>Observação (opcional)</label>
+          <input type="text" id="hav-reg-obs" placeholder="Ex: valor de devolução de itens, adiantamento, etc.">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="hav-reg-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="hav-reg-confirmar">Registrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('hav-reg-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('hav-reg-confirmar').addEventListener('click', ()=>{
+    const clienteId = document.getElementById('hav-reg-cliente').value;
+    const valor = parseFloat(document.getElementById('hav-reg-valor').value);
+    const data = document.getElementById('hav-reg-data').value || todayISO();
+    const obs = document.getElementById('hav-reg-obs').value.trim();
+    if(!clienteId){ showToast('Selecione um cliente.', 'error'); return; }
+    if(!valor || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+    STATE.haveres.push({
+      id: uid('hav'), clienteId, criadoEm: new Date().toISOString(),
+      historico: [{ id: uid('have'), tipo:'credito', valor, data, obs, notaFiscalAnexo:null, controleEntregaAnexo:null, criadoEm: new Date().toISOString() }]
+    });
+    saveState();
+    showToast('Haver registrado.', 'success');
+    modal.remove();
+    renderHaver();
+  });
+}
+
+function abrirModalLancamentoHaver(haverId, tipoPadrao){
+  const haver = STATE.haveres.find(h=>h.id===haverId);
+  if(!haver) return;
+  const cliente = STATE.clientes.find(c=>c.id===haver.clienteId);
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-lancamento-haver';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💵</div>
+        <div>
+          <h3>Lançamento de Haver — ${escapeHtml(cliente?cliente.nome:'')}</h3>
+          <div class="sub">Saldo atual: ${fmtMoney(calcularSaldoHaver(haver).saldo)}</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Tipo</label>
+          <select id="hav-lanc-tipo">
+            <option value="abatimento" ${tipoPadrao==='abatimento'?'selected':''}>Abatimento (usar o haver)</option>
+            <option value="credito" ${tipoPadrao==='credito'?'selected':''}>Crédito (aumentar o haver)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Valor</label>
+          <input type="number" id="hav-lanc-valor" step="0.01" min="0.01" placeholder="0,00">
+        </div>
+        <div class="field">
+          <label>Data</label>
+          <input type="date" id="hav-lanc-data" value="${todayISO()}">
+        </div>
+        <div class="field field-full">
+          <label>Observação (opcional)</label>
+          <input type="text" id="hav-lanc-obs" placeholder="Ex: itens retirados na loja">
+        </div>
+        <div class="field field-full">
+          <label>Nota Fiscal (opcional)</label>
+          <input type="file" id="hav-lanc-nf" accept="image/*,application/pdf">
+          <div class="help-text" id="hav-lanc-nf-status"></div>
+        </div>
+        <div class="field field-full">
+          <label>Controle de Entrega (opcional)</label>
+          <input type="file" id="hav-lanc-ce" accept="image/*,application/pdf">
+          <div class="help-text" id="hav-lanc-ce-status"></div>
+        </div>
+        <div class="help-text" id="hav-lanc-aviso-saldo" style="color:var(--negative);"></div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="hav-lanc-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="hav-lanc-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('hav-lanc-cancelar').addEventListener('click', ()=>modal.remove());
+
+  let nfAnexoPronto = null;
+  let ceAnexoPronto = null;
+  let confirmandoSaldoNegativo = false;
+
+  document.getElementById('hav-lanc-nf').addEventListener('change', (e)=>{
+    nfAnexoPronto = null;
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hav-lanc-nf-status'), (anexo)=>{ nfAnexoPronto = anexo; });
+  });
+  document.getElementById('hav-lanc-ce').addEventListener('change', (e)=>{
+    ceAnexoPronto = null;
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hav-lanc-ce-status'), (anexo)=>{ ceAnexoPronto = anexo; });
+  });
+
+  const resetarAvisoSaldo = ()=>{
+    confirmandoSaldoNegativo = false;
+    document.getElementById('hav-lanc-aviso-saldo').textContent = '';
+    document.getElementById('hav-lanc-confirmar').textContent = 'Salvar';
+  };
+  document.getElementById('hav-lanc-tipo').addEventListener('change', resetarAvisoSaldo);
+  document.getElementById('hav-lanc-valor').addEventListener('input', resetarAvisoSaldo);
+
+  document.getElementById('hav-lanc-confirmar').addEventListener('click', ()=>{
+    const tipo = document.getElementById('hav-lanc-tipo').value;
+    const valor = parseFloat(document.getElementById('hav-lanc-valor').value);
+    const data = document.getElementById('hav-lanc-data').value || todayISO();
+    const obs = document.getElementById('hav-lanc-obs').value.trim();
+    if(!valor || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+
+    if(tipo==='abatimento' && !confirmandoSaldoNegativo){
+      const { saldo } = calcularSaldoHaver(haver);
+      if(valor > saldo){
+        document.getElementById('hav-lanc-aviso-saldo').textContent = `⚠️ Esse valor é maior que o saldo disponível (${fmtMoney(saldo)}) — o saldo vai ficar negativo. Clique em "Confirmar mesmo assim" pra continuar.`;
+        document.getElementById('hav-lanc-confirmar').textContent = 'Confirmar mesmo assim';
+        confirmandoSaldoNegativo = true;
+        return;
+      }
+    }
+
+    haver.historico.push({
+      id: uid('have'), tipo, valor, data, obs,
+      notaFiscalAnexo: nfAnexoPronto ? {...nfAnexoPronto, criadoEm:new Date().toISOString()} : null,
+      controleEntregaAnexo: ceAnexoPronto ? {...ceAnexoPronto, criadoEm:new Date().toISOString()} : null,
+      criadoEm: new Date().toISOString()
+    });
+    saveState();
+    showToast(tipo==='credito' ? 'Crédito adicionado ao haver.' : 'Abatimento registrado.', 'success');
+    modal.remove();
+    renderHaver();
+  });
+}
+
+document.getElementById('btn-registrar-haver').addEventListener('click', abrirModalRegistrarHaver);
+
+RENDERERS.haver = renderHaver;
 
 /* =========================================================
    MÓDULO: LICITAÇÕES (funil kanban)
