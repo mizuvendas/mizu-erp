@@ -486,7 +486,8 @@ table.data-table{ width:100%; font-size:13px; }
 .modal-overlay.open{ display:flex; }
 .modal-box{
   background:#fff; border-radius:var(--radius); padding:22px 24px;
-  max-width:420px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);
+  max-width:min(480px, 94vw); width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);
+  max-height:90vh; overflow-y:auto;
 }
 .modal-box h3{ margin:0 0 8px 0; font-size:16px; }
 .modal-box p{ margin:0 0 18px 0; font-size:13.5px; color:var(--ink-soft); }
@@ -683,9 +684,6 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="locais-compra" href="#">
       <span class="ic">📍</span> Locais de Compra
     </a>
-    <a class="nav-item" data-page="estoque" href="#">
-      <span class="ic">📊</span> Estoque
-    </a>
 
     <div class="nav-section-label">Operação</div>
     <a class="nav-item" data-page="orcamentos" href="#">
@@ -694,15 +692,13 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="logistica" href="#">
       <span class="ic">🚚</span> Logística
     </a>
-    <a class="nav-item" data-page="lancar-venda" href="#">
-      <span class="ic">🧾</span> Lançar Venda
+    <a class="nav-item" data-page="estoque" href="#">
+      <span class="ic">📊</span> Estoque
     </a>
-    <a class="nav-item" data-page="analise-vendas" href="#">
-      <span class="ic">🔍</span> Análise de Vendas
-    </a>
-    <a class="nav-item" data-page="vendas-cliente" href="#">
-      <span class="ic">👥</span> Vendas por Cliente
-    </a>
+    <!-- "Lançar Venda" saiu do menu (pedido explícito no relatório de
+         alterações) mas a página/motor continuam existindo — a importação
+         de PDF de Nota Fiscal ainda depende dela. Acesso continua possível
+         via navigateTo('lancar-venda') a partir de quem precisar dele. -->
 
     <div class="nav-section-label">Financeiro</div>
     <a class="nav-item" data-page="despesas" href="#">
@@ -715,7 +711,13 @@ table.data-table{ width:100%; font-size:13px; }
       <span class="ic">🔁</span> Repasses (Pagador Terceiro)
     </a>
 
-    <div class="nav-section-label">Comercial</div>
+    <div class="nav-section-label">Relatórios</div>
+    <a class="nav-item" data-page="analise-vendas" href="#">
+      <span class="ic">🔍</span> Análise de Vendas
+    </a>
+    <a class="nav-item" data-page="vendas-cliente" href="#">
+      <span class="ic">👥</span> Vendas por Cliente
+    </a>
     <a class="nav-item" data-page="licitacoes" href="#">
       <span class="ic">🏛️</span> Licitações
     </a>
@@ -948,7 +950,7 @@ table.data-table{ width:100%; font-size:13px; }
 
 <!-- Generic Modal -->
 <div class="modal-overlay" id="modal-confirm">
-  <div class="modal-box modal-box-rapido" style="max-width:440px;">
+  <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
     <div class="modal-rapido-cabecalho" id="modal-confirm-cabecalho">
       <div class="ic-rapido" id="modal-confirm-icone">⚠️</div>
       <div>
@@ -1733,7 +1735,7 @@ function abrirFormCliente(id, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">👤</div>
         <div>
@@ -1984,7 +1986,7 @@ function abrirExtratoCliente(clienteId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-extrato-cliente';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;">
+    <div class="modal-box" style="max-width:min(840px, 94vw);max-height:90vh;overflow-y:auto;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
         <div>
           <h3 style="margin:0;">Extrato de Compras</h3>
@@ -2139,7 +2141,7 @@ function abrirSeletorMapaEndereco(config){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-mapa-endereco';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:640px;max-height:92vh;overflow-y:auto;">
+    <div class="modal-box" style="max-width:min(760px, 94vw);max-height:92vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🗺️</div>
         <div>
@@ -2476,7 +2478,7 @@ function criarModuloEndereco(config){
     modal.className = 'modal-overlay open';
     modal.id = `modal-form-${contentId}`;
     modal.innerHTML = `
-      <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+      <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
         <div class="modal-rapido-cabecalho">
           <div class="ic-rapido">${icone}</div>
           <div>
@@ -2616,7 +2618,7 @@ function abrirFormEnderecoRapido(config, id, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-endereco-rapido';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">${config.icone}</div>
         <div>
@@ -3016,7 +3018,7 @@ function abrirFormProduto(id, onSalvo){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-produto';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">${produto&&produto.criadoRapido?'⚡':'📦'}</div>
         <div>
@@ -3682,7 +3684,7 @@ function abrirConfigTotvs(onSalvo){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-config-totvs';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:520px;">
+    <div class="modal-box" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <h3>Configurar Integração TOTVS</h3>
       <p class="help-text">
         Endereço do servidor-ponte (Render) e a chave de acesso configurada lá em
@@ -4555,7 +4557,7 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-cadastro-rapido-produto';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">⚡</div>
         <div>
@@ -5115,7 +5117,7 @@ function abrirHistoricoComprasCliente(clienteId, destino){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-historico-compras-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:900px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(1020px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🧾</div>
         <div>
@@ -5741,7 +5743,7 @@ function abrirEdicaoItemCarrinho(idx){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-item-carrinho';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:440px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✎</div>
         <div>
@@ -7588,7 +7590,7 @@ function abrirOpcoesControleEntrega(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-opcoes-controle-entrega';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🚚</div>
         <div>
@@ -7732,7 +7734,7 @@ function verDetalheOrcamento(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-orcamento';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📋</div>
         <div>
@@ -8499,7 +8501,7 @@ function abrirEdicaoVenda(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-venda';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:720px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(840px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✏️</div>
         <div>
@@ -9861,7 +9863,7 @@ function abrirFormEntradaEstoque(produtoIdPreSelecionado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-entrada-estoque';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📥</div>
         <div>
@@ -9947,7 +9949,7 @@ function abrirFormAjusteEstoque(produtoId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-ajuste-estoque';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">⚖️</div>
         <div>
@@ -10077,7 +10079,7 @@ function renderAnalise(){
       <div class="card">
         <div class="empty-state">
           <div class="ic">🔍</div>
-          <p>Nenhuma venda lançada ainda. Registre vendas em <strong>Lançar Venda</strong> para ver as análises aqui.</p>
+          <p>Nenhuma venda lançada ainda. Converta um orçamento em venda (aba <strong>Orçamentos</strong>) para ver as análises aqui.</p>
         </div>
       </div>`;
     return;
@@ -10992,7 +10994,7 @@ function abrirDetalheVendaCliente(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-venda-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🧾</div>
         <div>
@@ -11440,7 +11442,7 @@ function abrirDetalheDiaCalendario(dataCompleta, itens){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-dia-calendario';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -11899,7 +11901,7 @@ function abrirFormDespesa(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-cadastro-despesa';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💳</div>
         <div>
@@ -12638,7 +12640,7 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-pagamento-quinzena';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:480px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(600px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -12829,7 +12831,7 @@ function abrirFormPagamentoRepasse(pagadorIdPre){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-pagamento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💵</div>
         <div>
@@ -12912,7 +12914,7 @@ function editarPagamentoRepasse(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-pagamento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✎</div>
         <div>
@@ -13077,7 +13079,7 @@ function abrirFormDescontoRepasse(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-desconto-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏷️</div>
         <div>
@@ -13308,7 +13310,7 @@ function abrirAnexoControleEntrega(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-anexo-controle-entrega';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📎</div>
         <div>
@@ -13406,7 +13408,7 @@ function abrirFormAbatimentoRepasse(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-abatimento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💵</div>
         <div>
@@ -13477,7 +13479,7 @@ function verHistoricoAbatimentos(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-historico-abatimentos';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📜</div>
         <div>
@@ -13611,7 +13613,7 @@ function gerarRelatorioWhatsappRepasses(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-whatsapp-repasses';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📲</div>
         <div>
@@ -13753,7 +13755,7 @@ function abrirEscolhaModoRelatorioRepasses(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-modo-relatorio-repasses';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📄</div>
         <div>
@@ -14418,7 +14420,7 @@ function abrirEditarVencimentoReceber(id, origem, vendaId, parcelaIdx){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-vencimento-receber';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -14524,7 +14526,7 @@ function abrirFormContaReceberManual(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-conta-receber-manual';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💰</div>
         <div>
@@ -14729,7 +14731,7 @@ function abrirFormLicitacao(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-licitacao';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏛️</div>
         <div>
@@ -14834,7 +14836,7 @@ function abrirDetalheLicitacao(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-licitacao';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏛️</div>
         <div>
@@ -15195,7 +15197,7 @@ function renderDashboard(){
       <div class="card">
         <div class="empty-state">
           <div class="ic">🚀</div>
-          <p>Bem-vindo! Comece cadastrando <strong>Clientes</strong> e <strong>Produtos</strong>, depois lance suas vendas do dia em <strong>Lançar Venda</strong>.<br>Este painel vai se preencher automaticamente conforme você usa o sistema.</p>
+          <p>Bem-vindo! Comece cadastrando <strong>Clientes</strong> e <strong>Produtos</strong>, depois lance seus pedidos do dia em <strong>Orçamentos</strong> (e converta em venda quando fechar).<br>Este painel vai se preencher automaticamente conforme você usa o sistema.</p>
         </div>
       </div>`;
     return;
