@@ -14262,17 +14262,25 @@ function gerarRelatorioPdfRepasses(modo){
     // ela.
     const vencimentosDoRelatorio = new Set(linhas.map(l=>l.vencimento));
     const pagamentosDoPagador = (STATE.pagamentosRepasse||[]).filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId));
-    // Só entram na tabela os pagamentos lançados pelo "Fechar Quinzena" (fluxo
-    // atual, já vem marcado com vencimentoQuinzena) cuja quinzena bate com a
-    // deste relatório. Pagamentos genéricos antigos (modo legado, sem essa
-    // marcação, de antes dessa mudança) NUNCA entram aqui por tentativa de
+    // Origem 1: pagamentos agregados por quinzena ("+ Registrar Pagamento" na
+    // tabela de Quinzenas) cuja quinzena bate com a deste relatório.
+    const pagamentosAgregados = pagamentosDoPagador
+      .filter(pg=>pg.vencimentoQuinzena && vencimentosDoRelatorio.has(pg.vencimentoQuinzena))
+      .map(pg=>({ data: pg.data, pagadorNome: (STATE.pagadores.find(p=>p.id===pg.pagadorId)||{}).nome || '(pagador removido)', valor: pg.valor, obs: pg.obs||'—' }));
+    // Origem 2: abatimentos lançados direto em cada venda ("✓ Marcar como
+    // Pago" ou "Editar Desconto" na tabela detalhada) — cada um já pertence a
+    // uma venda que está dentro de `linhas`, então já está automaticamente no
+    // escopo certo da quinzena, sem precisar checar vencimentoQuinzena.
+    const pagamentosPorVenda = linhas.flatMap(l =>
+      (l.abatimentos||[]).map(ab => ({ data: ab.data, pagadorNome: l.pagadorNome, valor: ab.valor, obs: `${ab.descricao||'Abatimento'} — ${l.descricao}` }))
+    );
+    // Pagamentos genéricos antigos (modo legado, sem vencimentoQuinzena, de
+    // antes do controle por quinzena) NUNCA entram aqui por tentativa de
     // adivinhar pela data — isso é exatamente o que misturava pagamento de
     // uma quinzena com o relatório de outra. Eles continuam existindo e
     // contando pro saldo geral do pagador (na tela, fora deste PDF), só não
     // aparecem misturados num relatório de uma quinzena específica.
-    pagamentosDoRelatorio = pagamentosDoPagador
-      .filter(pg=>pg.vencimentoQuinzena && vencimentosDoRelatorio.has(pg.vencimentoQuinzena))
-      .sort((a,b)=>a.data<b.data?-1:1);
+    pagamentosDoRelatorio = [...pagamentosAgregados, ...pagamentosPorVenda].sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
     // Total de pagamentos genéricos antigos (sem vínculo de quinzena) desses
     // mesmos pagadores — mostrado como nota à parte, só pra transparência,
@@ -14285,16 +14293,13 @@ function gerarRelatorioPdfRepasses(modo){
     // quanto os abatimentos lançados direto na venda, como o "Marcar como
     // Pago" — por isso é a fonte confiável, em vez de recalcular por fora)
     saldoFinalLiquido = linhas.reduce((s,l)=>s+Math.max(0,l.saldoPendente),0);
-    pagamentosHtml = pagamentosDoRelatorio.map(pg=>{
-      const pagador = STATE.pagadores.find(p=>p.id===pg.pagadorId);
-      return `
+    pagamentosHtml = pagamentosDoRelatorio.map(pg=>`
         <tr>
           <td>${fmtDate(pg.data)}</td>
-          <td>${pagador?escapeHtml(pagador.nome):'(pagador removido)'}</td>
+          <td>${escapeHtml(pg.pagadorNome)}</td>
           <td style="text-align:right;">${fmtMoney(pg.valor)}</td>
-          <td>${pg.obs?escapeHtml(pg.obs):'—'}</td>
-        </tr>`;
-    }).join('');
+          <td>${escapeHtml(pg.obs)}</td>
+        </tr>`).join('');
   }
 
   const janela = window.open('', '_blank');
