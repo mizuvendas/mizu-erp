@@ -6825,6 +6825,10 @@ function renderOrcamentos(){
             <input type="checkbox" id="orc-item-vender-caixa" style="width:auto;">
             📦 Vender em caixa <span id="orc-item-caixa-info" class="help-text" style="margin:0;"></span>
           </label>
+          <div id="orc-item-caixa-fator-wrap" style="display:none;margin-top:5px;">
+            <label style="font-size:11.5px;color:var(--ink-soft);">Quantas unidades vêm em cada caixa?</label>
+            <input type="number" id="orc-item-caixa-fator" min="1" step="1" placeholder="Ex: 12" style="width:100%;padding:4px 6px;font-size:12.5px;">
+          </div>
           <label id="orc-item-caixa-padrao-wrap" style="display:none;align-items:center;gap:6px;font-size:12px;margin-top:4px;cursor:pointer;color:var(--ink-soft);">
             <input type="checkbox" id="orc-item-caixa-padrao" style="width:auto;">
             Tornar padrão para este produto
@@ -6964,6 +6968,8 @@ function renderOrcamentos(){
   ativarComboboxProdutoOrcamento();
   document.getElementById('orc-item-qtd').addEventListener('input', atualizarPreviewItemOrcamento);
   document.getElementById('orc-item-preco').addEventListener('input', atualizarPreviewItemOrcamento);
+  document.getElementById('orc-item-caixa-fator').addEventListener('input', atualizarPreviewItemOrcamento);
+  document.getElementById('orc-item-vender-caixa').addEventListener('change', atualizarPreviewItemOrcamento);
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
   document.getElementById('orc-btn-cancelar-edicao').addEventListener('click', cancelarEdicaoOrcamento);
@@ -7186,32 +7192,43 @@ function mostrarHistoricoPrecoItemOrcamento(produtoId){
   box.style.display = '';
 }
 
-// Mostra/esconde o toggle "Vender em caixa" conforme o produto selecionado
-// tenha ou não um fator de conversão (Unidades por Caixa) cadastrado, e
-// pré-marca o toggle se esse for o padrão salvo no cadastro do produto.
+// Mostra/esconde o toggle "Vender em caixa" pra qualquer produto selecionado
+// (não depende mais de já ter um fator de conversão cadastrado — o campo
+// "Quantas unidades vêm em cada caixa?" aparece assim que marca o toggle,
+// pré-preenchido com o padrão do produto quando existir, mas sempre editável
+// na hora, pra dar conta de uma caixa com quantidade diferente do usual).
 function atualizarToggleVenderCaixa(p){
   const wrap = document.getElementById('orc-item-caixa-wrap');
   const checkbox = document.getElementById('orc-item-vender-caixa');
+  const fatorWrap = document.getElementById('orc-item-caixa-fator-wrap');
+  const fatorInput = document.getElementById('orc-item-caixa-fator');
   const padraoWrap = document.getElementById('orc-item-caixa-padrao-wrap');
   const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
   const info = document.getElementById('orc-item-caixa-info');
   const label = document.getElementById('orc-item-qtd-label');
-  if(!p || !p.unidadesPorCaixa || p.unidadesPorCaixa<=1){
+  if(!p){
     wrap.style.display = 'none';
     checkbox.checked = false;
+    fatorWrap.style.display = 'none';
+    fatorInput.value = '';
     padraoWrap.style.display = 'none';
     label.textContent = 'Quantidade';
     return;
   }
+  const temPadraoCadastrado = p.unidadesPorCaixa>1;
   wrap.style.display = '';
-  info.textContent = `(${p.unidadesPorCaixa} ${p.unidade||'UN'} cada)`;
-  checkbox.checked = !!p.venderEmCaixaPadrao;
+  info.textContent = temPadraoCadastrado ? `(padrão: ${p.unidadesPorCaixa} ${p.unidade||'UN'} por caixa)` : '';
+  checkbox.checked = !!(temPadraoCadastrado && p.venderEmCaixaPadrao);
+  fatorInput.value = temPadraoCadastrado ? p.unidadesPorCaixa : '';
+  fatorWrap.style.display = checkbox.checked ? '' : 'none';
   padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
   padraoCheckbox.checked = false;
   label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
   checkbox.onchange = ()=>{
-    label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+    fatorWrap.style.display = checkbox.checked ? '' : 'none';
     padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
+    label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+    if(checkbox.checked) fatorInput.focus();
   };
 }
 
@@ -7256,6 +7273,17 @@ function atualizarPreviewItemOrcamento(){
   const infoEl = document.getElementById('orc-item-info');
   if(!p){ infoEl.style.display='none'; return; }
   infoEl.style.display = '';
+
+  // quando "Vender em caixa" está marcado, a quantidade digitada é o número
+  // de CAIXAS — o total de verdade (e o custo) precisa multiplicar pelo
+  // fator de conversão informado, senão o preview mostraria um valor bem
+  // menor do que o real (qtd de caixas × preço, sem contar as unidades
+  // dentro de cada caixa)
+  const checkboxCaixa = document.getElementById('orc-item-vender-caixa');
+  const vendendoEmCaixa = !!(checkboxCaixa && checkboxCaixa.checked);
+  const fator = vendendoEmCaixa ? (parseFloat(document.getElementById('orc-item-caixa-fator').value)||0) : 1;
+  const qtdReal = vendendoEmCaixa ? qtd*fator : qtd;
+
   let avisoOrigem = '';
   if(p.ondeComprado){
     const origemFoiSelecionada = document.getElementById('orc-item-origem-id').value !== '';
@@ -7263,7 +7291,8 @@ function atualizarPreviewItemOrcamento(){
       ? ` · Origem padrão do produto: <strong>${escapeHtml(p.ondeComprado)}</strong>`
       : ` · Origem padrão do produto: <strong>${escapeHtml(p.ondeComprado)}</strong> <span style="color:var(--negative);">(sem endereço cadastrado — não aparece em "Origem da coleta". Cadastre o endereço em Locais de Compra/Fornecedores pra ele valer na Logística)</span>`;
   }
-  infoEl.innerHTML = `Custo: <strong>${fmtMoney(p.custo*qtd)}</strong> · Subtotal: <strong>${fmtMoney(preco*qtd)}</strong>${avisoOrigem}`;
+  const detalheCaixa = (vendendoEmCaixa && fator>1) ? ` (${fmtNum(qtd)} CX × ${fmtNum(fator)} ${p.unidade||'UN'})` : '';
+  infoEl.innerHTML = `Custo: <strong>${fmtMoney(p.custo*qtdReal)}</strong> · Total do item: <strong>${fmtMoney(preco*qtdReal)}</strong>${detalheCaixa}${avisoOrigem}`;
 }
 
 function adicionarItemAoOrcamento(){
@@ -7291,17 +7320,30 @@ function adicionarItemAoOrcamento(){
 
   // "Vender em caixa": quando marcado, a quantidade digitada é o número de
   // CAIXAS, não de unidades — a quantidade real (usada em estoque, custo e
-  // total) é convertida pelo fator "Unidades por Caixa" do produto. A
-  // descrição da linha ("2 CX (24 UN)") fica editável depois, no carrinho.
+  // total) é convertida pelo fator informado na hora ("Quantas unidades vêm
+  // em cada caixa?"), que já vem pré-preenchido com o padrão do produto
+  // quando existir, mas pode ser digitado do zero pra qualquer produto,
+  // mesmo sem esse padrão cadastrado. A descrição da linha ("2 CX (24 UN)")
+  // fica editável depois, no carrinho.
   const checkboxCaixa = document.getElementById('orc-item-vender-caixa');
-  const vendendoEmCaixaAtivo = !!(checkboxCaixa && checkboxCaixa.checked && p.unidadesPorCaixa>1);
+  const vendendoEmCaixaMarcado = !!(checkboxCaixa && checkboxCaixa.checked);
+  let fatorConversao = null;
+  if(vendendoEmCaixaMarcado){
+    fatorConversao = parseFloat(document.getElementById('orc-item-caixa-fator').value);
+    if(isNaN(fatorConversao) || fatorConversao<=1){
+      showToast('Informe quantas unidades vêm em cada caixa (um número maior que 1).', 'error');
+      return;
+    }
+  }
+  const vendendoEmCaixaAtivo = vendendoEmCaixaMarcado; // já validado acima
   let qtdCaixas = null, qtdReal = qtd, descricaoLinha = null;
   if(vendendoEmCaixaAtivo){
     qtdCaixas = qtd;
-    qtdReal = qtd * p.unidadesPorCaixa;
+    qtdReal = qtd * fatorConversao;
     descricaoLinha = `${fmtNum(qtdCaixas)} CX (${fmtNum(qtdReal)} ${p.unidade||'UN'})`;
     const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
     if(padraoCheckbox && padraoCheckbox.checked){
+      p.unidadesPorCaixa = fatorConversao;
       p.venderEmCaixaPadrao = true;
       saveState();
     }
@@ -7310,7 +7352,7 @@ function adicionarItemAoOrcamento(){
   carrinhoOrcamentoAtual.push({
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
     custoUnit: p.custo, precoUnit: preco, qtd: qtdReal, unidade: p.unidade||'UN',
-    vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?p.unidadesPorCaixa:null, descricaoLinha,
+    vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?fatorConversao:null, descricaoLinha,
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
   });
   renderCarrinhoOrcamento();
@@ -7870,6 +7912,10 @@ function converterOrcamentoEmVenda(id){
   if(!orcamento) return;
   if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
     showToast('Este orçamento já foi convertido em venda.', 'error');
+    return;
+  }
+  if(!orcamento.itens || orcamento.itens.length===0){
+    showToast('Este orçamento não tem nenhum item lançado — abra em "Editar", adicione ao menos um item na seção 2 e salve antes de converter em venda.', 'error');
     return;
   }
 
@@ -8619,6 +8665,10 @@ function marcarEntregaConcluida(orcamentoId){
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
   const vaiConverter = orcamento.status!=='convertido' && !orcamento.vendaGeradaId;
+  if(vaiConverter && (!orcamento.itens || orcamento.itens.length===0)){
+    showToast('Este orçamento não tem nenhum item lançado, então não dá pra converter em venda ao marcar como entregue. Abra em "Editar" (na lista de Orçamentos Lançados), adicione ao menos um item e salve antes de marcar a entrega.', 'error');
+    return;
+  }
   const texto = vaiConverter
     ? 'Confirma que este pedido já foi entregue ao cliente? Como este orçamento ainda não tinha virado venda, confirmar aqui também converte ele em venda de verdade (com baixa no estoque e lançamento no financeiro).'
     : 'Confirma que este pedido já foi entregue ao cliente?';
@@ -15330,9 +15380,18 @@ function linkEditalPNCP(cnpj, ano, sequencial){
 // UF + modalidade + janela de datas. Cada chamada de API só aceita UM
 // código de modalidade por vez, por isso o loop de fora (buscarOportunidadesPNCP)
 // repete essa chamada pra cada combinação.
-async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina){
-  const url = `https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=${dataParaPNCP(dataInicial)}&dataFinal=${dataParaPNCP(dataFinal)}&codigoModalidadeContratacao=${codigoModalidade}&uf=${uf}&pagina=${pagina}&tamanhoPagina=50`;
-  const resp = await fetch(url);
+// Proxy público só usado como ÚLTIMO RECURSO, quando a chamada direta ao
+// PNCP falha sem nem chegar a receber resposta (erro "Failed to fetch" —
+// típico de bloqueio de CORS, quando o navegador do usuário nega a chamada
+// pro PNCP por ela vir de outro site, e não de um problema no PNCP em si).
+// Contorna isso repassando a mesma URL através de um serviço que ADICIONA os
+// cabeçalhos de CORS que faltam, sem mudar nada no pedido.
+const PNCP_CORS_PROXY_URL = (urlReal) => `https://api.allorigins.win/raw?url=${encodeURIComponent(urlReal)}`;
+let _pncpUsouProxyCors = false; // marca se algum resultado desta busca só saiu via proxy, pra avisar no resumo final
+
+async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina, viaProxy){
+  const urlReal = `https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=${dataParaPNCP(dataInicial)}&dataFinal=${dataParaPNCP(dataFinal)}&codigoModalidadeContratacao=${codigoModalidade}&uf=${uf}&pagina=${pagina}&tamanhoPagina=50`;
+  const resp = await fetch(viaProxy ? PNCP_CORS_PROXY_URL(urlReal) : urlReal);
   if(resp.status===204) return { dados: [], totalPaginas: 0 }; // PNCP devolve 204 (sem corpo) quando não há nenhum resultado
   if(!resp.ok){
     const err = new Error(`PNCP respondeu ${resp.status}${resp.status===429 ? ' (muitas consultas ao mesmo tempo)' : ''}`);
@@ -15345,17 +15404,30 @@ async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pa
 
 // Tenta de novo com espera crescente quando a falha parece passageira
 // (limite de requisições — 429 — ou erro 5xx/rede do próprio PNCP), em vez
-// de já desistir daquela combinação de UF/modalidade na primeira falha.
+// de já desistir daquela combinação de UF/modalidade na primeira falha. Se
+// TODAS as tentativas diretas falharem sem devolver nenhum código HTTP (ou
+// seja, o navegador nem chegou a receber resposta — assinatura clássica de
+// bloqueio de CORS), faz uma última tentativa através do proxy CORS antes
+// de desistir de vez dessa combinação.
 async function buscarPaginaPNCPComRetentativa(uf, codigoModalidade, dataInicial, dataFinal, pagina, tentativas=3){
   let ultimoErro;
   for(let tentativa=1; tentativa<=tentativas; tentativa++){
     try{
-      return await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina);
+      return await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina, false);
     }catch(err){
       ultimoErro = err;
       const passageiro = !err.status || err.status===429 || err.status>=500;
-      if(!passageiro || tentativa===tentativas) throw err;
+      if(!passageiro || tentativa===tentativas) break;
       await new Promise(r=>setTimeout(r, 700*tentativa));
+    }
+  }
+  if(!ultimoErro.status){
+    try{
+      const resultado = await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina, true);
+      _pncpUsouProxyCors = true;
+      return resultado;
+    }catch(errProxy){
+      ultimoErro = errProxy;
     }
   }
   throw ultimoErro;
@@ -15514,6 +15586,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
   btn.disabled = true;
   btn.textContent = '🔎 Buscando...';
   esconderResumoBuscaLicitacoes(); // some o resumo da busca anterior, se tinha algum
+  _pncpUsouProxyCors = false;
 
   try{
     const hoje = todayISO();
@@ -15652,10 +15725,13 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
       partesResumo.push(`(${brutos.length} encontrada(s) no PNCP ao todo, ${abertas.length} ainda com prazo aberto.)`);
     }
     if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
+    if(_pncpUsouProxyCors) partesResumo.push('(Algumas consultas só funcionaram usando um proxy alternativo — o navegador bloqueou a chamada direta ao PNCP, provavelmente por CORS.)');
     if(combosComErro>0){
       partesResumo.push(`${combosComErro} de ${combosTotal} consulta(s) ao PNCP falharam e foram puladas${primeiroErro ? ` (motivo: ${primeiroErro})` : ''}.`);
       if(combosComErro===combosTotal){
-        partesResumo.push('Todas as consultas falharam — o PNCP pode estar limitando muitas buscas seguidas (tente de novo daqui a 1-2 minutos) ou fora do ar no momento.');
+        partesResumo.push(primeiroErro==='Failed to fetch'
+          ? 'Todas as consultas falharam sem resposta do servidor (mesmo tentando via proxy alternativo) — pode ser bloqueio de CORS do navegador, sua conexão de internet, ou o PNCP fora do ar. Abra o Console do navegador (F12) e veja se aparece alguma mensagem citando "CORS" pra confirmar.'
+          : 'Todas as consultas falharam — o PNCP pode estar limitando muitas buscas seguidas (tente de novo daqui a 1-2 minutos) ou fora do ar no momento.');
       }
     }
     // fica fixo na tela (não some sozinho) até o usuário fechar ou buscar de novo
