@@ -683,9 +683,6 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="locais-compra" href="#">
       <span class="ic">📍</span> Locais de Compra
     </a>
-    <a class="nav-item" data-page="pagadores" href="#">
-      <span class="ic">🏦</span> Pagadores
-    </a>
     <a class="nav-item" data-page="estoque" href="#">
       <span class="ic">📊</span> Estoque
     </a>
@@ -784,19 +781,6 @@ table.data-table{ width:100%; font-size:13px; }
       <div id="totvs-sync-container"></div>
     </section>
 
-    <!-- ============ PAGADORES ============ -->
-    <section class="page" id="page-pagadores">
-      <div class="page-header">
-        <div>
-          <h2>Pagadores</h2>
-          <p class="subtitle">Empresas que pagam vendas em nome de outros clientes (ex: intermediários, factoring)</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-primary" id="btn-novo-pagador">+ Novo Pagador</button>
-        </div>
-      </div>
-      <div id="pagadores-content"></div>
-    </section>
 
     <!-- ============ FORNECEDORES ============ -->
     <section class="page" id="page-fornecedores">
@@ -1201,6 +1185,7 @@ function loadState(){
     const state = Object.assign(defaultState(), parsed);
     state.config = Object.assign(defaultState().config, parsed.config||{});
     migrarFornecedoresELocaisCompra(state);
+    migrarPagadoresParaClientes(state);
     return state;
   }catch(e){
     console.error('Erro ao carregar dados salvos, iniciando vazio.', e);
@@ -1714,7 +1699,7 @@ function renderTabelaClientes(){
 
   document.getElementById('clientes-table-body').innerHTML = pagina.map(c=>`
     <tr>
-      <td>${escapeHtml(c.nome)}</td>
+      <td>${escapeHtml(c.nome)}${c.papeis&&c.papeis.pagador?' <span class="badge badge-neutral" title="Também usado como Pagador">🏦 Pagador</span>':''}</td>
       <td>${escapeHtml(c.documento||'—')}</td>
       <td>${escapeHtml(c.contato||'—')}</td>
       <td>${escapeHtml(c.cidade||'—')}</td>
@@ -1799,6 +1784,10 @@ function abrirFormCliente(id, onCriado){
               <label>Observações</label>
               <textarea id="f-obs">${cliente?escapeHtml(cliente.obs||''):''}</textarea>
             </div>
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-pagador" style="width:auto;" ${cliente&&cliente.papeis&&cliente.papeis.pagador?'checked':''}>
+              <label for="f-papel-pagador" style="margin:0;">🏦 Também é usado como Pagador <span class="hint">recebe/paga repasses de vendas em nome de outro cliente</span></label>
+            </div>
           </div>
           <div class="form-actions">
             <button type="button" class="btn" id="f-cliente-cancelar">Cancelar</button>
@@ -1836,6 +1825,9 @@ function abrirFormCliente(id, onCriado){
       endereco: document.getElementById('f-endereco').value.trim(),
       obs: document.getElementById('f-obs').value.trim(),
       lat: latClienteSelecionado, lng: lngClienteSelecionado,
+      papeis: Object.assign({cliente:true, fornecedor:false, pagador:false}, (cliente&&cliente.papeis)||{}, {
+        pagador: document.getElementById('f-papel-pagador').checked
+      }),
     };
     let clienteFinal;
     if(cliente){
@@ -1849,6 +1841,7 @@ function abrirFormCliente(id, onCriado){
       clienteFinal = data;
       showToast('Cliente cadastrado.', 'success');
     }
+    sincronizarPagadoresDeClientes(STATE);
     saveState();
     modal.remove();
     // se chamado a partir de outra tela (ex: Lançar Venda), não redesenha a
@@ -1930,11 +1923,16 @@ function abrirExtratoCliente(clienteId){
 
 function excluirCliente(id){
   const vendasComEsseCliente = STATE.vendas.filter(v=>v.clienteId===id).length;
-  const mensagem = vendasComEsseCliente>0
+  const cliente = STATE.clientes.find(c=>c.id===id);
+  const ehPagadorUsado = cliente && cliente.papeis && cliente.papeis.pagador && STATE.vendas.some(v=>v.pagadorId===id);
+  let mensagem = vendasComEsseCliente>0
     ? `Este cliente possui ${vendasComEsseCliente} venda(s) registrada(s). As vendas continuarão no histórico normalmente (aparecerão como "cliente removido"), mas o cadastro deste cliente será apagado. Deseja continuar?`
     : 'Esta ação não pode ser desfeita. Deseja continuar?';
+  if(ehPagadorUsado) mensagem += ' Este cliente também é usado como Pagador em vendas existentes — essas vendas deixarão de ter um pagador vinculado.';
   confirmAction('Excluir cliente', mensagem, ()=>{
     STATE.clientes = STATE.clientes.filter(c=>c.id!==id);
+    STATE.vendas.forEach(v=>{ if(v.pagadorId===id) v.pagadorId=null; });
+    sincronizarPagadoresDeClientes(STATE);
     saveState();
     renderClientes();
     showToast('Cliente excluído.', 'success');
@@ -1945,185 +1943,45 @@ document.getElementById('btn-novo-cliente').addEventListener('click', ()=>abrirF
 RENDERERS.clientes = renderClientes;
 
 /* =========================================================
-   MÓDULO: PAGADORES (empresas que pagam vendas em nome de outros
-   clientes, ex: intermediários/factoring — Oscar vende, WBN paga)
+   PAGADORES — deixou de ser um cadastro à parte: agora "ser pagador"
+   é só um papel/flag (cliente.papeis.pagador) dentro do cadastro de
+   Cliente (checkbox "🏦 Também é usado como Pagador"). STATE.pagadores
+   continua existindo como uma lista DERIVADA (recalculada a partir de
+   STATE.clientes) só pra não precisar reescrever as telas de Repasses,
+   que já leem STATE.pagadores/pagadorId em vários lugares — o "id" de
+   cada pagador continua sendo o mesmo id do cliente correspondente.
    ========================================================= */
-let pagadoresSort = {key:'nome', dir:'asc'};
-
-function pagadorVendasCount(pagadorId){
-  return STATE.vendas.filter(v=>v.pagadorId===pagadorId).length;
+function sincronizarPagadoresDeClientes(state){
+  state.pagadores = state.clientes.filter(c=>c.papeis && c.papeis.pagador).map(c=>({
+    id: c.id, nome: c.nome, documento: c.documento||'', contato: c.contato||'',
+    obs: c.obs||'', criadoEm: c.criadoEm
+  }));
 }
 
-function renderPagadores(){
-  const box = document.getElementById('pagadores-content');
-  if(STATE.pagadores.length===0){
-    box.innerHTML = `
-      <div class="card">
-        <div class="empty-state">
-          <div class="ic">🏦</div>
-          <p>Nenhum pagador cadastrado ainda. Use isso quando uma empresa diferente do cliente final é quem paga a conta<br>(ex: você vende para o Oscar, mas quem paga é a WBN).</p>
-        </div>
-      </div>
-      <div id="form-pagador-container"></div>`;
-    return;
-  }
-
-  box.innerHTML = `
-    <div class="card">
-      <h3>Lista de Pagadores</h3>
-      <div class="table-wrap">
-        <table class="data-table" id="tbl-pagadores">
-          <thead>
-            <tr>
-              <th data-sort="nome">Nome / Empresa</th>
-              <th data-sort="documento">CNPJ/CPF</th>
-              <th data-sort="contato">Contato</th>
-              <th class="num" data-sort="qtdVendas">Nº Vendas Vinculadas</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody id="pagadores-table-body"></tbody>
-        </table>
-      </div>
-      <div id="pagadores-paginacao"></div>
-    </div>
-    <div id="form-pagador-container"></div>
-  `;
-
-  document.getElementById('tbl-pagadores').addEventListener('sortrequest', (e)=>{
-    pagadoresSort = e.detail;
-    renderTabelaPagadores();
-  });
-
-  renderTabelaPagadores();
-}
-
-function renderTabelaPagadores(){
-  let pagadores = STATE.pagadores.map(p=>({...p, qtdVendas: pagadorVendasCount(p.id)}));
-
-  const {key, dir} = pagadoresSort;
-  pagadores.sort((a,b)=>{
-    let va=a[key], vb=b[key];
-    if(va==null) va = (typeof vb==='string') ? '' : 0;
-    if(vb==null) vb = (typeof va==='string') ? '' : 0;
-    if(typeof va==='string'){ va=va.toLowerCase(); vb=(vb||'').toLowerCase(); }
-    if(va<vb) return dir==='asc'?-1:1;
-    if(va>vb) return dir==='asc'?1:-1;
-    return 0;
-  });
-
-  const total = pagadores.length;
-  const pagina = aplicarPaginacao('pagadores', pagadores);
-
-  document.getElementById('pagadores-table-body').innerHTML = pagina.map(p=>`
-    <tr>
-      <td>${escapeHtml(p.nome)}</td>
-      <td>${escapeHtml(p.documento||'—')}</td>
-      <td>${escapeHtml(p.contato||'—')}</td>
-      <td class="num">${p.qtdVendas}</td>
-      <td>
-        <div class="cell-actions">
-          <button class="btn btn-sm" onclick="abrirFormPagador('${p.id}')">Editar</button>
-          <button class="btn btn-sm btn-danger" onclick="excluirPagador('${p.id}')">Excluir</button>
-        </div>
-      </td>
-    </tr>`).join('');
-
-  const pagBox = document.getElementById('pagadores-paginacao');
-  if(pagBox){
-    pagBox.innerHTML = renderControlePaginacao('pagadores', total);
-    ativarControlePaginacao('pagadores', renderTabelaPagadores);
-  }
-}
-
-function abrirFormPagador(id){
-  const pagador = id ? STATE.pagadores.find(p=>p.id===id) : null;
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay open';
-  modal.id = 'modal-form-pagador';
-  modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
-      <div class="modal-rapido-cabecalho">
-        <div class="ic-rapido">🏦</div>
-        <div>
-          <h3>${pagador ? 'Editar Pagador' : 'Novo Pagador'}</h3>
-          <div class="sub">${pagador ? escapeHtml(pagador.nome) : 'Empresa/pessoa que paga em nome de outra'}</div>
-        </div>
-      </div>
-      <div class="modal-rapido-corpo">
-        <form id="form-pagador">
-          <div class="form-grid">
-            <div class="field">
-              <label>Nome / Razão Social <span class="req">*</span></label>
-              <input type="text" id="pg-nome" required value="${pagador?escapeAttr(pagador.nome):''}" placeholder="Ex: WBN">
-            </div>
-            <div class="field">
-              <label>CNPJ / CPF</label>
-              <input type="text" id="pg-documento" value="${pagador?escapeAttr(pagador.documento||''):''}">
-            </div>
-            <div class="field">
-              <label>Contato (telefone/e-mail)</label>
-              <input type="text" id="pg-contato" value="${pagador?escapeAttr(pagador.contato||''):''}">
-            </div>
-            <div class="field field-full">
-              <label>Observações</label>
-              <textarea id="pg-obs">${pagador?escapeHtml(pagador.obs||''):''}</textarea>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button type="button" class="btn" id="pg-cancelar">Cancelar</button>
-            <button type="submit" class="btn btn-primary">${pagador?'Salvar Alterações':'Cadastrar Pagador'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-  document.getElementById('pg-cancelar').addEventListener('click', ()=>modal.remove());
-  document.getElementById('pg-nome').focus();
-
-  document.getElementById('form-pagador').addEventListener('submit', (e)=>{
-    e.preventDefault();
-    const nome = document.getElementById('pg-nome').value.trim();
-    if(!nome){ showToast('Informe o nome do pagador.', 'error'); return; }
-    const data = {
-      nome,
-      documento: document.getElementById('pg-documento').value.trim(),
-      contato: document.getElementById('pg-contato').value.trim(),
-      obs: document.getElementById('pg-obs').value.trim(),
-    };
-    if(pagador){
-      Object.assign(pagador, data);
-      showToast('Pagador atualizado.', 'success');
+// Migração: pagadores cadastrados antes dessa mudança (na aba "Pagadores",
+// removida) viram um Cliente novo com o papel de pagador marcado — mantendo
+// o MESMO id, pra todo pagadorId já gravado em vendas/orçamentos antigos
+// continuar apontando pro registro certo, sem precisar tocar nesse histórico.
+// Roda a cada carregamento (idempotente: na segunda vez pra frente, o
+// cliente migrado já existe com esse id, então só reconfirma o papel).
+function migrarPagadoresParaClientes(state){
+  (state.pagadores||[]).forEach(pg=>{
+    let cliente = state.clientes.find(c=>c.id===pg.id);
+    if(!cliente){
+      cliente = {
+        id: pg.id, nome: pg.nome, documento: pg.documento||'', contato: pg.contato||'',
+        pessoaContato:'', cidade:'', tipo:'Privado', endereco:'', lat:null, lng:null,
+        obs: pg.obs||'', criadoEm: pg.criadoEm || todayISO(),
+        papeis: { cliente:false, fornecedor:false, pagador:true }
+      };
+      state.clientes.push(cliente);
     }else{
-      data.id = uid('pag');
-      data.criadoEm = todayISO();
-      STATE.pagadores.push(data);
-      showToast('Pagador cadastrado.', 'success');
+      if(!cliente.papeis) cliente.papeis = { cliente:true, fornecedor:false, pagador:false };
+      cliente.papeis.pagador = true;
     }
-    saveState();
-    modal.remove();
-    renderPagadores();
   });
+  sincronizarPagadoresDeClientes(state);
 }
-
-function excluirPagador(id){
-  const vendasComEssePagador = STATE.vendas.filter(v=>v.pagadorId===id).length;
-  const mensagem = vendasComEssePagador>0
-    ? `Este pagador está vinculado a ${vendasComEssePagador} venda(s). Essas vendas continuarão no histórico, mas deixarão de ter um pagador vinculado. Deseja continuar?`
-    : 'Esta ação não pode ser desfeita. Deseja continuar?';
-  confirmAction('Excluir pagador', mensagem, ()=>{
-    STATE.pagadores = STATE.pagadores.filter(p=>p.id!==id);
-    STATE.vendas.forEach(v=>{ if(v.pagadorId===id) v.pagadorId=null; });
-    saveState();
-    renderPagadores();
-    showToast('Pagador excluído.', 'success');
-  });
-}
-
-document.getElementById('btn-novo-pagador').addEventListener('click', ()=>abrirFormPagador(null));
-RENDERERS.pagadores = renderPagadores;
 
 /* =========================================================
    COMPONENTE COMPARTILHADO: SELETOR DE ENDEREÇO NO MAPA
@@ -5372,6 +5230,7 @@ function renderVenda(){
             <option value="">Selecione...</option>
             ${STATE.pagadores.map(p=>`<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}
           </select>
+          <div class="help-text">Não achou o pagador? Marque o papel "🏦 Também é usado como Pagador" no cadastro dele em Clientes.</div>
         </div>
         <div class="field" id="v-wrap-repasse-pct" style="display:none;">
           <label>Percentual de Repasse <span class="req">*</span></label>
@@ -6385,6 +6244,7 @@ function renderOrcamentos(){
             <option value="">Selecione...</option>
             ${STATE.pagadores.map(p=>`<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}
           </select>
+          <div class="help-text">Não achou o pagador? Marque o papel "🏦 Também é usado como Pagador" no cadastro dele em Clientes.</div>
         </div>
         <div class="field" id="orc-wrap-repasse-pct" style="display:none;">
           <label>Percentual de Repasse <span class="req">*</span></label>
