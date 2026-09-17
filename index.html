@@ -15361,14 +15361,21 @@ async function executarComConcorrencia(itens, concorrencia, tarefa){
   await Promise.all(Array.from({length: Math.min(concorrencia, itens.length)}, worker));
 }
 
-// Preenche os campos de data de busca (publicação e prazo final da
-// proposta) com um padrão sensato — só na primeira vez que a página abre,
-// pra não sobrescrever um filtro que o usuário já tenha ajustado.
+// Preenche os campos de data de busca (publicação) com um padrão sensato —
+// mas só de verdade na PRIMEIRA vez que a tela é aberta nesta sessão. Depois
+// disso, nunca mais mexe nesses campos sozinho: se o usuário limpar o campo
+// de propósito (pra buscar só pelo prazo final da proposta, por exemplo),
+// esse limpo precisa continuar limpo mesmo depois de renderLicitacoes() ser
+// chamado de novo (o que acontece toda vez que a busca termina).
+let _filtrosDataLicitacoesInicializados = false;
 function inicializarFiltrosDataLicitacoes(){
+  if(_filtrosDataLicitacoesInicializados) return;
   const campoPubDe = document.getElementById('lic-busca-pub-de');
   const campoPubAte = document.getElementById('lic-busca-pub-ate');
-  if(campoPubDe && !campoPubDe.value) campoPubDe.value = addDays(todayISO(), -30);
-  if(campoPubAte && !campoPubAte.value) campoPubAte.value = todayISO();
+  if(!campoPubDe || !campoPubAte) return; // campos ainda não existem no DOM
+  if(!campoPubDe.value) campoPubDe.value = addDays(todayISO(), -30);
+  if(!campoPubAte.value) campoPubAte.value = todayISO();
+  _filtrosDataLicitacoesInicializados = true;
 }
 
 function buscarOportunidadesPNCP(){
@@ -15384,22 +15391,49 @@ function buscarOportunidadesPNCP(){
     return;
   }
 
-  // filtro de data de PUBLICAÇÃO — obrigatório pra API do PNCP, por isso
-  // sempre cai num padrão (últimos 30 dias) se o usuário deixar em branco
-  inicializarFiltrosDataLicitacoes();
-  const publicadoDe = document.getElementById('lic-busca-pub-de').value || addDays(todayISO(), -30);
-  const publicadoAte = document.getElementById('lic-busca-pub-ate').value || todayISO();
-  if(publicadoDe > publicadoAte){
-    showToast('A data "Publicado de" não pode ser depois da data "até".', 'error');
-    return;
-  }
-
   // filtro de PRAZO FINAL PRA PROPOSTA — opcional, aplicado depois de
   // buscar (a API do PNCP não tem esse filtro pronto pra usar na consulta)
   const prazoDe = document.getElementById('lic-busca-prazo-de').value || null;
   const prazoAte = document.getElementById('lic-busca-prazo-ate').value || null;
   if(prazoDe && prazoAte && prazoDe > prazoAte){
     showToast('A data "Prazo final p/ proposta de" não pode ser depois da data "até".', 'error');
+    return;
+  }
+
+  // filtro de data de PUBLICAÇÃO — obrigatório pra API do PNCP. Nunca
+  // sobrescrevemos o campo na tela (se o usuário limpou de propósito, ele
+  // continua limpo); só calculamos um padrão pra usar na consulta quando o
+  // campo estiver em branco:
+  //  - se o usuário já preencheu um prazo final de proposta mas deixou a
+  //    publicação em branco, a publicação certamente aconteceu ANTES do
+  //    prazo (normalmente algumas semanas antes) — então usamos uma janela
+  //    baseada no prazo em vez do padrão fixo, senão a busca fica presa nos
+  //    últimos 30 dias e pode não encontrar nada;
+  //  - senão, cai no padrão de últimos 30 dias.
+  const campoPubDeEl = document.getElementById('lic-busca-pub-de');
+  const campoPubAteEl = document.getElementById('lic-busca-pub-ate');
+  let publicadoDe = campoPubDeEl.value;
+  let publicadoAte = campoPubAteEl.value;
+  let usouPadraoPublicacao = false;
+  if(!publicadoDe && !publicadoAte){
+    usouPadraoPublicacao = true;
+    if(prazoDe || prazoAte){
+      // janela generosa: até 90 dias antes do prazo até o próprio prazo
+      // (ou hoje, o que vier primeiro, já que não existe publicação no futuro)
+      const baseAte = prazoAte || prazoDe;
+      const baseDe = prazoDe || prazoAte;
+      publicadoDe = addDays(baseDe, -90);
+      publicadoAte = baseAte < todayISO() ? baseAte : todayISO();
+    }else{
+      publicadoDe = addDays(todayISO(), -30);
+      publicadoAte = todayISO();
+    }
+  }else{
+    publicadoDe = publicadoDe || addDays(publicadoAte, -30);
+    publicadoAte = publicadoAte || todayISO();
+  }
+  if(publicadoDe > publicadoAte){
+    showToast('A data "Publicado de" não pode ser depois da data "até".', 'error');
     return;
   }
 
@@ -15412,7 +15446,7 @@ function buscarOportunidadesPNCP(){
     .filter(m=>m.codigos.some(c=>modalidadesSelecionadas.includes(c)))
     .flatMap(m=>m.codigos.filter(c=>modalidadesSelecionadas.includes(c)));
   const combosTotal = ufs.length * codigosParaBuscar.length;
-  const filtrosData = { publicadoDe, publicadoAte, prazoDe, prazoAte };
+  const filtrosData = { publicadoDe, publicadoAte, prazoDe, prazoAte, usouPadraoPublicacao };
 
   // área grande de mais (muitos estados alcançados) = busca bem mais lenta;
   // avisa e deixa o usuário decidir se quer mesmo assim ou reduzir o raio
@@ -15560,6 +15594,9 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
     renderLicitacoes();
 
     const partesResumo = [];
+    if(filtrosData.usouPadraoPublicacao){
+      partesResumo.push(`(Publicação não informada — usei automaticamente ${fmtDate(filtrosData.publicadoDe)} a ${fmtDate(filtrosData.publicadoAte)}.)`);
+    }
     if(brutos.length===0){
       partesResumo.push(`O PNCP não retornou nenhuma compra publicada entre ${fmtDate(filtrosData.publicadoDe)} e ${fmtDate(filtrosData.publicadoAte)} pras modalidades e estados dessa área (${ufs.join(', ')}).`);
     }else{
