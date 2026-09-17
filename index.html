@@ -486,7 +486,8 @@ table.data-table{ width:100%; font-size:13px; }
 .modal-overlay.open{ display:flex; }
 .modal-box{
   background:#fff; border-radius:var(--radius); padding:22px 24px;
-  max-width:420px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);
+  max-width:min(480px, 94vw); width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);
+  max-height:90vh; overflow-y:auto;
 }
 .modal-box h3{ margin:0 0 8px 0; font-size:16px; }
 .modal-box p{ margin:0 0 18px 0; font-size:13.5px; color:var(--ink-soft); }
@@ -618,6 +619,15 @@ table.data-table{ width:100%; font-size:13px; }
   margin:0 6px 6px 0;
 }
 
+/* busca rápida geral -- fica fixa no topo do conteúdo, em qualquer tela */
+.busca-global-wrap{ position:relative; max-width:420px; margin:0 0 16px auto; }
+.busca-global-wrap input{
+  width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius-sm);
+  font-size:13px; background:#fff;
+}
+.busca-global-wrap input:focus{ outline:none; border-color:var(--primary); }
+.busca-global-dropdown-grupo{ padding:6px 11px 2px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-faint); }
+
 /* combobox de busca (produto/item) com filtro em tempo real */
 .combo-wrap{ position:relative; }
 .combo-dropdown{
@@ -683,12 +693,6 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="locais-compra" href="#">
       <span class="ic">📍</span> Locais de Compra
     </a>
-    <a class="nav-item" data-page="pagadores" href="#">
-      <span class="ic">🏦</span> Pagadores
-    </a>
-    <a class="nav-item" data-page="estoque" href="#">
-      <span class="ic">📊</span> Estoque
-    </a>
 
     <div class="nav-section-label">Operação</div>
     <a class="nav-item" data-page="orcamentos" href="#">
@@ -697,15 +701,13 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="logistica" href="#">
       <span class="ic">🚚</span> Logística
     </a>
-    <a class="nav-item" data-page="lancar-venda" href="#">
-      <span class="ic">🧾</span> Lançar Venda
+    <a class="nav-item" data-page="estoque" href="#">
+      <span class="ic">📊</span> Estoque
     </a>
-    <a class="nav-item" data-page="analise-vendas" href="#">
-      <span class="ic">🔍</span> Análise de Vendas
-    </a>
-    <a class="nav-item" data-page="vendas-cliente" href="#">
-      <span class="ic">👥</span> Vendas por Cliente
-    </a>
+    <!-- "Lançar Venda" saiu do menu (pedido explícito no relatório de
+         alterações) mas a página/motor continuam existindo — a importação
+         de PDF de Nota Fiscal ainda depende dela. Acesso continua possível
+         via navigateTo('lancar-venda') a partir de quem precisar dele. -->
 
     <div class="nav-section-label">Financeiro</div>
     <a class="nav-item" data-page="despesas" href="#">
@@ -718,7 +720,13 @@ table.data-table{ width:100%; font-size:13px; }
       <span class="ic">🔁</span> Repasses (Pagador Terceiro)
     </a>
 
-    <div class="nav-section-label">Comercial</div>
+    <div class="nav-section-label">Relatórios</div>
+    <a class="nav-item" data-page="analise-vendas" href="#">
+      <span class="ic">🔍</span> Análise de Vendas
+    </a>
+    <a class="nav-item" data-page="vendas-cliente" href="#">
+      <span class="ic">👥</span> Vendas por Cliente
+    </a>
     <a class="nav-item" data-page="licitacoes" href="#">
       <span class="ic">🏛️</span> Licitações
     </a>
@@ -737,6 +745,14 @@ table.data-table{ width:100%; font-size:13px; }
 
   <!-- MAIN -->
   <main class="main">
+
+    <!-- BUSCA RÁPIDA GERAL — fica visível em qualquer tela, fora das
+         seções de página, pra achar produto/cliente/orçamento sem precisar
+         trocar de aba primeiro -->
+    <div class="busca-global-wrap combo-wrap">
+      <input type="text" id="busca-global-input" placeholder="🔍 Busca rápida — produto, cliente ou orçamento...">
+      <div class="combo-dropdown" id="busca-global-dropdown"></div>
+    </div>
 
     <!-- ============ DASHBOARD ============ -->
     <section class="page active" id="page-dashboard">
@@ -784,19 +800,6 @@ table.data-table{ width:100%; font-size:13px; }
       <div id="totvs-sync-container"></div>
     </section>
 
-    <!-- ============ PAGADORES ============ -->
-    <section class="page" id="page-pagadores">
-      <div class="page-header">
-        <div>
-          <h2>Pagadores</h2>
-          <p class="subtitle">Empresas que pagam vendas em nome de outros clientes (ex: intermediários, factoring)</p>
-        </div>
-        <div class="header-actions">
-          <button class="btn btn-primary" id="btn-novo-pagador">+ Novo Pagador</button>
-        </div>
-      </div>
-      <div id="pagadores-content"></div>
-    </section>
 
     <!-- ============ FORNECEDORES ============ -->
     <section class="page" id="page-fornecedores">
@@ -964,7 +967,7 @@ table.data-table{ width:100%; font-size:13px; }
 
 <!-- Generic Modal -->
 <div class="modal-overlay" id="modal-confirm">
-  <div class="modal-box modal-box-rapido" style="max-width:440px;">
+  <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
     <div class="modal-rapido-cabecalho" id="modal-confirm-cabecalho">
       <div class="ic-rapido" id="modal-confirm-icone">⚠️</div>
       <div>
@@ -1181,7 +1184,9 @@ function defaultState(){
     config: {
       impostoPct: 4,
       comissaoPct: 2,
-      lojaEndereco: '', lojaLat: null, lojaLng: null // ponto de partida do Planejador de Rotas — configurável em Logística
+      lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
+      diasProdutoParado: 30, // configurável na tela de Estoque — "produto parado" = sem vender há esses dias
+      diasClienteInativo: 60 // configurável na tela de Clientes — "cliente inativo" = sem comprar há esses dias
     }
   };
 }
@@ -1201,6 +1206,7 @@ function loadState(){
     const state = Object.assign(defaultState(), parsed);
     state.config = Object.assign(defaultState().config, parsed.config||{});
     migrarFornecedoresELocaisCompra(state);
+    migrarPagadoresParaClientes(state);
     return state;
   }catch(e){
     console.error('Erro ao carregar dados salvos, iniciando vazio.', e);
@@ -1425,6 +1431,91 @@ document.addEventListener('DOMContentLoaded', ()=>{
 })();
 
 /* =========================================================
+   BUSCA RÁPIDA GERAL (produto / cliente / orçamento) — disponível em
+   qualquer tela, fixa no topo do conteúdo principal.
+   ========================================================= */
+function buscarGlobalResultados(termoBruto){
+  const termo = normalizarBusca(termoBruto).trim();
+  if(!termo) return { produtos:[], clientes:[], orcamentos:[] };
+
+  const produtos = STATE.produtos.filter(p=>
+    normalizarBusca(p.nome).includes(termo) ||
+    normalizarBusca(p.marca).includes(termo) ||
+    normalizarBusca(p.codigoBarras).includes(termo) ||
+    normalizarBusca(p.sku).includes(termo)
+  ).slice(0,6);
+
+  const clientes = STATE.clientes.filter(c=>
+    normalizarBusca(c.nome).includes(termo) ||
+    normalizarBusca(c.documento).includes(termo)
+  ).slice(0,6);
+
+  const orcamentos = STATE.orcamentos.filter(o=>{
+    const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    return normalizarBusca(o.id).includes(termo) ||
+      (cliente && normalizarBusca(cliente.nome).includes(termo)) ||
+      normalizarBusca(o.data).includes(termo);
+  }).slice(0,6);
+
+  return { produtos, clientes, orcamentos };
+}
+
+(function(){
+  const input = document.getElementById('busca-global-input');
+  const dropdown = document.getElementById('busca-global-dropdown');
+  if(!input || !dropdown) return;
+
+  function render(){
+    const termo = input.value.trim();
+    if(!termo){ dropdown.classList.remove('open'); dropdown.innerHTML=''; return; }
+
+    const { produtos, clientes, orcamentos } = buscarGlobalResultados(termo);
+    if(produtos.length===0 && clientes.length===0 && orcamentos.length===0){
+      dropdown.innerHTML = `<div class="combo-empty">Nenhum resultado para "${escapeHtml(termo)}".</div>`;
+      dropdown.classList.add('open');
+      return;
+    }
+
+    let html = '';
+    if(produtos.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Produtos</div>`;
+      html += produtos.map(p=>`<div class="combo-option" data-tipo="produto" data-id="${p.id}">${escapeHtml(p.nome)}<div class="combo-sub">${escapeHtml(p.marca||'')}${p.codigoBarras?' · '+escapeHtml(p.codigoBarras):''}</div></div>`).join('');
+    }
+    if(clientes.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Clientes</div>`;
+      html += clientes.map(c=>`<div class="combo-option" data-tipo="cliente" data-id="${c.id}">${escapeHtml(c.nome)}${c.documento?`<div class="combo-sub">${escapeHtml(c.documento)}</div>`:''}</div>`).join('');
+    }
+    if(orcamentos.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Orçamentos</div>`;
+      html += orcamentos.map(o=>{
+        const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+        return `<div class="combo-option" data-tipo="orcamento" data-id="${o.id}">${escapeHtml(cliente?cliente.nome:'(cliente removido)')}<div class="combo-sub">${fmtDate(o.data)} · ${escapeHtml(o.status||'')}</div></div>`;
+      }).join('');
+    }
+    dropdown.innerHTML = html;
+    dropdown.classList.add('open');
+
+    dropdown.querySelectorAll('.combo-option[data-id]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const tipo = el.dataset.tipo, id = el.dataset.id;
+        input.value = '';
+        dropdown.classList.remove('open');
+        dropdown.innerHTML = '';
+        if(tipo==='produto'){ navigateTo('produtos'); abrirFormProduto(id); }
+        else if(tipo==='cliente'){ navigateTo('clientes'); abrirFormCliente(id); }
+        else if(tipo==='orcamento'){ navigateTo('orcamentos'); verDetalheOrcamento(id); }
+      });
+    });
+  }
+
+  input.addEventListener('input', render);
+  input.addEventListener('focus', render);
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.busca-global-wrap')) { dropdown.classList.remove('open'); }
+  });
+})();
+
+/* =========================================================
    EXPORT / IMPORT BACKUP
    ========================================================= */
 function exportarBackup(){
@@ -1599,6 +1690,14 @@ function renderClientes(){
   box.innerHTML = `
     ${renderRadarRiscoClientes()}
     <div class="card">
+      <h3>💤 Clientes Inativos
+        <span class="hint">sem comprar há
+          <input type="number" id="clientes-dias-inativo" min="1" value="${STATE.config.diasClienteInativo||60}" style="width:54px;padding:2px 4px;font-size:12px;">
+          dias ou mais</span>
+      </h3>
+      <div id="clientes-inativos-lista"></div>
+    </div>
+    <div class="card">
       <h3>Lista de Clientes <span class="hint">"Padrão de Compra" mostra o ritmo médio dele e se está atrasado em relação ao próprio histórico</span></h3>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar cliente</label>
@@ -1637,7 +1736,42 @@ function renderClientes(){
     renderTabelaClientes();
   });
 
+  renderClientesInativos();
+  document.getElementById('clientes-dias-inativo').addEventListener('change', (e)=>{
+    const dias = parseInt(e.target.value);
+    STATE.config.diasClienteInativo = (dias>0) ? dias : 60;
+    saveState();
+    renderClientesInativos();
+  });
+
   renderTabelaClientes();
+}
+
+function renderClientesInativos(){
+  const box = document.getElementById('clientes-inativos-lista');
+  if(!box) return;
+  const inativos = getClientesInativos();
+  if(inativos.length===0){
+    box.innerHTML = `<p class="help-text">Nenhum cliente inativo nesse período. 🎉</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Cliente</th><th>Última Compra</th><th class="num">Dias Inativo</th><th>Ações</th></tr></thead>
+        <tbody>
+          ${inativos.map(({cliente,ultimaVenda})=>{
+            const dias = Math.floor((new Date(todayISO())-new Date(ultimaVenda))/(1000*60*60*24));
+            return `<tr>
+              <td>${escapeHtml(cliente.nome)}</td>
+              <td>${fmtDate(ultimaVenda)}</td>
+              <td class="num" style="color:var(--warning);font-weight:700;">${dias}</td>
+              <td><button class="btn btn-sm" onclick="abrirFormCliente('${cliente.id}')">Ver Cadastro</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function renderRadarRiscoClientes(){
@@ -1714,7 +1848,7 @@ function renderTabelaClientes(){
 
   document.getElementById('clientes-table-body').innerHTML = pagina.map(c=>`
     <tr>
-      <td>${escapeHtml(c.nome)}</td>
+      <td>${escapeHtml(c.nome)}${c.papeis&&c.papeis.pagador?' <span class="badge badge-neutral" title="Também usado como Pagador">🏦 Pagador</span>':''}</td>
       <td>${escapeHtml(c.documento||'—')}</td>
       <td>${escapeHtml(c.contato||'—')}</td>
       <td>${escapeHtml(c.cidade||'—')}</td>
@@ -1741,6 +1875,43 @@ function renderTabelaClientes(){
   }
 }
 
+// Perfil do cliente: histórico de compras, ticket médio e última compra,
+// mostrado dentro do próprio formulário de edição (só faz sentido pra quem
+// já é cliente cadastrado, nunca no cadastro de um novo).
+function renderPerfilClienteResumo(cliente){
+  const vendasCliente = STATE.vendas.filter(v=>v.clienteId===cliente.id && v.status!=='cancelada');
+  const valores = vendasCliente.map(v=>{
+    const c = calcularVenda(v);
+    const acrescimo = v.acrescimo ? v.acrescimo.valor : 0;
+    return c.bruto + acrescimo;
+  });
+  const totalComprado = valores.reduce((s,v)=>s+v,0);
+  const ticketMedio = vendasCliente.length>0 ? totalComprado/vendasCliente.length : 0;
+  const ultimaCompra = vendasCliente.length>0
+    ? vendasCliente.reduce((maisRecente,v)=>v.data>maisRecente?v.data:maisRecente, vendasCliente[0].data)
+    : null;
+
+  return `
+    <div class="kpi-row" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:16px;">
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">🛒 Compras</div>
+        <div class="kpi-value" style="font-size:19px;">${vendasCliente.length}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">💰 Total Comprado</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(totalComprado)}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">🎯 Ticket Médio</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(ticketMedio)}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">📅 Última Compra</div>
+        <div class="kpi-value" style="font-size:19px;">${ultimaCompra?fmtDate(ultimaCompra):'—'}</div>
+      </div>
+    </div>`;
+}
+
 function abrirFormCliente(id, onCriado){
   const cliente = id ? STATE.clientes.find(c=>c.id===id) : null;
 
@@ -1748,7 +1919,7 @@ function abrirFormCliente(id, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">👤</div>
         <div>
@@ -1757,6 +1928,7 @@ function abrirFormCliente(id, onCriado){
         </div>
       </div>
       <div class="modal-rapido-corpo">
+        ${cliente ? renderPerfilClienteResumo(cliente) : ''}
         <form id="form-cliente">
           <div class="form-grid">
             <div class="field">
@@ -1764,8 +1936,30 @@ function abrirFormCliente(id, onCriado){
               <input type="text" id="f-nome" required value="${cliente?escapeAttr(cliente.nome):''}">
             </div>
             <div class="field">
+              <label>Nome Fantasia</label>
+              <input type="text" id="f-nome-fantasia" value="${cliente?escapeAttr(cliente.nomeFantasia||''):''}">
+            </div>
+            <div class="field">
               <label>CNPJ / CPF</label>
-              <input type="text" id="f-documento" value="${cliente?escapeAttr(cliente.documento||''):''}">
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="f-documento" style="flex:1;" value="${cliente?escapeAttr(cliente.documento||''):''}" placeholder="Só números, para buscar automático">
+                <button type="button" class="btn btn-sm" id="f-btn-buscar-cnpj" style="white-space:nowrap;">🔍 Buscar</button>
+              </div>
+              <div id="f-cnpj-status" style="margin-top:4px;"></div>
+            </div>
+            <div class="field">
+              <label>Tipo de Pessoa</label>
+              <select id="f-tipo-pessoa">
+                <option value="PJ" ${cliente&&cliente.tipoPessoa==='PF'?'':'selected'}>Jurídica (PJ)</option>
+                <option value="PF" ${cliente&&cliente.tipoPessoa==='PF'?'selected':''}>Física (PF)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Nacionalidade</label>
+              <select id="f-nacionalidade">
+                <option value="Nacional" ${cliente&&cliente.nacionalidade==='Estrangeira'?'':'selected'}>Nacional</option>
+                <option value="Estrangeira" ${cliente&&cliente.nacionalidade==='Estrangeira'?'selected':''}>Estrangeira</option>
+              </select>
             </div>
             <div class="field">
               <label>Contato (telefone/e-mail)</label>
@@ -1800,6 +1994,50 @@ function abrirFormCliente(id, onCriado){
               <textarea id="f-obs">${cliente?escapeHtml(cliente.obs||''):''}</textarea>
             </div>
           </div>
+
+          <details style="margin-top:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+            <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;color:var(--ink);">📍 Endereço estruturado (CEP/UF/Cidade/Bairro/Número) <span class="hint">opcional, complementa o endereço acima</span></summary>
+            <div class="form-grid" style="padding-bottom:10px;">
+              <div class="field">
+                <label>CEP</label>
+                <input type="text" id="f-cep" maxlength="9" value="${cliente?escapeAttr(cliente.cep||''):''}">
+              </div>
+              <div class="field">
+                <label>Estado (UF)</label>
+                <select id="f-uf">
+                  <option value="">Selecione...</option>
+                  ${['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map(uf=>`<option value="${uf}" ${cliente&&cliente.uf===uf?'selected':''}>${uf}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>Cidade</label>
+                <input type="text" id="f-cidade-estruturada" value="${cliente?escapeAttr(cliente.cidadeEstruturada||''):''}">
+              </div>
+              <div class="field">
+                <label>Bairro</label>
+                <input type="text" id="f-bairro" value="${cliente?escapeAttr(cliente.bairro||''):''}">
+              </div>
+              <div class="field">
+                <label>Número</label>
+                <input type="text" id="f-numero" value="${cliente?escapeAttr(cliente.numero||''):''}">
+              </div>
+            </div>
+          </details>
+
+          <div class="form-grid" style="margin-top:10px;">
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-cliente" style="width:auto;" ${!cliente || !cliente.papeis || cliente.papeis.cliente!==false?'checked':''}>
+              <label for="f-papel-cliente" style="margin:0;">👤 Cliente</label>
+            </div>
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-fornecedor" style="width:auto;" ${cliente&&cliente.papeis&&cliente.papeis.fornecedor?'checked':''}>
+              <label for="f-papel-fornecedor" style="margin:0;">🏭 Fornecedor <span class="hint">também fornece produtos pra você</span></label>
+            </div>
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-pagador" style="width:auto;" ${cliente&&cliente.papeis&&cliente.papeis.pagador?'checked':''}>
+              <label for="f-papel-pagador" style="margin:0;">🏦 Pagador <span class="hint">recebe/paga repasses de vendas em nome de outro cliente</span></label>
+            </div>
+          </div>
           <div class="form-actions">
             <button type="button" class="btn" id="f-cliente-cancelar">Cancelar</button>
             <button type="submit" class="btn btn-primary">${cliente?'Salvar Alterações':'Cadastrar Cliente'}</button>
@@ -1822,20 +2060,65 @@ function abrirFormCliente(id, onCriado){
     }
   );
 
+  // Busca automática por CNPJ (BrasilAPI) — preenche Razão Social, Nome
+  // Fantasia, Endereço (texto livre) e o endereço estruturado (CEP, Cidade,
+  // UF, Bairro, Número). Diferente da busca de NCM, aqui o preenchimento é
+  // direto (não é uma sugestão) porque é um dado oficial de cadastro (Receita).
+  document.getElementById('f-btn-buscar-cnpj').addEventListener('click', async ()=>{
+    const cnpjDigitos = document.getElementById('f-documento').value.replace(/\D/g,'');
+    const statusEl = document.getElementById('f-cnpj-status');
+    if(cnpjDigitos.length!==14){
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Informe um CNPJ válido (14 dígitos) para buscar.</span>`;
+      return;
+    }
+    statusEl.innerHTML = `<span class="help-text">Buscando dados do CNPJ...</span>`;
+    try{
+      const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjDigitos}`);
+      if(!resp.ok) throw new Error('CNPJ não encontrado');
+      const d = await resp.json();
+      if(d.razao_social) document.getElementById('f-nome').value = d.razao_social;
+      if(d.nome_fantasia) document.getElementById('f-nome-fantasia').value = d.nome_fantasia;
+      const enderecoMontado = [d.logradouro, d.numero, d.bairro].filter(Boolean).join(', ');
+      if(enderecoMontado) document.getElementById('f-endereco').value = `${enderecoMontado}${d.municipio?` - ${d.municipio}`:''}${d.uf?`/${d.uf}`:''}`;
+      if(d.cep) document.getElementById('f-cep').value = d.cep;
+      if(d.uf) document.getElementById('f-uf').value = d.uf;
+      if(d.municipio) document.getElementById('f-cidade-estruturada').value = d.municipio;
+      if(d.bairro) document.getElementById('f-bairro').value = d.bairro;
+      if(d.numero) document.getElementById('f-numero').value = d.numero;
+      document.querySelector('#modal-form-cliente details').open = true;
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--positive);">Dados preenchidos automaticamente. Confira antes de salvar.</span>`;
+    }catch(err){
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Não foi possível buscar esse CNPJ agora (sem internet, CNPJ inválido ou serviço fora do ar). Preencha manualmente.</span>`;
+    }
+  });
+
   document.getElementById('form-cliente').addEventListener('submit', (e)=>{
     e.preventDefault();
     const nome = document.getElementById('f-nome').value.trim();
     if(!nome){ showToast('Informe o nome do cliente.', 'error'); return; }
     const data = {
       nome,
+      nomeFantasia: document.getElementById('f-nome-fantasia').value.trim(),
       documento: document.getElementById('f-documento').value.trim(),
+      tipoPessoa: document.getElementById('f-tipo-pessoa').value,
+      nacionalidade: document.getElementById('f-nacionalidade').value,
       contato: document.getElementById('f-contato').value.trim(),
       pessoaContato: document.getElementById('f-pessoa-contato').value.trim(),
       cidade: document.getElementById('f-cidade').value.trim(),
       tipo: document.getElementById('f-tipo').value,
       endereco: document.getElementById('f-endereco').value.trim(),
+      cep: document.getElementById('f-cep').value.trim(),
+      uf: document.getElementById('f-uf').value,
+      cidadeEstruturada: document.getElementById('f-cidade-estruturada').value.trim(),
+      bairro: document.getElementById('f-bairro').value.trim(),
+      numero: document.getElementById('f-numero').value.trim(),
       obs: document.getElementById('f-obs').value.trim(),
       lat: latClienteSelecionado, lng: lngClienteSelecionado,
+      papeis: Object.assign({cliente:true, fornecedor:false, pagador:false}, (cliente&&cliente.papeis)||{}, {
+        cliente: document.getElementById('f-papel-cliente').checked,
+        fornecedor: document.getElementById('f-papel-fornecedor').checked,
+        pagador: document.getElementById('f-papel-pagador').checked
+      }),
     };
     let clienteFinal;
     if(cliente){
@@ -1849,6 +2132,7 @@ function abrirFormCliente(id, onCriado){
       clienteFinal = data;
       showToast('Cliente cadastrado.', 'success');
     }
+    sincronizarPagadoresDeClientes(STATE);
     saveState();
     modal.remove();
     // se chamado a partir de outra tela (ex: Lançar Venda), não redesenha a
@@ -1887,7 +2171,7 @@ function abrirExtratoCliente(clienteId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-extrato-cliente';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;">
+    <div class="modal-box" style="max-width:min(840px, 94vw);max-height:90vh;overflow-y:auto;">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;">
         <div>
           <h3 style="margin:0;">Extrato de Compras</h3>
@@ -1930,11 +2214,16 @@ function abrirExtratoCliente(clienteId){
 
 function excluirCliente(id){
   const vendasComEsseCliente = STATE.vendas.filter(v=>v.clienteId===id).length;
-  const mensagem = vendasComEsseCliente>0
+  const cliente = STATE.clientes.find(c=>c.id===id);
+  const ehPagadorUsado = cliente && cliente.papeis && cliente.papeis.pagador && STATE.vendas.some(v=>v.pagadorId===id);
+  let mensagem = vendasComEsseCliente>0
     ? `Este cliente possui ${vendasComEsseCliente} venda(s) registrada(s). As vendas continuarão no histórico normalmente (aparecerão como "cliente removido"), mas o cadastro deste cliente será apagado. Deseja continuar?`
     : 'Esta ação não pode ser desfeita. Deseja continuar?';
+  if(ehPagadorUsado) mensagem += ' Este cliente também é usado como Pagador em vendas existentes — essas vendas deixarão de ter um pagador vinculado.';
   confirmAction('Excluir cliente', mensagem, ()=>{
     STATE.clientes = STATE.clientes.filter(c=>c.id!==id);
+    STATE.vendas.forEach(v=>{ if(v.pagadorId===id) v.pagadorId=null; });
+    sincronizarPagadoresDeClientes(STATE);
     saveState();
     renderClientes();
     showToast('Cliente excluído.', 'success');
@@ -1945,185 +2234,45 @@ document.getElementById('btn-novo-cliente').addEventListener('click', ()=>abrirF
 RENDERERS.clientes = renderClientes;
 
 /* =========================================================
-   MÓDULO: PAGADORES (empresas que pagam vendas em nome de outros
-   clientes, ex: intermediários/factoring — Oscar vende, WBN paga)
+   PAGADORES — deixou de ser um cadastro à parte: agora "ser pagador"
+   é só um papel/flag (cliente.papeis.pagador) dentro do cadastro de
+   Cliente (checkbox "🏦 Também é usado como Pagador"). STATE.pagadores
+   continua existindo como uma lista DERIVADA (recalculada a partir de
+   STATE.clientes) só pra não precisar reescrever as telas de Repasses,
+   que já leem STATE.pagadores/pagadorId em vários lugares — o "id" de
+   cada pagador continua sendo o mesmo id do cliente correspondente.
    ========================================================= */
-let pagadoresSort = {key:'nome', dir:'asc'};
-
-function pagadorVendasCount(pagadorId){
-  return STATE.vendas.filter(v=>v.pagadorId===pagadorId).length;
+function sincronizarPagadoresDeClientes(state){
+  state.pagadores = state.clientes.filter(c=>c.papeis && c.papeis.pagador).map(c=>({
+    id: c.id, nome: c.nome, documento: c.documento||'', contato: c.contato||'',
+    obs: c.obs||'', criadoEm: c.criadoEm
+  }));
 }
 
-function renderPagadores(){
-  const box = document.getElementById('pagadores-content');
-  if(STATE.pagadores.length===0){
-    box.innerHTML = `
-      <div class="card">
-        <div class="empty-state">
-          <div class="ic">🏦</div>
-          <p>Nenhum pagador cadastrado ainda. Use isso quando uma empresa diferente do cliente final é quem paga a conta<br>(ex: você vende para o Oscar, mas quem paga é a WBN).</p>
-        </div>
-      </div>
-      <div id="form-pagador-container"></div>`;
-    return;
-  }
-
-  box.innerHTML = `
-    <div class="card">
-      <h3>Lista de Pagadores</h3>
-      <div class="table-wrap">
-        <table class="data-table" id="tbl-pagadores">
-          <thead>
-            <tr>
-              <th data-sort="nome">Nome / Empresa</th>
-              <th data-sort="documento">CNPJ/CPF</th>
-              <th data-sort="contato">Contato</th>
-              <th class="num" data-sort="qtdVendas">Nº Vendas Vinculadas</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody id="pagadores-table-body"></tbody>
-        </table>
-      </div>
-      <div id="pagadores-paginacao"></div>
-    </div>
-    <div id="form-pagador-container"></div>
-  `;
-
-  document.getElementById('tbl-pagadores').addEventListener('sortrequest', (e)=>{
-    pagadoresSort = e.detail;
-    renderTabelaPagadores();
-  });
-
-  renderTabelaPagadores();
-}
-
-function renderTabelaPagadores(){
-  let pagadores = STATE.pagadores.map(p=>({...p, qtdVendas: pagadorVendasCount(p.id)}));
-
-  const {key, dir} = pagadoresSort;
-  pagadores.sort((a,b)=>{
-    let va=a[key], vb=b[key];
-    if(va==null) va = (typeof vb==='string') ? '' : 0;
-    if(vb==null) vb = (typeof va==='string') ? '' : 0;
-    if(typeof va==='string'){ va=va.toLowerCase(); vb=(vb||'').toLowerCase(); }
-    if(va<vb) return dir==='asc'?-1:1;
-    if(va>vb) return dir==='asc'?1:-1;
-    return 0;
-  });
-
-  const total = pagadores.length;
-  const pagina = aplicarPaginacao('pagadores', pagadores);
-
-  document.getElementById('pagadores-table-body').innerHTML = pagina.map(p=>`
-    <tr>
-      <td>${escapeHtml(p.nome)}</td>
-      <td>${escapeHtml(p.documento||'—')}</td>
-      <td>${escapeHtml(p.contato||'—')}</td>
-      <td class="num">${p.qtdVendas}</td>
-      <td>
-        <div class="cell-actions">
-          <button class="btn btn-sm" onclick="abrirFormPagador('${p.id}')">Editar</button>
-          <button class="btn btn-sm btn-danger" onclick="excluirPagador('${p.id}')">Excluir</button>
-        </div>
-      </td>
-    </tr>`).join('');
-
-  const pagBox = document.getElementById('pagadores-paginacao');
-  if(pagBox){
-    pagBox.innerHTML = renderControlePaginacao('pagadores', total);
-    ativarControlePaginacao('pagadores', renderTabelaPagadores);
-  }
-}
-
-function abrirFormPagador(id){
-  const pagador = id ? STATE.pagadores.find(p=>p.id===id) : null;
-
-  const modal = document.createElement('div');
-  modal.className = 'modal-overlay open';
-  modal.id = 'modal-form-pagador';
-  modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
-      <div class="modal-rapido-cabecalho">
-        <div class="ic-rapido">🏦</div>
-        <div>
-          <h3>${pagador ? 'Editar Pagador' : 'Novo Pagador'}</h3>
-          <div class="sub">${pagador ? escapeHtml(pagador.nome) : 'Empresa/pessoa que paga em nome de outra'}</div>
-        </div>
-      </div>
-      <div class="modal-rapido-corpo">
-        <form id="form-pagador">
-          <div class="form-grid">
-            <div class="field">
-              <label>Nome / Razão Social <span class="req">*</span></label>
-              <input type="text" id="pg-nome" required value="${pagador?escapeAttr(pagador.nome):''}" placeholder="Ex: WBN">
-            </div>
-            <div class="field">
-              <label>CNPJ / CPF</label>
-              <input type="text" id="pg-documento" value="${pagador?escapeAttr(pagador.documento||''):''}">
-            </div>
-            <div class="field">
-              <label>Contato (telefone/e-mail)</label>
-              <input type="text" id="pg-contato" value="${pagador?escapeAttr(pagador.contato||''):''}">
-            </div>
-            <div class="field field-full">
-              <label>Observações</label>
-              <textarea id="pg-obs">${pagador?escapeHtml(pagador.obs||''):''}</textarea>
-            </div>
-          </div>
-          <div class="form-actions">
-            <button type="button" class="btn" id="pg-cancelar">Cancelar</button>
-            <button type="submit" class="btn btn-primary">${pagador?'Salvar Alterações':'Cadastrar Pagador'}</button>
-          </div>
-        </form>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(modal);
-  document.getElementById('pg-cancelar').addEventListener('click', ()=>modal.remove());
-  document.getElementById('pg-nome').focus();
-
-  document.getElementById('form-pagador').addEventListener('submit', (e)=>{
-    e.preventDefault();
-    const nome = document.getElementById('pg-nome').value.trim();
-    if(!nome){ showToast('Informe o nome do pagador.', 'error'); return; }
-    const data = {
-      nome,
-      documento: document.getElementById('pg-documento').value.trim(),
-      contato: document.getElementById('pg-contato').value.trim(),
-      obs: document.getElementById('pg-obs').value.trim(),
-    };
-    if(pagador){
-      Object.assign(pagador, data);
-      showToast('Pagador atualizado.', 'success');
+// Migração: pagadores cadastrados antes dessa mudança (na aba "Pagadores",
+// removida) viram um Cliente novo com o papel de pagador marcado — mantendo
+// o MESMO id, pra todo pagadorId já gravado em vendas/orçamentos antigos
+// continuar apontando pro registro certo, sem precisar tocar nesse histórico.
+// Roda a cada carregamento (idempotente: na segunda vez pra frente, o
+// cliente migrado já existe com esse id, então só reconfirma o papel).
+function migrarPagadoresParaClientes(state){
+  (state.pagadores||[]).forEach(pg=>{
+    let cliente = state.clientes.find(c=>c.id===pg.id);
+    if(!cliente){
+      cliente = {
+        id: pg.id, nome: pg.nome, documento: pg.documento||'', contato: pg.contato||'',
+        pessoaContato:'', cidade:'', tipo:'Privado', endereco:'', lat:null, lng:null,
+        obs: pg.obs||'', criadoEm: pg.criadoEm || todayISO(),
+        papeis: { cliente:false, fornecedor:false, pagador:true }
+      };
+      state.clientes.push(cliente);
     }else{
-      data.id = uid('pag');
-      data.criadoEm = todayISO();
-      STATE.pagadores.push(data);
-      showToast('Pagador cadastrado.', 'success');
+      if(!cliente.papeis) cliente.papeis = { cliente:true, fornecedor:false, pagador:false };
+      cliente.papeis.pagador = true;
     }
-    saveState();
-    modal.remove();
-    renderPagadores();
   });
+  sincronizarPagadoresDeClientes(state);
 }
-
-function excluirPagador(id){
-  const vendasComEssePagador = STATE.vendas.filter(v=>v.pagadorId===id).length;
-  const mensagem = vendasComEssePagador>0
-    ? `Este pagador está vinculado a ${vendasComEssePagador} venda(s). Essas vendas continuarão no histórico, mas deixarão de ter um pagador vinculado. Deseja continuar?`
-    : 'Esta ação não pode ser desfeita. Deseja continuar?';
-  confirmAction('Excluir pagador', mensagem, ()=>{
-    STATE.pagadores = STATE.pagadores.filter(p=>p.id!==id);
-    STATE.vendas.forEach(v=>{ if(v.pagadorId===id) v.pagadorId=null; });
-    saveState();
-    renderPagadores();
-    showToast('Pagador excluído.', 'success');
-  });
-}
-
-document.getElementById('btn-novo-pagador').addEventListener('click', ()=>abrirFormPagador(null));
-RENDERERS.pagadores = renderPagadores;
 
 /* =========================================================
    COMPONENTE COMPARTILHADO: SELETOR DE ENDEREÇO NO MAPA
@@ -2177,7 +2326,7 @@ function abrirSeletorMapaEndereco(config){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-mapa-endereco';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:640px;max-height:92vh;overflow-y:auto;">
+    <div class="modal-box" style="max-width:min(760px, 94vw);max-height:92vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🗺️</div>
         <div>
@@ -2387,6 +2536,105 @@ function abrirSeletorMapaEndereco(config){
   }
 }
 
+/* =========================================================
+   LEITURA DE CÓDIGO DE BARRAS PELA CÂMERA (celular ou webcam)
+   Usa a API nativa do navegador (BarcodeDetector) — sem depender de
+   nenhuma biblioteca externa via CDN. Funciona bem no Chrome/Android;
+   em navegadores sem suporte (ex: Safari/iOS mais antigo), mostra um
+   aviso amigável e deixa a digitação manual como alternativa — nunca
+   trava a tela nem impede o uso do resto do formulário.
+   ========================================================= */
+function abrirLeitorCodigoBarras(onCodigoLido){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-leitor-codigo-barras';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(480px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📷</div>
+        <div>
+          <h3>Ler código de barras</h3>
+          <div class="sub">Aponte a câmera pro código de barras do produto</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;min-height:220px;display:flex;align-items:center;justify-content:center;">
+          <video id="leitor-codigo-video" style="width:100%;max-height:320px;display:none;" playsinline muted></video>
+          <div id="leitor-codigo-status" style="color:#fff;font-size:13px;padding:16px;text-align:center;">Iniciando câmera...</div>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>Ou digite o código manualmente</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="leitor-codigo-manual" style="flex:1;" placeholder="Código de barras...">
+            <button type="button" class="btn btn-primary" id="leitor-codigo-manual-btn">OK</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="leitor-codigo-fechar">Fechar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  let stream = null;
+  let parar = false;
+  function fechar(){
+    parar = true;
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    modal.remove();
+  }
+  document.getElementById('leitor-codigo-fechar').addEventListener('click', fechar);
+
+  function confirmarCodigo(codigo){
+    if(!codigo) return;
+    fechar();
+    onCodigoLido(codigo.trim());
+  }
+  document.getElementById('leitor-codigo-manual-btn').addEventListener('click', ()=>{
+    confirmarCodigo(document.getElementById('leitor-codigo-manual').value);
+  });
+  document.getElementById('leitor-codigo-manual').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); confirmarCodigo(e.target.value); }
+  });
+
+  const statusEl = document.getElementById('leitor-codigo-status');
+  const videoEl = document.getElementById('leitor-codigo-video');
+
+  if(typeof BarcodeDetector === 'undefined'){
+    statusEl.textContent = 'Leitura por câmera não é suportada neste navegador. Digite o código manualmente abaixo.';
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(async (mediaStream)=>{
+      if(parar){ mediaStream.getTracks().forEach(t=>t.stop()); return; }
+      stream = mediaStream;
+      videoEl.srcObject = stream;
+      videoEl.style.display = '';
+      statusEl.style.display = 'none';
+      await videoEl.play();
+
+      const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','codabar','itf'] });
+      async function tentarLer(){
+        if(parar) return;
+        try{
+          const codigos = await detector.detect(videoEl);
+          if(codigos && codigos.length>0){
+            confirmarCodigo(codigos[0].rawValue);
+            return;
+          }
+        }catch(err){ /* frame ilegível, ignora e tenta o próximo */ }
+        if(!parar) setTimeout(tentarLer, 300);
+      }
+      tentarLer();
+    })
+    .catch(()=>{
+      statusEl.style.display = '';
+      statusEl.textContent = 'Não foi possível acessar a câmera (permissão negada ou indisponível). Digite o código manualmente abaixo.';
+    });
+}
+
 // Liga um botão "📍 Localizar no mapa" a um par de campos de input já
 // existentes (texto do endereço + hidden opcional de lat/lng), reutilizável
 // nos três formulários que têm endereço (Cliente, Fornecedor, Local de Compra).
@@ -2484,7 +2732,10 @@ function criarModuloEndereco(config){
 
     document.getElementById(tableBodyId).innerHTML = pagina.map(item=>`
       <tr>
-        <td>${escapeHtml(item.nome)}</td>
+        <td>
+          ${escapeHtml(item.nome)}
+          ${!item.endereco ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Sem endereço cadastrado — isso impede o planejamento de rotas de coleta para este ${tituloSingular.toLowerCase()}.">⚠️ Endereço faltando</div>` : ''}
+        </td>
         <td>${escapeHtml(item.endereco||'—')}</td>
         <td>${escapeHtml(item.telefone||'—')}</td>
         <td class="num">${item.qtdProdutos}</td>
@@ -2511,7 +2762,7 @@ function criarModuloEndereco(config){
     modal.className = 'modal-overlay open';
     modal.id = `modal-form-${contentId}`;
     modal.innerHTML = `
-      <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+      <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
         <div class="modal-rapido-cabecalho">
           <div class="ic-rapido">${icone}</div>
           <div>
@@ -2651,7 +2902,7 @@ function abrirFormEnderecoRapido(config, id, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-endereco-rapido';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">${config.icone}</div>
         <div>
@@ -2782,32 +3033,99 @@ function ativarEdicaoInlineProdutos(){
   });
 }
 
-function renderLinhaProduto(p){
+// Um produto é considerado com "dados incompletos" quando falta algo que
+// normalmente faz falta mais cedo ou mais tarde (categoria, marca, fornecedor
+// ou estoque mínimo) — usado nas duas listas de Produtos (normal e Compra Local).
+function produtoDadosIncompletos(p){
+  return !(p.categoria && p.marca && p.fornecedor && p.estoqueMin!=null);
+}
+
+function iconeDadosIncompletos(p){
+  return produtoDadosIncompletos(p)
+    ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Faltam dados: ${[!p.categoria&&'categoria',!p.marca&&'marca',!p.fornecedor&&'fornecedor',p.estoqueMin==null&&'estoque mínimo'].filter(Boolean).join(', ')}.">⚠️ Dados incompletos</div>`
+    : '';
+}
+
+// "Produto parado": tem pelo menos uma venda no histórico, mas a mais
+// recente já passou do limite de dias configurado. Produto que nunca foi
+// vendido fica de fora desse alerta (não tem "parado" pra comparar).
+function getProdutosParados(diasLimite){
+  diasLimite = diasLimite!=null ? diasLimite : (STATE.config.diasProdutoParado||30);
+  const hoje = todayISO();
+  const ultimaVendaPorProduto = {};
+  STATE.vendas.filter(v=>v.status!=='cancelada').forEach(v=>{
+    (v.itens||[]).forEach(it=>{
+      if(!it.produtoId) return;
+      if(!ultimaVendaPorProduto[it.produtoId] || v.data>ultimaVendaPorProduto[it.produtoId]) ultimaVendaPorProduto[it.produtoId]=v.data;
+    });
+  });
+  return STATE.produtos
+    .filter(p=>ultimaVendaPorProduto[p.id] && Math.floor((new Date(hoje)-new Date(ultimaVendaPorProduto[p.id]))/(1000*60*60*24))>=diasLimite)
+    .map(p=>({ produto:p, ultimaVenda: ultimaVendaPorProduto[p.id] }))
+    .sort((a,b)=>a.ultimaVenda.localeCompare(b.ultimaVenda));
+}
+
+// "Cliente inativo": mesma lógica, só que por cliente e por venda (não por
+// item) — sem comprar há X dias, contando só quem já comprou alguma vez.
+function getClientesInativos(diasLimite){
+  diasLimite = diasLimite!=null ? diasLimite : (STATE.config.diasClienteInativo||60);
+  const hoje = todayISO();
+  const ultimaVendaPorCliente = {};
+  STATE.vendas.filter(v=>v.status!=='cancelada' && v.clienteId).forEach(v=>{
+    if(!ultimaVendaPorCliente[v.clienteId] || v.data>ultimaVendaPorCliente[v.clienteId]) ultimaVendaPorCliente[v.clienteId]=v.data;
+  });
+  return STATE.clientes
+    .filter(c=>ultimaVendaPorCliente[c.id] && Math.floor((new Date(hoje)-new Date(ultimaVendaPorCliente[c.id]))/(1000*60*60*24))>=diasLimite)
+    .map(c=>({ cliente:c, ultimaVenda: ultimaVendaPorCliente[c.id] }))
+    .sort((a,b)=>a.ultimaVenda.localeCompare(b.ultimaVenda));
+}
+
+// Célula compacta de código (SKU / Cód. NF / Código de Barras empilhados),
+// usada nas duas listas de Produtos para caber a informação de código de
+// barras sem precisar de mais uma coluna e sem forçar rolagem horizontal.
+function celulaCodigosProduto(p){
+  const linhas = [];
+  if(p.codigoBarras) linhas.push(`<span class="badge badge-neutral" title="Código de barras">${escapeHtml(p.codigoBarras)}</span>`);
+  if(p.codigoNF) linhas.push(`<span class="badge badge-neutral" title="Código interno (Nota Fiscal)">NF: ${escapeHtml(p.codigoNF)}</span>`);
+  if(p.sku) linhas.push(`<span class="help-text" title="SKU">${escapeHtml(p.sku)}</span>`);
+  if(linhas.length===0) return '<span class="help-text">—</span>';
+  return linhas.map(l=>`<div>${l}</div>`).join('');
+}
+
+// Célula compacta de preço (Custo / Preço de Venda / Margem empilhados),
+// usada nas duas listas de Produtos.
+function celulaPrecoProduto(p){
   const margem = p.precoVenda>0 ? ((p.precoVenda-p.custo)/p.precoVenda*100) : 0;
   const margemClasse = margem>=30?'badge-positive':(margem>=10?'badge-warning':'badge-negative');
+  return `
+    <div class="help-text">Custo: ${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</div>
+    <div>Venda: ${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</div>
+    <span class="badge ${margemClasse}">${margem.toFixed(1)}%</span>`;
+}
+
+function renderLinhaProduto(p){
   const estoqueAtual = p.estoqueAtual||0;
   const estoqueClasse = (p.estoqueMin!=null && estoqueAtual<p.estoqueMin) ? 'color:var(--negative);font-weight:700;' : '';
-  const dadosIncompletos = !(p.categoria && p.fornecedor && p.estoqueMin!=null);
   return `
     <tr ${p.criadoRapido?'style="background:var(--warning-soft);"':''}>
       <td>
         ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
-        ${p.criadoRapido && dadosIncompletos ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Complete categoria, fornecedor e estoque mínimo para este aviso sumir.">⚡ Complete os dados</div>` : ''}
+        ${iconeDadosIncompletos(p)}
         ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
       </td>
-      <td>${celulaEditavelProduto(p.id,'categoria',p.categoria||'','text')}</td>
-      <td>${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</td>
+      <td>
+        ${celulaEditavelProduto(p.id,'categoria',p.categoria||'','text')}
+        <div class="help-text">${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</div>
+      </td>
       <td>${celulaEditavelProduto(p.id,'fornecedor',p.fornecedor||'','text')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</td>
-      <td class="num"><span class="badge ${margemClasse}">${margem.toFixed(1)}%</span></td>
+      <td class="num">${celulaPrecoProduto(p)}</td>
       <td class="num" style="${estoqueClasse}">${celulaEditavelProduto(p.id,'estoqueAtual',estoqueAtual,'number')}</td>
       <td class="num">${celulaEditavelProduto(p.id,'estoqueMin',p.estoqueMin!=null?p.estoqueMin:'','number')}</td>
-      <td>${p.codigoNF ? `<span class="badge badge-neutral">${escapeHtml(p.codigoNF)}</span>` : '<span class="help-text">—</span>'}</td>
+      <td>${celulaCodigosProduto(p)}</td>
       <td>
         <div class="cell-actions">
           ${p.criadoRapido ? `<button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>` : ''}
-          <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">Mais campos</button>
+          <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
           <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
@@ -2816,24 +3134,22 @@ function renderLinhaProduto(p){
 }
 
 // Linha específica da tabela de "Compra Local": mesma edição inline (clique
-// único em qualquer célula), mas sem as colunas Categoria, Estoque Mínimo e
-// Código NF, que não fazem tanto sentido para uma compra pontual em loja local.
+// único em qualquer célula), mas sem a coluna de Estoque Mínimo, que não faz
+// tanto sentido para uma compra pontual em loja local.
 function renderLinhaProdutoCompraLocal(p){
-  const margem = p.precoVenda>0 ? ((p.precoVenda-p.custo)/p.precoVenda*100) : 0;
-  const margemClasse = margem>=30?'badge-positive':(margem>=10?'badge-warning':'badge-negative');
   const estoqueAtual = p.estoqueAtual||0;
   return `
     <tr style="background:var(--warning-soft);">
       <td>
         ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
+        ${iconeDadosIncompletos(p)}
         ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
       </td>
       <td>${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</td>
       <td>${celulaEditavelProduto(p.id,'fornecedor',p.fornecedor||'','text')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</td>
-      <td class="num"><span class="badge ${margemClasse}">${margem.toFixed(1)}%</span></td>
+      <td class="num">${celulaPrecoProduto(p)}</td>
       <td class="num">${celulaEditavelProduto(p.id,'estoqueAtual',estoqueAtual,'number')}</td>
+      <td>${celulaCodigosProduto(p)}</td>
       <td>
         <div class="cell-actions">
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
@@ -2866,7 +3182,7 @@ function filtrarProdutosPorTexto(lista, texto){
   const palavras = normalizarBusca(texto).split(/[\s#\-\/]+/).filter(Boolean);
   if(palavras.length===0) return lista;
   return lista.filter(p=>{
-    const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku].map(normalizarBusca).join(' ');
+    const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku, p.codigoBarras].map(normalizarBusca).join(' ');
     return palavras.every(palavra=>textoCompleto.includes(palavra));
   });
 }
@@ -2908,10 +3224,9 @@ function renderProdutos(){
               <th data-sort="nome">Produto</th>
               <th data-sort="marca">Marca</th>
               <th data-sort="fornecedor">Fornecedor</th>
-              <th class="num" data-sort="custo">Custo</th>
-              <th class="num" data-sort="precoVenda">Preço Venda</th>
-              <th class="num" data-sort="margem">Margem</th>
-              <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
+              <th class="num" data-sort="margem">Preço</th>
+              <th class="num" data-sort="estoqueAtual">Estoque</th>
+              <th data-sort="codigoBarras">Código</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -2926,22 +3241,19 @@ function renderProdutos(){
       <p class="help-text" style="margin-bottom:10px;">💡 Clique em qualquer valor da tabela (nome, categoria, marca, fornecedor, custo, preço, estoque) para editar direto aqui. Pressione Enter ou clique fora para salvar.</p>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar produto</label>
-        <input type="text" id="produtos-busca" placeholder="Nome, categoria, marca, fornecedor ou código...">
+        <input type="text" id="produtos-busca" placeholder="Nome, categoria, marca, fornecedor, código ou código de barras...">
       </div>
       <div class="table-wrap">
         <table class="data-table" id="tbl-produtos">
           <thead>
             <tr>
               <th data-sort="nome">Produto</th>
-              <th data-sort="categoria">Categoria</th>
-              <th data-sort="marca">Marca</th>
+              <th data-sort="categoria">Categoria / Marca</th>
               <th data-sort="fornecedor">Fornecedor</th>
-              <th class="num" data-sort="custo">Custo</th>
-              <th class="num" data-sort="precoVenda">Preço Venda</th>
-              <th class="num" data-sort="margem">Margem</th>
+              <th class="num" data-sort="margem">Preço</th>
               <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
               <th class="num" data-sort="estoqueMin">Estoque Mín.</th>
-              <th data-sort="codigoNF">Cód. NF</th>
+              <th data-sort="codigoBarras">Código</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -2995,7 +3307,7 @@ function renderTabelaProdutosNormal(produtosNormais){
   const ordenados = ordenarProdutos(filtrados, produtosSort);
   const pagina = aplicarPaginacao('produtos-normal', ordenados);
   document.getElementById('tbl-produtos-body').innerHTML = pagina.map(renderLinhaProduto).join('')
-    || `<tr><td colspan="11" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
+    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
   const pagBox = document.getElementById('produtos-paginacao');
   if(pagBox){
     pagBox.innerHTML = renderControlePaginacao('produtos-normal', ordenados.length);
@@ -3008,7 +3320,7 @@ function renderTabelaProdutosCompraLocal(produtosCompraLocal){
   const ordenados = ordenarProdutos(produtosCompraLocal, compraLocalSort);
   const pagina = aplicarPaginacao('produtos-compra-local', ordenados);
   document.getElementById('tbl-produtos-compra-local-body').innerHTML = pagina.map(renderLinhaProdutoCompraLocal).join('')
-    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum produto nesta lista.</td></tr>`;
+    || `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum produto nesta lista.</td></tr>`;
   const pagBox = document.getElementById('produtos-compra-local-paginacao');
   if(pagBox){
     pagBox.innerHTML = renderControlePaginacao('produtos-compra-local', ordenados.length);
@@ -3024,7 +3336,7 @@ function abrirFormProduto(id, onSalvo){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-produto';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">${produto&&produto.criadoRapido?'⚡':'📦'}</div>
         <div>
@@ -3045,8 +3357,8 @@ function abrirFormProduto(id, onSalvo){
               <datalist id="dl-categorias">${getCategoriasUnicas().map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
             </div>
             <div class="field">
-              <label>Marca</label>
-              <input type="text" id="fp-marca" list="dl-marcas" value="${produto?escapeAttr(produto.marca||''):''}">
+              <label>Marca <span class="req">*</span></label>
+              <input type="text" id="fp-marca" list="dl-marcas" required value="${produto?escapeAttr(produto.marca||''):''}">
               <datalist id="dl-marcas">${getMarcasUnicas().map(m=>`<option value="${escapeAttr(m)}">`).join('')}</datalist>
             </div>
             <div class="field">
@@ -3067,6 +3379,9 @@ function abrirFormProduto(id, onSalvo){
               <label>Preço de Venda (R$) <span class="req">*</span></label>
               <input type="number" step="0.01" min="0" id="fp-preco" required value="${produto?produto.precoVenda:''}">
             </div>
+            <div class="field field-full">
+              <div class="help-text" id="fp-lucro-display" style="font-size:13px;"></div>
+            </div>
             <div class="field">
               <label>Unidade de Medida</label>
               <select id="fp-unidade">
@@ -3074,8 +3389,16 @@ function abrirFormProduto(id, onSalvo){
               </select>
             </div>
             <div class="field">
+              <label>Unidades por Caixa <span class="hint">opcional</span></label>
+              <input type="number" step="1" min="1" id="fp-unidades-por-caixa" placeholder="Ex: 12" value="${produto&&produto.unidadesPorCaixa!=null?produto.unidadesPorCaixa:''}">
+            </div>
+            <div class="field">
               <label>Estoque Mínimo (alerta)</label>
               <input type="number" step="1" min="0" id="fp-estoque-min" value="${produto&&produto.estoqueMin!=null?produto.estoqueMin:''}">
+            </div>
+            <div class="field">
+              <label>Estoque Máximo</label>
+              <input type="number" step="1" min="0" id="fp-estoque-max" value="${produto&&produto.estoqueMax!=null?produto.estoqueMax:''}">
             </div>
             ${!produto ? `
             <div class="field">
@@ -3094,6 +3417,81 @@ function abrirFormProduto(id, onSalvo){
               <label>Código Interno (Nota Fiscal)</label>
               <input type="text" id="fp-codigo-nf" value="${produto?escapeAttr(produto.codigoNF||''):''}" placeholder="Código que aparece na NF do fornecedor">
             </div>
+          </div>
+
+          <details style="margin-top:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+            <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;color:var(--ink);">📋 Dados fiscais / integração TOTVS <span class="hint">opcional</span></summary>
+            <div class="form-grid" style="padding-bottom:10px;">
+              <div class="field">
+                <label>Grupo</label>
+                <input type="text" id="fp-grupo" value="${produto?escapeAttr(produto.grupo||''):''}">
+              </div>
+              <div class="field">
+                <label>Subgrupo</label>
+                <input type="text" id="fp-subgrupo" value="${produto?escapeAttr(produto.subgrupo||''):''}">
+              </div>
+              <div class="field">
+                <label>Classificação</label>
+                <input type="text" id="fp-classificacao" value="${produto?escapeAttr(produto.classificacao||''):''}">
+              </div>
+              <div class="field">
+                <label>Conf. Tributária</label>
+                <input type="text" id="fp-conf-tributaria" value="${produto?escapeAttr(produto.confTributaria||''):''}">
+              </div>
+              <div class="field">
+                <label>Origem do Item</label>
+                <select id="fp-origem-item">
+                  <option value="">Selecione...</option>
+                  ${ORIGENS_ITEM_ICMS.map(o=>`<option value="${o.v}" ${produto&&produto.origemItem===o.v?'selected':''}>${o.v} - ${escapeHtml(o.label)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>Método de Controle</label>
+                <select id="fp-metodo-controle">
+                  <option value="">Selecione...</option>
+                  ${['PEPS (FIFO)','Custo Médio','Específico'].map(m=>`<option value="${escapeAttr(m)}" ${produto&&produto.metodoControle===m?'selected':''}>${m}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>NCM</label>
+                <div style="display:flex;gap:6px;">
+                  <input type="text" id="fp-ncm" style="flex:1;" maxlength="8" placeholder="8 dígitos" value="${produto?escapeAttr(produto.ncm||''):''}">
+                  <button type="button" class="btn btn-sm" id="fp-btn-buscar-ncm" style="white-space:nowrap;">🔍 Buscar</button>
+                </div>
+                <div id="fp-ncm-sugestoes" style="margin-top:4px;"></div>
+              </div>
+              <div class="field">
+                <label>CEST</label>
+                <input type="text" id="fp-cest" value="${produto?escapeAttr(produto.cest||''):''}">
+              </div>
+              <div class="field">
+                <label>FCI</label>
+                <input type="text" id="fp-fci" value="${produto?escapeAttr(produto.fci||''):''}">
+              </div>
+              <div class="field">
+                <label>Comissão (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-comissao" value="${produto&&produto.comissaoPct!=null?produto.comissaoPct:''}">
+              </div>
+              <div class="field">
+                <label>Desconto Máximo (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-desconto-max" value="${produto&&produto.descontoMaxPct!=null?produto.descontoMaxPct:''}">
+              </div>
+              <div class="field">
+                <label>Custo de Royalties (R$)</label>
+                <input type="number" step="0.01" min="0" id="fp-custo-royalties" value="${produto&&produto.custoRoyalties!=null?produto.custoRoyalties:''}">
+              </div>
+              <div class="field">
+                <label>Royalties (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-royalties" value="${produto&&produto.royaltiesPct!=null?produto.royaltiesPct:''}">
+              </div>
+              <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="fp-decidir-preco-venda" style="width:auto;" ${produto&&produto.decidirPrecoNaVenda?'checked':''}>
+                <label for="fp-decidir-preco-venda" style="margin:0;">Permitir decidir/ajustar o preço na hora da venda</label>
+              </div>
+            </div>
+          </details>
+
+          <div class="form-grid" style="margin-top:10px;">
             <div class="field field-full">
               <label>📍 Local onde é comprado</label>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -3139,13 +3537,60 @@ function abrirFormProduto(id, onSalvo){
     });
   }
 
+  // Lucro (%/R$) ao vivo, já descontando o imposto configurado (Config >
+  // impostos) — só o imposto entra nessa conta, a comissão fica de fora
+  // porque varia por venda/vendedor e não é um custo fixo do produto.
+  function atualizarLucroDisplay(){
+    const custoAtual = parseFloat(document.getElementById('fp-custo').value);
+    const precoAtual = parseFloat(document.getElementById('fp-preco').value);
+    const display = document.getElementById('fp-lucro-display');
+    if(isNaN(custoAtual) || isNaN(precoAtual) || precoAtual<=0){ display.textContent = ''; return; }
+    const impostoPct = (STATE.config && STATE.config.impostoPct) || 0;
+    const impostoValor = precoAtual * impostoPct/100;
+    const lucroValor = precoAtual - custoAtual - impostoValor;
+    const lucroPct = precoAtual>0 ? (lucroValor/precoAtual*100) : 0;
+    display.innerHTML = `💰 Lucro (já descontando ${impostoPct}% de imposto): <strong style="color:${lucroValor>=0?'var(--positive)':'var(--negative)'};">${fmtMoney(lucroValor)} (${lucroPct.toFixed(1)}%)</strong>`;
+  }
+  document.getElementById('fp-custo').addEventListener('input', atualizarLucroDisplay);
+  document.getElementById('fp-preco').addEventListener('input', atualizarLucroDisplay);
+  atualizarLucroDisplay();
+
+  // Busca de NCM por descrição (BrasilAPI) — só sugere, nunca preenche
+  // sozinho: o usuário precisa clicar numa sugestão pra confirmar.
+  document.getElementById('fp-btn-buscar-ncm').addEventListener('click', async ()=>{
+    const termo = (document.getElementById('fp-nome').value || '').trim();
+    const sugestoesBox = document.getElementById('fp-ncm-sugestoes');
+    if(!termo){ showToast('Preencha o nome do produto pra buscar o NCM.', 'error'); return; }
+    sugestoesBox.innerHTML = `<span class="help-text">Buscando sugestões de NCM...</span>`;
+    try{
+      const resp = await fetch(`https://brasilapi.com.br/api/ncm/v1?search=${encodeURIComponent(termo)}`);
+      if(!resp.ok) throw new Error('Falha na busca');
+      const resultados = await resp.json();
+      if(!Array.isArray(resultados) || resultados.length===0){
+        sugestoesBox.innerHTML = `<span class="help-text">Nenhuma sugestão encontrada para "${escapeHtml(termo)}". Preencha o NCM manualmente se souber.</span>`;
+        return;
+      }
+      sugestoesBox.innerHTML = `<div class="help-text" style="margin-bottom:4px;">Clique numa sugestão para preencher (confira antes de salvar):</div>` +
+        resultados.slice(0,8).map(r=>`<div class="combo-option ncm-sugestao" data-ncm="${escapeAttr(r.codigo)}" style="cursor:pointer;padding:5px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:3px;font-size:12.5px;"><strong>${escapeHtml(r.codigo)}</strong> — ${escapeHtml(r.descricao||'')}</div>`).join('');
+      sugestoesBox.querySelectorAll('.ncm-sugestao').forEach(el=>{
+        el.addEventListener('click', ()=>{
+          document.getElementById('fp-ncm').value = el.dataset.ncm;
+          sugestoesBox.innerHTML = `<span class="help-text">NCM preenchido a partir da sugestão. Confira se está correto.</span>`;
+        });
+      });
+    }catch(err){
+      sugestoesBox.innerHTML = `<span class="help-text" style="color:var(--negative);">Não foi possível buscar sugestões agora (sem internet ou serviço fora do ar). Preencha o NCM manualmente se souber.</span>`;
+    }
+  });
+
   document.getElementById('form-produto').addEventListener('submit', (e)=>{
     e.preventDefault();
     const nome = document.getElementById('fp-nome').value.trim();
+    const marca = document.getElementById('fp-marca').value.trim();
     const custo = parseFloat(document.getElementById('fp-custo').value);
     const precoVenda = parseFloat(document.getElementById('fp-preco').value);
-    if(!nome || isNaN(custo) || isNaN(precoVenda)){
-      showToast('Preencha nome, custo e preço de venda.', 'error');
+    if(!nome || !marca || isNaN(custo) || isNaN(precoVenda)){
+      showToast('Preencha nome, marca, custo e preço de venda.', 'error');
       return;
     }
     const codigoNF = document.getElementById('fp-codigo-nf').value.trim();
@@ -3157,21 +3602,44 @@ function abrirFormProduto(id, onSalvo){
       }
     }
     const estoqueMinRaw = document.getElementById('fp-estoque-min').value;
+    const estoqueMaxRaw = document.getElementById('fp-estoque-max').value;
+    const unidadesPorCaixaRaw = document.getElementById('fp-unidades-por-caixa').value;
+    const comissaoRaw = document.getElementById('fp-comissao').value;
+    const descontoMaxRaw = document.getElementById('fp-desconto-max').value;
+    const custoRoyaltiesRaw = document.getElementById('fp-custo-royalties').value;
+    const royaltiesPctRaw = document.getElementById('fp-royalties').value;
     const fornecedorIdSelecionado = document.getElementById('fp-fornecedor-id').value || null;
     const fornecedorSelecionado = STATE.fornecedores.find(f=>f.id===fornecedorIdSelecionado);
     const data = {
       nome,
       categoria: document.getElementById('fp-categoria').value.trim(),
-      marca: document.getElementById('fp-marca').value.trim(),
+      marca,
       fornecedorId: fornecedorIdSelecionado,
       fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '', // mantido por compatibilidade com telas que ainda leem o nome direto
       custo, precoVenda,
       unidade: document.getElementById('fp-unidade').value,
+      unidadesPorCaixa: unidadesPorCaixaRaw!=='' ? parseInt(unidadesPorCaixaRaw,10) : null,
       estoqueMin: estoqueMinRaw!=='' ? parseFloat(estoqueMinRaw) : null,
+      estoqueMax: estoqueMaxRaw!=='' ? parseFloat(estoqueMaxRaw) : null,
       sku: document.getElementById('fp-sku').value.trim(),
       codigoBarras: document.getElementById('fp-codigo-barras').value.trim(),
       codigoNF,
       obs: document.getElementById('fp-obs').value.trim(),
+      // Dados fiscais / integração TOTVS (todos opcionais)
+      grupo: document.getElementById('fp-grupo').value.trim(),
+      subgrupo: document.getElementById('fp-subgrupo').value.trim(),
+      classificacao: document.getElementById('fp-classificacao').value.trim(),
+      confTributaria: document.getElementById('fp-conf-tributaria').value.trim(),
+      origemItem: document.getElementById('fp-origem-item').value || null,
+      metodoControle: document.getElementById('fp-metodo-controle').value || null,
+      ncm: document.getElementById('fp-ncm').value.trim(),
+      cest: document.getElementById('fp-cest').value.trim(),
+      fci: document.getElementById('fp-fci').value.trim(),
+      comissaoPct: comissaoRaw!=='' ? parseFloat(comissaoRaw) : null,
+      descontoMaxPct: descontoMaxRaw!=='' ? parseFloat(descontoMaxRaw) : null,
+      custoRoyalties: custoRoyaltiesRaw!=='' ? parseFloat(custoRoyaltiesRaw) : null,
+      royaltiesPct: royaltiesPctRaw!=='' ? parseFloat(royaltiesPctRaw) : null,
+      decidirPrecoNaVenda: document.getElementById('fp-decidir-preco-venda').checked,
     };
     const localCompraEl = document.getElementById('fp-local-compra-id');
     if(localCompraEl){
@@ -3220,7 +3688,7 @@ function abrirMesclagemProduto(produtoBaseId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-mesclagem-produto';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:680px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(1080px, 94vw);width:1080px;max-height:92vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🔗</div>
         <div>
@@ -3252,6 +3720,14 @@ function abrirMesclagemProduto(produtoBaseId){
                 <option value="">Selecione...</option>
                 ${STATE.fornecedores.map(f=>`<option value="${f.id}" ${produtoBase.fornecedorId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}
               </select>
+            </div>
+            <div class="field">
+              <label>Código de Barras</label>
+              <input type="text" id="mp-codigo-barras" value="${escapeAttr(produtoBase.codigoBarras||'')}">
+            </div>
+            <div class="field">
+              <label>NCM</label>
+              <input type="text" id="mp-ncm" maxlength="8" value="${escapeAttr(produtoBase.ncm||'')}">
             </div>
             <div class="field">
               <label>Custo Unitário (R$) <span class="req">*</span></label>
@@ -3295,19 +3771,36 @@ function abrirMesclagemProduto(produtoBaseId){
       <div class="table-wrap" style="margin-top:8px;max-height:260px;overflow-y:auto;">
         <table class="data-table">
           <thead>
-            <tr><th></th><th>Produto</th><th>Marca</th><th>Fornecedor</th><th class="num">Custo</th><th class="num">Preço Venda</th><th class="num">Estoque</th></tr>
+            <tr><th></th><th>Produto</th><th>Marca</th><th>Fornecedor</th><th>Código de Barras</th><th>NCM</th><th class="num">Custo</th><th class="num">Preço Venda</th><th class="num">Estoque</th></tr>
           </thead>
           <tbody>
-            ${candidatos.map(p=>`
+            <tr style="background:#FAFBFC;font-weight:600;">
+              <td></td>
+              <td>${escapeHtml(produtoBase.nome)} <span class="badge badge-neutral">base</span></td>
+              <td>${escapeHtml(produtoBase.marca||'—')}</td>
+              <td>${escapeHtml(produtoBase.fornecedor||'—')}</td>
+              <td>${escapeHtml(produtoBase.codigoBarras||'—')}</td>
+              <td>${escapeHtml(produtoBase.ncm||'—')}</td>
+              <td class="num">${fmtMoney(produtoBase.custo)}</td>
+              <td class="num">${fmtMoney(produtoBase.precoVenda)}</td>
+              <td class="num">${fmtNum(produtoBase.estoqueAtual||0)}</td>
+            </tr>
+            ${candidatos.map(p=>{
+              const mesmoBarras = p.codigoBarras && produtoBase.codigoBarras && p.codigoBarras===produtoBase.codigoBarras;
+              const mesmoNcm = p.ncm && produtoBase.ncm && p.ncm===produtoBase.ncm;
+              return `
               <tr>
                 <td><input type="checkbox" class="mp-check" data-id="${p.id}" ${selecionados.has(p.id)?'checked':''}></td>
                 <td>${escapeHtml(p.nome)}${p.criadoRapido?' <span class="badge badge-warning">⚡</span>':''}</td>
                 <td>${escapeHtml(p.marca||'—')}</td>
                 <td>${escapeHtml(p.fornecedor||'—')}</td>
+                <td${mesmoBarras?' style="color:var(--positive);font-weight:700;" title="Mesmo código de barras do produto base"':''}>${escapeHtml(p.codigoBarras||'—')}</td>
+                <td${mesmoNcm?' style="color:var(--positive);font-weight:700;" title="Mesmo NCM do produto base"':''}>${escapeHtml(p.ncm||'—')}</td>
                 <td class="num">${fmtMoney(p.custo)}</td>
                 <td class="num">${fmtMoney(p.precoVenda)}</td>
                 <td class="num">${fmtNum(p.estoqueAtual||0)}</td>
-              </tr>`).join('')}
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       </div>`;
@@ -3343,6 +3836,8 @@ function abrirMesclagemProduto(produtoBaseId){
       marca: document.getElementById('mp-marca').value.trim(),
       fornecedorId: fornecedorIdSelecionado,
       fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '',
+      codigoBarras: document.getElementById('mp-codigo-barras').value.trim(),
+      ncm: document.getElementById('mp-ncm').value.trim(),
       custo, precoVenda,
       localCompraId,
       ondeComprado: localSelecionado ? localSelecionado.nome : ''
@@ -3458,6 +3953,20 @@ function apagarTodosProdutos(){
 
 function getCategoriasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.categoria).filter(Boolean))]; }
 function getMarcasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.marca).filter(Boolean))]; }
+
+// Códigos de Origem do Item (ICMS), usados no cadastro de produto (campo
+// "Origem do Item" da integração TOTVS).
+const ORIGENS_ITEM_ICMS = [
+  {v:'0', label:'Nacional'},
+  {v:'1', label:'Estrangeira - Importação direta'},
+  {v:'2', label:'Estrangeira - Adquirida no mercado interno'},
+  {v:'3', label:'Nacional - Conteúdo de importação > 40%'},
+  {v:'4', label:'Nacional - Processos produtivos básicos'},
+  {v:'5', label:'Nacional - Conteúdo de importação ≤ 40%'},
+  {v:'6', label:'Estrangeira - Importação direta, sem similar nacional'},
+  {v:'7', label:'Estrangeira - Mercado interno, sem similar nacional'},
+  {v:'8', label:'Nacional - Conteúdo de importação > 70%'}
+];
 function getFornecedoresUnicos(){ return [...new Set(STATE.produtos.map(p=>p.fornecedor).filter(Boolean))]; }
 // "Onde foi comprado" — locais de compra já usados em produtos de Compra Local
 function getLocaisCompraUnicos(){ return [...new Set(STATE.produtos.map(p=>p.ondeComprado).filter(Boolean))]; }
@@ -3493,7 +4002,7 @@ function abrirConfigTotvs(onSalvo){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-config-totvs';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:520px;">
+    <div class="modal-box" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <h3>Configurar Integração TOTVS</h3>
       <p class="help-text">
         Endereço do servidor-ponte (Render) e a chave de acesso configurada lá em
@@ -4186,14 +4695,17 @@ function escapeAttr(str){ return escapeHtml(str); }
    Gera um input de texto + dropdown filtrado em tempo real, no lugar
    de um <select> nativo (que não filtra por texto digitado).
    ========================================================= */
-function renderComboboxProduto(inputId, hiddenId, opcoes, valorInicialId, placeholder){
+function renderComboboxProduto(inputId, hiddenId, opcoes, valorInicialId, placeholder, comLeitorCodigoBarras){
   // opcoes: [{id, label, sub}]
   const inicial = valorInicialId ? opcoes.find(o=>o.id===valorInicialId) : null;
   return `
-    <div class="combo-wrap" id="${inputId}-wrap">
-      <input type="text" id="${inputId}" autocomplete="off" placeholder="${placeholder||'Digite para buscar...'}" value="${inicial?escapeAttr(inicial.label):''}">
-      <input type="hidden" id="${hiddenId}" value="${valorInicialId||''}">
-      <div class="combo-dropdown" id="${inputId}-dropdown"></div>
+    <div class="combo-wrap" id="${inputId}-wrap" style="${comLeitorCodigoBarras?'display:flex;gap:6px;align-items:flex-start;':''}">
+      <div style="flex:1;position:relative;">
+        <input type="text" id="${inputId}" autocomplete="off" placeholder="${placeholder||'Digite para buscar...'}" value="${inicial?escapeAttr(inicial.label):''}">
+        <input type="hidden" id="${hiddenId}" value="${valorInicialId||''}">
+        <div class="combo-dropdown" id="${inputId}-dropdown"></div>
+      </div>
+      ${comLeitorCodigoBarras ? `<button type="button" class="btn btn-sm" id="${inputId}-scan" title="Ler código de barras pela câmera" style="white-space:nowrap;">📷</button>` : ''}
     </div>
   `;
 }
@@ -4236,7 +4748,7 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
     }
     const palavras = normalizar(textoBusca).split(/[\s#\-\/]+/).filter(Boolean);
     let resultado = palavras.length===0 ? opcoes.slice() : opcoes.filter(o=>{
-      const textoCompleto = normalizar(o.label) + ' ' + normalizar(o.sub||'');
+      const textoCompleto = normalizar(o.label) + ' ' + normalizar(o.sub||'') + ' ' + normalizar(o.buscaExtra||'');
       return palavras.every(p=>textoCompleto.includes(p));
     });
     if(priorizarCompraLocal){
@@ -4331,6 +4843,30 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
     }
   });
 
+  // opcoesExtra.comLeitorCodigoBarras: liga o botão 📷 (quando o HTML foi
+  // gerado com renderComboboxProduto(..., true)) à leitura por câmera —
+  // ao ler um código, procura o produto correspondente e já seleciona ele
+  // direto, sem precisar digitar nada.
+  if(opcoesExtra && opcoesExtra.comLeitorCodigoBarras){
+    const btnScan = document.getElementById(inputId+'-scan');
+    if(btnScan){
+      btnScan.addEventListener('click', ()=>{
+        abrirLeitorCodigoBarras((codigo)=>{
+          const encontrado = opcoes.find(o=>o.buscaExtra && normalizar(o.buscaExtra).includes(normalizar(codigo)));
+          if(encontrado){
+            selecionar(encontrado);
+            showToast(`Produto "${encontrado.label}" encontrado pelo código de barras.`, 'success');
+          }else{
+            input.value = codigo;
+            hidden.value = '';
+            renderDropdown(filtrar(codigo));
+            showToast('Nenhum produto cadastrado com esse código de barras — mostrando busca por texto.', 'error');
+          }
+        });
+      });
+    }
+  }
+
   // devolve um controlador simples pra quem chamou poder ligar/desligar o
   // filtro "somente Compra Local" de fora (ex: via um checkbox na tela)
   return {
@@ -4366,7 +4902,7 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-cadastro-rapido-produto';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">⚡</div>
         <div>
@@ -4498,6 +5034,7 @@ function opcoesProdutosCombobox(){
     id: p.id,
     label: p.nome,
     sub: [p.marca, p.fornecedor, p.categoria].filter(Boolean).join(' · '),
+    buscaExtra: [p.codigoBarras, p.sku].filter(Boolean).join(' '),
     criadoRapido: !!p.criadoRapido
   }));
 }
@@ -4925,7 +5462,7 @@ function abrirHistoricoComprasCliente(clienteId, destino){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-historico-compras-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:900px;max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(1020px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🧾</div>
         <div>
@@ -5144,6 +5681,7 @@ function renderVenda(){
             <option value="">Selecione...</option>
             ${STATE.pagadores.map(p=>`<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}
           </select>
+          <div class="help-text">Não achou o pagador? Marque o papel "🏦 Também é usado como Pagador" no cadastro dele em Clientes.</div>
         </div>
         <div class="field" id="v-wrap-repasse-pct" style="display:none;">
           <label>Percentual de Repasse <span class="req">*</span></label>
@@ -5206,7 +5744,7 @@ function renderVenda(){
         <div class="field">
           <label>Produto</label>
           <div style="display:flex;gap:6px;align-items:flex-end;">
-            <div style="flex:1;min-width:0;">${renderComboboxProduto('v-item-produto-busca', 'v-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}</div>
+            <div style="flex:1;min-width:0;">${renderComboboxProduto('v-item-produto-busca', 'v-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}</div>
             <button type="button" class="btn btn-sm" id="v-btn-editar-produto" style="display:none;flex-shrink:0;" title="Editar dados deste produto">✏️</button>
           </div>
         </div>
@@ -5328,7 +5866,7 @@ function renderVenda(){
       document.getElementById('v-btn-editar-produto').style.display = p ? '' : 'none';
       atualizarSubtotalELucroItem();
       mostrarHistoricoPrecoItem(opt.id);
-    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoVenda});
+    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoVenda, comLeitorCodigoBarras: true});
     const checkboxCompraLocal = document.getElementById('v-filtro-compra-local');
     if(checkboxCompraLocal){
       checkboxCompraLocal.addEventListener('change', (e)=>{
@@ -5550,7 +6088,7 @@ function abrirEdicaoItemCarrinho(idx){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-item-carrinho';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:440px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✎</div>
         <div>
@@ -6062,6 +6600,50 @@ RENDERERS['lancar-venda'] = renderVenda;
    ========================================================= */
 let carrinhoOrcamentoAtual = [];
 let orcamentoEmEdicaoId = null;
+const RASCUNHO_ORCAMENTO_KEY = 'gv_rascunho_orcamento_v1';
+
+// Salva automaticamente o que está sendo digitado no formulário de
+// orçamento (cliente, data, itens, etc.) — se a aba fechar ou o navegador
+// travar antes de clicar em "Salvar Orçamento", dá pra retomar de onde
+// parou na próxima vez que abrir a aba de Orçamentos. Só salva rascunho
+// de verdade quando tem algo preenchido (cliente OU item), pra não sujar
+// o localStorage com rascunhos vazios.
+function salvarRascunhoOrcamento(){
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return; // formulário não está na tela
+  const clienteId = clienteEl.value;
+  if(!clienteId && carrinhoOrcamentoAtual.length===0){
+    localStorage.removeItem(RASCUNHO_ORCAMENTO_KEY);
+    return;
+  }
+  const rascunho = {
+    clienteId,
+    data: document.getElementById('orc-data').value,
+    validadeDias: document.getElementById('orc-validade').value,
+    vendedor: document.getElementById('orc-vendedor').value,
+    observacoes: document.getElementById('orc-obs').value,
+    itens: carrinhoOrcamentoAtual,
+    orcamentoEmEdicaoId,
+    salvoEm: new Date().toISOString()
+  };
+  localStorage.setItem(RASCUNHO_ORCAMENTO_KEY, JSON.stringify(rascunho));
+}
+function limparRascunhoOrcamento(){
+  localStorage.removeItem(RASCUNHO_ORCAMENTO_KEY);
+}
+// Confirmação nativa do navegador ao tentar sair/fechar a aba com um
+// orçamento em andamento (cliente escolhido ou item já adicionado, mas
+// ainda não salvo) — o texto exato é controlado pelo próprio navegador por
+// segurança, mas o aviso "tem certeza que quer sair?" aparece do mesmo jeito.
+window.addEventListener('beforeunload', (e)=>{
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return;
+  const temAlgoNaoSalvo = clienteEl.value || carrinhoOrcamentoAtual.length>0;
+  if(temAlgoNaoSalvo){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 function renderOrcamentos(){
   const box = document.getElementById('orcamentos-content');
@@ -6080,6 +6662,7 @@ function renderOrcamentos(){
   }
 
   box.innerHTML = `
+    <div id="orc-rascunho-banner"></div>
     <div class="card">
       <h3 id="orc-form-titulo">1. Dados do Orçamento</h3>
       <div class="form-grid">
@@ -6091,6 +6674,7 @@ function renderOrcamentos(){
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
             </select>
             <button type="button" class="btn btn-sm" id="orc-btn-novo-cliente" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+            <button type="button" class="btn btn-sm" id="orc-btn-editar-cliente" title="Editar dados deste cliente" style="flex-shrink:0;display:none;">✏️</button>
             <button type="button" class="btn btn-sm" id="orc-btn-historico-compras" title="Ver produtos que este cliente já comprou antes" style="flex-shrink:0;white-space:nowrap;display:none;">🧾 Histórico</button>
           </div>
         </div>
@@ -6112,6 +6696,7 @@ function renderOrcamentos(){
             <option value="">Selecione...</option>
             ${STATE.pagadores.map(p=>`<option value="${p.id}">${escapeHtml(p.nome)}</option>`).join('')}
           </select>
+          <div class="help-text">Não achou o pagador? Marque o papel "🏦 Também é usado como Pagador" no cadastro dele em Clientes.</div>
         </div>
         <div class="field" id="orc-wrap-repasse-pct" style="display:none;">
           <label>Percentual de Repasse <span class="req">*</span></label>
@@ -6176,17 +6761,27 @@ function renderOrcamentos(){
         <div class="field">
           <label>Produto</label>
           <div style="display:flex;gap:6px;align-items:flex-end;">
-            <div style="flex:1;min-width:0;">${renderComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}</div>
+            <div style="flex:1;min-width:0;">${renderComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}</div>
             <button type="button" class="btn btn-sm" id="orc-btn-editar-produto" style="display:none;flex-shrink:0;" title="Editar dados deste produto">✏️</button>
           </div>
         </div>
         <div class="field">
-          <label>Quantidade</label>
+          <label id="orc-item-qtd-label">Quantidade</label>
           <input type="number" id="orc-item-qtd" min="0.01" step="0.01" value="1" style="text-align:center;">
         </div>
         <div class="field">
           <label>Preço unit. (R$)</label>
           <input type="number" id="orc-item-preco" min="0" step="0.01" style="text-align:center;">
+        </div>
+        <div class="field" id="orc-item-caixa-wrap" style="display:none;min-width:170px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+            <input type="checkbox" id="orc-item-vender-caixa" style="width:auto;">
+            📦 Vender em caixa <span id="orc-item-caixa-info" class="help-text" style="margin:0;"></span>
+          </label>
+          <label id="orc-item-caixa-padrao-wrap" style="display:none;align-items:center;gap:6px;font-size:12px;margin-top:4px;cursor:pointer;color:var(--ink-soft);">
+            <input type="checkbox" id="orc-item-caixa-padrao" style="width:auto;">
+            Tornar padrão para este produto
+          </label>
         </div>
         <div class="field">
           <label>Origem da coleta</label>
@@ -6203,8 +6798,8 @@ function renderOrcamentos(){
       <div class="help-text" id="orc-item-info" style="display:none;margin:-6px 0 10px 0;padding:6px 10px;background:#F5F8FA;border-radius:var(--radius-sm);"></div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Produto</th><th>Qtd</th><th>Preço Unit.</th><th>Origem</th><th>Subtotal</th><th></th></tr></thead>
-          <tbody id="orc-carrinho-body"><tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr></tbody>
+          <thead><tr><th>Produto</th><th>Unidade</th><th>Qtd</th><th>Preço Unit.</th><th>Origem</th><th>Subtotal</th><th></th></tr></thead>
+          <tbody id="orc-carrinho-body"><tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -6254,6 +6849,7 @@ function renderOrcamentos(){
           <div class="help-text" id="orc-kpi-repasse-real-mizu" style="margin-top:2px;"></div>
         </div>
         <div class="kpi-card"><div class="kpi-label">Lucro Líquido Previsto</div><div class="kpi-value positive" id="orc-kpi-lucro">R$ 0,00</div></div>
+        <div class="kpi-card"><div class="kpi-label">Margem do Orçamento</div><div class="kpi-value positive" id="orc-kpi-margem">0,0%</div></div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="orc-btn-salvar">Salvar Orçamento</button>
@@ -6263,9 +6859,27 @@ function renderOrcamentos(){
 
     <div class="card">
       <h3>Orçamentos Lançados</h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <div class="field" style="margin:0;min-width:180px;">
+          <label style="font-size:12px;">Filtrar por status</label>
+          <select id="orc-lista-filtro-status" onchange="renderListaOrcamentos()">
+            <option value="">Todos</option>
+            <option value="pendente">Pendente</option>
+            <option value="aprovado">Aprovado</option>
+            <option value="enviado">Enviado</option>
+            <option value="recusado">Recusado</option>
+            <option value="expirado">Expirado</option>
+            <option value="convertido">Virou Venda</option>
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:16px;">
+          <input type="checkbox" id="orc-lista-mostrar-convertidos" style="width:auto;" onchange="renderListaOrcamentos()">
+          Mostrar orçamentos já convertidos em venda
+        </label>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Locais de coleta</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
       </div>
@@ -6285,11 +6899,23 @@ function renderOrcamentos(){
     const btnHist = document.getElementById('orc-btn-historico-compras');
     const temCompras = clienteId && STATE.vendas.some(v=>v.clienteId===clienteId && v.status!=='cancelada');
     btnHist.style.display = temCompras ? '' : 'none';
+    document.getElementById('orc-btn-editar-cliente').style.display = clienteId ? '' : 'none';
   }
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
   atualizarBotaoHistoricoComprasOrcamento();
   document.getElementById('orc-btn-historico-compras').addEventListener('click', ()=>{
     abrirHistoricoComprasCliente(document.getElementById('orc-cliente').value, 'orcamento');
+  });
+  // Reaproveita o MESMO formulário/componente de Cliente usado na aba
+  // Clientes — abre direto de dentro do Orçamento, sem precisar navegar.
+  document.getElementById('orc-btn-editar-cliente').addEventListener('click', ()=>{
+    const clienteId = document.getElementById('orc-cliente').value;
+    if(!clienteId) return;
+    abrirFormCliente(clienteId, (clienteAtualizado)=>{
+      const select = document.getElementById('orc-cliente');
+      select.innerHTML = `<option value="">Selecione...</option>` +
+        STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteAtualizado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
+    });
   });
 
   ativarComboboxProdutoOrcamento();
@@ -6298,6 +6924,61 @@ function renderOrcamentos(){
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
   document.getElementById('orc-btn-cancelar-edicao').addEventListener('click', cancelarEdicaoOrcamento);
+
+  // Auto-save do rascunho: qualquer mudança dentro do formulário (campo ou
+  // item do carrinho) agenda um salvamento silencioso, com um pequeno atraso
+  // pra não salvar a cada tecla digitada.
+  let timeoutRascunho = null;
+  box.addEventListener('input', ()=>{
+    clearTimeout(timeoutRascunho);
+    timeoutRascunho = setTimeout(salvarRascunhoOrcamento, 800);
+  });
+  box.addEventListener('change', ()=>{
+    clearTimeout(timeoutRascunho);
+    timeoutRascunho = setTimeout(salvarRascunhoOrcamento, 300);
+  });
+
+  // Se existir um rascunho salvo (de uma sessão anterior que não chegou a
+  // salvar o orçamento), oferece retomar — só quando não estamos no meio de
+  // uma edição de orçamento já existente, pra não confundir os dois fluxos.
+  if(!orcamentoEmEdicaoId){
+    const rascunhoBruto = localStorage.getItem(RASCUNHO_ORCAMENTO_KEY);
+    if(rascunhoBruto){
+      try{
+        const rascunho = JSON.parse(rascunhoBruto);
+        if(rascunho && (rascunho.clienteId || (rascunho.itens&&rascunho.itens.length>0))){
+          const dataFmt = rascunho.salvoEm ? new Date(rascunho.salvoEm).toLocaleString('pt-BR') : '';
+          document.getElementById('orc-rascunho-banner').innerHTML = `
+            <div class="card" style="background:#FFF8E6;border:1px solid #E8C468;margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <div>💡 Você tem um orçamento não finalizado${dataFmt?` (salvo automaticamente em ${dataFmt})`:''}. Quer continuar de onde parou?</div>
+                <div class="cell-actions">
+                  <button class="btn btn-sm btn-primary" id="orc-rascunho-retomar">Retomar rascunho</button>
+                  <button class="btn btn-sm" id="orc-rascunho-descartar">Descartar</button>
+                </div>
+              </div>
+            </div>`;
+          document.getElementById('orc-rascunho-retomar').addEventListener('click', ()=>{
+            document.getElementById('orc-cliente').value = rascunho.clienteId||'';
+            document.getElementById('orc-data').value = rascunho.data||todayISO();
+            document.getElementById('orc-validade').value = rascunho.validadeDias||7;
+            document.getElementById('orc-vendedor').value = rascunho.vendedor||'';
+            document.getElementById('orc-obs').value = rascunho.observacoes||'';
+            carrinhoOrcamentoAtual = rascunho.itens||[];
+            atualizarBotaoHistoricoComprasOrcamento();
+            renderCarrinhoOrcamento();
+            atualizarResumoOrcamento();
+            document.getElementById('orc-rascunho-banner').innerHTML = '';
+            showToast('Rascunho retomado.', 'success');
+          });
+          document.getElementById('orc-rascunho-descartar').addEventListener('click', ()=>{
+            limparRascunhoOrcamento();
+            document.getElementById('orc-rascunho-banner').innerHTML = '';
+          });
+        }
+      }catch(e){ limparRascunhoOrcamento(); }
+    }
+  }
 
   // Mesma lógica de repasse já usada em Lançar Venda: marcar o checkbox
   // mostra pagador + percentual; desmarcar limpa tudo
@@ -6414,8 +7095,18 @@ function atualizarResumoOrcamento(){
   document.getElementById('orc-kpi-imposto').textContent = fmtMoney(c.imposto);
   document.getElementById('orc-kpi-comissao').textContent = fmtMoney(c.comissao);
   const lucroEl = document.getElementById('orc-kpi-lucro');
-  lucroEl.textContent = fmtMoney(c.lucro+acrescimo);
-  lucroEl.className = 'kpi-value ' + ((c.lucro+acrescimo)>=0?'positive':'negative');
+  const lucroTotal = c.lucro+acrescimo;
+  lucroEl.textContent = fmtMoney(lucroTotal);
+  lucroEl.className = 'kpi-value ' + (lucroTotal>=0?'positive':'negative');
+
+  // margem do orçamento inteiro (não só por item) — pedido explícito do
+  // relatório, pra dar uma visão geral de rentabilidade antes de fechar
+  const margemEl = document.getElementById('orc-kpi-margem');
+  if(margemEl){
+    const margemPct = brutoTotal>0 ? (lucroTotal/brutoTotal*100) : 0;
+    margemEl.textContent = margemPct.toFixed(1)+'%';
+    margemEl.className = 'kpi-value ' + (margemPct>=0?'positive':'negative');
+  }
 
   const temRepasseEl = document.getElementById('orc-tem-repasse');
   const kpiRepasseCard = document.getElementById('orc-kpi-repasse-card');
@@ -6452,6 +7143,35 @@ function mostrarHistoricoPrecoItemOrcamento(produtoId){
   box.style.display = '';
 }
 
+// Mostra/esconde o toggle "Vender em caixa" conforme o produto selecionado
+// tenha ou não um fator de conversão (Unidades por Caixa) cadastrado, e
+// pré-marca o toggle se esse for o padrão salvo no cadastro do produto.
+function atualizarToggleVenderCaixa(p){
+  const wrap = document.getElementById('orc-item-caixa-wrap');
+  const checkbox = document.getElementById('orc-item-vender-caixa');
+  const padraoWrap = document.getElementById('orc-item-caixa-padrao-wrap');
+  const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
+  const info = document.getElementById('orc-item-caixa-info');
+  const label = document.getElementById('orc-item-qtd-label');
+  if(!p || !p.unidadesPorCaixa || p.unidadesPorCaixa<=1){
+    wrap.style.display = 'none';
+    checkbox.checked = false;
+    padraoWrap.style.display = 'none';
+    label.textContent = 'Quantidade';
+    return;
+  }
+  wrap.style.display = '';
+  info.textContent = `(${p.unidadesPorCaixa} ${p.unidade||'UN'} cada)`;
+  checkbox.checked = !!p.venderEmCaixaPadrao;
+  padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
+  padraoCheckbox.checked = false;
+  label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+  checkbox.onchange = ()=>{
+    label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+    padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
+  };
+}
+
 function ativarComboboxProdutoOrcamento(){
   const controlador = ativarComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), (opt)=>{
     const p = STATE.produtos.find(x=>x.id===opt.id);
@@ -6461,9 +7181,10 @@ function ativarComboboxProdutoOrcamento(){
     if(p && p.localCompraId) selectOrigem.value = `loc:${p.localCompraId}`;
     else if(p && p.fornecedorId) selectOrigem.value = `forn:${p.fornecedorId}`;
     else selectOrigem.value = '';
+    atualizarToggleVenderCaixa(p);
     mostrarHistoricoPrecoItemOrcamento(opt.id);
     atualizarPreviewItemOrcamento();
-  }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoOrcamento});
+  }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoOrcamento, comLeitorCodigoBarras: true});
   const checkboxCompraLocal = document.getElementById('orc-filtro-compra-local');
   if(checkboxCompraLocal){
     checkboxCompraLocal.addEventListener('change', (e)=>{
@@ -6525,9 +7246,28 @@ function adicionarItemAoOrcamento(){
     }
   }
 
+  // "Vender em caixa": quando marcado, a quantidade digitada é o número de
+  // CAIXAS, não de unidades — a quantidade real (usada em estoque, custo e
+  // total) é convertida pelo fator "Unidades por Caixa" do produto. A
+  // descrição da linha ("2 CX (24 UN)") fica editável depois, no carrinho.
+  const checkboxCaixa = document.getElementById('orc-item-vender-caixa');
+  const vendendoEmCaixaAtivo = !!(checkboxCaixa && checkboxCaixa.checked && p.unidadesPorCaixa>1);
+  let qtdCaixas = null, qtdReal = qtd, descricaoLinha = null;
+  if(vendendoEmCaixaAtivo){
+    qtdCaixas = qtd;
+    qtdReal = qtd * p.unidadesPorCaixa;
+    descricaoLinha = `${fmtNum(qtdCaixas)} CX (${fmtNum(qtdReal)} ${p.unidade||'UN'})`;
+    const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
+    if(padraoCheckbox && padraoCheckbox.checked){
+      p.venderEmCaixaPadrao = true;
+      saveState();
+    }
+  }
+
   carrinhoOrcamentoAtual.push({
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
-    custoUnit: p.custo, precoUnit: preco, qtd,
+    custoUnit: p.custo, precoUnit: preco, qtd: qtdReal, unidade: p.unidade||'UN',
+    vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?p.unidadesPorCaixa:null, descricaoLinha,
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
   });
   renderCarrinhoOrcamento();
@@ -6539,6 +7279,7 @@ function adicionarItemAoOrcamento(){
   document.getElementById('orc-item-preco').value = '';
   document.getElementById('orc-item-origem-id').value = '';
   document.getElementById('orc-item-info').style.display = 'none';
+  atualizarToggleVenderCaixa(null);
 }
 
 function removerItemOrcamento(idx){
@@ -6607,25 +7348,28 @@ function renderCarrinhoOrcamento(){
   const tbody = document.getElementById('orc-carrinho-body');
   if(!tbody) return;
   if(carrinhoOrcamentoAtual.length===0){
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr>`;
     return;
   }
-  const opcoesOrigem = (selecionadoTipo, selecionadoId)=>`
-    <option value="">(a definir)</option>
-    ${fornecedoresComEndereco().length ? `<optgroup label="Fornecedores">${fornecedoresComEndereco().map(f=>`<option value="forn:${f.id}" ${selecionadoTipo==='forn'&&selecionadoId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}</optgroup>` : ''}
-    ${locaisCompraComEndereco().length ? `<optgroup label="Locais de Compra">${locaisCompraComEndereco().map(l=>`<option value="loc:${l.id}" ${selecionadoTipo==='loc'&&selecionadoId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}</optgroup>` : ''}
-    <option value="novo">➕ Cadastrar novo local de coleta...</option>
-  `;
   tbody.innerHTML = carrinhoOrcamentoAtual.map((it,idx)=>`
     <tr>
       <td>${escapeHtml(it.nome)}</td>
-      <td><input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)"></td>
+      <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
+      <td>
+        <input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)">
+        ${it.vendidoEmCaixa ? `<input type="text" value="${escapeAttr(it.descricaoLinha||'')}" title="Descrição da linha (só exibição, editável)" style="width:110px;margin-top:3px;padding:2px 5px;font-size:11px;color:var(--ink-soft);display:block;" onchange="editarDescricaoLinhaItemOrcamento(${idx}, this.value)">` : ''}
+      </td>
       <td><input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)"></td>
-      <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${opcoesOrigem(it.origemTipo, it.origemId)}</select></td>
+      <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
       <td><button class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})">Remover</button></td>
     </tr>
   `).join('');
+}
+
+function editarDescricaoLinhaItemOrcamento(idx, novoValor){
+  if(!carrinhoOrcamentoAtual[idx]) return;
+  carrinhoOrcamentoAtual[idx].descricaoLinha = novoValor.trim();
 }
 
 // Edita quantidade/preço de um item JÁ no carrinho, direto na tabela — sem
@@ -6701,6 +7445,7 @@ function salvarOrcamento(){
     delete orcamento.desconto; if(desconto) orcamento.desconto = desconto;
     delete orcamento.acrescimo; if(acrescimo) orcamento.acrescimo = acrescimo;
     saveState();
+    limparRascunhoOrcamento();
     showToast('Orçamento atualizado.', 'success');
     orcamentoEmEdicaoId = null;
     renderOrcamentos();
@@ -6717,6 +7462,7 @@ function salvarOrcamento(){
 
   STATE.orcamentos.push(orcamento);
   saveState();
+  limparRascunhoOrcamento();
   showToast('Orçamento salvo.', 'success');
   renderOrcamentos();
 }
@@ -6821,13 +7567,42 @@ function locaisCompraComEndereco(){
   return STATE.locaisCompra.filter(l=>l.endereco && l.endereco.trim());
 }
 
+// Select de origem de coleta reaproveitado tanto no carrinho de orçamento
+// (ainda não salvo) quanto no detalhe de um orçamento JÁ salvo (edição da
+// origem a partir do aviso de "entregas sem rota definida" em Logística).
+function renderOpcoesOrigemSelect(selecionadoTipo, selecionadoId){
+  return `
+    <option value="">(a definir)</option>
+    ${fornecedoresComEndereco().length ? `<optgroup label="Fornecedores">${fornecedoresComEndereco().map(f=>`<option value="forn:${f.id}" ${selecionadoTipo==='forn'&&selecionadoId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}</optgroup>` : ''}
+    ${locaisCompraComEndereco().length ? `<optgroup label="Locais de Compra">${locaisCompraComEndereco().map(l=>`<option value="loc:${l.id}" ${selecionadoTipo==='loc'&&selecionadoId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}</optgroup>` : ''}
+    <option value="novo">➕ Cadastrar novo local de coleta...</option>
+  `;
+}
+
 const statusOrcamentoLabel = {
   pendente: '<span class="badge badge-neutral">Pendente</span>',
   aprovado: '<span class="badge badge-positive">Aprovado</span>',
   enviado: '<span class="badge badge-info">Enviado</span>',
   recusado: '<span class="badge badge-negative">Recusado</span>',
+  expirado: '<span class="badge" style="background:#F5E6D8;color:#A15C1E;">Expirado</span>',
   convertido: '<span class="badge badge-positive">Virou Venda</span>'
 };
+
+// Passa pra "Expirado" automaticamente todo orçamento ainda 'pendente' cuja
+// validade (data + validadeDias) já passou — orçamento aprovado/enviado/
+// recusado/convertido nunca expira sozinho, só pendente sem resposta do
+// cliente. Rodado sempre antes de renderizar a lista.
+function atualizarOrcamentosExpirados(){
+  const hoje = todayISO();
+  let mudou = false;
+  STATE.orcamentos.forEach(o=>{
+    if(o.status==='pendente' && addDays(o.data, o.validadeDias) < hoje){
+      o.status = 'expirado';
+      mudou = true;
+    }
+  });
+  if(mudou) saveState();
+}
 
 // Status de ENTREGA — independente do status comercial acima. Nasce
 // 'nenhum' (orçamento nem foi aprovado ainda), vira 'em_rota' automaticamente
@@ -6843,9 +7618,27 @@ const statusEntregaLabel = {
 function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
-  const orcamentosOrdenados = [...STATE.orcamentos].sort((a,b)=>b.data<a.data?-1:1);
+  atualizarOrcamentosExpirados();
+
+  const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
+  const mostrarConvertidos = document.getElementById('orc-lista-mostrar-convertidos') ? document.getElementById('orc-lista-mostrar-convertidos').checked : false;
+
+  let lista = [...STATE.orcamentos];
+  // por padrão, orçamento já convertido em venda sai da lista (o histórico
+  // dele já vive normalmente na aba Vendas, como venda de verdade) — só
+  // aparece aqui de volta se marcar "Mostrar convertidos" ou filtrar por
+  // esse status explicitamente
+  if(!mostrarConvertidos && filtroStatus!=='convertido'){
+    lista = lista.filter(o=>o.status!=='convertido');
+  }
+  if(filtroStatus){
+    lista = lista.filter(o=>o.status===filtroStatus);
+  }
+  // mais antigo primeiro (ordem cronológica) — pedido do usuário
+  const orcamentosOrdenados = lista.sort((a,b)=> a.data<b.data ? -1 : (a.data>b.data ? 1 : 0));
+
   if(orcamentosOrdenados.length===0){
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento lançado ainda.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
     return;
   }
   tbody.innerHTML = orcamentosOrdenados.map(o=>{
@@ -6853,14 +7646,12 @@ function renderListaOrcamentos(){
     const c = calcularVenda(o);
     const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
     const validadeAte = addDays(o.data, o.validadeDias);
-    const locais = getLocaisColetaOrcamento(o);
     const jaConvertido = o.status==='convertido';
-    // status COMERCIAL efetivo pro dropdown: uma vez convertido, o dropdown
-    // continua mostrando "Aprovado" selecionado (não existe opção
-    // "Convertido" nele) — o rótulo "Virou Venda" aparece à parte, na
-    // coluna de Entrega, pra não esconder de qual dos 4 status comerciais
-    // ele veio.
-    const statusComercialSelect = jaConvertido ? 'aprovado' : o.status;
+    // status COMERCIAL efetivo pro dropdown: convertido/expirado não são
+    // opções selecionáveis no dropdown (esse último é automático) — mapeia
+    // pro valor mais próximo, só pra manter o select coerente. Escolher
+    // manualmente outro status ali "reativa" um orçamento expirado.
+    const statusComercialSelect = jaConvertido ? 'aprovado' : (o.status==='expirado' ? 'pendente' : o.status);
     const statusEntrega = o.statusEntrega || 'nenhum';
     return `
       <tr>
@@ -6870,11 +7661,10 @@ function renderListaOrcamentos(){
         <td class="num">${fmtMoney(c.brutoOriginal+acrescimo)}</td>
         <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
         <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
-        <td>${locais.length ? locais.map(l=>`<span class="badge badge-neutral" style="margin:1px;">${escapeHtml(l)}</span>`).join('') : '<span class="help-text">A definir</span>'}</td>
         <td>
-          <select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
+          ${jaConvertido || o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
             ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-          </select>
+          </select>`}
         </td>
         <td>${statusEntregaLabel[statusEntrega]}</td>
         <td>
@@ -6882,7 +7672,9 @@ function renderListaOrcamentos(){
             <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
             <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
             ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+            ${!jaConvertido && o.status==='aprovado' ? `<button class="btn btn-sm btn-primary" onclick="converterOrcamentoEmVenda('${o.id}')">💰 Converter em Venda</button>` : ''}
             ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
+            <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
             ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
           </div>
         </td>
@@ -6890,16 +7682,43 @@ function renderListaOrcamentos(){
   }).join('');
 }
 
+// Copia um orçamento existente (cliente, itens, condições) como ponto de
+// partida pra um novo — útil pra cliente recorrente que compra sempre
+// parecido. A cópia já entra salva como 'pendente' e abre direto no
+// formulário de edição pra revisar/ajustar antes de mandar pro cliente.
+function duplicarOrcamento(id){
+  const original = STATE.orcamentos.find(o=>o.id===id);
+  if(!original) return;
+  const copia = {
+    ...original,
+    id: uid('orc'),
+    status: 'pendente',
+    statusEntrega: 'nenhum',
+    data: todayISO(),
+    criadoEm: new Date().toISOString(),
+    itens: original.itens.map(it=>({...it}))
+  };
+  delete copia.vendaGeradaId;
+  if(original.desconto) copia.desconto = {...original.desconto};
+  if(original.acrescimo) copia.acrescimo = {...original.acrescimo};
+  STATE.orcamentos.push(copia);
+  saveState();
+  showToast('Orçamento duplicado — revise e salve.', 'success');
+  renderListaOrcamentos();
+  editarOrcamento(copia.id);
+}
+
 function mudarStatusOrcamento(id, novoStatus){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
   orcamento.status = novoStatus;
-  // Ao aprovar, o orçamento vira venda de verdade automaticamente (entra nas
-  // contas e no dashboard igual qualquer venda) e já nasce "em rota de
-  // entrega" — não existe mais um passo manual de "Converter em Venda"
-  // separado, o próprio ato de aprovar já faz as duas coisas.
-  if(novoStatus==='aprovado'){
-    converterOrcamentoEmVendaAutomatico(orcamento);
+  // Aprovar NÃO converte mais em venda automaticamente — vira só "em rota de
+  // entrega", pra dar tempo de corrigir valores/itens antes da venda virar
+  // definitiva (o "Converter em Venda" agora é uma ação separada e manual,
+  // veja converterOrcamentoEmVenda). Só marca em_rota se a entrega ainda nem
+  // começou, pra não voltar atrás um pedido que já foi marcado como entregue.
+  if(novoStatus==='aprovado' && (!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum')){
+    orcamento.statusEntrega = 'em_rota';
   }
   saveState();
   showToast('Status atualizado.', 'success');
@@ -6995,37 +7814,35 @@ function executarConversaoOrcamentoEmVenda(orcamento){
   return venda;
 }
 
-// Fluxo MANUAL (botão "Converter em Venda", com confirmação) — mantido como
-// atalho pra orçamentos que já estavam aprovados antes desta função existir,
-// ou casos em que o usuário mudou o status sem querer e precisa converter
-// depois manualmente.
+// Ação MANUAL e ÚNICA de conversão (botão "Converter em Venda") — separada
+// de "aprovar" e de "marcar entrega feita" (marcarEntregaConcluida, em
+// Logística). As três ações são independentes: dá pra aprovar sem converter,
+// converter sem ter marcado entrega feita, ou marcar entrega feita antes de
+// converter — o usuário decide a ordem que faz sentido pro caso dele. A
+// baixa de estoque só acontece aqui, no momento da conversão de verdade.
 function converterOrcamentoEmVenda(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
+    showToast('Este orçamento já foi convertido em venda.', 'error');
+    return;
+  }
 
   confirmAction(
     'Converter em Venda',
-    'Isso vai gerar uma venda de verdade a partir deste orçamento, com o mesmo desconto, comissão e repasse já configurados. O orçamento fica marcado como "Virou Venda" e não pode mais ser editado. Deseja continuar?',
+    'Isso vai gerar uma venda de verdade a partir deste orçamento (com os valores atuais), dar baixa no estoque e somar ele nas contas/dashboard. O orçamento fica marcado como "Virou Venda" e sai da lista de Orçamentos Lançados. Deseja continuar?',
     ()=>{
       executarConversaoOrcamentoEmVenda(orcamento);
-      orcamento.statusEntrega = 'em_rota';
+      // só avança o status de entrega se ele ainda nem tinha começado —
+      // se já estava "em_rota" ou "entregue" (fluxo independente), preserva.
+      if(!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum'){
+        orcamento.statusEntrega = 'em_rota';
+      }
       saveState();
       showToast('Orçamento convertido em venda com sucesso.', 'success');
       renderListaOrcamentos();
     }
   );
-}
-
-// Fluxo AUTOMÁTICO — disparado direto de mudarStatusOrcamento() quando o
-// status vira 'aprovado': já converte em venda de verdade (entra nas contas
-// e no dashboard normalmente) e já marca como "em rota de entrega", sem
-// precisar de um clique extra em "Converter em Venda". Só age se ainda não
-// tiver sido convertido antes (evita duplicar venda se o usuário voltar o
-// status pra aprovado de novo por engano).
-function converterOrcamentoEmVendaAutomatico(orcamento){
-  if(orcamento.status==='convertido' || orcamento.vendaGeradaId) return;
-  executarConversaoOrcamentoEmVenda(orcamento);
-  orcamento.statusEntrega = 'em_rota';
 }
 
 // Gera o PDF do orçamento pra enviar ao cliente — com logo, dados da
@@ -7042,7 +7859,7 @@ function gerarPdfOrcamento(id){
 
   const linhasItens = orcamento.itens.map(it=>`
     <tr>
-      <td>${fmtNum(it.qtd)}</td>
+      <td>${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
       <td>${escapeHtml(it.nome)}${it.marca?` — ${escapeHtml(it.marca)}`:''}</td>
       <td style="text-align:right;">${fmtMoney(it.precoUnit)}</td>
       <td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>
@@ -7122,13 +7939,14 @@ function gerarPdfOrcamento(id){
 // toda vez do zero.
 function abrirOpcoesControleEntrega(id){
   const prefsSalvas = JSON.parse(localStorage.getItem('gv_prefs_controle_entrega')||'{}');
-  const comLogo = prefsSalvas.comLogo !== false; // default true
+  const comLogo = prefsSalvas.comLogo === true; // default AGORA é desmarcado
+  const comPreco = prefsSalvas.comPreco === true; // default desmarcado (só quantitativo)
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-opcoes-controle-entrega';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🚚</div>
         <div>
@@ -7140,6 +7958,10 @@ function abrirOpcoesControleEntrega(id){
         <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink);cursor:pointer;">
           <input type="checkbox" id="oce-com-logo" style="width:auto;" ${comLogo?'checked':''}>
           Mostrar logo e nome da empresa no topo
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ink);cursor:pointer;margin-top:8px;">
+          <input type="checkbox" id="oce-com-preco" style="width:auto;" ${comPreco?'checked':''}>
+          Mostrar valor de cada item (senão mostra só a quantidade)
         </label>
         <div class="form-actions">
           <button type="button" class="btn" id="oce-cancelar">Cancelar</button>
@@ -7153,7 +7975,7 @@ function abrirOpcoesControleEntrega(id){
   document.getElementById('oce-confirmar').addEventListener('click', ()=>{
     const opcoes = {
       comLogo: document.getElementById('oce-com-logo').checked,
-      comPreco: true // por enquanto sempre mostra o preço — pode virar opção depois, se pedido
+      comPreco: document.getElementById('oce-com-preco').checked
     };
     localStorage.setItem('gv_prefs_controle_entrega', JSON.stringify(opcoes));
     modal.remove();
@@ -7162,7 +7984,7 @@ function abrirOpcoesControleEntrega(id){
 }
 
 function gerarPdfControleEntrega(id, opcoes){
-  opcoes = opcoes || { comLogo: true, comPreco: true };
+  opcoes = opcoes || { comLogo: false, comPreco: false };
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
@@ -7172,12 +7994,14 @@ function gerarPdfControleEntrega(id, opcoes){
 
   // Documento pro CLIENTE conferir e assinar. A origem de coleta é
   // informação interna da loja e nunca entra aqui. Preço por item e total
-  // geral são opcionais (opcoes.comPreco) — item 4 da especificação.
+  // geral são opcionais (opcoes.comPreco) — item 4 da especificação. O nome
+  // do produto aparece puro, sem o complemento de marca (pedido do usuário).
   const linhasItens = orcamento.itens.map((it,idx)=>`
     <tr>
       <td>${idx+1}</td>
-      <td>${escapeHtml(it.nome)}${it.marca?` — ${escapeHtml(it.marca)}`:''}</td>
-      <td style="text-align:center;">${fmtNum(it.qtd)}</td>
+      <td>${escapeHtml(it.nome)}</td>
+      <td style="text-align:center;">${escapeHtml(it.unidade||'UN')}</td>
+      <td style="text-align:center;">${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
       ${opcoes.comPreco ? `<td style="text-align:right;">${fmtMoney(it.precoUnit)}</td><td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>` : ''}
     </tr>
   `).join('');
@@ -7236,9 +8060,9 @@ function gerarPdfControleEntrega(id, opcoes){
 
       <h2>Itens desta entrega</h2>
       <table>
-        <thead><tr><th>Item</th><th>Produto</th><th>Qtd</th>${opcoes.comPreco ? '<th style="text-align:right;">Vlr Unit.</th><th style="text-align:right;">Vlr Total</th>' : ''}</tr></thead>
+        <thead><tr><th>Item</th><th>Produto</th><th>Unidade</th><th>Qtd</th>${opcoes.comPreco ? '<th style="text-align:right;">Vlr Unit.</th><th style="text-align:right;">Vlr Total</th>' : ''}</tr></thead>
         <tbody>${linhasItens}</tbody>
-        ${opcoes.comPreco ? `<tfoot><tr><td colspan="4" style="text-align:right;">Total Geral</td><td style="text-align:right;">${fmtMoney(totalGeral)}</td></tr></tfoot>` : ''}
+        ${opcoes.comPreco ? `<tfoot><tr><td colspan="5" style="text-align:right;">Total Geral</td><td style="text-align:right;">${fmtMoney(totalGeral)}</td></tr></tfoot>` : ''}
       </table>
 
       ${orcamento.observacoes ? `<div class="obs"><strong>Observações:</strong> ${escapeHtml(orcamento.observacoes)}</div>` : ''}
@@ -7256,6 +8080,8 @@ function gerarPdfControleEntrega(id, opcoes){
 function verDetalheOrcamento(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  const modalExistente = document.getElementById('modal-detalhe-orcamento');
+  if(modalExistente) modalExistente.remove(); // evita duplicar a modal ao reabrir (ex: depois de editar origem)
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const c = calcularVenda(orcamento);
   const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
@@ -7264,7 +8090,7 @@ function verDetalheOrcamento(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-orcamento';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📋</div>
         <div>
@@ -7273,15 +8099,17 @@ function verDetalheOrcamento(id){
         </div>
       </div>
       <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">💡 Pode trocar a origem de coleta de qualquer item aqui embaixo — assim que escolher, o roteiro de Logística é recalculado automaticamente.</p>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Preço Unit.</th><th>Origem</th><th class="num">Subtotal</th></tr></thead>
+            <thead><tr><th>Produto</th><th>Unidade</th><th class="num">Qtd</th><th class="num">Preço Unit.</th><th>Origem</th><th class="num">Subtotal</th></tr></thead>
             <tbody>
-              ${orcamento.itens.map(it=>`<tr>
+              ${orcamento.itens.map((it,idx)=>`<tr>
                 <td>${escapeHtml(it.nome)}</td>
+                <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
                 <td class="num">${fmtNum(it.qtd)}</td>
                 <td class="num">${fmtMoney(it.precoUnit)}</td>
-                <td>${escapeHtml(it.origem)}</td>
+                <td><select style="padding:4px 6px;font-size:12.5px;" onchange="editarOrigemItemOrcamentoSalvo('${orcamento.id}', ${idx}, this.value)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
                 <td class="num">${fmtMoney(it.qtd*it.precoUnit)}</td>
               </tr>`).join('')}
             </tbody>
@@ -7304,6 +8132,42 @@ function verDetalheOrcamento(id){
   `;
   document.body.appendChild(modal);
   document.getElementById('dorc-fechar').addEventListener('click', ()=>modal.remove());
+}
+
+// Edita a origem de coleta de um item de um orçamento JÁ SALVO (diferente de
+// editarOrigemItemOrcamento, que mexe no carrinho ainda não salvo) — usado
+// principalmente a partir do aviso "Entregas sem rota definida" em
+// Logística, pra resolver ali mesmo o item sem origem e já ver o roteiro
+// recalculado, sem precisar ir em Orçamentos > Editar.
+function editarOrigemItemOrcamentoSalvo(orcamentoId, idx, novoValor){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  const item = orcamento.itens[idx];
+  if(!item) return;
+  if(novoValor==='novo'){
+    abrirFormLocalCompraRapido(null, (novoLocal)=>{
+      item.origemTipo = 'loc'; item.origemId = novoLocal.id; item.origem = novoLocal.nome; item.origemEndereco = novoLocal.endereco||'';
+      saveState();
+      showToast('Origem atualizada — roteiro recalculado.', 'success');
+      verDetalheOrcamento(orcamentoId); // reabre o modal já com a origem nova
+      if(document.getElementById('logistica-content')) renderLogistica();
+    });
+    return;
+  }
+  if(!novoValor){
+    item.origemTipo = null; item.origemId = null; item.origem = '(a definir)'; item.origemEndereco = '';
+  }else{
+    const [tipo, id] = novoValor.split(':');
+    const lista = tipo==='forn' ? STATE.fornecedores : STATE.locaisCompra;
+    const encontrado = lista.find(x=>x.id===id);
+    if(encontrado){
+      item.origemTipo = tipo; item.origemId = id; item.origem = encontrado.nome; item.origemEndereco = encontrado.endereco||'';
+    }
+  }
+  saveState();
+  showToast('Origem atualizada — roteiro recalculado.', 'success');
+  verDetalheOrcamento(orcamentoId);
+  if(document.getElementById('logistica-content')) renderLogistica();
 }
 
 RENDERERS['orcamentos'] = renderOrcamentos;
@@ -7339,6 +8203,8 @@ function getDadosLogistica(){
 
   const entregas = orcamentosEmRota.map(o=>{
     const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    const c = calcularVenda(o);
+    const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
     return {
       orcamentoId: o.id,
       clienteId: o.clienteId,
@@ -7346,6 +8212,8 @@ function getDadosLogistica(){
       endereco: cliente ? cliente.endereco : '',
       lat: cliente ? cliente.lat : null,
       lng: cliente ? cliente.lng : null,
+      data: o.data,
+      valor: c.bruto + acrescimo,
       itens: o.itens.map(it=>({
         nome: it.nome, qtd: it.qtd,
         origemTipo: it.origemTipo, origemId: it.origemId, origemNome: it.origem
@@ -7466,7 +8334,75 @@ function calcularRoteiro(){
   // aparecem à parte, como pendência a resolver, não fazem parte da rota
   const entregasBloqueadas = entregasPendentes.filter(e=>e.itensRestantes.size>0);
 
-  return { roteiro, entregasBloqueadas };
+  return { roteiro: otimizarRoteiro2opt(roteiro), entregasBloqueadas };
+}
+
+// Segunda etapa de otimização (2-opt): o algoritmo guloso acima escolhe
+// sempre o ponto mais próximo NO MOMENTO, o que pode gerar zigue-zague
+// (ex: ir longe, voltar perto de onde já passou). O 2-opt testa inverter
+// trechos do roteiro pra ver se o trajeto total fica mais curto, mas só
+// aceita a troca se a ordem resultante continuar respeitando a regra de
+// precedência: uma entrega só pode vir depois de TODAS as coletas de que
+// ela depende. Roda algumas passadas (limitadas, pra não travar a tela em
+// rotas muito grandes) até não conseguir mais encurtar o trajeto.
+function otimizarRoteiro2opt(roteiro){
+  if(roteiro.length<4) return roteiro; // rotas curtas não têm o que reordenar
+
+  const dependenciasPorEntrega = new Map(); // orcamentoId -> Set de chaves de coleta necessárias
+  roteiro.forEach(stop=>{
+    if(stop.tipo==='entrega'){
+      const chaves = new Set((stop.itens||[]).filter(it=>it.origemTipo&&it.origemId).map(it=>`${it.origemTipo}:${it.origemId}`));
+      dependenciasPorEntrega.set(stop.orcamentoId, chaves);
+    }
+  });
+
+  function precedenciaValida(ordem){
+    const coletadoAteAqui = new Set();
+    for(const stop of ordem){
+      if(stop.tipo==='coleta'){
+        coletadoAteAqui.add(stop.chave);
+      }else{
+        const deps = dependenciasPorEntrega.get(stop.orcamentoId);
+        if(deps){ for(const dep of deps){ if(!coletadoAteAqui.has(dep)) return false; } }
+      }
+    }
+    return true;
+  }
+
+  function distanciaTotalRota(ordem){
+    let total = 0;
+    let lat = STATE.config.lojaLat, lng = STATE.config.lojaLng;
+    for(const stop of ordem){
+      if(lat!=null && lng!=null && stop.lat!=null && stop.lng!=null){
+        total += distanciaKm(lat, lng, stop.lat, stop.lng);
+      }
+      if(stop.lat!=null && stop.lng!=null){ lat = stop.lat; lng = stop.lng; }
+    }
+    return total;
+  }
+
+  let melhor = [...roteiro];
+  let melhorDist = distanciaTotalRota(melhor);
+  let melhorou = true;
+  let passadas = 0;
+  const LIMITE_PASSADAS = 25; // segurança: evita travar a tela em rotas muito grandes
+  while(melhorou && passadas < LIMITE_PASSADAS){
+    melhorou = false;
+    passadas++;
+    for(let i=0; i<melhor.length-1; i++){
+      for(let j=i+1; j<melhor.length; j++){
+        const candidato = melhor.slice(0,i).concat(melhor.slice(i,j+1).reverse(), melhor.slice(j+1));
+        if(!precedenciaValida(candidato)) continue;
+        const dist = distanciaTotalRota(candidato);
+        if(dist < melhorDist - 0.001){
+          melhor = candidato;
+          melhorDist = dist;
+          melhorou = true;
+        }
+      }
+    }
+  }
+  return melhor;
 }
 
 function renderLogistica(){
@@ -7501,10 +8437,17 @@ function renderLogistica(){
 
   const { roteiro, entregasBloqueadas } = calcularRoteiro();
 
+  // mapa orcamentoId -> nome do cliente, só pra mostrar na tela (nunca no
+  // PDF de coleta) pra qual cliente é cada item que precisa ser pego ali
+  const clienteNomePorOrcamento = new Map(entregas.map(e=>[e.orcamentoId, e.clienteNome]));
+
   const linhasRoteiro = roteiro.map((p,idx)=>{
     if(p.tipo==='coleta'){
       const itensAgrupados = p.itens.reduce((acc,it)=>{
-        acc[it.nome] = (acc[it.nome]||0) + it.qtd;
+        if(!acc[it.nome]) acc[it.nome] = { qtd:0, destinos:{} };
+        acc[it.nome].qtd += it.qtd;
+        const nomeCliente = clienteNomePorOrcamento.get(it.orcamentoId) || '?';
+        acc[it.nome].destinos[nomeCliente] = (acc[it.nome].destinos[nomeCliente]||0) + it.qtd;
         return acc;
       },{});
       return `
@@ -7517,8 +8460,13 @@ function renderLogistica(){
             </div>
           </div>
           <table class="data-table" style="margin-top:10px;">
-            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th></tr></thead>
-            <tbody>${Object.entries(itensAgrupados).map(([nome,qtd])=>`<tr><td>${escapeHtml(nome)}</td><td class="num">${fmtNum(qtd)}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th><th>Para quem é</th></tr></thead>
+            <tbody>${Object.entries(itensAgrupados).map(([nome,info])=>`
+              <tr>
+                <td>${escapeHtml(nome)}</td>
+                <td class="num">${fmtNum(info.qtd)}</td>
+                <td style="font-size:12px;color:var(--ink-soft);">${Object.entries(info.destinos).map(([cli,qtd])=>`${escapeHtml(cli)} (${fmtNum(qtd)})`).join(', ')}</td>
+              </tr>`).join('')}</tbody>
           </table>
         </div>`;
     }else{
@@ -7542,8 +8490,31 @@ function renderLogistica(){
       ${entregasBloqueadas.map(e=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);">${escapeHtml(e.clienteNome)} <button class="btn btn-sm" style="margin-left:8px;" onclick="verDetalheOrcamento('${e.orcamentoId}')">Ver Itens</button></div>`).join('')}
     </div>` : '';
 
-  box.innerHTML = cardPartida + `
+  // Visão resumida em tabela — pedida como um jeito mais rápido de ver todas
+  // as entregas em rota de uma vez (data, cliente, valor, status), com opção
+  // de marcar como entregue direto na linha, sem precisar rolar os cards.
+  const tabelaEntregas = `
     <div class="card">
+      <h3>📋 Entregas em Rota</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>
+            ${entregas.map(e=>`
+              <tr>
+                <td>${fmtDate(e.data)}</td>
+                <td>${escapeHtml(e.clienteNome)}</td>
+                <td class="num">${fmtMoney(e.valor)}</td>
+                <td><span class="badge badge-warning">Em rota</span></td>
+                <td><button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${e.orcamentoId}')">✓ Marcar Entregue</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  box.innerHTML = cardPartida + tabelaEntregas + `
+    <div class="card" style="margin-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           <h3 style="margin:0;">Roteiro do dia</h3>
@@ -7624,14 +8595,16 @@ function gerarPdfRoteiro(){
         acc[it.nome] = (acc[it.nome]||0) + it.qtd;
         return acc;
       },{});
-      const itensTexto = Object.entries(itensAgrupados).map(([nome,qtd])=>`${escapeHtml(nome)} (${fmtNum(qtd)})`).join(' · ');
+      // itens em 3 colunas (em vez de um por linha) pra caber mais coisa
+      // numa folha só de impressão, como pedido.
+      const itensColunas = Object.entries(itensAgrupados).map(([nome,qtd])=>`<span>${escapeHtml(nome)} (${fmtNum(qtd)})</span>`).join('');
       return `
         <div class="parada parada-coleta">
           <div class="numero">${idx+1}</div>
           <div class="corpo">
             <div class="linha-topo"><span class="selo">COLETA</span><h3>📦 ${escapeHtml(p.nome)}</h3></div>
             <div class="endereco">${escapeHtml(p.endereco||'Endereço não cadastrado')}</div>
-            <div class="itens-compactos">${itensTexto}</div>
+            <div class="itens-3col">${itensColunas}</div>
           </div>
         </div>`;
     }else{
@@ -7674,7 +8647,7 @@ function gerarPdfRoteiro(){
         .selo-entrega{ background:#EDE4FA; color:#6B3FA0; }
         .corpo h3{ font-size:12.5px; margin:0; }
         .endereco{ font-size:10.5px; color:#666; margin-top:1px; }
-        .itens-compactos{ font-size:10.5px; color:#333; margin-top:2px; }
+        .itens-3col{ font-size:10.5px; color:#333; margin-top:3px; display:grid; grid-template-columns:repeat(3, 1fr); gap:2px 10px; }
         .bloqueadas{ margin-top:10px; font-size:10.5px; color:#B23B3B; background:#FBEAEA; padding:6px 10px; border-radius:6px; }
         @media print{ body{ padding:8px 14px; } .parada{ padding:4px 0; } }
       </style>
@@ -7743,7 +8716,7 @@ function abrirMapaRoteiro(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-mapa-roteiro';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;max-height:92vh;overflow-y:auto;">
+    <div class="modal-box" style="max-width:min(1180px, 96vw);width:1180px;max-height:94vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🗺️</div>
         <div>
@@ -7752,7 +8725,12 @@ function abrirMapaRoteiro(){
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <div id="mapa-roteiro-leaflet" style="width:100%;height:440px;border-radius:8px;background:#e9ecef;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <input type="text" id="mapa-roteiro-busca" placeholder="Buscar um endereço no mapa (ex: nome de rua)..." style="flex:1;min-width:220px;">
+          <button type="button" class="btn btn-sm" id="mapa-roteiro-btn-busca">🔍 Buscar</button>
+        </div>
+        <div id="mapa-roteiro-leaflet" style="width:100%;height:min(640px, 68vh);border-radius:8px;background:#e9ecef;"></div>
+        <div id="mapa-roteiro-status" class="help-text" style="margin-top:6px;"></div>
         <div class="form-actions">
           <button type="button" class="btn" id="mapa-roteiro-fechar">Fechar</button>
         </div>
@@ -7770,9 +8748,16 @@ function abrirMapaRoteiro(){
   setTimeout(()=>{
     try{
       const mapa = L.map('mapa-roteiro-leaflet');
+
+      // Duas camadas alternáveis (Mapa/Satélite) via o controle de camadas
+      // padrão do Leaflet, no canto do mapa.
       const camadaRuas = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
         maxZoom: 19, attribution: 'Tiles © Esri — Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P'
       }).addTo(mapa);
+      const camadaSatelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics'
+      });
+      L.control.layers({ 'Mapa': camadaRuas, 'Satélite': camadaSatelite }).addTo(mapa);
 
       const pontosLatLng = comCoordenada.map(p=>[p.lat, p.lng]);
       mapa.fitBounds(pontosLatLng, { padding: [30,30] });
@@ -7793,10 +8778,56 @@ function abrirMapaRoteiro(){
           .bindPopup(`<strong>Parada ${idx+1} · ${p.tipo==='coleta'?'Coleta':'Entrega'}</strong><br>${escapeHtml(nomeExibicao)}`);
       });
 
-      // linha ligando as paradas na ordem calculada — só entre pontos que
-      // TÊM coordenada (pontos sem localização são "pulados" na linha
-      // visual, mas continuam existindo na lista/PDF do roteiro)
-      L.polyline(pontosLatLng, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
+      // linha reta entre as paradas — desenhada IMEDIATAMENTE, pra sempre
+      // ter alguma linha visível mesmo se a busca de rota real (abaixo)
+      // falhar ou demorar (sem internet, serviço fora do ar, etc.)
+      const linhaReta = L.polyline(pontosLatLng, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
+
+      // tenta buscar uma rota seguindo ruas de verdade (OSRM, serviço
+      // público gratuito) — se conseguir, troca a linha reta por essa;
+      // se falhar por qualquer motivo, a linha reta tracejada continua
+      // valendo, então o roteiro nunca fica sem uma linha visual.
+      if(pontosLatLng.length>=2){
+        const statusEl = document.getElementById('mapa-roteiro-status');
+        statusEl.textContent = 'Calculando trajeto seguindo as ruas...';
+        const coordsOsrm = pontosLatLng.map(([lat,lng])=>`${lng},${lat}`).join(';');
+        fetch(`https://router.project-osrm.org/route/v1/driving/${coordsOsrm}?overview=full&geometries=geojson`)
+          .then(r=>r.ok?r.json():Promise.reject(new Error('Falha na busca de rota')))
+          .then(dados=>{
+            if(dados.code!=='Ok' || !dados.routes || !dados.routes[0]) throw new Error('Sem rota encontrada');
+            const coordsRota = dados.routes[0].geometry.coordinates.map(([lng,lat])=>[lat,lng]);
+            mapa.removeLayer(linhaReta);
+            L.polyline(coordsRota, { color:'#1B4B5A', weight:4, opacity:0.8 }).addTo(mapa);
+            const km = (dados.routes[0].distance/1000).toFixed(1);
+            statusEl.textContent = `Trajeto seguindo as ruas — aproximadamente ${km} km.`;
+          })
+          .catch(()=>{
+            statusEl.textContent = 'Não foi possível calcular o trajeto seguindo as ruas agora — mostrando linha reta entre as paradas.';
+          });
+      }
+
+      // busca de endereço dentro do próprio mapa (Nominatim), só pra
+      // orientação — não adiciona ponto novo ao roteiro, só centraliza
+      // o mapa ali (ex: conferir onde fica uma rua antes de sair).
+      document.getElementById('mapa-roteiro-btn-busca').addEventListener('click', async ()=>{
+        const termo = document.getElementById('mapa-roteiro-busca').value.trim();
+        const statusEl = document.getElementById('mapa-roteiro-status');
+        if(!termo) return;
+        statusEl.textContent = 'Buscando endereço...';
+        try{
+          const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(termo)}`, { headers:{'Accept-Language':'pt-BR'} });
+          const resultados = await resp.json();
+          if(!resultados || resultados.length===0){
+            statusEl.textContent = `Endereço "${termo}" não encontrado.`;
+            return;
+          }
+          const { lat, lon } = resultados[0];
+          mapa.setView([parseFloat(lat), parseFloat(lon)], 16);
+          statusEl.textContent = `Mostrando: ${resultados[0].display_name}`;
+        }catch(err){
+          statusEl.textContent = 'Não foi possível buscar esse endereço agora (sem internet ou serviço fora do ar).';
+        }
+      });
     }catch(err){
       console.error('Erro ao montar mapa do roteiro:', err);
     }
@@ -7826,7 +8857,7 @@ function abrirEdicaoVenda(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-venda';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:720px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(840px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✏️</div>
         <div>
@@ -7880,7 +8911,7 @@ function abrirEdicaoVenda(vendaId){
         <div class="item-picker-row">
           <div class="field">
             <label>Produto</label>
-            ${renderComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}
+            ${renderComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}
           </div>
           <div class="field">
             <label>Quantidade</label>
@@ -8038,7 +9069,7 @@ function abrirEdicaoVenda(vendaId){
     ativarComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), (opt)=>{
       const p = STATE.produtos.find(x=>x.id===opt.id);
       document.getElementById('ev-item-preco').value = p ? p.precoVenda : '';
-    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoEdicao});
+    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoEdicao, comLeitorCodigoBarras: true});
   }
   ativarComboboxProdutoEdicao();
 
@@ -8857,10 +9888,19 @@ function renderEstoque(){
     </div>` : ''}
 
     <div class="card">
+      <h3>🐌 Produtos Parados
+        <span class="hint">sem vender há
+          <input type="number" id="estoque-dias-parado" min="1" value="${STATE.config.diasProdutoParado||30}" style="width:54px;padding:2px 4px;font-size:12px;">
+          dias ou mais</span>
+      </h3>
+      <div id="estoque-produtos-parados"></div>
+    </div>
+
+    <div class="card">
       <h3>Saldo Atual por Produto <span class="hint">clique em Ajustar para corrigir manualmente</span></h3>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar produto</label>
-        <input type="text" id="estoque-busca" placeholder="Nome, categoria ou fornecedor...">
+        <input type="text" id="estoque-busca" placeholder="Nome, categoria, fornecedor ou código de barras...">
       </div>
       <div class="table-wrap">
         <table class="data-table" id="tbl-estoque">
@@ -8869,6 +9909,7 @@ function renderEstoque(){
               <th data-sort="nome">Produto</th>
               <th data-sort="categoria">Categoria</th>
               <th data-sort="fornecedor">Fornecedor</th>
+              <th data-sort="codigoBarras">Código de Barras</th>
               <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
               <th class="num" data-sort="estoqueMin">Mínimo</th>
               <th>Status</th>
@@ -8932,8 +9973,43 @@ function renderEstoque(){
     renderTabelaAbaixoMin(produtosAbaixoMin);
   }
 
+  renderProdutosParados();
+  document.getElementById('estoque-dias-parado').addEventListener('change', (e)=>{
+    const dias = parseInt(e.target.value);
+    STATE.config.diasProdutoParado = (dias>0) ? dias : 30;
+    saveState();
+    renderProdutosParados();
+  });
+
   renderTabelaEstoque();
   renderHistoricoEstoque();
+}
+
+function renderProdutosParados(){
+  const box = document.getElementById('estoque-produtos-parados');
+  if(!box) return;
+  const parados = getProdutosParados();
+  if(parados.length===0){
+    box.innerHTML = `<p class="help-text">Nenhum produto parado nesse período. 🎉</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Produto</th><th>Marca</th><th>Última Venda</th><th class="num">Dias Parado</th></tr></thead>
+        <tbody>
+          ${parados.map(({produto,ultimaVenda})=>{
+            const dias = Math.floor((new Date(todayISO())-new Date(ultimaVenda))/(1000*60*60*24));
+            return `<tr>
+              <td>${escapeHtml(produto.nome)}</td>
+              <td>${escapeHtml(produto.marca||'')}</td>
+              <td>${fmtDate(ultimaVenda)}</td>
+              <td class="num" style="color:var(--warning);font-weight:700;">${dias}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 let estoqueSort = {key:'nome', dir:'asc'};
@@ -9100,7 +10176,9 @@ function renderTabelaEstoque(){
     produtos = produtos.filter(p=>
       normalizarBusca(p.nome).includes(alvoBusca) ||
       normalizarBusca(p.categoria).includes(alvoBusca) ||
-      normalizarBusca(p.fornecedor).includes(alvoBusca)
+      normalizarBusca(p.fornecedor).includes(alvoBusca) ||
+      normalizarBusca(p.codigoBarras).includes(alvoBusca) ||
+      normalizarBusca(p.sku).includes(alvoBusca)
     );
   }
 
@@ -9134,6 +10212,7 @@ function renderTabelaEstoque(){
         </td>
         <td>${escapeHtml(p.categoria||'—')}</td>
         <td>${escapeHtml(p.fornecedor||'—')}</td>
+        <td>${p.codigoBarras ? `<span class="badge badge-neutral">${escapeHtml(p.codigoBarras)}</span>` : '<span class="help-text">—</span>'}</td>
         <td class="num" style="font-weight:700;">${fmtNum(atual)}</td>
         <td class="num">${p.estoqueMin!=null?fmtNum(p.estoqueMin):'—'}</td>
         <td>${statusBadge}</td>
@@ -9144,7 +10223,7 @@ function renderTabelaEstoque(){
           </div>
         </td>
       </tr>`;
-  }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">${estoqueBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto cadastrado.'}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${estoqueBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto cadastrado.'}</td></tr>`;
 
   const pagBox = document.getElementById('estoque-saldo-paginacao');
   if(pagBox){
@@ -9177,14 +10256,14 @@ function renderHistoricoEstoque(){
 }
 
 function abrirFormEntradaEstoque(produtoIdPreSelecionado){
-  const opcoesEstoque = STATE.produtos.map(p=>({id:p.id, label:p.nome, sub:`Estoque atual: ${fmtNum(p.estoqueAtual||0)}`}));
+  const opcoesEstoque = STATE.produtos.map(p=>({id:p.id, label:p.nome, sub:`Estoque atual: ${fmtNum(p.estoqueAtual||0)}`, buscaExtra:[p.codigoBarras, p.sku].filter(Boolean).join(' ')}));
   const produtoPre = produtoIdPreSelecionado ? STATE.produtos.find(p=>p.id===produtoIdPreSelecionado) : null;
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-entrada-estoque';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📥</div>
         <div>
@@ -9197,7 +10276,7 @@ function abrirFormEntradaEstoque(produtoIdPreSelecionado){
         <div class="form-grid">
           <div class="field">
             <label>Produto <span class="req">*</span></label>
-            ${renderComboboxProduto('fe-produto-busca', 'fe-produto', opcoesEstoque, produtoIdPreSelecionado, 'Digite o nome do produto...')}
+            ${renderComboboxProduto('fe-produto-busca', 'fe-produto', opcoesEstoque, produtoIdPreSelecionado, 'Digite o nome do produto...', true)}
           </div>
           <div class="field">
             <label>Quantidade Recebida <span class="req">*</span></label>
@@ -9237,7 +10316,7 @@ function abrirFormEntradaEstoque(produtoIdPreSelecionado){
       document.getElementById('fe-custo').value = p.custo;
       document.getElementById('fe-fornecedor').value = p.fornecedor||'';
     }
-  });
+  }, {comLeitorCodigoBarras: true});
   document.getElementById('fe-confirmar').addEventListener('click', ()=>{
     const produtoId = document.getElementById('fe-produto').value;
     const qtd = parseFloat(document.getElementById('fe-qtd').value);
@@ -9270,7 +10349,7 @@ function abrirFormAjusteEstoque(produtoId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-ajuste-estoque';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">⚖️</div>
         <div>
@@ -9400,7 +10479,7 @@ function renderAnalise(){
       <div class="card">
         <div class="empty-state">
           <div class="ic">🔍</div>
-          <p>Nenhuma venda lançada ainda. Registre vendas em <strong>Lançar Venda</strong> para ver as análises aqui.</p>
+          <p>Nenhuma venda lançada ainda. Converta um orçamento em venda (aba <strong>Orçamentos</strong>) para ver as análises aqui.</p>
         </div>
       </div>`;
     return;
@@ -9531,7 +10610,7 @@ function renderAnalise(){
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <h3 style="margin:0;">Total por Produto <span class="hint">quantidade e valor total vendido de cada produto no período</span></h3>
+        <h3 style="margin:0;">Total por Produto <span class="hint">quantidade e valor total vendido de cada produto no período — clique em "Margem" pra ver a curva de rentabilidade, não só o volume</span></h3>
         <button class="btn btn-sm" id="btn-exportar-analise-produto">⬇ Exportar Excel</button>
       </div>
       <div class="table-wrap">
@@ -9545,6 +10624,7 @@ function renderAnalise(){
               <th class="num" data-sort="custoUnit">Custo Unit.</th>
               <th class="num" data-sort="bruto">Bruto</th>
               <th class="num" data-sort="lucro">Lucro</th>
+              <th class="num" data-sort="margemPct">Margem</th>
               <th></th>
             </tr>
           </thead>
@@ -9766,6 +10846,11 @@ function renderTabelaAnalisePorProduto(linhas){
     porProduto[chave].lucro += l.lucro;
   });
 
+  // curva de rentabilidade: margem (%) de cada produto, não só o volume
+  // vendido — permite ordenar por "Margem" pra achar os produtos mais
+  // rentáveis, mesmo que vendam pouco em quantidade
+  Object.values(porProduto).forEach(p=>{ p.margemPct = p.bruto>0 ? (p.lucro/p.bruto*100) : 0; });
+
   let linhasProduto = Object.values(porProduto);
 
   const {key, dir} = analiseProdutoSort;
@@ -9789,13 +10874,15 @@ function renderTabelaAnalisePorProduto(linhas){
       <td class="num">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
       <td class="num">${fmtMoney(p.bruto)}</td>
       <td class="num" style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(p.lucro)}</td>
+      <td class="num" style="color:${p.margemPct>=0?'var(--positive)':'var(--negative)'};font-weight:700;">${p.margemPct.toFixed(1)}%</td>
       <td>${p.produtoId ? `<button class="btn btn-sm" onclick="abrirFormProduto('${p.produtoId}', ()=>aplicarFiltrosAnalise())" title="Editar produto">✏️</button>` : ''}</td>
     </tr>
-  `).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum resultado para os filtros selecionados.</td></tr>`;
+  `).join('') || `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum resultado para os filtros selecionados.</td></tr>`;
 
   const totQtd = linhasProduto.reduce((s,p)=>s+p.qtd,0);
   const totBrutoP = linhasProduto.reduce((s,p)=>s+p.bruto,0);
   const totLucroP = linhasProduto.reduce((s,p)=>s+p.lucro,0);
+  const totMargemP = totBrutoP>0 ? (totLucroP/totBrutoP*100) : 0;
   document.getElementById('an-table-produto-foot').innerHTML = `
     <tr>
       <td>Total (${total} produto${total===1?'':'s'})</td>
@@ -9805,6 +10892,7 @@ function renderTabelaAnalisePorProduto(linhas){
       <td></td>
       <td class="num">${fmtMoney(totBrutoP)}</td>
       <td class="num" style="color:${totLucroP>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(totLucroP)}</td>
+      <td class="num" style="color:${totMargemP>=0?'var(--positive)':'var(--negative)'}">${totMargemP.toFixed(1)}%</td>
       <td></td>
     </tr>
   `;
@@ -9843,11 +10931,12 @@ function exportarAnalisePorProdutoExcel(){
     'Qtd Vendida': Number(p.qtd.toFixed(2)),
     'Custo Unit. (R$)': p.custoUnit!=null ? Number(p.custoUnit.toFixed(2)) : '',
     'Valor Bruto (R$)': Number(p.bruto.toFixed(2)),
-    'Lucro (R$)': Number(p.lucro.toFixed(2))
+    'Lucro (R$)': Number(p.lucro.toFixed(2)),
+    'Margem (%)': Number((p.bruto>0 ? (p.lucro/p.bruto*100) : 0).toFixed(1))
   }));
 
   const ws = XLSX.utils.json_to_sheet(dadosPlanilha);
-  ws['!cols'] = [{wch:36},{wch:16},{wch:20},{wch:14},{wch:16},{wch:16},{wch:16}];
+  ws['!cols'] = [{wch:36},{wch:16},{wch:20},{wch:14},{wch:16},{wch:16},{wch:16},{wch:14}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Total por Produto');
   XLSX.writeFile(wb, `analise_por_produto_${todayISO()}.xlsx`);
@@ -10315,7 +11404,7 @@ function abrirDetalheVendaCliente(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-venda-cliente';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🧾</div>
         <div>
@@ -10763,7 +11852,7 @@ function abrirDetalheDiaCalendario(dataCompleta, itens){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-dia-calendario';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -10918,6 +12007,19 @@ function getPeriodoFiltroRepasses(){
   }
   if(valor==='tudo'){
     return { ini: '1900-01-01', fim: '2999-12-31' };
+  }
+  if(valor==='ultimas-n-quinzenas'){
+    const nEl = document.getElementById('rp-filtro-n-quinzenas');
+    const n = Math.max(1, parseInt(nEl && nEl.value)||6);
+    // pega as N quinzenas mais recentes que já têm venda com repasse
+    // (olhando TODAS as vendas, sem filtro de data), e usa a mais antiga
+    // delas pra definir o início do período — cobre 16 dias antes do
+    // vencimento pra garantir que toda venda daquela quinzena entra.
+    const todasQuinzenas = [...new Set(getLinhasRepasse().map(l=>l.vencimento))].sort().reverse();
+    const selecionadas = todasQuinzenas.slice(0, n);
+    if(selecionadas.length===0) return { ini: '1900-01-01', fim: '2999-12-31' };
+    const maisAntiga = selecionadas[selecionadas.length-1];
+    return { ini: addDays(maisAntiga, -16), fim: '2999-12-31' };
   }
   // customizado
   const iniEl = document.getElementById('rp-filtro-data-ini');
@@ -11209,7 +12311,7 @@ function abrirFormDespesa(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-cadastro-despesa';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💳</div>
         <div>
@@ -11696,12 +12798,17 @@ function renderRepasses(){
             <option value="ultimos-3">Últimos 3 + próximos 3 meses</option>
             <option value="ultimos-6" selected>Últimos 6 + próximos 6 meses</option>
             <option value="ano-corrente">Ano corrente</option>
+            <option value="ultimas-n-quinzenas">Últimas N quinzenas</option>
             <option value="customizado">Customizado</option>
           </select>
         </div>
         <div class="field" id="rp-filtro-data-campo" style="display:none;">
           <label>Escolha o período</label>
           ${renderDateRangePicker('rp-filtro-data', '', '')}
+        </div>
+        <div class="field" id="rp-filtro-n-quinzenas-campo" style="display:none;max-width:140px;">
+          <label>Quantas quinzenas</label>
+          <input type="number" id="rp-filtro-n-quinzenas" min="1" value="6">
         </div>
       </div>
       <div class="form-actions" style="margin-bottom:10px;">
@@ -11740,9 +12847,12 @@ function renderRepasses(){
   });
   document.getElementById('rp-filtro-periodo').addEventListener('change', (e)=>{
     const customizado = e.target.value==='customizado';
+    const ultimasNQuinzenas = e.target.value==='ultimas-n-quinzenas';
     document.getElementById('rp-filtro-data-campo').style.display = customizado?'':'none';
+    document.getElementById('rp-filtro-n-quinzenas-campo').style.display = ultimasNQuinzenas?'':'none';
     if(!customizado) renderTabelaRepasses();
   });
+  document.getElementById('rp-filtro-n-quinzenas').addEventListener('input', ()=>renderTabelaRepasses());
   ativarDateRangePicker('rp-filtro-data', ()=>renderTabelaRepasses());
   document.getElementById('rp-esconder-pagas').checked = repasseEsconderPagas;
   document.getElementById('rp-esconder-pagas').addEventListener('change', (e)=>{
@@ -11899,7 +13009,19 @@ function getQuinzenasRepasse(){
     }
     grupos[chave].linhas.push(l);
     grupos[chave].totalComDesconto += l.valorComDesconto;
+    // totalAbatido "legado": soma de abatimentos por venda já lançados no
+    // modelo antigo, antes desta mudança — mantido só pra não perder saldo
+    // já registrado de quinzenas passadas.
     grupos[chave].totalAbatido += l.totalAbatido;
+  });
+  // pagamentos NOVOS (modelo atual): lançamento agregado por quinzena, sem
+  // vínculo com venda nenhuma — o pagador paga o montante da quinzena, não
+  // venda por venda. Soma aqui em cima do totalAbatido legado.
+  Object.values(grupos).forEach(g=>{
+    const pagoAgregado = (STATE.pagamentosRepasse||[])
+      .filter(p=>p.pagadorId===g.pagadorId && p.vencimentoQuinzena===g.vencimento)
+      .reduce((s,p)=>s+p.valor,0);
+    g.totalAbatido += pagoAgregado;
   });
   return Object.values(grupos).map(g=>{
     const saldoPendente = g.totalComDesconto - g.totalAbatido;
@@ -11915,9 +13037,10 @@ function getQuinzenasRepasse(){
 // pagador (ex: 1-15 Set/26) e lança os pagamentos que forem chegando, mesmo que
 // venham picados em várias parcelas até fechar o valor total (o padrão real do
 // usuário: "hoje me pagou 1 mil, semana que vem mais 3 mil..."). Cada pagamento
-// lançado aqui é distribuído automaticamente como abatimento nas vendas
-// daquela quinzena (as mais antigas primeiro), então o histórico de qual venda
-// foi paga por qual pagamento nunca se perde nem se mistura com outra quinzena.
+// lançado aqui vira um lançamento ÚNICO e agregado sobre a quinzena inteira —
+// NÃO abate venda por venda (o pagador paga o montante da quinzena, não cada
+// venda individualmente), então nenhuma venda específica fica marcada como
+// "paga" por causa de um pagamento de quinzena.
 function abrirFormPagamentoQuinzena(pagadorId, vencimento){
   const quinzena = getQuinzenasRepasse().find(q=>q.pagadorId===pagadorId && q.vencimento===vencimento);
   if(!quinzena){ showToast('Quinzena não encontrada.', 'error'); return; }
@@ -11927,7 +13050,7 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-pagamento-quinzena';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:480px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(600px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -11980,23 +13103,14 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
     if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
     if(!data){ showToast('Informe a data.', 'error'); return; }
 
-    // distribui o valor recebido nas vendas desta quinzena, das mais antigas
-    // pras mais novas, sem ultrapassar o saldo pendente de cada venda — é
-    // exatamente o mesmo abatimento por venda que já existia, só que aplicado
-    // automaticamente em lote pra quinzena inteira
-    const linhasOrdenadas = [...quinzena.linhas].sort((a,b)=> a.data<b.data ? -1 : 1);
-    let restante = valor;
-    linhasOrdenadas.forEach(l=>{
-      if(restante<=0.005) return;
-      const saldoLinha = Math.max(0, l.saldoPendente);
-      if(saldoLinha<=0.005) return;
-      const abaterAqui = Math.min(restante, saldoLinha);
-      const venda = STATE.vendas.find(v=>v.id===l.vendaId);
-      if(!venda) return;
-      if(!venda.repasse) venda.repasse = {desconto:null, abatimentos:[]};
-      if(!venda.repasse.abatimentos) venda.repasse.abatimentos = [];
-      venda.repasse.abatimentos.push({ id: uid('abat'), valor: abaterAqui, data, obs: obs || `Pagamento da quinzena ${rotuloQuinzena(vencimento)}`, criadoEm: new Date().toISOString() });
-      restante -= abaterAqui;
+    // lançamento único e agregado sobre a quinzena inteira — não toca em
+    // nenhuma venda individual, só soma no saldo da quinzena como um todo
+    if(!STATE.pagamentosRepasse) STATE.pagamentosRepasse = [];
+    STATE.pagamentosRepasse.push({
+      id: uid('pgrp'), pagadorId, data, valor,
+      obs: obs || `Pagamento da quinzena ${rotuloQuinzena(vencimento)}`,
+      vencimentoQuinzena: vencimento,
+      criadoEm: new Date().toISOString()
     });
 
     saveState();
@@ -12127,7 +13241,7 @@ function abrirFormPagamentoRepasse(pagadorIdPre){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-pagamento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💵</div>
         <div>
@@ -12210,7 +13324,7 @@ function editarPagamentoRepasse(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-pagamento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">✎</div>
         <div>
@@ -12272,6 +13386,7 @@ function excluirPagamentoRepasse(id){
 }
 
 function renderTabelaRepasses(){
+  if(!document.getElementById('repasses-table-body')) return; // tela de Repasses não está aberta no momento
   let linhas = getLinhasRepasse();
   if(repasseFiltroPagador) linhas = linhas.filter(l=>l.pagadorId===repasseFiltroPagador);
   const periodo = getPeriodoFiltroRepasses();
@@ -12327,6 +13442,7 @@ function renderTabelaRepasses(){
         <div class="cell-actions">
           ${(l.descontoPct!=null||l.descontoValorFixo!=null) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="marcarRepasseComoPago('${l.vendaId}')">✓ Marcar como Pago</button>` : ''}
+          ${anexoControleEntregaBtn(l.vendaId)}
         </div>
       </td>
     </tr>
@@ -12374,7 +13490,7 @@ function abrirFormDescontoRepasse(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-desconto-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏷️</div>
         <div>
@@ -12559,6 +13675,141 @@ function marcarRepasseComoPago(vendaId){
   );
 }
 
+/* =========================================================
+   ANEXO DO CONTROLE DE ENTREGA (escaneado/fotografado) — vinculado à
+   venda, aparece na tela de Repasses. Imagem é redimensionada e recomprimida
+   antes de salvar (localStorage tem espaço limitado); PDF é salvo direto,
+   com um limite de tamanho pra não estourar o armazenamento do navegador.
+   ========================================================= */
+function anexoControleEntregaBtn(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return '';
+  if(venda.controleEntregaAnexo){
+    return `<button class="btn btn-sm" onclick="verAnexoControleEntrega('${vendaId}')">📎 Ver Controle de Entrega</button>
+      <button class="btn btn-sm" title="Remover anexo" onclick="removerAnexoControleEntrega('${vendaId}')">🗑️</button>`;
+  }
+  return `<button class="btn btn-sm" onclick="abrirAnexoControleEntrega('${vendaId}')">📎 Anexar Controle de Entrega</button>`;
+}
+
+function verAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda || !venda.controleEntregaAnexo) return;
+  const janela = window.open('', '_blank');
+  const anexo = venda.controleEntregaAnexo;
+  const corpo = anexo.tipo==='pdf'
+    ? `<embed src="${anexo.dataUrl}" type="application/pdf" style="width:100%;height:100vh;">`
+    : `<img src="${anexo.dataUrl}" style="max-width:100%;display:block;margin:0 auto;">`;
+  janela.document.write(`<!DOCTYPE html><html><head><title>Controle de Entrega - ${escapeHtml(anexo.nomeArquivo||'')}</title></head><body style="margin:0;background:#333;">${corpo}</body></html>`);
+  janela.document.close();
+}
+
+function removerAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  confirmAction('Remover anexo', 'Isso vai remover o controle de entrega anexado a esta venda. Deseja continuar?', ()=>{
+    delete venda.controleEntregaAnexo;
+    saveState();
+    showToast('Anexo removido.', 'success');
+    renderTabelaRepasses();
+  });
+}
+
+function abrirAnexoControleEntrega(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-anexo-controle-entrega';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📎</div>
+        <div>
+          <h3>Anexar Controle de Entrega</h3>
+          <div class="sub">Foto ou PDF do controle já assinado pelo cliente</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field field-full">
+          <label>Arquivo (foto ou PDF)</label>
+          <input type="file" id="ace-arquivo" accept="image/*,application/pdf">
+        </div>
+        <div class="help-text" id="ace-status"></div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="ace-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ace-confirmar" disabled>Salvar Anexo</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('ace-cancelar').addEventListener('click', ()=>modal.remove());
+
+  let anexoPronto = null; // {dataUrl, nomeArquivo, tipo}
+
+  document.getElementById('ace-arquivo').addEventListener('change', (e)=>{
+    const arquivo = e.target.files[0];
+    const statusEl = document.getElementById('ace-status');
+    const btnConfirmar = document.getElementById('ace-confirmar');
+    btnConfirmar.disabled = true;
+    anexoPronto = null;
+    if(!arquivo) return;
+
+    if(arquivo.type==='application/pdf'){
+      if(arquivo.size > 4*1024*1024){
+        statusEl.innerHTML = '<span style="color:var(--negative);">PDF muito grande (máx. 4MB) — tente uma foto em vez do PDF, ou comprima o arquivo antes.</span>';
+        return;
+      }
+      const leitor = new FileReader();
+      leitor.onload = ()=>{
+        anexoPronto = { dataUrl: leitor.result, nomeArquivo: arquivo.name, tipo: 'pdf' };
+        statusEl.innerHTML = `PDF pronto pra salvar (${(arquivo.size/1024/1024).toFixed(1)}MB).`;
+        btnConfirmar.disabled = false;
+      };
+      leitor.readAsDataURL(arquivo);
+      return;
+    }
+
+    if(!arquivo.type.startsWith('image/')){
+      statusEl.innerHTML = '<span style="color:var(--negative);">Formato não suportado — envie uma foto (JPG/PNG) ou um PDF.</span>';
+      return;
+    }
+
+    // imagem: redimensiona e recomprime antes de salvar, pra não pesar no
+    // armazenamento do navegador (localStorage tem espaço limitado)
+    statusEl.textContent = 'Processando imagem...';
+    const leitorImg = new FileReader();
+    leitorImg.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const maxLargura = 1280;
+        const escala = Math.min(1, maxLargura/img.width);
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width*escala);
+        canvas.height = Math.round(img.height*escala);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.72);
+        anexoPronto = { dataUrl, nomeArquivo: arquivo.name, tipo: 'imagem' };
+        statusEl.textContent = `Imagem pronta pra salvar (${Math.round(dataUrl.length/1024)}KB).`;
+        btnConfirmar.disabled = false;
+      };
+      img.onerror = ()=>{ statusEl.innerHTML = '<span style="color:var(--negative);">Não consegui abrir essa imagem.</span>'; };
+      img.src = leitorImg.result;
+    };
+    leitorImg.readAsDataURL(arquivo);
+  });
+
+  document.getElementById('ace-confirmar').addEventListener('click', ()=>{
+    if(!anexoPronto) return;
+    venda.controleEntregaAnexo = { ...anexoPronto, criadoEm: new Date().toISOString() };
+    saveState();
+    showToast('Controle de entrega anexado.', 'success');
+    modal.remove();
+    renderTabelaRepasses();
+  });
+}
+
 function abrirFormAbatimentoRepasse(vendaId){
   const venda = STATE.vendas.find(v=>v.id===vendaId);
   if(!venda) return;
@@ -12568,7 +13819,7 @@ function abrirFormAbatimentoRepasse(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-abatimento-repasse';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:460px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(580px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💵</div>
         <div>
@@ -12639,7 +13890,7 @@ function verHistoricoAbatimentos(vendaId){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-historico-abatimentos';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📜</div>
         <div>
@@ -12773,7 +14024,7 @@ function gerarRelatorioWhatsappRepasses(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-whatsapp-repasses';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:520px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📲</div>
         <div>
@@ -12915,7 +14166,7 @@ function abrirEscolhaModoRelatorioRepasses(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-modo-relatorio-repasses';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📄</div>
         <div>
@@ -13004,8 +14255,12 @@ function gerarRelatorioPdfRepasses(modo){
   let pagamentosHtml = '', totalPagoRelatorio = 0, pagamentosDoRelatorio = [], saldoFinalLiquido = 0;
   if(!ehBruto){
     const pagadoresDoRelatorio = [...new Set(linhas.map(l=>l.pagadorId))];
+    // só entra no histórico do relatório o pagamento feito DENTRO do período
+    // filtrado — antes mostrava todo o histórico do pagador, mesmo pagamento
+    // de outra quinzena fora do período escolhido, o que confundia o relatório
     pagamentosDoRelatorio = (STATE.pagamentosRepasse||[])
       .filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId))
+      .filter(pg=>pg.data>=periodo.ini && pg.data<=periodo.fim)
       .sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
     // Saldo final: soma direta do saldo pendente já calculado em cada linha
@@ -13576,7 +14831,7 @@ function abrirEditarVencimentoReceber(id, origem, vendaId, parcelaIdx){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-editar-vencimento-receber';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:420px;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -13682,7 +14937,7 @@ function abrirFormContaReceberManual(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-conta-receber-manual';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:560px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💰</div>
         <div>
@@ -13887,7 +15142,7 @@ function abrirFormLicitacao(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-form-licitacao';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:640px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(760px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏛️</div>
         <div>
@@ -13992,7 +15247,7 @@ function abrirDetalheLicitacao(id){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-licitacao';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:600px;max-height:88vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(720px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🏛️</div>
         <div>
@@ -14353,7 +15608,7 @@ function renderDashboard(){
       <div class="card">
         <div class="empty-state">
           <div class="ic">🚀</div>
-          <p>Bem-vindo! Comece cadastrando <strong>Clientes</strong> e <strong>Produtos</strong>, depois lance suas vendas do dia em <strong>Lançar Venda</strong>.<br>Este painel vai se preencher automaticamente conforme você usa o sistema.</p>
+          <p>Bem-vindo! Comece cadastrando <strong>Clientes</strong> e <strong>Produtos</strong>, depois lance seus pedidos do dia em <strong>Orçamentos</strong> (e converta em venda quando fechar).<br>Este painel vai se preencher automaticamente conforme você usa o sistema.</p>
         </div>
       </div>`;
     return;
@@ -14952,6 +16207,18 @@ function renderDashAlertas(){
   const alertasBox = document.getElementById('dash-alertas');
   const alertas = [];
 
+  // lembrete periódico de backup: como os dados ficam só neste navegador,
+  // avisamos aqui (além do card de baixo) quando faz mais de 7 dias desde o
+  // último backup exportado, ou quando nunca foi exportado nenhum
+  const DIAS_LIMITE_BACKUP = 7;
+  const diasDesdeBackup = STATE.ultimoBackup ? Math.floor((new Date()-new Date(STATE.ultimoBackup))/(1000*60*60*24)) : null;
+  if(diasDesdeBackup===null || diasDesdeBackup>=DIAS_LIMITE_BACKUP){
+    const texto = diasDesdeBackup===null
+      ? '💾 Você ainda não exportou nenhum backup dos dados.'
+      : `💾 Já fazem ${diasDesdeBackup} dias desde o último backup exportado.`;
+    alertas.push({tipo:'warning', texto, acao:{label:'Exportar agora', onclick:'exportarBackup()'}});
+  }
+
   const kpisDespesa = calcularKpisDespesas();
   if(kpisDespesa.atrasado>0){
     alertas.push({tipo:'negative', texto:`Você tem ${fmtMoney(kpisDespesa.atrasado)} em despesas atrasadas.`});
@@ -14983,6 +16250,43 @@ function renderDashAlertas(){
     alertas.push({tipo:'warning', texto:`⚠️ ${parcelasPrecisandoRevisao.length} despesa(s) Fixa Variável precisam ter o valor revisado: ${nomes}.`});
   }
 
+  // painel central de alertas: junta aqui avisos que antes só apareciam
+  // espalhados em cada tela (estoque baixo, cadastro incompleto, entrega
+  // sem rota definida, quinzena de repasse vencida)
+  const produtosEstoqueBaixo = STATE.produtos.filter(p=>p.estoqueMin!=null && (p.estoqueAtual||0) < p.estoqueMin);
+  if(produtosEstoqueBaixo.length>0){
+    alertas.push({tipo:'negative', texto:`📦 ${produtosEstoqueBaixo.length} produto(s) abaixo do estoque mínimo.`, acao:{label:'Ver Estoque', pagina:'estoque'}});
+  }
+
+  const produtosIncompletos = STATE.produtos.filter(produtoDadosIncompletos).length;
+  const enderecosFaltando = [...STATE.fornecedores, ...STATE.locaisCompra].filter(l=>!l.endereco).length;
+  if(produtosIncompletos>0 || enderecosFaltando>0){
+    const partes = [];
+    if(produtosIncompletos>0) partes.push(`${produtosIncompletos} produto(s)`);
+    if(enderecosFaltando>0) partes.push(`${enderecosFaltando} fornecedor(es)/local(is) de compra sem endereço`);
+    alertas.push({tipo:'neutral', texto:`📋 Cadastro incompleto: ${partes.join(' e ')}.`});
+  }
+
+  const entregasSemRota = calcularRoteiro().entregasBloqueadas.length;
+  if(entregasSemRota>0){
+    alertas.push({tipo:'warning', texto:`🚚 ${entregasSemRota} entrega(s) em rota sem origem de coleta definida.`, acao:{label:'Ver Logística', pagina:'logistica'}});
+  }
+
+  const quinzenasVencidas = getLinhasRepasse().filter(l=>l.statusRecebimento==='atrasado').length;
+  if(quinzenasVencidas>0){
+    alertas.push({tipo:'negative', texto:`🔁 ${quinzenasVencidas} venda(s) com repasse de quinzena vencido.`, acao:{label:'Ver Repasses', pagina:'repasses'}});
+  }
+
+  const produtosParados = getProdutosParados().length;
+  if(produtosParados>0){
+    alertas.push({tipo:'neutral', texto:`🐌 ${produtosParados} produto(s) parado(s) (sem vender há ${STATE.config.diasProdutoParado||30}+ dias).`, acao:{label:'Ver Estoque', pagina:'estoque'}});
+  }
+
+  const clientesInativos = getClientesInativos().length;
+  if(clientesInativos>0){
+    alertas.push({tipo:'neutral', texto:`💤 ${clientesInativos} cliente(s) inativo(s) (sem comprar há ${STATE.config.diasClienteInativo||60}+ dias).`, acao:{label:'Ver Clientes', pagina:'clientes'}});
+  }
+
   if(alertas.length===0){
     alertasBox.innerHTML = `<p class="help-text">Nenhum alerta no momento. Tudo em dia! 🎉</p>`;
     return;
@@ -14990,9 +16294,10 @@ function renderDashAlertas(){
 
   const badgeClass = {negative:'badge-negative', warning:'badge-warning', neutral:'badge-neutral'};
   alertasBox.innerHTML = alertas.map(a=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #F0F1F3;">
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #F0F1F3;flex-wrap:wrap;">
       <span class="badge ${badgeClass[a.tipo]}">${a.tipo==='negative'?'Atenção':a.tipo==='warning'?'Aviso':'Info'}</span>
-      <span style="font-size:13px;">${a.texto}</span>
+      <span style="font-size:13px;flex:1;">${a.texto}</span>
+      ${a.acao ? `<button class="btn btn-sm" onclick="${a.acao.onclick || `navigateTo('${a.acao.pagina}')`}">${escapeHtml(a.acao.label)}</button>` : ''}
     </div>
   `).join('');
 }
