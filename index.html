@@ -436,6 +436,20 @@ table.data-table{ width:100%; font-size:13px; }
 .num{ text-align:right; font-variant-numeric:tabular-nums; }
 .cell-actions{ display:flex; gap:6px; }
 
+/* "Ver mais" — esconde ações secundárias de uma linha atrás de um toggle,
+   pra não poluir a tabela com muitos botões lado a lado. Usa <details> nativo
+   (expande a própria linha em vez de flutuar por cima, pra não ser cortado
+   pelo overflow:auto do .table-wrap). */
+.acoes-ver-mais{ margin-top:2px; }
+.acoes-ver-mais summary{
+  cursor:pointer; font-size:12px; color:var(--primary); font-weight:600;
+  list-style:none; user-select:none; display:inline-block;
+}
+.acoes-ver-mais summary::-webkit-details-marker{ display:none; }
+.acoes-ver-mais summary::before{ content:'▸ Ver mais'; }
+.acoes-ver-mais[open] summary::before{ content:'▾ Ver menos'; }
+.acoes-ver-mais-lista{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+
 .badge{
   display:inline-block;
   padding:3px 9px;
@@ -6872,10 +6886,6 @@ function renderOrcamentos(){
             <option value="convertido">Virou Venda</option>
           </select>
         </div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:16px;">
-          <input type="checkbox" id="orc-lista-mostrar-convertidos" style="width:auto;" onchange="renderListaOrcamentos()">
-          Mostrar orçamentos já convertidos em venda
-        </label>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -7621,16 +7631,13 @@ function renderListaOrcamentos(){
   atualizarOrcamentosExpirados();
 
   const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
-  const mostrarConvertidos = document.getElementById('orc-lista-mostrar-convertidos') ? document.getElementById('orc-lista-mostrar-convertidos').checked : false;
 
   let lista = [...STATE.orcamentos];
-  // por padrão, orçamento já convertido em venda sai da lista (o histórico
-  // dele já vive normalmente na aba Vendas, como venda de verdade) — só
-  // aparece aqui de volta se marcar "Mostrar convertidos" ou filtrar por
-  // esse status explicitamente
-  if(!mostrarConvertidos && filtroStatus!=='convertido'){
-    lista = lista.filter(o=>o.status!=='convertido');
-  }
+  // Orçamento já convertido em venda continua aparecendo aqui normalmente
+  // (com o selo "✅ Virou Venda" na coluna Status) — antes ele sumia da
+  // lista por padrão assim que convertia, o que dava a impressão de que
+  // nada tinha acontecido. O histórico dele também continua existindo como
+  // venda de verdade na aba Vendas, isso não muda.
   if(filtroStatus){
     lista = lista.filter(o=>o.status===filtroStatus);
   }
@@ -7668,14 +7675,19 @@ function renderListaOrcamentos(){
         </td>
         <td>${statusEntregaLabel[statusEntrega]}</td>
         <td>
-          <div class="cell-actions">
-            <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
-            <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
-            ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+          <div>
             ${!jaConvertido && o.status==='aprovado' ? `<button class="btn btn-sm btn-primary" onclick="converterOrcamentoEmVenda('${o.id}')">💰 Converter em Venda</button>` : ''}
-            ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
-            <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
-            ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
+            <details class="acoes-ver-mais">
+              <summary></summary>
+              <div class="acoes-ver-mais-lista">
+                <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
+                <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
+                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+                ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
+                <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
+                ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
+              </div>
+            </details>
           </div>
         </td>
       </tr>`;
@@ -7814,12 +7826,12 @@ function executarConversaoOrcamentoEmVenda(orcamento){
   return venda;
 }
 
-// Ação MANUAL e ÚNICA de conversão (botão "Converter em Venda") — separada
-// de "aprovar" e de "marcar entrega feita" (marcarEntregaConcluida, em
-// Logística). As três ações são independentes: dá pra aprovar sem converter,
-// converter sem ter marcado entrega feita, ou marcar entrega feita antes de
-// converter — o usuário decide a ordem que faz sentido pro caso dele. A
-// baixa de estoque só acontece aqui, no momento da conversão de verdade.
+// Conversão em venda acontece em EXATAMENTE dois lugares: aqui, no clique
+// manual do botão "Converter em Venda", ou automaticamente dentro de
+// marcarEntregaConcluida() quando o pedido é marcado como entregue na
+// Logística (se ainda não tinha sido convertido). "Aprovar" sozinho nunca
+// converte. A baixa de estoque só acontece no momento da conversão de
+// verdade, em executarConversaoOrcamentoEmVenda().
 function converterOrcamentoEmVenda(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
@@ -7830,7 +7842,7 @@ function converterOrcamentoEmVenda(id){
 
   confirmAction(
     'Converter em Venda',
-    'Isso vai gerar uma venda de verdade a partir deste orçamento (com os valores atuais), dar baixa no estoque e somar ele nas contas/dashboard. O orçamento fica marcado como "Virou Venda" e sai da lista de Orçamentos Lançados. Deseja continuar?',
+    'Isso vai gerar uma venda de verdade a partir deste orçamento (com os valores atuais), dar baixa no estoque e somar ele nas contas/dashboard. O orçamento continua na lista de Orçamentos Lançados, agora com o selo "Virou Venda". Deseja continuar?',
     ()=>{
       executarConversaoOrcamentoEmVenda(orcamento);
       // só avança o status de entrega se ele ainda nem tinha começado —
@@ -7841,7 +7853,8 @@ function converterOrcamentoEmVenda(id){
       saveState();
       showToast('Orçamento convertido em venda com sucesso.', 'success');
       renderListaOrcamentos();
-    }
+    },
+    'Converter em Venda'
   );
 }
 
@@ -8565,15 +8578,26 @@ function ativarCardPartidaLogistica(){
 
 // Marca a entrega de um orçamento como concluída — some do roteiro ativo,
 // mas o orçamento continua existindo normalmente (histórico preservado).
+// Se o orçamento ainda não tinha virado venda de verdade, marcar como
+// entregue já converte automaticamente (dá baixa no estoque e lança no
+// financeiro) — entregar significa que a venda de fato aconteceu, não faz
+// sentido exigir um segundo clique em "Converter em Venda" depois.
 function marcarEntregaConcluida(orcamentoId){
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
-  confirmAction('Marcar como entregue', 'Confirma que este pedido já foi entregue ao cliente?', ()=>{
+  const vaiConverter = orcamento.status!=='convertido' && !orcamento.vendaGeradaId;
+  const texto = vaiConverter
+    ? 'Confirma que este pedido já foi entregue ao cliente? Como este orçamento ainda não tinha virado venda, confirmar aqui também converte ele em venda de verdade (com baixa no estoque e lançamento no financeiro).'
+    : 'Confirma que este pedido já foi entregue ao cliente?';
+  confirmAction('Marcar como entregue', texto, ()=>{
     orcamento.statusEntrega = 'entregue';
+    if(vaiConverter){
+      executarConversaoOrcamentoEmVenda(orcamento);
+    }
     saveState();
-    showToast('Entrega confirmada.', 'success');
+    showToast(vaiConverter ? 'Entrega confirmada e orçamento convertido em venda.' : 'Entrega confirmada.', 'success');
     renderLogistica();
-  });
+  }, 'Confirmar');
 }
 
 RENDERERS['logistica'] = renderLogistica;
