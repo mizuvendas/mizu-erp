@@ -1448,6 +1448,13 @@ document.querySelectorAll('.nav-item').forEach(item=>{
 });
 
 function navigateTo(page){
+  // Sai da tela de Orçamentos sem ter clicado em salvar? Guarda
+  // automaticamente como Rascunho (ou mantém Pré-venda, se já era) antes de
+  // trocar de página — ver salvarRascunhoAutomaticoAoSair().
+  const paginaOrcamentosAtiva = document.getElementById('page-orcamentos') && document.getElementById('page-orcamentos').classList.contains('active');
+  if(paginaOrcamentosAtiva && page!=='orcamentos' && typeof salvarRascunhoAutomaticoAoSair==='function'){
+    salvarRascunhoAutomaticoAoSair();
+  }
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page===page));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
@@ -6726,6 +6733,9 @@ window.addEventListener('beforeunload', (e)=>{
   if(!clienteEl) return;
   const temAlgoNaoSalvo = clienteEl.value || carrinhoOrcamentoAtual.length>0;
   if(temAlgoNaoSalvo){
+    // melhor esforço: tenta guardar como Rascunho/Pré-venda antes de talvez
+    // fechar a aba de vez (localStorage é síncrono, então dá tempo)
+    if(typeof salvarRascunhoAutomaticoAoSair==='function') salvarRascunhoAutomaticoAoSair();
     e.preventDefault();
     e.returnValue = '';
   }
@@ -6943,6 +6953,7 @@ function renderOrcamentos(){
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="orc-btn-salvar">Salvar Orçamento</button>
+        <button class="btn" id="orc-btn-salvar-pre-venda" title="Guarda o que já foi preenchido pra continuar depois, sem precisar finalizar agora">💾 Salvar como Pré-venda</button>
         <button class="btn" id="orc-btn-cancelar-edicao" style="display:none;">Cancelar Edição</button>
       </div>
     </div>
@@ -6967,6 +6978,16 @@ function renderOrcamentos(){
         <table class="data-table">
           <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card" id="card-orcamentos-em-andamento" style="display:none;">
+      <h3>Orçamentos em Andamento <span class="hint">pré-vendas salvas e rascunhos ainda não finalizados — continue de onde parou ou exclua se não precisar mais</span></h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Cliente</th><th class="num">Valor até o momento</th><th>Situação</th><th>Última atualização</th><th>Ações</th></tr></thead>
+          <tbody id="orc-em-andamento-body"></tbody>
         </table>
       </div>
     </div>
@@ -7011,6 +7032,14 @@ function renderOrcamentos(){
   document.getElementById('orc-item-vender-caixa').addEventListener('change', atualizarPreviewItemOrcamento);
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
+  document.getElementById('orc-btn-salvar-pre-venda').addEventListener('click', ()=>{
+    const orcamento = salvarOrcamentoEmAndamento('pre_venda');
+    if(orcamento){
+      limparRascunhoOrcamento();
+      showToast('Salvo como Pré-venda — você pode continuar editando agora ou retomar depois na lista "Orçamentos em Andamento".', 'success');
+      renderOrcamentosEmAndamento();
+    }
+  });
   document.getElementById('orc-btn-cancelar-edicao').addEventListener('click', cancelarEdicaoOrcamento);
 
   // Auto-save do rascunho: qualquer mudança dentro do formulário (campo ou
@@ -7515,6 +7544,135 @@ function editarPrecoItemOrcamento(idx, novoValor){
   atualizarResumoOrcamento();
 }
 
+// Lê os campos do formulário de orçamento SEM validar nada — usado só pra
+// salvar como "Pré-venda"/"Rascunho" (orçamento em andamento, ainda não
+// finalizado), onde o usuário pode ter preenchido só uma parte. A validação
+// de verdade (cliente obrigatório, item obrigatório, etc.) só acontece
+// quando ele finaliza de verdade em salvarOrcamento().
+function coletarDadosOrcamentoEmAndamento(){
+  const temRepasse = document.getElementById('orc-tem-repasse').checked;
+  const condicaoPagamento = document.getElementById('orc-condicao-pagamento').value;
+  return {
+    clienteId: document.getElementById('orc-cliente').value,
+    data: document.getElementById('orc-data').value || todayISO(),
+    validadeDias: parseInt(document.getElementById('orc-validade').value)||7,
+    observacoes: document.getElementById('orc-obs').value.trim(),
+    vendedor: document.getElementById('orc-vendedor').value.trim(),
+    temComissao: document.getElementById('orc-tem-comissao').checked,
+    pagadorId: temRepasse ? (document.getElementById('orc-pagador').value || null) : null,
+    repassePct: temRepasse ? (parseFloat(document.getElementById('orc-repasse-pct').value)||null) : null,
+    condicaoPagamento,
+    vencimentoReceber: condicaoPagamento==='boleto' ? (document.getElementById('orc-vencimento-receber').value||null) : null,
+    crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
+    crediarioDia: condicaoPagamento==='crediario' ? (Math.min(31, Math.max(1, parseInt(document.getElementById('orc-crediario-dia').value)||10))) : null,
+    itens: carrinhoOrcamentoAtual.map(it=>({...it}))
+  };
+}
+
+// Cria ou atualiza um orçamento "em andamento" (statusAlvo: 'pre_venda' ou
+// 'rascunho') — SEM validação, pra poder salvar a qualquer momento durante
+// a montagem. Nunca mexe num orçamento já lançado de verdade (status fora
+// desses dois) — só cria novo ou atualiza um "em andamento" já existente.
+// Retorna o orçamento salvo, ou null se não havia nada pra salvar (ou se
+// orcamentoEmEdicaoId apontava pra um orçamento real, não um rascunho).
+function salvarOrcamentoEmAndamento(statusAlvo){
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return null; // formulário não está na tela
+
+  let orcamentoExistente = null;
+  if(orcamentoEmEdicaoId){
+    const achado = STATE.orcamentos.find(o=>o.id===orcamentoEmEdicaoId);
+    if(achado && !['pre_venda','rascunho'].includes(achado.status)) return null; // é um orçamento de verdade — não mexe
+    orcamentoExistente = achado || null;
+  }
+
+  const dados = coletarDadosOrcamentoEmAndamento();
+  if(!dados.clienteId && dados.itens.length===0) return null; // nada preenchido ainda, não tem o que salvar
+
+  const tipoDesconto = document.getElementById('orc-desconto-tipo').value;
+  let desconto;
+  if(tipoDesconto==='pct'){
+    const v = parseFloat(document.getElementById('orc-desconto-pct').value);
+    if(!isNaN(v) && v>0) desconto = { pct: v, valor: null };
+  }else if(tipoDesconto==='valor'){
+    const v = parseFloat(document.getElementById('orc-desconto-valor').value);
+    if(!isNaN(v) && v>0) desconto = { pct: null, valor: v };
+  }
+  const acrescimoValor = parseFloat(document.getElementById('orc-acrescimo-valor').value)||0;
+  const acrescimo = acrescimoValor>0 ? { descricao: document.getElementById('orc-acrescimo-desc').value.trim()||'Acréscimo', valor: acrescimoValor } : undefined;
+
+  let orcamento;
+  if(orcamentoExistente){
+    orcamento = orcamentoExistente;
+    Object.assign(orcamento, dados);
+    delete orcamento.desconto; if(desconto) orcamento.desconto = desconto;
+    delete orcamento.acrescimo; if(acrescimo) orcamento.acrescimo = acrescimo;
+    orcamento.status = statusAlvo;
+    orcamento.salvoEm = new Date().toISOString();
+  }else{
+    orcamento = { id: uid('orc'), ...dados, status: statusAlvo, criadoEm: new Date().toISOString(), salvoEm: new Date().toISOString() };
+    if(desconto) orcamento.desconto = desconto;
+    if(acrescimo) orcamento.acrescimo = acrescimo;
+    STATE.orcamentos.push(orcamento);
+    orcamentoEmEdicaoId = orcamento.id;
+  }
+  saveState();
+  return orcamento;
+}
+
+// Chamado ao sair da tela de Orçamentos (navegando pra outra página, ou
+// fechando/atualizando a aba) sem ter clicado em "Salvar Orçamento" nem em
+// "Salvar como Pré-venda" — guarda automaticamente o que já foi preenchido
+// como "Rascunho" (ou mantém "Pré-venda" se já tinha sido salvo assim antes
+// de propósito, pra não "rebaixar" um salvamento manual só por sair da tela).
+function salvarRascunhoAutomaticoAoSair(){
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return;
+  let statusAlvo = 'rascunho';
+  if(orcamentoEmEdicaoId){
+    const existente = STATE.orcamentos.find(o=>o.id===orcamentoEmEdicaoId);
+    if(existente && existente.status==='pre_venda') statusAlvo = 'pre_venda';
+  }
+  const orcamento = salvarOrcamentoEmAndamento(statusAlvo);
+  if(orcamento) limparRascunhoOrcamento();
+}
+
+// Lista de "Orçamentos em Andamento" (Pré-venda + Rascunho), abaixo dos
+// Orçamentos Lançados — cada um com cliente, valor até o momento, etiqueta
+// e ações pra continuar editando ou excluir. Fica escondida quando vazia.
+function renderOrcamentosEmAndamento(){
+  const card = document.getElementById('card-orcamentos-em-andamento');
+  const tbody = document.getElementById('orc-em-andamento-body');
+  if(!card || !tbody) return;
+
+  const emAndamento = STATE.orcamentos.filter(o=>o.status==='pre_venda' || o.status==='rascunho');
+  if(emAndamento.length===0){
+    card.style.display = 'none';
+    tbody.innerHTML = '';
+    return;
+  }
+  card.style.display = '';
+
+  const ordenados = [...emAndamento].sort((a,b)=> (b.salvoEm||b.criadoEm||'').localeCompare(a.salvoEm||a.criadoEm||''));
+  tbody.innerHTML = ordenados.map(o=>{
+    const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    const c = calcularVenda(o);
+    const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
+    const quando = o.salvoEm || o.criadoEm;
+    return `
+      <tr>
+        <td>${cliente ? escapeHtml(cliente.nome) : '<span class="help-text">(cliente ainda não definido)</span>'}</td>
+        <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
+        <td>${statusOrcamentoLabel[o.status]}</td>
+        <td class="help-text">${quando ? new Date(quando).toLocaleString('pt-BR') : '—'}</td>
+        <td>
+          <button class="btn btn-sm btn-primary" onclick="editarOrcamento('${o.id}')">▶️ Continuar</button>
+          <button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>
+        </td>
+      </tr>`;
+  }).join('');
+}
+
 function salvarOrcamento(){
   const clienteId = document.getElementById('orc-cliente').value;
   const data = document.getElementById('orc-data').value;
@@ -7562,15 +7720,20 @@ function salvarOrcamento(){
   if(orcamentoEmEdicaoId){
     // Modo edição: atualiza o orçamento existente em vez de criar um novo.
     // Preserva id, status comercial, status de entrega e vínculo com venda
-    // já gerada (se houver) — só os dados do formulário mudam.
+    // já gerada (se houver) — só os dados do formulário mudam. EXCEÇÃO: se
+    // era uma Pré-venda/Rascunho (orçamento em andamento) e o usuário clicou
+    // no "Salvar Orçamento" de verdade agora, isso finaliza de vez — vira um
+    // orçamento 'pendente' normal, saindo da lista de "Em Andamento".
     const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoEmEdicaoId);
     if(!orcamento){ showToast('Orçamento não encontrado.', 'error'); orcamentoEmEdicaoId=null; renderOrcamentos(); return; }
+    const estavaEmAndamento = orcamento.status==='pre_venda' || orcamento.status==='rascunho';
     Object.assign(orcamento, dadosBase);
     delete orcamento.desconto; if(desconto) orcamento.desconto = desconto;
     delete orcamento.acrescimo; if(acrescimo) orcamento.acrescimo = acrescimo;
+    if(estavaEmAndamento) orcamento.status = 'pendente';
     saveState();
     limparRascunhoOrcamento();
-    showToast('Orçamento atualizado.', 'success');
+    showToast(estavaEmAndamento ? 'Orçamento finalizado.' : 'Orçamento atualizado.', 'success');
     orcamentoEmEdicaoId = null;
     renderOrcamentos();
     return;
@@ -7658,8 +7821,21 @@ function editarOrcamento(id){
     document.getElementById('orc-acrescimo-valor').value = orcamento.acrescimo.valor;
   }
 
-  document.getElementById('orc-form-titulo').textContent = '1. Dados do Orçamento (editando)';
-  document.getElementById('orc-btn-salvar').textContent = 'Salvar Alterações';
+  // Título/botões mudam um pouco quando é uma Pré-venda/Rascunho sendo
+  // continuada, pra deixar claro que ainda não foi finalizado — e o botão
+  // "Salvar como Pré-venda" só faz sentido nesse caso (editar um orçamento
+  // JÁ lançado não deveria conseguir "rebaixá-lo" de volta a rascunho).
+  const emAndamento = orcamento.status==='pre_venda' || orcamento.status==='rascunho';
+  const btnPreVenda = document.getElementById('orc-btn-salvar-pre-venda');
+  if(emAndamento){
+    document.getElementById('orc-form-titulo').textContent = orcamento.status==='pre_venda' ? '1. Dados do Orçamento (continuando pré-venda)' : '1. Dados do Orçamento (continuando rascunho)';
+    document.getElementById('orc-btn-salvar').textContent = 'Finalizar Orçamento';
+    if(btnPreVenda) btnPreVenda.style.display = '';
+  }else{
+    document.getElementById('orc-form-titulo').textContent = '1. Dados do Orçamento (editando)';
+    document.getElementById('orc-btn-salvar').textContent = 'Salvar Alterações';
+    if(btnPreVenda) btnPreVenda.style.display = 'none';
+  }
   document.getElementById('orc-btn-cancelar-edicao').style.display = '';
 
   renderCarrinhoOrcamento();
@@ -7709,7 +7885,9 @@ const statusOrcamentoLabel = {
   enviado: '<span class="badge badge-info">Enviado</span>',
   recusado: '<span class="badge badge-negative">Recusado</span>',
   expirado: '<span class="badge" style="background:#F5E6D8;color:#A15C1E;">Expirado</span>',
-  convertido: '<span class="badge badge-positive">Virou Venda</span>'
+  convertido: '<span class="badge badge-positive">Virou Venda</span>',
+  pre_venda: '<span class="badge" style="background:#EAF2FF;color:#2A5DB0;">Pré-venda</span>',
+  rascunho: '<span class="badge" style="background:#EEEEEE;color:#666666;">Rascunho</span>'
 };
 
 // Passa pra "Expirado" automaticamente todo orçamento ainda 'pendente' cuja
@@ -7743,10 +7921,15 @@ function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
   atualizarOrcamentosExpirados();
+  renderOrcamentosEmAndamento();
 
   const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
 
-  let lista = [...STATE.orcamentos];
+  // Pré-vendas e rascunhos ainda NÃO fazem parte dos "Orçamentos Lançados"
+  // de verdade — ficam só na lista de "Orçamentos em Andamento" (ver
+  // renderOrcamentosEmAndamento()), até o usuário finalizar de verdade
+  // clicando em "Salvar Orçamento".
+  let lista = STATE.orcamentos.filter(o=>o.status!=='pre_venda' && o.status!=='rascunho');
   // Orçamento já convertido em venda continua aparecendo aqui normalmente
   // (com o selo "✅ Virou Venda" na coluna Status) — antes ele sumia da
   // lista por padrão assim que convertia, o que dava a impressão de que
