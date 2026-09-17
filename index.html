@@ -16310,11 +16310,19 @@ function renderRevisaoOportunidades(){
     <div class="rev-item" draggable="true" data-rev-id="${l.id}" style="display:flex;gap:12px;align-items:flex-start;padding:12px 8px;border-bottom:1px solid var(--border-soft, #E7E5E0);cursor:grab;${marcado?'background:var(--bg-app);':''}">
       <input type="checkbox" class="rev-check" data-id="${l.id}" ${marcado?'checked':''} style="margin-top:3px;flex-shrink:0;">
       <div style="flex:1;min-width:0;cursor:pointer;" onclick="abrirDetalheLicitacao('${l.id}')">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:5px;">
+          <span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:11px;font-weight:700;">📋 ${escapeHtml(l.modalidadeNome||'Modalidade não identificada')}</span>
+          ${l.formaParticipacao==='email'
+            ? `<span class="badge" style="background:#FCE9D6;color:#9A4B10;font-size:11px;font-weight:700;">✉️ Envio por E-mail${l.formaParticipacaoEstimada?' (estimado)':''}</span>`
+            : l.formaParticipacao
+              ? `<span class="badge" style="background:#EAF2FF;color:#2A5DB0;font-size:11px;font-weight:700;">${FORMA_PARTICIPACAO_LABEL[l.formaParticipacao]}${l.formaParticipacaoEstimada?' (estimado)':''}</span>`
+              : ''}
+        </div>
         <div style="font-weight:600;font-size:14.5px;line-height:1.5;">${escapeHtml(l.objeto)}</div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:7px;font-size:12.5px;color:var(--ink-soft);">
           <span>🏛️ ${escapeHtml(l.orgao||'—')}</span>
           <span>📍 ${escapeHtml(l.municipioNome||'—')}${l.uf?'/'+escapeHtml(l.uf):''}${l.distanciaKm!=null?` (~${l.distanciaKm}km)`:''}</span>
-          <span>📋 ${escapeHtml(l.modalidadeNome||'—')}${l.numero?' · Nº '+escapeHtml(l.numero):''}</span>
+          ${l.numero?`<span>Nº ${escapeHtml(l.numero)}</span>`:''}
           <span>💰 ${fmtMoney(l.valorEstimado)}</span>
           <span>🗓️ Publicado ${l.dataAberturaProposta?new Date(l.dataAberturaProposta).toLocaleDateString('pt-BR'):'—'}</span>
           <span style="font-weight:600;color:var(--ink);">⏰ Prazo final: ${l.dataEncerramentoProposta?new Date(l.dataEncerramentoProposta).toLocaleString('pt-BR'):'—'}</span>
