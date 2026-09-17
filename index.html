@@ -619,6 +619,15 @@ table.data-table{ width:100%; font-size:13px; }
   margin:0 6px 6px 0;
 }
 
+/* busca rápida geral -- fica fixa no topo do conteúdo, em qualquer tela */
+.busca-global-wrap{ position:relative; max-width:420px; margin:0 0 16px auto; }
+.busca-global-wrap input{
+  width:100%; padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius-sm);
+  font-size:13px; background:#fff;
+}
+.busca-global-wrap input:focus{ outline:none; border-color:var(--primary); }
+.busca-global-dropdown-grupo{ padding:6px 11px 2px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; color:var(--ink-faint); }
+
 /* combobox de busca (produto/item) com filtro em tempo real */
 .combo-wrap{ position:relative; }
 .combo-dropdown{
@@ -736,6 +745,14 @@ table.data-table{ width:100%; font-size:13px; }
 
   <!-- MAIN -->
   <main class="main">
+
+    <!-- BUSCA RÁPIDA GERAL — fica visível em qualquer tela, fora das
+         seções de página, pra achar produto/cliente/orçamento sem precisar
+         trocar de aba primeiro -->
+    <div class="busca-global-wrap combo-wrap">
+      <input type="text" id="busca-global-input" placeholder="🔍 Busca rápida — produto, cliente ou orçamento...">
+      <div class="combo-dropdown" id="busca-global-dropdown"></div>
+    </div>
 
     <!-- ============ DASHBOARD ============ -->
     <section class="page active" id="page-dashboard">
@@ -1167,7 +1184,9 @@ function defaultState(){
     config: {
       impostoPct: 4,
       comissaoPct: 2,
-      lojaEndereco: '', lojaLat: null, lojaLng: null // ponto de partida do Planejador de Rotas — configurável em Logística
+      lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
+      diasProdutoParado: 30, // configurável na tela de Estoque — "produto parado" = sem vender há esses dias
+      diasClienteInativo: 60 // configurável na tela de Clientes — "cliente inativo" = sem comprar há esses dias
     }
   };
 }
@@ -1412,6 +1431,91 @@ document.addEventListener('DOMContentLoaded', ()=>{
 })();
 
 /* =========================================================
+   BUSCA RÁPIDA GERAL (produto / cliente / orçamento) — disponível em
+   qualquer tela, fixa no topo do conteúdo principal.
+   ========================================================= */
+function buscarGlobalResultados(termoBruto){
+  const termo = normalizarBusca(termoBruto).trim();
+  if(!termo) return { produtos:[], clientes:[], orcamentos:[] };
+
+  const produtos = STATE.produtos.filter(p=>
+    normalizarBusca(p.nome).includes(termo) ||
+    normalizarBusca(p.marca).includes(termo) ||
+    normalizarBusca(p.codigoBarras).includes(termo) ||
+    normalizarBusca(p.sku).includes(termo)
+  ).slice(0,6);
+
+  const clientes = STATE.clientes.filter(c=>
+    normalizarBusca(c.nome).includes(termo) ||
+    normalizarBusca(c.documento).includes(termo)
+  ).slice(0,6);
+
+  const orcamentos = STATE.orcamentos.filter(o=>{
+    const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    return normalizarBusca(o.id).includes(termo) ||
+      (cliente && normalizarBusca(cliente.nome).includes(termo)) ||
+      normalizarBusca(o.data).includes(termo);
+  }).slice(0,6);
+
+  return { produtos, clientes, orcamentos };
+}
+
+(function(){
+  const input = document.getElementById('busca-global-input');
+  const dropdown = document.getElementById('busca-global-dropdown');
+  if(!input || !dropdown) return;
+
+  function render(){
+    const termo = input.value.trim();
+    if(!termo){ dropdown.classList.remove('open'); dropdown.innerHTML=''; return; }
+
+    const { produtos, clientes, orcamentos } = buscarGlobalResultados(termo);
+    if(produtos.length===0 && clientes.length===0 && orcamentos.length===0){
+      dropdown.innerHTML = `<div class="combo-empty">Nenhum resultado para "${escapeHtml(termo)}".</div>`;
+      dropdown.classList.add('open');
+      return;
+    }
+
+    let html = '';
+    if(produtos.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Produtos</div>`;
+      html += produtos.map(p=>`<div class="combo-option" data-tipo="produto" data-id="${p.id}">${escapeHtml(p.nome)}<div class="combo-sub">${escapeHtml(p.marca||'')}${p.codigoBarras?' · '+escapeHtml(p.codigoBarras):''}</div></div>`).join('');
+    }
+    if(clientes.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Clientes</div>`;
+      html += clientes.map(c=>`<div class="combo-option" data-tipo="cliente" data-id="${c.id}">${escapeHtml(c.nome)}${c.documento?`<div class="combo-sub">${escapeHtml(c.documento)}</div>`:''}</div>`).join('');
+    }
+    if(orcamentos.length>0){
+      html += `<div class="busca-global-dropdown-grupo">Orçamentos</div>`;
+      html += orcamentos.map(o=>{
+        const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+        return `<div class="combo-option" data-tipo="orcamento" data-id="${o.id}">${escapeHtml(cliente?cliente.nome:'(cliente removido)')}<div class="combo-sub">${fmtDate(o.data)} · ${escapeHtml(o.status||'')}</div></div>`;
+      }).join('');
+    }
+    dropdown.innerHTML = html;
+    dropdown.classList.add('open');
+
+    dropdown.querySelectorAll('.combo-option[data-id]').forEach(el=>{
+      el.addEventListener('click', ()=>{
+        const tipo = el.dataset.tipo, id = el.dataset.id;
+        input.value = '';
+        dropdown.classList.remove('open');
+        dropdown.innerHTML = '';
+        if(tipo==='produto'){ navigateTo('produtos'); abrirFormProduto(id); }
+        else if(tipo==='cliente'){ navigateTo('clientes'); abrirFormCliente(id); }
+        else if(tipo==='orcamento'){ navigateTo('orcamentos'); verDetalheOrcamento(id); }
+      });
+    });
+  }
+
+  input.addEventListener('input', render);
+  input.addEventListener('focus', render);
+  document.addEventListener('click', (e)=>{
+    if(!e.target.closest('.busca-global-wrap')) { dropdown.classList.remove('open'); }
+  });
+})();
+
+/* =========================================================
    EXPORT / IMPORT BACKUP
    ========================================================= */
 function exportarBackup(){
@@ -1586,6 +1690,14 @@ function renderClientes(){
   box.innerHTML = `
     ${renderRadarRiscoClientes()}
     <div class="card">
+      <h3>💤 Clientes Inativos
+        <span class="hint">sem comprar há
+          <input type="number" id="clientes-dias-inativo" min="1" value="${STATE.config.diasClienteInativo||60}" style="width:54px;padding:2px 4px;font-size:12px;">
+          dias ou mais</span>
+      </h3>
+      <div id="clientes-inativos-lista"></div>
+    </div>
+    <div class="card">
       <h3>Lista de Clientes <span class="hint">"Padrão de Compra" mostra o ritmo médio dele e se está atrasado em relação ao próprio histórico</span></h3>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar cliente</label>
@@ -1624,7 +1736,42 @@ function renderClientes(){
     renderTabelaClientes();
   });
 
+  renderClientesInativos();
+  document.getElementById('clientes-dias-inativo').addEventListener('change', (e)=>{
+    const dias = parseInt(e.target.value);
+    STATE.config.diasClienteInativo = (dias>0) ? dias : 60;
+    saveState();
+    renderClientesInativos();
+  });
+
   renderTabelaClientes();
+}
+
+function renderClientesInativos(){
+  const box = document.getElementById('clientes-inativos-lista');
+  if(!box) return;
+  const inativos = getClientesInativos();
+  if(inativos.length===0){
+    box.innerHTML = `<p class="help-text">Nenhum cliente inativo nesse período. 🎉</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Cliente</th><th>Última Compra</th><th class="num">Dias Inativo</th><th>Ações</th></tr></thead>
+        <tbody>
+          ${inativos.map(({cliente,ultimaVenda})=>{
+            const dias = Math.floor((new Date(todayISO())-new Date(ultimaVenda))/(1000*60*60*24));
+            return `<tr>
+              <td>${escapeHtml(cliente.nome)}</td>
+              <td>${fmtDate(ultimaVenda)}</td>
+              <td class="num" style="color:var(--warning);font-weight:700;">${dias}</td>
+              <td><button class="btn btn-sm" onclick="abrirFormCliente('${cliente.id}')">Ver Cadastro</button></td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 function renderRadarRiscoClientes(){
@@ -1728,6 +1875,43 @@ function renderTabelaClientes(){
   }
 }
 
+// Perfil do cliente: histórico de compras, ticket médio e última compra,
+// mostrado dentro do próprio formulário de edição (só faz sentido pra quem
+// já é cliente cadastrado, nunca no cadastro de um novo).
+function renderPerfilClienteResumo(cliente){
+  const vendasCliente = STATE.vendas.filter(v=>v.clienteId===cliente.id && v.status!=='cancelada');
+  const valores = vendasCliente.map(v=>{
+    const c = calcularVenda(v);
+    const acrescimo = v.acrescimo ? v.acrescimo.valor : 0;
+    return c.bruto + acrescimo;
+  });
+  const totalComprado = valores.reduce((s,v)=>s+v,0);
+  const ticketMedio = vendasCliente.length>0 ? totalComprado/vendasCliente.length : 0;
+  const ultimaCompra = vendasCliente.length>0
+    ? vendasCliente.reduce((maisRecente,v)=>v.data>maisRecente?v.data:maisRecente, vendasCliente[0].data)
+    : null;
+
+  return `
+    <div class="kpi-row" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr));margin-bottom:16px;">
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">🛒 Compras</div>
+        <div class="kpi-value" style="font-size:19px;">${vendasCliente.length}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">💰 Total Comprado</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(totalComprado)}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">🎯 Ticket Médio</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(ticketMedio)}</div>
+      </div>
+      <div class="kpi-card" style="padding:12px 14px;">
+        <div class="kpi-label">📅 Última Compra</div>
+        <div class="kpi-value" style="font-size:19px;">${ultimaCompra?fmtDate(ultimaCompra):'—'}</div>
+      </div>
+    </div>`;
+}
+
 function abrirFormCliente(id, onCriado){
   const cliente = id ? STATE.clientes.find(c=>c.id===id) : null;
 
@@ -1744,6 +1928,7 @@ function abrirFormCliente(id, onCriado){
         </div>
       </div>
       <div class="modal-rapido-corpo">
+        ${cliente ? renderPerfilClienteResumo(cliente) : ''}
         <form id="form-cliente">
           <div class="form-grid">
             <div class="field">
@@ -2351,6 +2536,105 @@ function abrirSeletorMapaEndereco(config){
   }
 }
 
+/* =========================================================
+   LEITURA DE CÓDIGO DE BARRAS PELA CÂMERA (celular ou webcam)
+   Usa a API nativa do navegador (BarcodeDetector) — sem depender de
+   nenhuma biblioteca externa via CDN. Funciona bem no Chrome/Android;
+   em navegadores sem suporte (ex: Safari/iOS mais antigo), mostra um
+   aviso amigável e deixa a digitação manual como alternativa — nunca
+   trava a tela nem impede o uso do resto do formulário.
+   ========================================================= */
+function abrirLeitorCodigoBarras(onCodigoLido){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-leitor-codigo-barras';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(480px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📷</div>
+        <div>
+          <h3>Ler código de barras</h3>
+          <div class="sub">Aponte a câmera pro código de barras do produto</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;min-height:220px;display:flex;align-items:center;justify-content:center;">
+          <video id="leitor-codigo-video" style="width:100%;max-height:320px;display:none;" playsinline muted></video>
+          <div id="leitor-codigo-status" style="color:#fff;font-size:13px;padding:16px;text-align:center;">Iniciando câmera...</div>
+        </div>
+        <div class="field" style="margin-top:14px;">
+          <label>Ou digite o código manualmente</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="leitor-codigo-manual" style="flex:1;" placeholder="Código de barras...">
+            <button type="button" class="btn btn-primary" id="leitor-codigo-manual-btn">OK</button>
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="leitor-codigo-fechar">Fechar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  let stream = null;
+  let parar = false;
+  function fechar(){
+    parar = true;
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    modal.remove();
+  }
+  document.getElementById('leitor-codigo-fechar').addEventListener('click', fechar);
+
+  function confirmarCodigo(codigo){
+    if(!codigo) return;
+    fechar();
+    onCodigoLido(codigo.trim());
+  }
+  document.getElementById('leitor-codigo-manual-btn').addEventListener('click', ()=>{
+    confirmarCodigo(document.getElementById('leitor-codigo-manual').value);
+  });
+  document.getElementById('leitor-codigo-manual').addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); confirmarCodigo(e.target.value); }
+  });
+
+  const statusEl = document.getElementById('leitor-codigo-status');
+  const videoEl = document.getElementById('leitor-codigo-video');
+
+  if(typeof BarcodeDetector === 'undefined'){
+    statusEl.textContent = 'Leitura por câmera não é suportada neste navegador. Digite o código manualmente abaixo.';
+    return;
+  }
+
+  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+    .then(async (mediaStream)=>{
+      if(parar){ mediaStream.getTracks().forEach(t=>t.stop()); return; }
+      stream = mediaStream;
+      videoEl.srcObject = stream;
+      videoEl.style.display = '';
+      statusEl.style.display = 'none';
+      await videoEl.play();
+
+      const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','codabar','itf'] });
+      async function tentarLer(){
+        if(parar) return;
+        try{
+          const codigos = await detector.detect(videoEl);
+          if(codigos && codigos.length>0){
+            confirmarCodigo(codigos[0].rawValue);
+            return;
+          }
+        }catch(err){ /* frame ilegível, ignora e tenta o próximo */ }
+        if(!parar) setTimeout(tentarLer, 300);
+      }
+      tentarLer();
+    })
+    .catch(()=>{
+      statusEl.style.display = '';
+      statusEl.textContent = 'Não foi possível acessar a câmera (permissão negada ou indisponível). Digite o código manualmente abaixo.';
+    });
+}
+
 // Liga um botão "📍 Localizar no mapa" a um par de campos de input já
 // existentes (texto do endereço + hidden opcional de lat/lng), reutilizável
 // nos três formulários que têm endereço (Cliente, Fornecedor, Local de Compra).
@@ -2760,6 +3044,40 @@ function iconeDadosIncompletos(p){
   return produtoDadosIncompletos(p)
     ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Faltam dados: ${[!p.categoria&&'categoria',!p.marca&&'marca',!p.fornecedor&&'fornecedor',p.estoqueMin==null&&'estoque mínimo'].filter(Boolean).join(', ')}.">⚠️ Dados incompletos</div>`
     : '';
+}
+
+// "Produto parado": tem pelo menos uma venda no histórico, mas a mais
+// recente já passou do limite de dias configurado. Produto que nunca foi
+// vendido fica de fora desse alerta (não tem "parado" pra comparar).
+function getProdutosParados(diasLimite){
+  diasLimite = diasLimite!=null ? diasLimite : (STATE.config.diasProdutoParado||30);
+  const hoje = todayISO();
+  const ultimaVendaPorProduto = {};
+  STATE.vendas.filter(v=>v.status!=='cancelada').forEach(v=>{
+    (v.itens||[]).forEach(it=>{
+      if(!it.produtoId) return;
+      if(!ultimaVendaPorProduto[it.produtoId] || v.data>ultimaVendaPorProduto[it.produtoId]) ultimaVendaPorProduto[it.produtoId]=v.data;
+    });
+  });
+  return STATE.produtos
+    .filter(p=>ultimaVendaPorProduto[p.id] && Math.floor((new Date(hoje)-new Date(ultimaVendaPorProduto[p.id]))/(1000*60*60*24))>=diasLimite)
+    .map(p=>({ produto:p, ultimaVenda: ultimaVendaPorProduto[p.id] }))
+    .sort((a,b)=>a.ultimaVenda.localeCompare(b.ultimaVenda));
+}
+
+// "Cliente inativo": mesma lógica, só que por cliente e por venda (não por
+// item) — sem comprar há X dias, contando só quem já comprou alguma vez.
+function getClientesInativos(diasLimite){
+  diasLimite = diasLimite!=null ? diasLimite : (STATE.config.diasClienteInativo||60);
+  const hoje = todayISO();
+  const ultimaVendaPorCliente = {};
+  STATE.vendas.filter(v=>v.status!=='cancelada' && v.clienteId).forEach(v=>{
+    if(!ultimaVendaPorCliente[v.clienteId] || v.data>ultimaVendaPorCliente[v.clienteId]) ultimaVendaPorCliente[v.clienteId]=v.data;
+  });
+  return STATE.clientes
+    .filter(c=>ultimaVendaPorCliente[c.id] && Math.floor((new Date(hoje)-new Date(ultimaVendaPorCliente[c.id]))/(1000*60*60*24))>=diasLimite)
+    .map(c=>({ cliente:c, ultimaVenda: ultimaVendaPorCliente[c.id] }))
+    .sort((a,b)=>a.ultimaVenda.localeCompare(b.ultimaVenda));
 }
 
 // Célula compacta de código (SKU / Cód. NF / Código de Barras empilhados),
@@ -4377,14 +4695,17 @@ function escapeAttr(str){ return escapeHtml(str); }
    Gera um input de texto + dropdown filtrado em tempo real, no lugar
    de um <select> nativo (que não filtra por texto digitado).
    ========================================================= */
-function renderComboboxProduto(inputId, hiddenId, opcoes, valorInicialId, placeholder){
+function renderComboboxProduto(inputId, hiddenId, opcoes, valorInicialId, placeholder, comLeitorCodigoBarras){
   // opcoes: [{id, label, sub}]
   const inicial = valorInicialId ? opcoes.find(o=>o.id===valorInicialId) : null;
   return `
-    <div class="combo-wrap" id="${inputId}-wrap">
-      <input type="text" id="${inputId}" autocomplete="off" placeholder="${placeholder||'Digite para buscar...'}" value="${inicial?escapeAttr(inicial.label):''}">
-      <input type="hidden" id="${hiddenId}" value="${valorInicialId||''}">
-      <div class="combo-dropdown" id="${inputId}-dropdown"></div>
+    <div class="combo-wrap" id="${inputId}-wrap" style="${comLeitorCodigoBarras?'display:flex;gap:6px;align-items:flex-start;':''}">
+      <div style="flex:1;position:relative;">
+        <input type="text" id="${inputId}" autocomplete="off" placeholder="${placeholder||'Digite para buscar...'}" value="${inicial?escapeAttr(inicial.label):''}">
+        <input type="hidden" id="${hiddenId}" value="${valorInicialId||''}">
+        <div class="combo-dropdown" id="${inputId}-dropdown"></div>
+      </div>
+      ${comLeitorCodigoBarras ? `<button type="button" class="btn btn-sm" id="${inputId}-scan" title="Ler código de barras pela câmera" style="white-space:nowrap;">📷</button>` : ''}
     </div>
   `;
 }
@@ -4521,6 +4842,30 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
       dropdown.classList.remove('open');
     }
   });
+
+  // opcoesExtra.comLeitorCodigoBarras: liga o botão 📷 (quando o HTML foi
+  // gerado com renderComboboxProduto(..., true)) à leitura por câmera —
+  // ao ler um código, procura o produto correspondente e já seleciona ele
+  // direto, sem precisar digitar nada.
+  if(opcoesExtra && opcoesExtra.comLeitorCodigoBarras){
+    const btnScan = document.getElementById(inputId+'-scan');
+    if(btnScan){
+      btnScan.addEventListener('click', ()=>{
+        abrirLeitorCodigoBarras((codigo)=>{
+          const encontrado = opcoes.find(o=>o.buscaExtra && normalizar(o.buscaExtra).includes(normalizar(codigo)));
+          if(encontrado){
+            selecionar(encontrado);
+            showToast(`Produto "${encontrado.label}" encontrado pelo código de barras.`, 'success');
+          }else{
+            input.value = codigo;
+            hidden.value = '';
+            renderDropdown(filtrar(codigo));
+            showToast('Nenhum produto cadastrado com esse código de barras — mostrando busca por texto.', 'error');
+          }
+        });
+      });
+    }
+  }
 
   // devolve um controlador simples pra quem chamou poder ligar/desligar o
   // filtro "somente Compra Local" de fora (ex: via um checkbox na tela)
@@ -5399,7 +5744,7 @@ function renderVenda(){
         <div class="field">
           <label>Produto</label>
           <div style="display:flex;gap:6px;align-items:flex-end;">
-            <div style="flex:1;min-width:0;">${renderComboboxProduto('v-item-produto-busca', 'v-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}</div>
+            <div style="flex:1;min-width:0;">${renderComboboxProduto('v-item-produto-busca', 'v-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}</div>
             <button type="button" class="btn btn-sm" id="v-btn-editar-produto" style="display:none;flex-shrink:0;" title="Editar dados deste produto">✏️</button>
           </div>
         </div>
@@ -5521,7 +5866,7 @@ function renderVenda(){
       document.getElementById('v-btn-editar-produto').style.display = p ? '' : 'none';
       atualizarSubtotalELucroItem();
       mostrarHistoricoPrecoItem(opt.id);
-    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoVenda});
+    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoVenda, comLeitorCodigoBarras: true});
     const checkboxCompraLocal = document.getElementById('v-filtro-compra-local');
     if(checkboxCompraLocal){
       checkboxCompraLocal.addEventListener('change', (e)=>{
@@ -6416,7 +6761,7 @@ function renderOrcamentos(){
         <div class="field">
           <label>Produto</label>
           <div style="display:flex;gap:6px;align-items:flex-end;">
-            <div style="flex:1;min-width:0;">${renderComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}</div>
+            <div style="flex:1;min-width:0;">${renderComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}</div>
             <button type="button" class="btn btn-sm" id="orc-btn-editar-produto" style="display:none;flex-shrink:0;" title="Editar dados deste produto">✏️</button>
           </div>
         </div>
@@ -6504,6 +6849,7 @@ function renderOrcamentos(){
           <div class="help-text" id="orc-kpi-repasse-real-mizu" style="margin-top:2px;"></div>
         </div>
         <div class="kpi-card"><div class="kpi-label">Lucro Líquido Previsto</div><div class="kpi-value positive" id="orc-kpi-lucro">R$ 0,00</div></div>
+        <div class="kpi-card"><div class="kpi-label">Margem do Orçamento</div><div class="kpi-value positive" id="orc-kpi-margem">0,0%</div></div>
       </div>
       <div class="form-actions">
         <button class="btn btn-primary" id="orc-btn-salvar">Salvar Orçamento</button>
@@ -6749,8 +7095,18 @@ function atualizarResumoOrcamento(){
   document.getElementById('orc-kpi-imposto').textContent = fmtMoney(c.imposto);
   document.getElementById('orc-kpi-comissao').textContent = fmtMoney(c.comissao);
   const lucroEl = document.getElementById('orc-kpi-lucro');
-  lucroEl.textContent = fmtMoney(c.lucro+acrescimo);
-  lucroEl.className = 'kpi-value ' + ((c.lucro+acrescimo)>=0?'positive':'negative');
+  const lucroTotal = c.lucro+acrescimo;
+  lucroEl.textContent = fmtMoney(lucroTotal);
+  lucroEl.className = 'kpi-value ' + (lucroTotal>=0?'positive':'negative');
+
+  // margem do orçamento inteiro (não só por item) — pedido explícito do
+  // relatório, pra dar uma visão geral de rentabilidade antes de fechar
+  const margemEl = document.getElementById('orc-kpi-margem');
+  if(margemEl){
+    const margemPct = brutoTotal>0 ? (lucroTotal/brutoTotal*100) : 0;
+    margemEl.textContent = margemPct.toFixed(1)+'%';
+    margemEl.className = 'kpi-value ' + (margemPct>=0?'positive':'negative');
+  }
 
   const temRepasseEl = document.getElementById('orc-tem-repasse');
   const kpiRepasseCard = document.getElementById('orc-kpi-repasse-card');
@@ -6828,7 +7184,7 @@ function ativarComboboxProdutoOrcamento(){
     atualizarToggleVenderCaixa(p);
     mostrarHistoricoPrecoItemOrcamento(opt.id);
     atualizarPreviewItemOrcamento();
-  }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoOrcamento});
+  }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoOrcamento, comLeitorCodigoBarras: true});
   const checkboxCompraLocal = document.getElementById('orc-filtro-compra-local');
   if(checkboxCompraLocal){
     checkboxCompraLocal.addEventListener('change', (e)=>{
@@ -8555,7 +8911,7 @@ function abrirEdicaoVenda(vendaId){
         <div class="item-picker-row">
           <div class="field">
             <label>Produto</label>
-            ${renderComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...')}
+            ${renderComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), null, 'Digite o nome do produto...', true)}
           </div>
           <div class="field">
             <label>Quantidade</label>
@@ -8713,7 +9069,7 @@ function abrirEdicaoVenda(vendaId){
     ativarComboboxProduto('ev-item-produto-busca', 'ev-item-produto', opcoesProdutosCombobox(), (opt)=>{
       const p = STATE.produtos.find(x=>x.id===opt.id);
       document.getElementById('ev-item-preco').value = p ? p.precoVenda : '';
-    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoEdicao});
+    }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoEdicao, comLeitorCodigoBarras: true});
   }
   ativarComboboxProdutoEdicao();
 
@@ -9532,6 +9888,15 @@ function renderEstoque(){
     </div>` : ''}
 
     <div class="card">
+      <h3>🐌 Produtos Parados
+        <span class="hint">sem vender há
+          <input type="number" id="estoque-dias-parado" min="1" value="${STATE.config.diasProdutoParado||30}" style="width:54px;padding:2px 4px;font-size:12px;">
+          dias ou mais</span>
+      </h3>
+      <div id="estoque-produtos-parados"></div>
+    </div>
+
+    <div class="card">
       <h3>Saldo Atual por Produto <span class="hint">clique em Ajustar para corrigir manualmente</span></h3>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar produto</label>
@@ -9608,8 +9973,43 @@ function renderEstoque(){
     renderTabelaAbaixoMin(produtosAbaixoMin);
   }
 
+  renderProdutosParados();
+  document.getElementById('estoque-dias-parado').addEventListener('change', (e)=>{
+    const dias = parseInt(e.target.value);
+    STATE.config.diasProdutoParado = (dias>0) ? dias : 30;
+    saveState();
+    renderProdutosParados();
+  });
+
   renderTabelaEstoque();
   renderHistoricoEstoque();
+}
+
+function renderProdutosParados(){
+  const box = document.getElementById('estoque-produtos-parados');
+  if(!box) return;
+  const parados = getProdutosParados();
+  if(parados.length===0){
+    box.innerHTML = `<p class="help-text">Nenhum produto parado nesse período. 🎉</p>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Produto</th><th>Marca</th><th>Última Venda</th><th class="num">Dias Parado</th></tr></thead>
+        <tbody>
+          ${parados.map(({produto,ultimaVenda})=>{
+            const dias = Math.floor((new Date(todayISO())-new Date(ultimaVenda))/(1000*60*60*24));
+            return `<tr>
+              <td>${escapeHtml(produto.nome)}</td>
+              <td>${escapeHtml(produto.marca||'')}</td>
+              <td>${fmtDate(ultimaVenda)}</td>
+              <td class="num" style="color:var(--warning);font-weight:700;">${dias}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 let estoqueSort = {key:'nome', dir:'asc'};
@@ -9856,7 +10256,7 @@ function renderHistoricoEstoque(){
 }
 
 function abrirFormEntradaEstoque(produtoIdPreSelecionado){
-  const opcoesEstoque = STATE.produtos.map(p=>({id:p.id, label:p.nome, sub:`Estoque atual: ${fmtNum(p.estoqueAtual||0)}`}));
+  const opcoesEstoque = STATE.produtos.map(p=>({id:p.id, label:p.nome, sub:`Estoque atual: ${fmtNum(p.estoqueAtual||0)}`, buscaExtra:[p.codigoBarras, p.sku].filter(Boolean).join(' ')}));
   const produtoPre = produtoIdPreSelecionado ? STATE.produtos.find(p=>p.id===produtoIdPreSelecionado) : null;
 
   const modal = document.createElement('div');
@@ -9876,7 +10276,7 @@ function abrirFormEntradaEstoque(produtoIdPreSelecionado){
         <div class="form-grid">
           <div class="field">
             <label>Produto <span class="req">*</span></label>
-            ${renderComboboxProduto('fe-produto-busca', 'fe-produto', opcoesEstoque, produtoIdPreSelecionado, 'Digite o nome do produto...')}
+            ${renderComboboxProduto('fe-produto-busca', 'fe-produto', opcoesEstoque, produtoIdPreSelecionado, 'Digite o nome do produto...', true)}
           </div>
           <div class="field">
             <label>Quantidade Recebida <span class="req">*</span></label>
@@ -9916,7 +10316,7 @@ function abrirFormEntradaEstoque(produtoIdPreSelecionado){
       document.getElementById('fe-custo').value = p.custo;
       document.getElementById('fe-fornecedor').value = p.fornecedor||'';
     }
-  });
+  }, {comLeitorCodigoBarras: true});
   document.getElementById('fe-confirmar').addEventListener('click', ()=>{
     const produtoId = document.getElementById('fe-produto').value;
     const qtd = parseFloat(document.getElementById('fe-qtd').value);
@@ -10210,7 +10610,7 @@ function renderAnalise(){
 
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <h3 style="margin:0;">Total por Produto <span class="hint">quantidade e valor total vendido de cada produto no período</span></h3>
+        <h3 style="margin:0;">Total por Produto <span class="hint">quantidade e valor total vendido de cada produto no período — clique em "Margem" pra ver a curva de rentabilidade, não só o volume</span></h3>
         <button class="btn btn-sm" id="btn-exportar-analise-produto">⬇ Exportar Excel</button>
       </div>
       <div class="table-wrap">
@@ -10224,6 +10624,7 @@ function renderAnalise(){
               <th class="num" data-sort="custoUnit">Custo Unit.</th>
               <th class="num" data-sort="bruto">Bruto</th>
               <th class="num" data-sort="lucro">Lucro</th>
+              <th class="num" data-sort="margemPct">Margem</th>
               <th></th>
             </tr>
           </thead>
@@ -10445,6 +10846,11 @@ function renderTabelaAnalisePorProduto(linhas){
     porProduto[chave].lucro += l.lucro;
   });
 
+  // curva de rentabilidade: margem (%) de cada produto, não só o volume
+  // vendido — permite ordenar por "Margem" pra achar os produtos mais
+  // rentáveis, mesmo que vendam pouco em quantidade
+  Object.values(porProduto).forEach(p=>{ p.margemPct = p.bruto>0 ? (p.lucro/p.bruto*100) : 0; });
+
   let linhasProduto = Object.values(porProduto);
 
   const {key, dir} = analiseProdutoSort;
@@ -10468,13 +10874,15 @@ function renderTabelaAnalisePorProduto(linhas){
       <td class="num">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
       <td class="num">${fmtMoney(p.bruto)}</td>
       <td class="num" style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(p.lucro)}</td>
+      <td class="num" style="color:${p.margemPct>=0?'var(--positive)':'var(--negative)'};font-weight:700;">${p.margemPct.toFixed(1)}%</td>
       <td>${p.produtoId ? `<button class="btn btn-sm" onclick="abrirFormProduto('${p.produtoId}', ()=>aplicarFiltrosAnalise())" title="Editar produto">✏️</button>` : ''}</td>
     </tr>
-  `).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum resultado para os filtros selecionados.</td></tr>`;
+  `).join('') || `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum resultado para os filtros selecionados.</td></tr>`;
 
   const totQtd = linhasProduto.reduce((s,p)=>s+p.qtd,0);
   const totBrutoP = linhasProduto.reduce((s,p)=>s+p.bruto,0);
   const totLucroP = linhasProduto.reduce((s,p)=>s+p.lucro,0);
+  const totMargemP = totBrutoP>0 ? (totLucroP/totBrutoP*100) : 0;
   document.getElementById('an-table-produto-foot').innerHTML = `
     <tr>
       <td>Total (${total} produto${total===1?'':'s'})</td>
@@ -10484,6 +10892,7 @@ function renderTabelaAnalisePorProduto(linhas){
       <td></td>
       <td class="num">${fmtMoney(totBrutoP)}</td>
       <td class="num" style="color:${totLucroP>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(totLucroP)}</td>
+      <td class="num" style="color:${totMargemP>=0?'var(--positive)':'var(--negative)'}">${totMargemP.toFixed(1)}%</td>
       <td></td>
     </tr>
   `;
@@ -10522,11 +10931,12 @@ function exportarAnalisePorProdutoExcel(){
     'Qtd Vendida': Number(p.qtd.toFixed(2)),
     'Custo Unit. (R$)': p.custoUnit!=null ? Number(p.custoUnit.toFixed(2)) : '',
     'Valor Bruto (R$)': Number(p.bruto.toFixed(2)),
-    'Lucro (R$)': Number(p.lucro.toFixed(2))
+    'Lucro (R$)': Number(p.lucro.toFixed(2)),
+    'Margem (%)': Number((p.bruto>0 ? (p.lucro/p.bruto*100) : 0).toFixed(1))
   }));
 
   const ws = XLSX.utils.json_to_sheet(dadosPlanilha);
-  ws['!cols'] = [{wch:36},{wch:16},{wch:20},{wch:14},{wch:16},{wch:16},{wch:16}];
+  ws['!cols'] = [{wch:36},{wch:16},{wch:20},{wch:14},{wch:16},{wch:16},{wch:16},{wch:14}];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Total por Produto');
   XLSX.writeFile(wb, `analise_por_produto_${todayISO()}.xlsx`);
@@ -15796,6 +16206,18 @@ function renderDashAlertas(){
   const alertasBox = document.getElementById('dash-alertas');
   const alertas = [];
 
+  // lembrete periódico de backup: como os dados ficam só neste navegador,
+  // avisamos aqui (além do card de baixo) quando faz mais de 7 dias desde o
+  // último backup exportado, ou quando nunca foi exportado nenhum
+  const DIAS_LIMITE_BACKUP = 7;
+  const diasDesdeBackup = STATE.ultimoBackup ? Math.floor((new Date()-new Date(STATE.ultimoBackup))/(1000*60*60*24)) : null;
+  if(diasDesdeBackup===null || diasDesdeBackup>=DIAS_LIMITE_BACKUP){
+    const texto = diasDesdeBackup===null
+      ? '💾 Você ainda não exportou nenhum backup dos dados.'
+      : `💾 Já fazem ${diasDesdeBackup} dias desde o último backup exportado.`;
+    alertas.push({tipo:'warning', texto, acao:{label:'Exportar agora', onclick:'exportarBackup()'}});
+  }
+
   const kpisDespesa = calcularKpisDespesas();
   if(kpisDespesa.atrasado>0){
     alertas.push({tipo:'negative', texto:`Você tem ${fmtMoney(kpisDespesa.atrasado)} em despesas atrasadas.`});
@@ -15827,6 +16249,43 @@ function renderDashAlertas(){
     alertas.push({tipo:'warning', texto:`⚠️ ${parcelasPrecisandoRevisao.length} despesa(s) Fixa Variável precisam ter o valor revisado: ${nomes}.`});
   }
 
+  // painel central de alertas: junta aqui avisos que antes só apareciam
+  // espalhados em cada tela (estoque baixo, cadastro incompleto, entrega
+  // sem rota definida, quinzena de repasse vencida)
+  const produtosEstoqueBaixo = STATE.produtos.filter(p=>p.estoqueMin!=null && (p.estoqueAtual||0) < p.estoqueMin);
+  if(produtosEstoqueBaixo.length>0){
+    alertas.push({tipo:'negative', texto:`📦 ${produtosEstoqueBaixo.length} produto(s) abaixo do estoque mínimo.`, acao:{label:'Ver Estoque', pagina:'estoque'}});
+  }
+
+  const produtosIncompletos = STATE.produtos.filter(produtoDadosIncompletos).length;
+  const enderecosFaltando = [...STATE.fornecedores, ...STATE.locaisCompra].filter(l=>!l.endereco).length;
+  if(produtosIncompletos>0 || enderecosFaltando>0){
+    const partes = [];
+    if(produtosIncompletos>0) partes.push(`${produtosIncompletos} produto(s)`);
+    if(enderecosFaltando>0) partes.push(`${enderecosFaltando} fornecedor(es)/local(is) de compra sem endereço`);
+    alertas.push({tipo:'neutral', texto:`📋 Cadastro incompleto: ${partes.join(' e ')}.`});
+  }
+
+  const entregasSemRota = calcularRoteiro().entregasBloqueadas.length;
+  if(entregasSemRota>0){
+    alertas.push({tipo:'warning', texto:`🚚 ${entregasSemRota} entrega(s) em rota sem origem de coleta definida.`, acao:{label:'Ver Logística', pagina:'logistica'}});
+  }
+
+  const quinzenasVencidas = getLinhasRepasse().filter(l=>l.statusRecebimento==='atrasado').length;
+  if(quinzenasVencidas>0){
+    alertas.push({tipo:'negative', texto:`🔁 ${quinzenasVencidas} venda(s) com repasse de quinzena vencido.`, acao:{label:'Ver Repasses', pagina:'repasses'}});
+  }
+
+  const produtosParados = getProdutosParados().length;
+  if(produtosParados>0){
+    alertas.push({tipo:'neutral', texto:`🐌 ${produtosParados} produto(s) parado(s) (sem vender há ${STATE.config.diasProdutoParado||30}+ dias).`, acao:{label:'Ver Estoque', pagina:'estoque'}});
+  }
+
+  const clientesInativos = getClientesInativos().length;
+  if(clientesInativos>0){
+    alertas.push({tipo:'neutral', texto:`💤 ${clientesInativos} cliente(s) inativo(s) (sem comprar há ${STATE.config.diasClienteInativo||60}+ dias).`, acao:{label:'Ver Clientes', pagina:'clientes'}});
+  }
+
   if(alertas.length===0){
     alertasBox.innerHTML = `<p class="help-text">Nenhum alerta no momento. Tudo em dia! 🎉</p>`;
     return;
@@ -15834,9 +16293,10 @@ function renderDashAlertas(){
 
   const badgeClass = {negative:'badge-negative', warning:'badge-warning', neutral:'badge-neutral'};
   alertasBox.innerHTML = alertas.map(a=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #F0F1F3;">
+    <div style="display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid #F0F1F3;flex-wrap:wrap;">
       <span class="badge ${badgeClass[a.tipo]}">${a.tipo==='negative'?'Atenção':a.tipo==='warning'?'Aviso':'Info'}</span>
-      <span style="font-size:13px;">${a.texto}</span>
+      <span style="font-size:13px;flex:1;">${a.texto}</span>
+      ${a.acao ? `<button class="btn btn-sm" onclick="${a.acao.onclick || `navigateTo('${a.acao.pagina}')`}">${escapeHtml(a.acao.label)}</button>` : ''}
     </div>
   `).join('');
 }
