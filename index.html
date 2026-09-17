@@ -6999,6 +6999,7 @@ function renderOrcamentos(){
       const select = document.getElementById('orc-cliente');
       select.innerHTML = `<option value="">Selecione...</option>` +
         STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteCriado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
+      atualizarBotaoHistoricoComprasOrcamento();
     });
   });
 
@@ -7023,6 +7024,7 @@ function renderOrcamentos(){
       const select = document.getElementById('orc-cliente');
       select.innerHTML = `<option value="">Selecione...</option>` +
         STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteAtualizado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
+      atualizarBotaoHistoricoComprasOrcamento();
     });
   });
 
@@ -7767,6 +7769,11 @@ function editarOrcamento(id){
   carrinhoOrcamentoAtual = orcamento.itens.map(it=>({...it}));
 
   document.getElementById('orc-cliente').value = orcamento.clienteId;
+  // Preencher o campo via JS não dispara o evento "change" sozinho — sem
+  // isso, o botão "🧾 Histórico" (e o "✏️" de editar cliente) ficavam
+  // escondidos mesmo com o cliente já selecionado, porque a função que os
+  // mostra só roda quando o campo muda de verdade.
+  document.getElementById('orc-cliente').dispatchEvent(new Event('change'));
   document.getElementById('orc-data').value = orcamento.data;
   document.getElementById('orc-validade').value = orcamento.validadeDias;
   document.getElementById('orc-obs').value = orcamento.observacoes||'';
