@@ -10996,6 +10996,19 @@ function getPeriodoFiltroRepasses(){
   if(valor==='tudo'){
     return { ini: '1900-01-01', fim: '2999-12-31' };
   }
+  if(valor==='ultimas-n-quinzenas'){
+    const nEl = document.getElementById('rp-filtro-n-quinzenas');
+    const n = Math.max(1, parseInt(nEl && nEl.value)||6);
+    // pega as N quinzenas mais recentes que já têm venda com repasse
+    // (olhando TODAS as vendas, sem filtro de data), e usa a mais antiga
+    // delas pra definir o início do período — cobre 16 dias antes do
+    // vencimento pra garantir que toda venda daquela quinzena entra.
+    const todasQuinzenas = [...new Set(getLinhasRepasse().map(l=>l.vencimento))].sort().reverse();
+    const selecionadas = todasQuinzenas.slice(0, n);
+    if(selecionadas.length===0) return { ini: '1900-01-01', fim: '2999-12-31' };
+    const maisAntiga = selecionadas[selecionadas.length-1];
+    return { ini: addDays(maisAntiga, -16), fim: '2999-12-31' };
+  }
   // customizado
   const iniEl = document.getElementById('rp-filtro-data-ini');
   const fimEl = document.getElementById('rp-filtro-data-fim');
@@ -11773,12 +11786,17 @@ function renderRepasses(){
             <option value="ultimos-3">Últimos 3 + próximos 3 meses</option>
             <option value="ultimos-6" selected>Últimos 6 + próximos 6 meses</option>
             <option value="ano-corrente">Ano corrente</option>
+            <option value="ultimas-n-quinzenas">Últimas N quinzenas</option>
             <option value="customizado">Customizado</option>
           </select>
         </div>
         <div class="field" id="rp-filtro-data-campo" style="display:none;">
           <label>Escolha o período</label>
           ${renderDateRangePicker('rp-filtro-data', '', '')}
+        </div>
+        <div class="field" id="rp-filtro-n-quinzenas-campo" style="display:none;max-width:140px;">
+          <label>Quantas quinzenas</label>
+          <input type="number" id="rp-filtro-n-quinzenas" min="1" value="6">
         </div>
       </div>
       <div class="form-actions" style="margin-bottom:10px;">
@@ -11817,9 +11835,12 @@ function renderRepasses(){
   });
   document.getElementById('rp-filtro-periodo').addEventListener('change', (e)=>{
     const customizado = e.target.value==='customizado';
+    const ultimasNQuinzenas = e.target.value==='ultimas-n-quinzenas';
     document.getElementById('rp-filtro-data-campo').style.display = customizado?'':'none';
+    document.getElementById('rp-filtro-n-quinzenas-campo').style.display = ultimasNQuinzenas?'':'none';
     if(!customizado) renderTabelaRepasses();
   });
+  document.getElementById('rp-filtro-n-quinzenas').addEventListener('input', ()=>renderTabelaRepasses());
   ativarDateRangePicker('rp-filtro-data', ()=>renderTabelaRepasses());
   document.getElementById('rp-esconder-pagas').checked = repasseEsconderPagas;
   document.getElementById('rp-esconder-pagas').addEventListener('change', (e)=>{
@@ -11976,7 +11997,19 @@ function getQuinzenasRepasse(){
     }
     grupos[chave].linhas.push(l);
     grupos[chave].totalComDesconto += l.valorComDesconto;
+    // totalAbatido "legado": soma de abatimentos por venda já lançados no
+    // modelo antigo, antes desta mudança — mantido só pra não perder saldo
+    // já registrado de quinzenas passadas.
     grupos[chave].totalAbatido += l.totalAbatido;
+  });
+  // pagamentos NOVOS (modelo atual): lançamento agregado por quinzena, sem
+  // vínculo com venda nenhuma — o pagador paga o montante da quinzena, não
+  // venda por venda. Soma aqui em cima do totalAbatido legado.
+  Object.values(grupos).forEach(g=>{
+    const pagoAgregado = (STATE.pagamentosRepasse||[])
+      .filter(p=>p.pagadorId===g.pagadorId && p.vencimentoQuinzena===g.vencimento)
+      .reduce((s,p)=>s+p.valor,0);
+    g.totalAbatido += pagoAgregado;
   });
   return Object.values(grupos).map(g=>{
     const saldoPendente = g.totalComDesconto - g.totalAbatido;
@@ -11992,9 +12025,10 @@ function getQuinzenasRepasse(){
 // pagador (ex: 1-15 Set/26) e lança os pagamentos que forem chegando, mesmo que
 // venham picados em várias parcelas até fechar o valor total (o padrão real do
 // usuário: "hoje me pagou 1 mil, semana que vem mais 3 mil..."). Cada pagamento
-// lançado aqui é distribuído automaticamente como abatimento nas vendas
-// daquela quinzena (as mais antigas primeiro), então o histórico de qual venda
-// foi paga por qual pagamento nunca se perde nem se mistura com outra quinzena.
+// lançado aqui vira um lançamento ÚNICO e agregado sobre a quinzena inteira —
+// NÃO abate venda por venda (o pagador paga o montante da quinzena, não cada
+// venda individualmente), então nenhuma venda específica fica marcada como
+// "paga" por causa de um pagamento de quinzena.
 function abrirFormPagamentoQuinzena(pagadorId, vencimento){
   const quinzena = getQuinzenasRepasse().find(q=>q.pagadorId===pagadorId && q.vencimento===vencimento);
   if(!quinzena){ showToast('Quinzena não encontrada.', 'error'); return; }
@@ -12057,23 +12091,14 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
     if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
     if(!data){ showToast('Informe a data.', 'error'); return; }
 
-    // distribui o valor recebido nas vendas desta quinzena, das mais antigas
-    // pras mais novas, sem ultrapassar o saldo pendente de cada venda — é
-    // exatamente o mesmo abatimento por venda que já existia, só que aplicado
-    // automaticamente em lote pra quinzena inteira
-    const linhasOrdenadas = [...quinzena.linhas].sort((a,b)=> a.data<b.data ? -1 : 1);
-    let restante = valor;
-    linhasOrdenadas.forEach(l=>{
-      if(restante<=0.005) return;
-      const saldoLinha = Math.max(0, l.saldoPendente);
-      if(saldoLinha<=0.005) return;
-      const abaterAqui = Math.min(restante, saldoLinha);
-      const venda = STATE.vendas.find(v=>v.id===l.vendaId);
-      if(!venda) return;
-      if(!venda.repasse) venda.repasse = {desconto:null, abatimentos:[]};
-      if(!venda.repasse.abatimentos) venda.repasse.abatimentos = [];
-      venda.repasse.abatimentos.push({ id: uid('abat'), valor: abaterAqui, data, obs: obs || `Pagamento da quinzena ${rotuloQuinzena(vencimento)}`, criadoEm: new Date().toISOString() });
-      restante -= abaterAqui;
+    // lançamento único e agregado sobre a quinzena inteira — não toca em
+    // nenhuma venda individual, só soma no saldo da quinzena como um todo
+    if(!STATE.pagamentosRepasse) STATE.pagamentosRepasse = [];
+    STATE.pagamentosRepasse.push({
+      id: uid('pgrp'), pagadorId, data, valor,
+      obs: obs || `Pagamento da quinzena ${rotuloQuinzena(vencimento)}`,
+      vencimentoQuinzena: vencimento,
+      criadoEm: new Date().toISOString()
     });
 
     saveState();
@@ -13081,8 +13106,12 @@ function gerarRelatorioPdfRepasses(modo){
   let pagamentosHtml = '', totalPagoRelatorio = 0, pagamentosDoRelatorio = [], saldoFinalLiquido = 0;
   if(!ehBruto){
     const pagadoresDoRelatorio = [...new Set(linhas.map(l=>l.pagadorId))];
+    // só entra no histórico do relatório o pagamento feito DENTRO do período
+    // filtrado — antes mostrava todo o histórico do pagador, mesmo pagamento
+    // de outra quinzena fora do período escolhido, o que confundia o relatório
     pagamentosDoRelatorio = (STATE.pagamentosRepasse||[])
       .filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId))
+      .filter(pg=>pg.data>=periodo.ini && pg.data<=periodo.fim)
       .sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
     // Saldo final: soma direta do saldo pendente já calculado em cada linha
