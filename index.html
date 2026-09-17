@@ -1423,7 +1423,16 @@ function confirmAction(title, text, onConfirm, labelBotaoOk){
   const ehRisco = !labelBotaoOk;
   cabecalho.style.background = ehRisco ? 'var(--negative)' : 'var(--primary)';
   icone.textContent = ehRisco ? '⚠️' : 'ℹ️';
-  document.getElementById('modal-confirm').classList.add('open');
+  const modalConfirmEl = document.getElementById('modal-confirm');
+  // Todo modal usa o mesmo z-index (.modal-overlay) — quando dois estão
+  // abertos ao mesmo tempo (ex: excluir algo de dentro de outro modal já
+  // aberto, como o de "Fechar Quinzena"), quem fica por cima é quem está
+  // depois no HTML. #modal-confirm é fixo no topo do documento, então sem
+  // isso ele abria ESCONDIDO atrás de qualquer modal criado dinamicamente
+  // depois dele — reanexá-lo como último filho do body garante que a
+  // confirmação sempre aparece por cima, não importa o que mais esteja aberto.
+  document.body.appendChild(modalConfirmEl);
+  modalConfirmEl.classList.add('open');
   _confirmCallback = onConfirm;
 }
 document.getElementById('modal-confirm-cancel').addEventListener('click', ()=>{
@@ -13387,6 +13396,13 @@ function getQuinzenasRepasse(){
   }).sort((a,b)=> a.vencimento<b.vencimento ? 1 : (a.vencimento>b.vencimento ? -1 : 0));
 }
 
+// Referência à função que atualiza o resumo/lista de pagamentos do modal de
+// "Fechar Quinzena" ATUALMENTE aberto (ou null se nenhum estiver aberto) —
+// assim, editar/excluir um pagamento (mesmo de dentro de outro modal
+// empilhado por cima) consegue atualizar o que já está na tela sem precisar
+// fechar e reabrir o "Fechar Quinzena" na mão.
+let _quinzenaModalRefresh = null;
+
 // Modal de "Fechar Quinzena" — o usuário escolhe uma quinzena específica de um
 // pagador (ex: 1-15 Set/26) e lança os pagamentos que forem chegando, mesmo que
 // venham picados em várias parcelas até fechar o valor total (o padrão real do
@@ -13413,7 +13429,8 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <p class="help-text">Total da quinzena: <strong>${fmtMoney(quinzena.totalComDesconto)}</strong> · Já pago: <strong>${fmtMoney(quinzena.totalAbatido)}</strong> · Saldo pendente: <strong>${fmtMoney(Math.max(0,quinzena.saldoPendente))}</strong></p>
+        <p class="help-text" id="rpq-resumo-quinzena">Total da quinzena: <strong>${fmtMoney(quinzena.totalComDesconto)}</strong> · Já pago: <strong>${fmtMoney(quinzena.totalAbatido)}</strong> · Saldo pendente: <strong>${fmtMoney(Math.max(0,quinzena.saldoPendente))}</strong></p>
+        <div id="rpq-lista-pagamentos-wrap"></div>
         <div class="help-text">💡 Se o cliente pagar em partes, registre cada parte separadamente — o saldo desta quinzena vai sendo abatido a cada pagamento, sem afetar outras quinzenas.</div>
         <div class="form-grid">
           <div class="field">
@@ -13438,11 +13455,65 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
     </div>
   `;
   document.body.appendChild(modal);
-  document.getElementById('rpq-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('rpq-cancelar').addEventListener('click', ()=>{ _quinzenaModalRefresh = null; modal.remove(); });
+
+  // Lista, logo no topo do modal, todos os pagamentos JÁ lançados nesta
+  // quinzena específica (pedido do usuário: poder ver de cara quantos
+  // pagamentos já entraram e, se precisar, editar ou excluir algum deles
+  // sem precisar ir procurar no histórico geral de outra tela).
+  function renderizarListaPagamentosQuinzena(){
+    const wrap = document.getElementById('rpq-lista-pagamentos-wrap');
+    if(!wrap) return;
+    const pagamentosDaQuinzena = (STATE.pagamentosRepasse||[])
+      .filter(p=>p.pagadorId===pagadorId && p.vencimentoQuinzena===vencimento)
+      .sort((a,b)=> a.data<b.data ? 1 : (a.data>b.data ? -1 : 0));
+    if(pagamentosDaQuinzena.length===0){
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="margin:2px 0 10px 0;padding:10px 12px;background:#F5F8FA;border-radius:var(--radius-sm);">
+        <div style="font-size:12.5px;font-weight:700;color:var(--ink);margin-bottom:6px;">Pagamentos já registrados nesta quinzena (${pagamentosDaQuinzena.length})</div>
+        <table class="data-table" style="font-size:12.5px;">
+          <thead><tr><th>Data</th><th class="num">Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+          <tbody>
+            ${pagamentosDaQuinzena.map(pg=>`
+              <tr>
+                <td>${fmtDate(pg.data)}</td>
+                <td class="num">${fmtMoney(pg.valor)}</td>
+                <td>${pg.obs?escapeHtml(pg.obs):'<span class="help-text">—</span>'}</td>
+                <td>
+                  <div class="cell-actions">
+                    <button class="btn btn-sm" type="button" onclick="editarPagamentoRepasse('${pg.id}')">Editar</button>
+                    <button class="btn btn-sm btn-danger" type="button" onclick="excluirPagamentoRepasse('${pg.id}')">Excluir</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  // Reconsulta a quinzena inteira (totais podem ter mudado com a edição/
+  // exclusão de um pagamento) e atualiza tanto o resumo do topo quanto a
+  // lista de pagamentos — chamada de novo depois de editar/excluir.
+  function atualizarModalQuinzenaCompleto(){
+    const resumoEl = document.getElementById('rpq-resumo-quinzena');
+    const qAtual = getQuinzenasRepasse().find(x=>x.pagadorId===pagadorId && x.vencimento===vencimento);
+    if(resumoEl && qAtual){
+      resumoEl.innerHTML = `Total da quinzena: <strong>${fmtMoney(qAtual.totalComDesconto)}</strong> · Já pago: <strong>${fmtMoney(qAtual.totalAbatido)}</strong> · Saldo pendente: <strong>${fmtMoney(Math.max(0,qAtual.saldoPendente))}</strong>`;
+    }
+    renderizarListaPagamentosQuinzena();
+  }
+  atualizarModalQuinzenaCompleto();
+  _quinzenaModalRefresh = atualizarModalQuinzenaCompleto;
 
   function atualizarNovoSaldo(){
+    const qAtual = getQuinzenasRepasse().find(x=>x.pagadorId===pagadorId && x.vencimento===vencimento) || quinzena;
     const valor = parseFloat(document.getElementById('rpq-valor').value)||0;
-    const novoSaldo = Math.max(0, quinzena.saldoPendente - valor);
+    const novoSaldo = Math.max(0, qAtual.saldoPendente - valor);
     document.getElementById('rpq-novo-saldo').innerHTML = valor>0
       ? `Saldo desta quinzena após este pagamento: <strong>${fmtMoney(novoSaldo)}</strong>`
       : '';
@@ -13469,6 +13540,7 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
 
     saveState();
     showToast('Pagamento da quinzena registrado.', 'success');
+    _quinzenaModalRefresh = null;
     modal.remove();
     renderKpisRepasses();
     renderQuinzenasRepasse();
@@ -13723,8 +13795,14 @@ function editarPagamentoRepasse(id){
     showToast('Pagamento atualizado.', 'success');
     modal.remove();
     renderKpisRepasses();
+    renderQuinzenasRepasse();
     renderSaldoPorPagador();
+    renderTabelaRepasses();
     renderHistoricoPagamentosRepasse();
+    // se o modal de "Fechar Quinzena" estiver aberto por trás (o usuário
+    // clicou em "Editar" na lista de pagamentos dali), atualiza o resumo e
+    // a lista dele também, sem precisar fechar e reabrir na mão
+    if(_quinzenaModalRefresh) _quinzenaModalRefresh();
   });
 }
 
@@ -13734,8 +13812,11 @@ function excluirPagamentoRepasse(id){
     saveState();
     showToast('Pagamento excluído.', 'success');
     renderKpisRepasses();
+    renderQuinzenasRepasse();
     renderSaldoPorPagador();
+    renderTabelaRepasses();
     renderHistoricoPagamentosRepasse();
+    if(_quinzenaModalRefresh) _quinzenaModalRefresh();
   });
 }
 
