@@ -976,6 +976,27 @@ table.data-table{ width:100%; font-size:13px; }
           <button class="btn btn-primary" id="btn-nova-licitacao">+ Nova Licitação</button>
         </div>
       </div>
+      <div class="card" style="padding:12px 16px;margin-bottom:10px;">
+        <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
+          <div class="field" style="margin:0;">
+            <label style="font-size:11.5px;">Publicado de</label>
+            <input type="date" id="lic-busca-pub-de" style="padding:5px 8px;">
+          </div>
+          <div class="field" style="margin:0;">
+            <label style="font-size:11.5px;">até</label>
+            <input type="date" id="lic-busca-pub-ate" style="padding:5px 8px;">
+          </div>
+          <div class="field" style="margin:0;">
+            <label style="font-size:11.5px;">Prazo final p/ proposta de <span style="font-weight:400;color:var(--ink-faint);">(opcional)</span></label>
+            <input type="date" id="lic-busca-prazo-de" style="padding:5px 8px;">
+          </div>
+          <div class="field" style="margin:0;">
+            <label style="font-size:11.5px;">até</label>
+            <input type="date" id="lic-busca-prazo-ate" style="padding:5px 8px;">
+          </div>
+        </div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">💡 "Publicado" filtra quando a compra foi divulgada no PNCP. "Prazo final p/ proposta" filtra pelo último dia pra enviar a proposta — deixe em branco pra trazer todas as que ainda estão abertas, sem se importar com o prazo exato.</div>
+      </div>
       <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
       <div id="licitacoes-content"></div>
     </section>
@@ -15240,15 +15261,30 @@ function distanciaKm(lat1, lng1, lat2, lng2){
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+// Distância (km) do ponto até o retângulo (bounding box) mais próximo —
+// 0 se o ponto já está dentro do retângulo. Usada por ufsCandidatasPorArea
+// pra medir a distância real até CADA ESTADO, em vez de só checar se duas
+// caixas se tocam — como muitos estados brasileiros têm bounding boxes
+// enormes e bem largas (o formato real do estado é bem mais irregular/
+// menor que o retângulo), comparar caixa-com-caixa fazia o círculo "vazar"
+// pra estados vizinhos-dos-vizinhos mesmo com um raio pequeno.
+function distanciaAoRetangulo(lat, lng, latMin, latMax, lngMin, lngMax){
+  const latClamp = Math.min(Math.max(lat, latMin), latMax);
+  const lngClamp = Math.min(Math.max(lng, lngMin), lngMax);
+  return distanciaKm(lat, lng, latClamp, lngClamp);
+}
+
 // Quais UFs o círculo de atendimento (centro + raio) pode alcançar —
-// pré-filtro grosseiro (ver comentário de UF_BBOX acima).
+// pré-filtro grosseiro (ver comentário de UF_BBOX acima): mede a distância
+// real do centro até a borda mais próxima de cada estado, com uma folga
+// extra pra compensar que o bounding box é uma caixa reta sobre um estado
+// de formato irregular.
+const FOLGA_UF_KM = 60;
 function ufsCandidatasPorArea(area){
-  const folgaGraus = area.raioKm/95; // ~1° de latitude ≈ 111km; usa 95 pra sobrar folga extra
-  const latMin = area.lat - folgaGraus, latMax = area.lat + folgaGraus;
-  const lngMin = area.lng - folgaGraus, lngMax = area.lng + folgaGraus;
   return Object.keys(UF_BBOX).filter(uf=>{
     const [bLatMin,bLatMax,bLngMin,bLngMax] = UF_BBOX[uf];
-    return latMin<=bLatMax && latMax>=bLatMin && lngMin<=bLngMax && lngMax>=bLngMin;
+    const dist = distanciaAoRetangulo(area.lat, area.lng, bLatMin, bLatMax, bLngMin, bLngMax);
+    return dist <= area.raioKm + FOLGA_UF_KM;
   });
 }
 
@@ -15309,7 +15345,33 @@ async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pa
 // cache) e cria um cartão novo na coluna "Potencial" pra cada oportunidade
 // nova (evita duplicar uma já importada antes, comparando numeroControlePNCP).
 const MAX_PAGINAS_POR_COMBINACAO = 4; // trava de segurança (até 200 resultados por UF×modalidade) — a área de atendimento já limita bastante o volume real
-async function buscarOportunidadesPNCP(){
+const CONCORRENCIA_BUSCA_PNCP = 5; // quantas combinações UF×modalidade consultar em paralelo — sequencial (1 por vez) demorava demais pra áreas que tocam vários estados
+
+// Roda `tarefa` pra cada item de `itens`, no máximo `concorrencia` de cada
+// vez (em vez de todas de uma vez ou uma por vez) — usado pra acelerar a
+// busca no PNCP sem disparar dezenas de requisições simultâneas de uma vez.
+async function executarComConcorrencia(itens, concorrencia, tarefa){
+  let indice = 0;
+  async function worker(){
+    while(indice < itens.length){
+      const meuIndice = indice++;
+      await tarefa(itens[meuIndice], meuIndice);
+    }
+  }
+  await Promise.all(Array.from({length: Math.min(concorrencia, itens.length)}, worker));
+}
+
+// Preenche os campos de data de busca (publicação e prazo final da
+// proposta) com um padrão sensato — só na primeira vez que a página abre,
+// pra não sobrescrever um filtro que o usuário já tenha ajustado.
+function inicializarFiltrosDataLicitacoes(){
+  const campoPubDe = document.getElementById('lic-busca-pub-de');
+  const campoPubAte = document.getElementById('lic-busca-pub-ate');
+  if(campoPubDe && !campoPubDe.value) campoPubDe.value = addDays(todayISO(), -30);
+  if(campoPubAte && !campoPubAte.value) campoPubAte.value = todayISO();
+}
+
+function buscarOportunidadesPNCP(){
   const area = STATE.config.licitacoesArea;
   if(!area){
     showToast('Configure sua área de atendimento primeiro (botão ⚙️ Configurar Área).', 'error');
@@ -15322,6 +15384,51 @@ async function buscarOportunidadesPNCP(){
     return;
   }
 
+  // filtro de data de PUBLICAÇÃO — obrigatório pra API do PNCP, por isso
+  // sempre cai num padrão (últimos 30 dias) se o usuário deixar em branco
+  inicializarFiltrosDataLicitacoes();
+  const publicadoDe = document.getElementById('lic-busca-pub-de').value || addDays(todayISO(), -30);
+  const publicadoAte = document.getElementById('lic-busca-pub-ate').value || todayISO();
+  if(publicadoDe > publicadoAte){
+    showToast('A data "Publicado de" não pode ser depois da data "até".', 'error');
+    return;
+  }
+
+  // filtro de PRAZO FINAL PRA PROPOSTA — opcional, aplicado depois de
+  // buscar (a API do PNCP não tem esse filtro pronto pra usar na consulta)
+  const prazoDe = document.getElementById('lic-busca-prazo-de').value || null;
+  const prazoAte = document.getElementById('lic-busca-prazo-ate').value || null;
+  if(prazoDe && prazoAte && prazoDe > prazoAte){
+    showToast('A data "Prazo final p/ proposta de" não pode ser depois da data "até".', 'error');
+    return;
+  }
+
+  const ufs = ufsCandidatasPorArea(area);
+  if(ufs.length===0){
+    showToast('Não encontrei nenhum estado próximo da área configurada — confira o ponto central no mapa.', 'error');
+    return;
+  }
+  const codigosParaBuscar = PNCP_MODALIDADES
+    .filter(m=>m.codigos.some(c=>modalidadesSelecionadas.includes(c)))
+    .flatMap(m=>m.codigos.filter(c=>modalidadesSelecionadas.includes(c)));
+  const combosTotal = ufs.length * codigosParaBuscar.length;
+  const filtrosData = { publicadoDe, publicadoAte, prazoDe, prazoAte };
+
+  // área grande de mais (muitos estados alcançados) = busca bem mais lenta;
+  // avisa e deixa o usuário decidir se quer mesmo assim ou reduzir o raio
+  if(ufs.length > 5){
+    confirmAction(
+      'Área bem grande',
+      `Essa área alcança ${ufs.length} estado(s) (${ufs.join(', ')}), o que significa ${combosTotal} consultas ao PNCP — pode levar vários minutos. Quer continuar mesmo assim, ou prefere reduzir o raio em ⚙️ Configurar Área pra uma busca mais rápida e focada na sua região?`,
+      ()=>executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData),
+      'Buscar mesmo assim'
+    );
+    return;
+  }
+  executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData);
+}
+
+async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData){
   const btn = document.getElementById('btn-buscar-oportunidades');
   const statusEl = document.getElementById('licitacoes-busca-status');
   const setStatus = (msg)=>{ if(statusEl) statusEl.textContent = msg; };
@@ -15329,48 +15436,32 @@ async function buscarOportunidadesPNCP(){
   btn.textContent = '🔎 Buscando...';
 
   try{
-    const ufs = ufsCandidatasPorArea(area);
-    if(ufs.length===0){
-      showToast('Não encontrei nenhum estado próximo da área configurada — confira o ponto central no mapa.', 'error');
-      return;
-    }
-
-    // janela de publicação: últimos 30 dias — uma compra publicada há mais
-    // tempo que isso normalmente já encerrou o prazo de proposta, mas o
-    // filtro real de "ainda aberta" é a data de encerramento da proposta,
-    // checada abaixo (então uma compra de prazo longo continua aparecendo).
     const hoje = todayISO();
-    const dataInicial = addDays(hoje, -30);
+    const dataInicial = filtrosData.publicadoDe;
+    const dataFinalBusca = filtrosData.publicadoAte;
 
-    // agrupa códigos de modalidade selecionados nos grupos da tabela PNCP_MODALIDADES
-    // (ex: "Leilão" = códigos 1 e 13 juntos, mas cada um precisa de uma chamada própria)
-    const codigosParaBuscar = PNCP_MODALIDADES
-      .filter(m=>m.codigos.some(c=>modalidadesSelecionadas.includes(c)))
-      .flatMap(m=>m.codigos.filter(c=>modalidadesSelecionadas.includes(c)));
-
+    const combos = ufs.flatMap(uf=>codigosParaBuscar.map(codigoModalidade=>({uf, codigoModalidade})));
     const brutos = []; // resultados crus da API, antes de filtrar por raio
     let combosComErro = 0;
-    let combosTotal = ufs.length * codigosParaBuscar.length;
     let combosFeitos = 0;
 
-    for(const uf of ufs){
-      for(const codigoModalidade of codigosParaBuscar){
+    await executarComConcorrencia(combos, CONCORRENCIA_BUSCA_PNCP, async ({uf, codigoModalidade})=>{
+      try{
+        let pagina = 1, totalPaginas = 1;
+        do{
+          const { dados, totalPaginas: tp } = await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinalBusca, pagina);
+          totalPaginas = tp;
+          dados.forEach(d=>brutos.push({ ...d, _codigoModalidade: codigoModalidade }));
+          pagina++;
+        }while(pagina<=totalPaginas && pagina<=MAX_PAGINAS_POR_COMBINACAO);
+      }catch(err){
+        combosComErro++;
+        console.warn(`Falha ao consultar PNCP (${uf}, modalidade ${codigoModalidade}):`, err);
+      }finally{
         combosFeitos++;
-        setStatus(`Consultando PNCP... ${uf} · ${nomeModalidadePNCP(codigoModalidade)} (${combosFeitos}/${combosTotal})`);
-        try{
-          let pagina = 1, totalPaginas = 1;
-          do{
-            const { dados, totalPaginas: tp } = await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, hoje, pagina);
-            totalPaginas = tp;
-            dados.forEach(d=>brutos.push({ ...d, _codigoModalidade: codigoModalidade }));
-            pagina++;
-          }while(pagina<=totalPaginas && pagina<=MAX_PAGINAS_POR_COMBINACAO);
-        }catch(err){
-          combosComErro++;
-          console.warn(`Falha ao consultar PNCP (${uf}, modalidade ${codigoModalidade}):`, err);
-        }
+        setStatus(`Consultando PNCP... ${uf} · ${nomeModalidadePNCP(codigoModalidade)} (${combosFeitos}/${combosTotal}) — ${brutos.length} encontrado(s) até agora`);
       }
-    }
+    });
 
     // dedupe por numeroControlePNCP (pode repetir entre páginas/combos) e
     // remove o que já foi importado antes (mesmo numeroControlePNCP já
@@ -15383,10 +15474,25 @@ async function buscarOportunidadesPNCP(){
       return true;
     });
 
-    // só propostas ainda abertas (encerramento no futuro, ou sem data
-    // informada — melhor mostrar a mais do que deixar de mostrar uma válida)
-    const agora = new Date().toISOString();
-    const abertas = candidatos.filter(d=> !d.dataEncerramentoProposta || d.dataEncerramentoProposta >= agora);
+    // filtro pelo prazo final da proposta: se o usuário preencheu "Prazo
+    // final p/ proposta de/até", usa exatamente essa janela (e só mantém
+    // quem tem essa data informada, já que não dá pra confirmar se está no
+    // intervalo sem ela); se deixou em branco, cai no padrão de sempre —
+    // só o que ainda está aberto (prazo no futuro, ou sem data informada,
+    // pra não esconder uma oportunidade válida por falta de dado).
+    let abertas;
+    if(filtrosData.prazoDe || filtrosData.prazoAte){
+      abertas = candidatos.filter(d=>{
+        if(!d.dataEncerramentoProposta) return false;
+        const dataPrazo = d.dataEncerramentoProposta.slice(0,10);
+        if(filtrosData.prazoDe && dataPrazo < filtrosData.prazoDe) return false;
+        if(filtrosData.prazoAte && dataPrazo > filtrosData.prazoAte) return false;
+        return true;
+      });
+    }else{
+      const agora = new Date().toISOString();
+      abertas = candidatos.filter(d=> !d.dataEncerramentoProposta || d.dataEncerramentoProposta >= agora);
+    }
 
     setStatus(`Confirmando localização de ${abertas.length} oportunidade(s)...`);
 
@@ -15404,10 +15510,9 @@ async function buscarOportunidadesPNCP(){
       if(!geo){ semLocalizacaoConfirmada++; continue; }
       const dist = distanciaKm(area.lat, area.lng, geo.lat, geo.lng);
       if(dist <= area.raioKm) dentroDoRaio.push({ d, unidade, geo, dist });
-      // pausa curta entre geocodificações novas, respeitando o limite de uso
-      // do Nominatim (1 requisição/seg) — só acontece na 1ª vez de cada
-      // município (depois fica em cache e não pausa mais)
     }
+
+    console.log(`[Buscar Oportunidades PNCP] brutos=${brutos.length} candidatos(sem duplicar/já importado)=${candidatos.length} abertas(prazo não vencido)=${abertas.length} semLocalizacao=${semLocalizacaoConfirmada} dentroDoRaio=${dentroDoRaio.length}`);
 
     // cria um cartão novo em "Potencial" pra cada oportunidade dentro do raio
     dentroDoRaio.forEach(({d, unidade, geo, dist})=>{
@@ -15454,9 +15559,15 @@ async function buscarOportunidadesPNCP(){
     saveState();
     renderLicitacoes();
 
-    const partesResumo = [`${dentroDoRaio.length} nova(s) oportunidade(s) encontrada(s) dentro da sua área.`];
+    const partesResumo = [];
+    if(brutos.length===0){
+      partesResumo.push(`O PNCP não retornou nenhuma compra publicada entre ${fmtDate(filtrosData.publicadoDe)} e ${fmtDate(filtrosData.publicadoAte)} pras modalidades e estados dessa área (${ufs.join(', ')}).`);
+    }else{
+      partesResumo.push(`${dentroDoRaio.length} nova(s) oportunidade(s) dentro da sua área.`);
+      partesResumo.push(`(${brutos.length} encontrada(s) no PNCP ao todo, ${abertas.length} ainda com prazo aberto.)`);
+    }
     if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
-    if(combosComErro>0) partesResumo.push(`${combosComErro} consulta(s) ao PNCP falharam e foram puladas.`);
+    if(combosComErro>0) partesResumo.push(`${combosComErro} de ${combosTotal} consulta(s) ao PNCP falharam e foram puladas.`);
     showToast(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : 'info');
   }catch(err){
     console.error(err);
@@ -15610,6 +15721,7 @@ function abrirConfigLicitacoes(){
 
 function renderLicitacoes(){
   const box = document.getElementById('licitacoes-content');
+  inicializarFiltrosDataLicitacoes();
 
   const total = STATE.licitacoes.length;
   const ganhas = STATE.licitacoes.filter(l=>['Ganhamos','Comprando Itens','Entregue'].includes(l.status));
