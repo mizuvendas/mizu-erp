@@ -2484,7 +2484,10 @@ function criarModuloEndereco(config){
 
     document.getElementById(tableBodyId).innerHTML = pagina.map(item=>`
       <tr>
-        <td>${escapeHtml(item.nome)}</td>
+        <td>
+          ${escapeHtml(item.nome)}
+          ${!item.endereco ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Sem endereço cadastrado — isso impede o planejamento de rotas de coleta para este ${tituloSingular.toLowerCase()}.">⚠️ Endereço faltando</div>` : ''}
+        </td>
         <td>${escapeHtml(item.endereco||'—')}</td>
         <td>${escapeHtml(item.telefone||'—')}</td>
         <td class="num">${item.qtdProdutos}</td>
@@ -2782,32 +2785,65 @@ function ativarEdicaoInlineProdutos(){
   });
 }
 
-function renderLinhaProduto(p){
+// Um produto é considerado com "dados incompletos" quando falta algo que
+// normalmente faz falta mais cedo ou mais tarde (categoria, marca, fornecedor
+// ou estoque mínimo) — usado nas duas listas de Produtos (normal e Compra Local).
+function produtoDadosIncompletos(p){
+  return !(p.categoria && p.marca && p.fornecedor && p.estoqueMin!=null);
+}
+
+function iconeDadosIncompletos(p){
+  return produtoDadosIncompletos(p)
+    ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Faltam dados: ${[!p.categoria&&'categoria',!p.marca&&'marca',!p.fornecedor&&'fornecedor',p.estoqueMin==null&&'estoque mínimo'].filter(Boolean).join(', ')}.">⚠️ Dados incompletos</div>`
+    : '';
+}
+
+// Célula compacta de código (SKU / Cód. NF / Código de Barras empilhados),
+// usada nas duas listas de Produtos para caber a informação de código de
+// barras sem precisar de mais uma coluna e sem forçar rolagem horizontal.
+function celulaCodigosProduto(p){
+  const linhas = [];
+  if(p.codigoBarras) linhas.push(`<span class="badge badge-neutral" title="Código de barras">${escapeHtml(p.codigoBarras)}</span>`);
+  if(p.codigoNF) linhas.push(`<span class="badge badge-neutral" title="Código interno (Nota Fiscal)">NF: ${escapeHtml(p.codigoNF)}</span>`);
+  if(p.sku) linhas.push(`<span class="help-text" title="SKU">${escapeHtml(p.sku)}</span>`);
+  if(linhas.length===0) return '<span class="help-text">—</span>';
+  return linhas.map(l=>`<div>${l}</div>`).join('');
+}
+
+// Célula compacta de preço (Custo / Preço de Venda / Margem empilhados),
+// usada nas duas listas de Produtos.
+function celulaPrecoProduto(p){
   const margem = p.precoVenda>0 ? ((p.precoVenda-p.custo)/p.precoVenda*100) : 0;
   const margemClasse = margem>=30?'badge-positive':(margem>=10?'badge-warning':'badge-negative');
+  return `
+    <div class="help-text">Custo: ${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</div>
+    <div>Venda: ${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</div>
+    <span class="badge ${margemClasse}">${margem.toFixed(1)}%</span>`;
+}
+
+function renderLinhaProduto(p){
   const estoqueAtual = p.estoqueAtual||0;
   const estoqueClasse = (p.estoqueMin!=null && estoqueAtual<p.estoqueMin) ? 'color:var(--negative);font-weight:700;' : '';
-  const dadosIncompletos = !(p.categoria && p.fornecedor && p.estoqueMin!=null);
   return `
     <tr ${p.criadoRapido?'style="background:var(--warning-soft);"':''}>
       <td>
         ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
-        ${p.criadoRapido && dadosIncompletos ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Complete categoria, fornecedor e estoque mínimo para este aviso sumir.">⚡ Complete os dados</div>` : ''}
+        ${iconeDadosIncompletos(p)}
         ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
       </td>
-      <td>${celulaEditavelProduto(p.id,'categoria',p.categoria||'','text')}</td>
-      <td>${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</td>
+      <td>
+        ${celulaEditavelProduto(p.id,'categoria',p.categoria||'','text')}
+        <div class="help-text">${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</div>
+      </td>
       <td>${celulaEditavelProduto(p.id,'fornecedor',p.fornecedor||'','text')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</td>
-      <td class="num"><span class="badge ${margemClasse}">${margem.toFixed(1)}%</span></td>
+      <td class="num">${celulaPrecoProduto(p)}</td>
       <td class="num" style="${estoqueClasse}">${celulaEditavelProduto(p.id,'estoqueAtual',estoqueAtual,'number')}</td>
       <td class="num">${celulaEditavelProduto(p.id,'estoqueMin',p.estoqueMin!=null?p.estoqueMin:'','number')}</td>
-      <td>${p.codigoNF ? `<span class="badge badge-neutral">${escapeHtml(p.codigoNF)}</span>` : '<span class="help-text">—</span>'}</td>
+      <td>${celulaCodigosProduto(p)}</td>
       <td>
         <div class="cell-actions">
           ${p.criadoRapido ? `<button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>` : ''}
-          <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">Mais campos</button>
+          <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
           <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
@@ -2816,24 +2852,22 @@ function renderLinhaProduto(p){
 }
 
 // Linha específica da tabela de "Compra Local": mesma edição inline (clique
-// único em qualquer célula), mas sem as colunas Categoria, Estoque Mínimo e
-// Código NF, que não fazem tanto sentido para uma compra pontual em loja local.
+// único em qualquer célula), mas sem a coluna de Estoque Mínimo, que não faz
+// tanto sentido para uma compra pontual em loja local.
 function renderLinhaProdutoCompraLocal(p){
-  const margem = p.precoVenda>0 ? ((p.precoVenda-p.custo)/p.precoVenda*100) : 0;
-  const margemClasse = margem>=30?'badge-positive':(margem>=10?'badge-warning':'badge-negative');
   const estoqueAtual = p.estoqueAtual||0;
   return `
     <tr style="background:var(--warning-soft);">
       <td>
         ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
+        ${iconeDadosIncompletos(p)}
         ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
       </td>
       <td>${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</td>
       <td>${celulaEditavelProduto(p.id,'fornecedor',p.fornecedor||'','text')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</td>
-      <td class="num"><span class="badge ${margemClasse}">${margem.toFixed(1)}%</span></td>
+      <td class="num">${celulaPrecoProduto(p)}</td>
       <td class="num">${celulaEditavelProduto(p.id,'estoqueAtual',estoqueAtual,'number')}</td>
+      <td>${celulaCodigosProduto(p)}</td>
       <td>
         <div class="cell-actions">
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
@@ -2866,7 +2900,7 @@ function filtrarProdutosPorTexto(lista, texto){
   const palavras = normalizarBusca(texto).split(/[\s#\-\/]+/).filter(Boolean);
   if(palavras.length===0) return lista;
   return lista.filter(p=>{
-    const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku].map(normalizarBusca).join(' ');
+    const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku, p.codigoBarras].map(normalizarBusca).join(' ');
     return palavras.every(palavra=>textoCompleto.includes(palavra));
   });
 }
@@ -2908,10 +2942,9 @@ function renderProdutos(){
               <th data-sort="nome">Produto</th>
               <th data-sort="marca">Marca</th>
               <th data-sort="fornecedor">Fornecedor</th>
-              <th class="num" data-sort="custo">Custo</th>
-              <th class="num" data-sort="precoVenda">Preço Venda</th>
-              <th class="num" data-sort="margem">Margem</th>
-              <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
+              <th class="num" data-sort="margem">Preço</th>
+              <th class="num" data-sort="estoqueAtual">Estoque</th>
+              <th data-sort="codigoBarras">Código</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -2926,22 +2959,19 @@ function renderProdutos(){
       <p class="help-text" style="margin-bottom:10px;">💡 Clique em qualquer valor da tabela (nome, categoria, marca, fornecedor, custo, preço, estoque) para editar direto aqui. Pressione Enter ou clique fora para salvar.</p>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar produto</label>
-        <input type="text" id="produtos-busca" placeholder="Nome, categoria, marca, fornecedor ou código...">
+        <input type="text" id="produtos-busca" placeholder="Nome, categoria, marca, fornecedor, código ou código de barras...">
       </div>
       <div class="table-wrap">
         <table class="data-table" id="tbl-produtos">
           <thead>
             <tr>
               <th data-sort="nome">Produto</th>
-              <th data-sort="categoria">Categoria</th>
-              <th data-sort="marca">Marca</th>
+              <th data-sort="categoria">Categoria / Marca</th>
               <th data-sort="fornecedor">Fornecedor</th>
-              <th class="num" data-sort="custo">Custo</th>
-              <th class="num" data-sort="precoVenda">Preço Venda</th>
-              <th class="num" data-sort="margem">Margem</th>
+              <th class="num" data-sort="margem">Preço</th>
               <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
               <th class="num" data-sort="estoqueMin">Estoque Mín.</th>
-              <th data-sort="codigoNF">Cód. NF</th>
+              <th data-sort="codigoBarras">Código</th>
               <th>Ações</th>
             </tr>
           </thead>
@@ -2995,7 +3025,7 @@ function renderTabelaProdutosNormal(produtosNormais){
   const ordenados = ordenarProdutos(filtrados, produtosSort);
   const pagina = aplicarPaginacao('produtos-normal', ordenados);
   document.getElementById('tbl-produtos-body').innerHTML = pagina.map(renderLinhaProduto).join('')
-    || `<tr><td colspan="11" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
+    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
   const pagBox = document.getElementById('produtos-paginacao');
   if(pagBox){
     pagBox.innerHTML = renderControlePaginacao('produtos-normal', ordenados.length);
@@ -3008,7 +3038,7 @@ function renderTabelaProdutosCompraLocal(produtosCompraLocal){
   const ordenados = ordenarProdutos(produtosCompraLocal, compraLocalSort);
   const pagina = aplicarPaginacao('produtos-compra-local', ordenados);
   document.getElementById('tbl-produtos-compra-local-body').innerHTML = pagina.map(renderLinhaProdutoCompraLocal).join('')
-    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum produto nesta lista.</td></tr>`;
+    || `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum produto nesta lista.</td></tr>`;
   const pagBox = document.getElementById('produtos-compra-local-paginacao');
   if(pagBox){
     pagBox.innerHTML = renderControlePaginacao('produtos-compra-local', ordenados.length);
@@ -3045,8 +3075,8 @@ function abrirFormProduto(id, onSalvo){
               <datalist id="dl-categorias">${getCategoriasUnicas().map(c=>`<option value="${escapeAttr(c)}">`).join('')}</datalist>
             </div>
             <div class="field">
-              <label>Marca</label>
-              <input type="text" id="fp-marca" list="dl-marcas" value="${produto?escapeAttr(produto.marca||''):''}">
+              <label>Marca <span class="req">*</span></label>
+              <input type="text" id="fp-marca" list="dl-marcas" required value="${produto?escapeAttr(produto.marca||''):''}">
               <datalist id="dl-marcas">${getMarcasUnicas().map(m=>`<option value="${escapeAttr(m)}">`).join('')}</datalist>
             </div>
             <div class="field">
@@ -3067,6 +3097,9 @@ function abrirFormProduto(id, onSalvo){
               <label>Preço de Venda (R$) <span class="req">*</span></label>
               <input type="number" step="0.01" min="0" id="fp-preco" required value="${produto?produto.precoVenda:''}">
             </div>
+            <div class="field field-full">
+              <div class="help-text" id="fp-lucro-display" style="font-size:13px;"></div>
+            </div>
             <div class="field">
               <label>Unidade de Medida</label>
               <select id="fp-unidade">
@@ -3074,8 +3107,16 @@ function abrirFormProduto(id, onSalvo){
               </select>
             </div>
             <div class="field">
+              <label>Unidades por Caixa <span class="hint">opcional</span></label>
+              <input type="number" step="1" min="1" id="fp-unidades-por-caixa" placeholder="Ex: 12" value="${produto&&produto.unidadesPorCaixa!=null?produto.unidadesPorCaixa:''}">
+            </div>
+            <div class="field">
               <label>Estoque Mínimo (alerta)</label>
               <input type="number" step="1" min="0" id="fp-estoque-min" value="${produto&&produto.estoqueMin!=null?produto.estoqueMin:''}">
+            </div>
+            <div class="field">
+              <label>Estoque Máximo</label>
+              <input type="number" step="1" min="0" id="fp-estoque-max" value="${produto&&produto.estoqueMax!=null?produto.estoqueMax:''}">
             </div>
             ${!produto ? `
             <div class="field">
@@ -3094,6 +3135,81 @@ function abrirFormProduto(id, onSalvo){
               <label>Código Interno (Nota Fiscal)</label>
               <input type="text" id="fp-codigo-nf" value="${produto?escapeAttr(produto.codigoNF||''):''}" placeholder="Código que aparece na NF do fornecedor">
             </div>
+          </div>
+
+          <details style="margin-top:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+            <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;color:var(--ink);">📋 Dados fiscais / integração TOTVS <span class="hint">opcional</span></summary>
+            <div class="form-grid" style="padding-bottom:10px;">
+              <div class="field">
+                <label>Grupo</label>
+                <input type="text" id="fp-grupo" value="${produto?escapeAttr(produto.grupo||''):''}">
+              </div>
+              <div class="field">
+                <label>Subgrupo</label>
+                <input type="text" id="fp-subgrupo" value="${produto?escapeAttr(produto.subgrupo||''):''}">
+              </div>
+              <div class="field">
+                <label>Classificação</label>
+                <input type="text" id="fp-classificacao" value="${produto?escapeAttr(produto.classificacao||''):''}">
+              </div>
+              <div class="field">
+                <label>Conf. Tributária</label>
+                <input type="text" id="fp-conf-tributaria" value="${produto?escapeAttr(produto.confTributaria||''):''}">
+              </div>
+              <div class="field">
+                <label>Origem do Item</label>
+                <select id="fp-origem-item">
+                  <option value="">Selecione...</option>
+                  ${ORIGENS_ITEM_ICMS.map(o=>`<option value="${o.v}" ${produto&&produto.origemItem===o.v?'selected':''}>${o.v} - ${escapeHtml(o.label)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>Método de Controle</label>
+                <select id="fp-metodo-controle">
+                  <option value="">Selecione...</option>
+                  ${['PEPS (FIFO)','Custo Médio','Específico'].map(m=>`<option value="${escapeAttr(m)}" ${produto&&produto.metodoControle===m?'selected':''}>${m}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>NCM</label>
+                <div style="display:flex;gap:6px;">
+                  <input type="text" id="fp-ncm" style="flex:1;" maxlength="8" placeholder="8 dígitos" value="${produto?escapeAttr(produto.ncm||''):''}">
+                  <button type="button" class="btn btn-sm" id="fp-btn-buscar-ncm" style="white-space:nowrap;">🔍 Buscar</button>
+                </div>
+                <div id="fp-ncm-sugestoes" style="margin-top:4px;"></div>
+              </div>
+              <div class="field">
+                <label>CEST</label>
+                <input type="text" id="fp-cest" value="${produto?escapeAttr(produto.cest||''):''}">
+              </div>
+              <div class="field">
+                <label>FCI</label>
+                <input type="text" id="fp-fci" value="${produto?escapeAttr(produto.fci||''):''}">
+              </div>
+              <div class="field">
+                <label>Comissão (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-comissao" value="${produto&&produto.comissaoPct!=null?produto.comissaoPct:''}">
+              </div>
+              <div class="field">
+                <label>Desconto Máximo (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-desconto-max" value="${produto&&produto.descontoMaxPct!=null?produto.descontoMaxPct:''}">
+              </div>
+              <div class="field">
+                <label>Custo de Royalties (R$)</label>
+                <input type="number" step="0.01" min="0" id="fp-custo-royalties" value="${produto&&produto.custoRoyalties!=null?produto.custoRoyalties:''}">
+              </div>
+              <div class="field">
+                <label>Royalties (%)</label>
+                <input type="number" step="0.01" min="0" id="fp-royalties" value="${produto&&produto.royaltiesPct!=null?produto.royaltiesPct:''}">
+              </div>
+              <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+                <input type="checkbox" id="fp-decidir-preco-venda" style="width:auto;" ${produto&&produto.decidirPrecoNaVenda?'checked':''}>
+                <label for="fp-decidir-preco-venda" style="margin:0;">Permitir decidir/ajustar o preço na hora da venda</label>
+              </div>
+            </div>
+          </details>
+
+          <div class="form-grid" style="margin-top:10px;">
             <div class="field field-full">
               <label>📍 Local onde é comprado</label>
               <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -3139,13 +3255,60 @@ function abrirFormProduto(id, onSalvo){
     });
   }
 
+  // Lucro (%/R$) ao vivo, já descontando o imposto configurado (Config >
+  // impostos) — só o imposto entra nessa conta, a comissão fica de fora
+  // porque varia por venda/vendedor e não é um custo fixo do produto.
+  function atualizarLucroDisplay(){
+    const custoAtual = parseFloat(document.getElementById('fp-custo').value);
+    const precoAtual = parseFloat(document.getElementById('fp-preco').value);
+    const display = document.getElementById('fp-lucro-display');
+    if(isNaN(custoAtual) || isNaN(precoAtual) || precoAtual<=0){ display.textContent = ''; return; }
+    const impostoPct = (STATE.config && STATE.config.impostoPct) || 0;
+    const impostoValor = precoAtual * impostoPct/100;
+    const lucroValor = precoAtual - custoAtual - impostoValor;
+    const lucroPct = precoAtual>0 ? (lucroValor/precoAtual*100) : 0;
+    display.innerHTML = `💰 Lucro (já descontando ${impostoPct}% de imposto): <strong style="color:${lucroValor>=0?'var(--positive)':'var(--negative)'};">${fmtMoney(lucroValor)} (${lucroPct.toFixed(1)}%)</strong>`;
+  }
+  document.getElementById('fp-custo').addEventListener('input', atualizarLucroDisplay);
+  document.getElementById('fp-preco').addEventListener('input', atualizarLucroDisplay);
+  atualizarLucroDisplay();
+
+  // Busca de NCM por descrição (BrasilAPI) — só sugere, nunca preenche
+  // sozinho: o usuário precisa clicar numa sugestão pra confirmar.
+  document.getElementById('fp-btn-buscar-ncm').addEventListener('click', async ()=>{
+    const termo = (document.getElementById('fp-nome').value || '').trim();
+    const sugestoesBox = document.getElementById('fp-ncm-sugestoes');
+    if(!termo){ showToast('Preencha o nome do produto pra buscar o NCM.', 'error'); return; }
+    sugestoesBox.innerHTML = `<span class="help-text">Buscando sugestões de NCM...</span>`;
+    try{
+      const resp = await fetch(`https://brasilapi.com.br/api/ncm/v1?search=${encodeURIComponent(termo)}`);
+      if(!resp.ok) throw new Error('Falha na busca');
+      const resultados = await resp.json();
+      if(!Array.isArray(resultados) || resultados.length===0){
+        sugestoesBox.innerHTML = `<span class="help-text">Nenhuma sugestão encontrada para "${escapeHtml(termo)}". Preencha o NCM manualmente se souber.</span>`;
+        return;
+      }
+      sugestoesBox.innerHTML = `<div class="help-text" style="margin-bottom:4px;">Clique numa sugestão para preencher (confira antes de salvar):</div>` +
+        resultados.slice(0,8).map(r=>`<div class="combo-option ncm-sugestao" data-ncm="${escapeAttr(r.codigo)}" style="cursor:pointer;padding:5px 8px;border:1px solid var(--border);border-radius:6px;margin-bottom:3px;font-size:12.5px;"><strong>${escapeHtml(r.codigo)}</strong> — ${escapeHtml(r.descricao||'')}</div>`).join('');
+      sugestoesBox.querySelectorAll('.ncm-sugestao').forEach(el=>{
+        el.addEventListener('click', ()=>{
+          document.getElementById('fp-ncm').value = el.dataset.ncm;
+          sugestoesBox.innerHTML = `<span class="help-text">NCM preenchido a partir da sugestão. Confira se está correto.</span>`;
+        });
+      });
+    }catch(err){
+      sugestoesBox.innerHTML = `<span class="help-text" style="color:var(--negative);">Não foi possível buscar sugestões agora (sem internet ou serviço fora do ar). Preencha o NCM manualmente se souber.</span>`;
+    }
+  });
+
   document.getElementById('form-produto').addEventListener('submit', (e)=>{
     e.preventDefault();
     const nome = document.getElementById('fp-nome').value.trim();
+    const marca = document.getElementById('fp-marca').value.trim();
     const custo = parseFloat(document.getElementById('fp-custo').value);
     const precoVenda = parseFloat(document.getElementById('fp-preco').value);
-    if(!nome || isNaN(custo) || isNaN(precoVenda)){
-      showToast('Preencha nome, custo e preço de venda.', 'error');
+    if(!nome || !marca || isNaN(custo) || isNaN(precoVenda)){
+      showToast('Preencha nome, marca, custo e preço de venda.', 'error');
       return;
     }
     const codigoNF = document.getElementById('fp-codigo-nf').value.trim();
@@ -3157,21 +3320,44 @@ function abrirFormProduto(id, onSalvo){
       }
     }
     const estoqueMinRaw = document.getElementById('fp-estoque-min').value;
+    const estoqueMaxRaw = document.getElementById('fp-estoque-max').value;
+    const unidadesPorCaixaRaw = document.getElementById('fp-unidades-por-caixa').value;
+    const comissaoRaw = document.getElementById('fp-comissao').value;
+    const descontoMaxRaw = document.getElementById('fp-desconto-max').value;
+    const custoRoyaltiesRaw = document.getElementById('fp-custo-royalties').value;
+    const royaltiesPctRaw = document.getElementById('fp-royalties').value;
     const fornecedorIdSelecionado = document.getElementById('fp-fornecedor-id').value || null;
     const fornecedorSelecionado = STATE.fornecedores.find(f=>f.id===fornecedorIdSelecionado);
     const data = {
       nome,
       categoria: document.getElementById('fp-categoria').value.trim(),
-      marca: document.getElementById('fp-marca').value.trim(),
+      marca,
       fornecedorId: fornecedorIdSelecionado,
       fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '', // mantido por compatibilidade com telas que ainda leem o nome direto
       custo, precoVenda,
       unidade: document.getElementById('fp-unidade').value,
+      unidadesPorCaixa: unidadesPorCaixaRaw!=='' ? parseInt(unidadesPorCaixaRaw,10) : null,
       estoqueMin: estoqueMinRaw!=='' ? parseFloat(estoqueMinRaw) : null,
+      estoqueMax: estoqueMaxRaw!=='' ? parseFloat(estoqueMaxRaw) : null,
       sku: document.getElementById('fp-sku').value.trim(),
       codigoBarras: document.getElementById('fp-codigo-barras').value.trim(),
       codigoNF,
       obs: document.getElementById('fp-obs').value.trim(),
+      // Dados fiscais / integração TOTVS (todos opcionais)
+      grupo: document.getElementById('fp-grupo').value.trim(),
+      subgrupo: document.getElementById('fp-subgrupo').value.trim(),
+      classificacao: document.getElementById('fp-classificacao').value.trim(),
+      confTributaria: document.getElementById('fp-conf-tributaria').value.trim(),
+      origemItem: document.getElementById('fp-origem-item').value || null,
+      metodoControle: document.getElementById('fp-metodo-controle').value || null,
+      ncm: document.getElementById('fp-ncm').value.trim(),
+      cest: document.getElementById('fp-cest').value.trim(),
+      fci: document.getElementById('fp-fci').value.trim(),
+      comissaoPct: comissaoRaw!=='' ? parseFloat(comissaoRaw) : null,
+      descontoMaxPct: descontoMaxRaw!=='' ? parseFloat(descontoMaxRaw) : null,
+      custoRoyalties: custoRoyaltiesRaw!=='' ? parseFloat(custoRoyaltiesRaw) : null,
+      royaltiesPct: royaltiesPctRaw!=='' ? parseFloat(royaltiesPctRaw) : null,
+      decidirPrecoNaVenda: document.getElementById('fp-decidir-preco-venda').checked,
     };
     const localCompraEl = document.getElementById('fp-local-compra-id');
     if(localCompraEl){
@@ -3254,6 +3440,14 @@ function abrirMesclagemProduto(produtoBaseId){
               </select>
             </div>
             <div class="field">
+              <label>Código de Barras</label>
+              <input type="text" id="mp-codigo-barras" value="${escapeAttr(produtoBase.codigoBarras||'')}">
+            </div>
+            <div class="field">
+              <label>NCM</label>
+              <input type="text" id="mp-ncm" maxlength="8" value="${escapeAttr(produtoBase.ncm||'')}">
+            </div>
+            <div class="field">
               <label>Custo Unitário (R$) <span class="req">*</span></label>
               <input type="number" step="0.01" min="0" id="mp-custo" required value="${produtoBase.custo}">
             </div>
@@ -3295,19 +3489,36 @@ function abrirMesclagemProduto(produtoBaseId){
       <div class="table-wrap" style="margin-top:8px;max-height:260px;overflow-y:auto;">
         <table class="data-table">
           <thead>
-            <tr><th></th><th>Produto</th><th>Marca</th><th>Fornecedor</th><th class="num">Custo</th><th class="num">Preço Venda</th><th class="num">Estoque</th></tr>
+            <tr><th></th><th>Produto</th><th>Marca</th><th>Fornecedor</th><th>Código de Barras</th><th>NCM</th><th class="num">Custo</th><th class="num">Preço Venda</th><th class="num">Estoque</th></tr>
           </thead>
           <tbody>
-            ${candidatos.map(p=>`
+            <tr style="background:#FAFBFC;font-weight:600;">
+              <td></td>
+              <td>${escapeHtml(produtoBase.nome)} <span class="badge badge-neutral">base</span></td>
+              <td>${escapeHtml(produtoBase.marca||'—')}</td>
+              <td>${escapeHtml(produtoBase.fornecedor||'—')}</td>
+              <td>${escapeHtml(produtoBase.codigoBarras||'—')}</td>
+              <td>${escapeHtml(produtoBase.ncm||'—')}</td>
+              <td class="num">${fmtMoney(produtoBase.custo)}</td>
+              <td class="num">${fmtMoney(produtoBase.precoVenda)}</td>
+              <td class="num">${fmtNum(produtoBase.estoqueAtual||0)}</td>
+            </tr>
+            ${candidatos.map(p=>{
+              const mesmoBarras = p.codigoBarras && produtoBase.codigoBarras && p.codigoBarras===produtoBase.codigoBarras;
+              const mesmoNcm = p.ncm && produtoBase.ncm && p.ncm===produtoBase.ncm;
+              return `
               <tr>
                 <td><input type="checkbox" class="mp-check" data-id="${p.id}" ${selecionados.has(p.id)?'checked':''}></td>
                 <td>${escapeHtml(p.nome)}${p.criadoRapido?' <span class="badge badge-warning">⚡</span>':''}</td>
                 <td>${escapeHtml(p.marca||'—')}</td>
                 <td>${escapeHtml(p.fornecedor||'—')}</td>
+                <td${mesmoBarras?' style="color:var(--positive);font-weight:700;" title="Mesmo código de barras do produto base"':''}>${escapeHtml(p.codigoBarras||'—')}</td>
+                <td${mesmoNcm?' style="color:var(--positive);font-weight:700;" title="Mesmo NCM do produto base"':''}>${escapeHtml(p.ncm||'—')}</td>
                 <td class="num">${fmtMoney(p.custo)}</td>
                 <td class="num">${fmtMoney(p.precoVenda)}</td>
                 <td class="num">${fmtNum(p.estoqueAtual||0)}</td>
-              </tr>`).join('')}
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       </div>`;
@@ -3343,6 +3554,8 @@ function abrirMesclagemProduto(produtoBaseId){
       marca: document.getElementById('mp-marca').value.trim(),
       fornecedorId: fornecedorIdSelecionado,
       fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '',
+      codigoBarras: document.getElementById('mp-codigo-barras').value.trim(),
+      ncm: document.getElementById('mp-ncm').value.trim(),
       custo, precoVenda,
       localCompraId,
       ondeComprado: localSelecionado ? localSelecionado.nome : ''
@@ -3458,6 +3671,20 @@ function apagarTodosProdutos(){
 
 function getCategoriasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.categoria).filter(Boolean))]; }
 function getMarcasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.marca).filter(Boolean))]; }
+
+// Códigos de Origem do Item (ICMS), usados no cadastro de produto (campo
+// "Origem do Item" da integração TOTVS).
+const ORIGENS_ITEM_ICMS = [
+  {v:'0', label:'Nacional'},
+  {v:'1', label:'Estrangeira - Importação direta'},
+  {v:'2', label:'Estrangeira - Adquirida no mercado interno'},
+  {v:'3', label:'Nacional - Conteúdo de importação > 40%'},
+  {v:'4', label:'Nacional - Processos produtivos básicos'},
+  {v:'5', label:'Nacional - Conteúdo de importação ≤ 40%'},
+  {v:'6', label:'Estrangeira - Importação direta, sem similar nacional'},
+  {v:'7', label:'Estrangeira - Mercado interno, sem similar nacional'},
+  {v:'8', label:'Nacional - Conteúdo de importação > 70%'}
+];
 function getFornecedoresUnicos(){ return [...new Set(STATE.produtos.map(p=>p.fornecedor).filter(Boolean))]; }
 // "Onde foi comprado" — locais de compra já usados em produtos de Compra Local
 function getLocaisCompraUnicos(){ return [...new Set(STATE.produtos.map(p=>p.ondeComprado).filter(Boolean))]; }
@@ -4236,7 +4463,7 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
     }
     const palavras = normalizar(textoBusca).split(/[\s#\-\/]+/).filter(Boolean);
     let resultado = palavras.length===0 ? opcoes.slice() : opcoes.filter(o=>{
-      const textoCompleto = normalizar(o.label) + ' ' + normalizar(o.sub||'');
+      const textoCompleto = normalizar(o.label) + ' ' + normalizar(o.sub||'') + ' ' + normalizar(o.buscaExtra||'');
       return palavras.every(p=>textoCompleto.includes(p));
     });
     if(priorizarCompraLocal){
@@ -4498,6 +4725,7 @@ function opcoesProdutosCombobox(){
     id: p.id,
     label: p.nome,
     sub: [p.marca, p.fornecedor, p.categoria].filter(Boolean).join(' · '),
+    buscaExtra: [p.codigoBarras, p.sku].filter(Boolean).join(' '),
     criadoRapido: !!p.criadoRapido
   }));
 }
@@ -9093,7 +9321,7 @@ function renderEstoque(){
       <h3>Saldo Atual por Produto <span class="hint">clique em Ajustar para corrigir manualmente</span></h3>
       <div class="field" style="max-width:340px;margin-bottom:12px;">
         <label>🔍 Buscar produto</label>
-        <input type="text" id="estoque-busca" placeholder="Nome, categoria ou fornecedor...">
+        <input type="text" id="estoque-busca" placeholder="Nome, categoria, fornecedor ou código de barras...">
       </div>
       <div class="table-wrap">
         <table class="data-table" id="tbl-estoque">
@@ -9102,6 +9330,7 @@ function renderEstoque(){
               <th data-sort="nome">Produto</th>
               <th data-sort="categoria">Categoria</th>
               <th data-sort="fornecedor">Fornecedor</th>
+              <th data-sort="codigoBarras">Código de Barras</th>
               <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
               <th class="num" data-sort="estoqueMin">Mínimo</th>
               <th>Status</th>
@@ -9333,7 +9562,9 @@ function renderTabelaEstoque(){
     produtos = produtos.filter(p=>
       normalizarBusca(p.nome).includes(alvoBusca) ||
       normalizarBusca(p.categoria).includes(alvoBusca) ||
-      normalizarBusca(p.fornecedor).includes(alvoBusca)
+      normalizarBusca(p.fornecedor).includes(alvoBusca) ||
+      normalizarBusca(p.codigoBarras).includes(alvoBusca) ||
+      normalizarBusca(p.sku).includes(alvoBusca)
     );
   }
 
@@ -9367,6 +9598,7 @@ function renderTabelaEstoque(){
         </td>
         <td>${escapeHtml(p.categoria||'—')}</td>
         <td>${escapeHtml(p.fornecedor||'—')}</td>
+        <td>${p.codigoBarras ? `<span class="badge badge-neutral">${escapeHtml(p.codigoBarras)}</span>` : '<span class="help-text">—</span>'}</td>
         <td class="num" style="font-weight:700;">${fmtNum(atual)}</td>
         <td class="num">${p.estoqueMin!=null?fmtNum(p.estoqueMin):'—'}</td>
         <td>${statusBadge}</td>
@@ -9377,7 +9609,7 @@ function renderTabelaEstoque(){
           </div>
         </td>
       </tr>`;
-  }).join('') || `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">${estoqueBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto cadastrado.'}</td></tr>`;
+  }).join('') || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${estoqueBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto cadastrado.'}</td></tr>`;
 
   const pagBox = document.getElementById('estoque-saldo-paginacao');
   if(pagBox){
