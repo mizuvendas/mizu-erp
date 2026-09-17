@@ -14252,28 +14252,34 @@ function gerarRelatorioPdfRepasses(modo){
   // Histórico de pagamentos: só faz sentido no modo líquido (é informação
   // financeira de quanto já foi recebido) — no modo bruto, este documento
   // acompanha a entrega e não deve conter dados de cobrança/desconto
-  let pagamentosHtml = '', totalPagoRelatorio = 0, pagamentosDoRelatorio = [], saldoFinalLiquido = 0;
+  let pagamentosHtml = '', totalPagoRelatorio = 0, pagamentosDoRelatorio = [], saldoFinalLiquido = 0, totalLegadoForaEscopo = 0;
   if(!ehBruto){
     const pagadoresDoRelatorio = [...new Set(linhas.map(l=>l.pagadorId))];
     // Quinzenas (vencimentos) realmente presentes nas vendas deste relatório —
-    // é contra ISSO que um pagamento precisa bater, não contra a data em que
+    // é contra ISSO que um pagamento precisa bater, nunca contra a data em que
     // foi registrado. Ex: um pagamento feito em 11/09 pra quitar a quinzena de
     // agosto tem pg.data dentro de uma janela de setembro, mas não pertence a
-    // ela — sem essa checagem ele "vazava" pro relatório de setembro.
+    // ela.
     const vencimentosDoRelatorio = new Set(linhas.map(l=>l.vencimento));
-    // Pagamentos lançados pelo "Fechar Quinzena" (fluxo atual) já vêm
-    // marcados com vencimentoQuinzena — esses são checados pela quinzena de
-    // verdade. Só os pagamentos genéricos antigos (modo legado, sem essa
-    // marcação, de antes dessa mudança) caem no fallback por data — é a
-    // única informação que existe pra eles, mas por isso mesmo são só uma
-    // aproximação, nunca uma vinculação exata a uma quinzena específica.
-    pagamentosDoRelatorio = (STATE.pagamentosRepasse||[])
-      .filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId))
-      .filter(pg=> pg.vencimentoQuinzena
-        ? vencimentosDoRelatorio.has(pg.vencimentoQuinzena)
-        : (pg.data>=periodo.ini && pg.data<=periodo.fim))
+    const pagamentosDoPagador = (STATE.pagamentosRepasse||[]).filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId));
+    // Só entram na tabela os pagamentos lançados pelo "Fechar Quinzena" (fluxo
+    // atual, já vem marcado com vencimentoQuinzena) cuja quinzena bate com a
+    // deste relatório. Pagamentos genéricos antigos (modo legado, sem essa
+    // marcação, de antes dessa mudança) NUNCA entram aqui por tentativa de
+    // adivinhar pela data — isso é exatamente o que misturava pagamento de
+    // uma quinzena com o relatório de outra. Eles continuam existindo e
+    // contando pro saldo geral do pagador (na tela, fora deste PDF), só não
+    // aparecem misturados num relatório de uma quinzena específica.
+    pagamentosDoRelatorio = pagamentosDoPagador
+      .filter(pg=>pg.vencimentoQuinzena && vencimentosDoRelatorio.has(pg.vencimentoQuinzena))
       .sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
+    // Total de pagamentos genéricos antigos (sem vínculo de quinzena) desses
+    // mesmos pagadores — mostrado como nota à parte, só pra transparência,
+    // nunca somado ao total desta quinzena.
+    totalLegadoForaEscopo = pagamentosDoPagador
+      .filter(pg=>!pg.vencimentoQuinzena)
+      .reduce((s,pg)=>s+pg.valor,0);
     // Saldo final: soma direta do saldo pendente já calculado em cada linha
     // (l.saldoPendente já considera TANTO os pagamentos "por pagador geral"
     // quanto os abatimentos lançados direto na venda, como o "Marcar como
@@ -14358,6 +14364,7 @@ function gerarRelatorioPdfRepasses(modo){
         </tfoot>
       </table>
       `}
+      ${totalLegadoForaEscopo>0.005 ? `<p style="color:#888;font-size:11px;margin-top:6px;">Obs: ${fmtMoney(totalLegadoForaEscopo)} em pagamentos genéricos antigos (lançados antes do controle por quinzena, sem quinzena vinculada) não entram nesta lista por não terem como confirmar a qual quinzena pertencem — consulte o Saldo por Pagador na tela de Repasses pra ver o total incluindo eles.</p>` : ''}
       <div class="resumo-final">
         <div class="linha"><span>Total das vendas no período (já com desconto)</span><span>${fmtMoney(totalPrincipal)}</span></div>
         <div class="linha"><span>(-) Total já pago pelo(s) pagador(es)</span><span>${fmtMoney(totalPagoRelatorio)}</span></div>
