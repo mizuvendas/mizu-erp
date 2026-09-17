@@ -13442,6 +13442,7 @@ function renderTabelaRepasses(){
         <div class="cell-actions">
           ${(l.descontoPct!=null||l.descontoValorFixo!=null) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="marcarRepasseComoPago('${l.vendaId}')">✓ Marcar como Pago</button>` : ''}
+          ${l.saldoPendente>0.005 ? `<button class="btn btn-sm" onclick="abrirFormAbatimentoRepasse('${l.vendaId}')">💵 Pagamento Parcial</button>` : ''}
           ${anexoControleEntregaBtn(l.vendaId)}
         </div>
       </td>
@@ -13647,32 +13648,61 @@ function abrirFormDescontoRepasse(vendaId){
 }
 
 // Atalho de "Marcar como Pago": registra um abatimento no valor EXATO do
-// saldo pendente daquela venda, quitando de uma vez — sem precisar abrir o
-// modal de abatimento e digitar o valor manualmente toda vez que o pagador
-// quita à vista.
+// saldo pendente daquela venda, quitando de uma vez — sem precisar digitar o
+// valor manualmente toda vez que o pagador quita à vista. Pede a data do
+// recebimento (não assume sempre "hoje"), já que o pagamento pode ter sido
+// feito em outro dia e isso importa pra saber a quantos dias ele está sendo
+// registrado com atraso.
 function marcarRepasseComoPago(vendaId){
   const venda = STATE.vendas.find(v=>v.id===vendaId);
   if(!venda) return;
   const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
   if(!linha || linha.saldoPendente<=0.005) return;
 
-  confirmAction(
-    'Marcar como Pago',
-    `Confirma o recebimento de ${fmtMoney(linha.saldoPendente)} de ${escapeHtml(linha.pagadorNome)} para quitar totalmente esta venda?`,
-    ()=>{
-      if(!venda.repasse) venda.repasse = {abatimentos:[]};
-      venda.repasse.abatimentos.push({
-        id: uid('abat'), data: todayISO(), valor: Math.round(linha.saldoPendente*100)/100, descricao: 'Pagamento total'
-      });
-      saveState();
-      showToast('Repasse marcado como pago.', 'success');
-      renderKpisRepasses();
-      renderQuinzenasRepasse();
-      renderSaldoPorPagador();
-      renderTabelaRepasses();
-    },
-    'Confirmar Pagamento'
-  );
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-marcar-pago-repasse';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✓</div>
+        <div>
+          <h3>Marcar como Pago</h3>
+          <div class="sub">${escapeHtml(linha.descricao)} — quinzena ${rotuloQuinzena(linha.vencimento)}</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text">Confirma o recebimento de <strong>${fmtMoney(linha.saldoPendente)}</strong> de ${escapeHtml(linha.pagadorNome)} para quitar totalmente esta venda?</p>
+        <div class="form-grid">
+          <div class="field">
+            <label>Data em que o pagamento foi recebido</label>
+            <input type="date" id="mrp-data" value="${todayISO()}">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="mrp-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="mrp-confirmar">Confirmar Pagamento</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('mrp-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('mrp-confirmar').addEventListener('click', ()=>{
+    const data = document.getElementById('mrp-data').value;
+    if(!data){ showToast('Informe a data do recebimento.', 'error'); return; }
+    if(!venda.repasse) venda.repasse = {abatimentos:[]};
+    venda.repasse.abatimentos.push({
+      id: uid('abat'), data, valor: Math.round(linha.saldoPendente*100)/100, descricao: 'Pagamento total'
+    });
+    saveState();
+    showToast('Repasse marcado como pago.', 'success');
+    modal.remove();
+    renderKpisRepasses();
+    renderQuinzenasRepasse();
+    renderSaldoPorPagador();
+    renderTabelaRepasses();
+  });
 }
 
 /* =========================================================
@@ -13824,11 +13854,11 @@ function abrirFormAbatimentoRepasse(vendaId){
         <div class="ic-rapido">💵</div>
         <div>
           <h3>Registrar Abatimento</h3>
-          <div class="sub">Pagamento recebido</div>
+          <div class="sub">${escapeHtml(linha.descricao)} — quinzena ${rotuloQuinzena(linha.vencimento)}</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <p class="help-text">Saldo pendente atual: <strong>${fmtMoney(Math.max(0,linha.saldoPendente))}</strong> de ${fmtMoney(linha.valorComDesconto)}.</p>
+        <p class="help-text">Saldo pendente atual: <strong>${fmtMoney(Math.max(0,linha.saldoPendente))}</strong> de ${fmtMoney(linha.valorComDesconto)} — este pagamento fica vinculado a esta venda, e portanto à quinzena de ${fmtDate(linha.vencimento)}.</p>
         <div class="form-grid">
           <div class="field">
             <label>Valor Recebido (R$) <span class="req">*</span></label>
@@ -13874,6 +13904,9 @@ function abrirFormAbatimentoRepasse(vendaId){
     saveState();
     showToast('Abatimento registrado.', 'success');
     modal.remove();
+    renderKpisRepasses();
+    renderQuinzenasRepasse();
+    renderSaldoPorPagador();
     renderTabelaRepasses();
   });
 }
