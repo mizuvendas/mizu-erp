@@ -15333,9 +15333,31 @@ async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pa
   const url = `https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=${dataParaPNCP(dataInicial)}&dataFinal=${dataParaPNCP(dataFinal)}&codigoModalidadeContratacao=${codigoModalidade}&uf=${uf}&pagina=${pagina}&tamanhoPagina=50`;
   const resp = await fetch(url);
   if(resp.status===204) return { dados: [], totalPaginas: 0 }; // PNCP devolve 204 (sem corpo) quando não há nenhum resultado
-  if(!resp.ok) throw new Error(`PNCP respondeu ${resp.status}`);
+  if(!resp.ok){
+    const err = new Error(`PNCP respondeu ${resp.status}${resp.status===429 ? ' (muitas consultas ao mesmo tempo)' : ''}`);
+    err.status = resp.status;
+    throw err;
+  }
   const json = await resp.json();
   return { dados: json.data||[], totalPaginas: json.totalPaginas||1 };
+}
+
+// Tenta de novo com espera crescente quando a falha parece passageira
+// (limite de requisições — 429 — ou erro 5xx/rede do próprio PNCP), em vez
+// de já desistir daquela combinação de UF/modalidade na primeira falha.
+async function buscarPaginaPNCPComRetentativa(uf, codigoModalidade, dataInicial, dataFinal, pagina, tentativas=3){
+  let ultimoErro;
+  for(let tentativa=1; tentativa<=tentativas; tentativa++){
+    try{
+      return await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina);
+    }catch(err){
+      ultimoErro = err;
+      const passageiro = !err.status || err.status===429 || err.status>=500;
+      if(!passageiro || tentativa===tentativas) throw err;
+      await new Promise(r=>setTimeout(r, 700*tentativa));
+    }
+  }
+  throw ultimoErro;
 }
 
 // Ação do botão "🔎 Buscar Oportunidades" — consulta a API do PNCP NA HORA
@@ -15345,7 +15367,7 @@ async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pa
 // cache) e cria um cartão novo na coluna "Potencial" pra cada oportunidade
 // nova (evita duplicar uma já importada antes, comparando numeroControlePNCP).
 const MAX_PAGINAS_POR_COMBINACAO = 4; // trava de segurança (até 200 resultados por UF×modalidade) — a área de atendimento já limita bastante o volume real
-const CONCORRENCIA_BUSCA_PNCP = 5; // quantas combinações UF×modalidade consultar em paralelo — sequencial (1 por vez) demorava demais pra áreas que tocam vários estados
+const CONCORRENCIA_BUSCA_PNCP = 3; // quantas combinações UF×modalidade consultar em paralelo — sequencial (1 por vez) demorava demais pra áreas que tocam vários estados, mas exagerar aqui aumenta a chance do PNCP limitar (429) as requisições
 
 // Roda `tarefa` pra cada item de `itens`, no máximo `concorrencia` de cada
 // vez (em vez de todas de uma vez ou uma por vez) — usado pra acelerar a
@@ -15478,18 +15500,20 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
     const brutos = []; // resultados crus da API, antes de filtrar por raio
     let combosComErro = 0;
     let combosFeitos = 0;
+    let primeiroErro = null; // guarda a 1ª falha de verdade, pra mostrar o motivo real no resumo final
 
     await executarComConcorrencia(combos, CONCORRENCIA_BUSCA_PNCP, async ({uf, codigoModalidade})=>{
       try{
         let pagina = 1, totalPaginas = 1;
         do{
-          const { dados, totalPaginas: tp } = await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinalBusca, pagina);
+          const { dados, totalPaginas: tp } = await buscarPaginaPNCPComRetentativa(uf, codigoModalidade, dataInicial, dataFinalBusca, pagina);
           totalPaginas = tp;
           dados.forEach(d=>brutos.push({ ...d, _codigoModalidade: codigoModalidade }));
           pagina++;
         }while(pagina<=totalPaginas && pagina<=MAX_PAGINAS_POR_COMBINACAO);
       }catch(err){
         combosComErro++;
+        if(!primeiroErro) primeiroErro = err.message || String(err);
         console.warn(`Falha ao consultar PNCP (${uf}, modalidade ${codigoModalidade}):`, err);
       }finally{
         combosFeitos++;
@@ -15604,7 +15628,12 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
       partesResumo.push(`(${brutos.length} encontrada(s) no PNCP ao todo, ${abertas.length} ainda com prazo aberto.)`);
     }
     if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
-    if(combosComErro>0) partesResumo.push(`${combosComErro} de ${combosTotal} consulta(s) ao PNCP falharam e foram puladas.`);
+    if(combosComErro>0){
+      partesResumo.push(`${combosComErro} de ${combosTotal} consulta(s) ao PNCP falharam e foram puladas${primeiroErro ? ` (motivo: ${primeiroErro})` : ''}.`);
+      if(combosComErro===combosTotal){
+        partesResumo.push('Todas as consultas falharam — o PNCP pode estar limitando muitas buscas seguidas (tente de novo daqui a 1-2 minutos) ou fora do ar no momento.');
+      }
+    }
     showToast(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : 'info');
   }catch(err){
     console.error(err);
