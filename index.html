@@ -15911,6 +15911,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
       vistos.add(d.numeroControlePNCP);
       return true;
     });
+    const removidosPorDuplicadaOuJaImportada = brutos.length - candidatos.length;
 
     // filtro de palavra-chave (incluir/excluir) pelo texto do objeto da
     // compra — aplicado ANTES do filtro de prazo/raio, pra não gastar tempo
@@ -15943,26 +15944,63 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
       const agora = new Date().toISOString();
       abertas = candidatos.filter(d=> !d.dataEncerramentoProposta || d.dataEncerramentoProposta >= agora);
     }
+    const removidosPorPrazo = candidatos.length - abertas.length;
 
-    setStatus(`Confirmando localização de ${abertas.length} oportunidade(s)...`);
-
-    // geocodifica (com cache) cada município distinto encontrado e mantém só
-    // quem está de fato dentro do raio configurado
-    const dentroDoRaio = [];
-    let semLocalizacaoConfirmada = 0;
-    for(const d of abertas){
+    // Geocodifica cada MUNICÍPIO DISTINTO uma única vez (não uma vez por
+    // oportunidade) — antes, se a geocodificação de uma cidade falhasse, ela
+    // era tentada de novo pra CADA oportunidade daquela mesma cidade (só
+    // sucesso ficava em cache), o que deixava a busca muito lenta (parecendo
+    // travada) quando o Nominatim (serviço gratuito de geocodificação,
+    // usado aqui pra confirmar se a cidade está dentro do raio configurado)
+    // começa a limitar/bloquear por excesso de chamadas seguidas.
+    const municipiosDistintos = [];
+    const vistosMunicipio = new Set();
+    abertas.forEach(d=>{
       const unidade = d.unidadeOrgao || {};
-      const codigoIbge = unidade.codigoIbge;
-      const municipioNome = unidade.municipioNome;
-      const ufSigla = unidade.ufSigla;
-      if(!codigoIbge || !municipioNome){ semLocalizacaoConfirmada++; continue; }
-      const geo = await geocodificarMunicipioPNCP(codigoIbge, municipioNome, ufSigla);
-      if(!geo){ semLocalizacaoConfirmada++; continue; }
-      const dist = distanciaKm(area.lat, area.lng, geo.lat, geo.lng);
-      if(dist <= area.raioKm) dentroDoRaio.push({ d, unidade, geo, dist });
+      if(!unidade.codigoIbge || !unidade.municipioNome || vistosMunicipio.has(unidade.codigoIbge)) return;
+      vistosMunicipio.add(unidade.codigoIbge);
+      municipiosDistintos.push(unidade);
+    });
+
+    const geoPorMunicipio = new Map();
+    let falhasSeguidasGeocodificacao = 0;
+    let geocodificacaoAbortada = false;
+    for(let i=0; i<municipiosDistintos.length; i++){
+      const unidade = municipiosDistintos[i];
+      const jaEmCache = !!STATE.licitacoesGeocodeCache[unidade.codigoIbge];
+      setStatus(`Confirmando localização... ${i+1}/${municipiosDistintos.length} município(s) (${unidade.municipioNome}/${unidade.ufSigla})`);
+      const geo = await geocodificarMunicipioPNCP(unidade.codigoIbge, unidade.municipioNome, unidade.ufSigla);
+      geoPorMunicipio.set(unidade.codigoIbge, geo);
+      if(jaEmCache) continue; // não gastou rede agora — não conta pra pausa nem pro limite de falhas
+      if(geo){
+        falhasSeguidasGeocodificacao = 0;
+      }else{
+        falhasSeguidasGeocodificacao++;
+        // 8 falhas de verdade seguidas (fora do cache) é bem mais sinal de
+        // Nominatim bloqueando/fora do ar do que 8 cidades diferentes não
+        // existirem — para de insistir em vez de travar a busca inteira
+        // tentando geocodificar centenas de município em vão.
+        if(falhasSeguidasGeocodificacao>=8){ geocodificacaoAbortada = true; break; }
+      }
+      await new Promise(r=>setTimeout(r, 250)); // respiro entre chamadas de verdade ao Nominatim
     }
 
-    console.log(`[Buscar Oportunidades PNCP] brutos=${brutos.length} candidatos(sem duplicar/já importado)=${candidatos.length} abertas(prazo não vencido)=${abertas.length} semLocalizacao=${semLocalizacaoConfirmada} dentroDoRaio=${dentroDoRaio.length}`);
+    const dentroDoRaio = [];
+    let semLocalizacaoConfirmada = 0;
+    if(!geocodificacaoAbortada){
+      abertas.forEach(d=>{
+        const unidade = d.unidadeOrgao || {};
+        const codigoIbge = unidade.codigoIbge;
+        if(!codigoIbge || !unidade.municipioNome){ semLocalizacaoConfirmada++; return; }
+        const geo = geoPorMunicipio.get(codigoIbge);
+        if(!geo){ semLocalizacaoConfirmada++; return; }
+        const dist = distanciaKm(area.lat, area.lng, geo.lat, geo.lng);
+        if(dist <= area.raioKm) dentroDoRaio.push({ d, unidade, geo, dist });
+      });
+    }
+    const foraDoRaio = abertas.length - semLocalizacaoConfirmada - dentroDoRaio.length;
+
+    console.log(`[Buscar Oportunidades PNCP] brutos=${brutos.length} candidatos(sem duplicar/já importado)=${candidatos.length} abertas(prazo não vencido)=${abertas.length} municipiosDistintos=${municipiosDistintos.length} geocodificacaoAbortada=${geocodificacaoAbortada} semLocalizacao=${semLocalizacaoConfirmada} foraDoRaio=${foraDoRaio} dentroDoRaio=${dentroDoRaio.length}`);
 
     // cria um item novo na Revisão de Oportunidades (NÃO entra direto no
     // funil/"Potencial" — o usuário decide o que promover, ver
@@ -16017,14 +16055,31 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
     }
     if(brutos.length===0){
       partesResumo.push(`O PNCP não retornou nenhuma compra publicada entre ${fmtDate(filtrosData.publicadoDe)} e ${fmtDate(filtrosData.publicadoAte)} pras modalidades e estados dessa área (${ufs.join(', ')}).`);
+    }else if(geocodificacaoAbortada){
+      partesResumo.push(`O serviço de localização (Nominatim/OpenStreetMap) parou de responder depois de várias tentativas seguidas — provavelmente está limitando ou fora do ar agora. ${brutos.length} compra(s) foram encontradas no PNCP, mas não deu pra confirmar quais estão dentro do seu raio. Tente de novo em alguns minutos.`);
     }else if(dentroDoRaio.length===0){
-      partesResumo.push(`Nenhuma oportunidade nova sobrou depois dos filtros (${brutos.length} encontrada(s) no PNCP, mas todas ficaram de fora pelo raio, prazo, palavra-chave ou já tinham sido importadas antes).`);
+      // detalha EXATAMENTE em qual etapa cada uma foi descartada, em vez de
+      // só dizer "ficou de fora" — isso que fazia esse tipo de caso difícil
+      // de diagnosticar antes.
+      partesResumo.push(`Nenhuma oportunidade nova sobrou depois dos filtros. Dos ${brutos.length} resultado(s) do PNCP:`);
+      const detalhes = [];
+      if(removidosPorDuplicadaOuJaImportada>0) detalhes.push(`${removidosPorDuplicadaOuJaImportada} já tinham sido importada(s) antes (ou duplicada(s) entre páginas)`);
+      if(ignoradosPorPalavraChave>0) detalhes.push(`${ignoradosPorPalavraChave} foram descartada(s) pelo filtro de palavra-chave`);
+      if(removidosPorPrazo>0) detalhes.push(`${removidosPorPrazo} ficaram de fora pelo prazo final da proposta`);
+      if(semLocalizacaoConfirmada>0) detalhes.push(`${semLocalizacaoConfirmada} não deu pra confirmar a localização`);
+      if(foraDoRaio>0) detalhes.push(`${foraDoRaio} tinham localização confirmada mas fora do raio configurado`);
+      partesResumo.push(detalhes.length ? detalhes.join('; ') + '.' : 'nenhuma sobrou pras etapas seguintes.');
+      if(foraDoRaio>0 && foraDoRaio===abertas.length){
+        partesResumo.push('Se isso se repetir sempre, vale conferir se o raio configurado em ⚙️ Configurar Área não está pequeno demais pra essa área.');
+      }
     }else{
       partesResumo.push(`${dentroDoRaio.length} nova(s) oportunidade(s) dentro da sua área foram pra "Oportunidades para Revisar", em cima do funil — selecione as que interessam e mova pra Potencial.`);
       partesResumo.push(`(${brutos.length} encontrada(s) no PNCP ao todo, ${abertas.length} ainda com prazo aberto.)`);
     }
-    if(ignoradosPorPalavraChave>0) partesResumo.push(`${ignoradosPorPalavraChave} ignorada(s) pelo filtro de palavra-chave.`);
-    if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
+    if(!geocodificacaoAbortada && dentroDoRaio.length>0){
+      if(ignoradosPorPalavraChave>0) partesResumo.push(`${ignoradosPorPalavraChave} ignorada(s) pelo filtro de palavra-chave.`);
+      if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
+    }
     if(_pncpUsouProxyCors) partesResumo.push('(Algumas consultas só funcionaram usando um proxy alternativo — o navegador bloqueou a chamada direta ao PNCP, provavelmente por CORS.)');
     if(combosComErro>0){
       partesResumo.push(`${combosComErro} de ${combosTotal} consulta(s) ao PNCP falharam e foram puladas${primeiroErro ? ` (motivo: ${primeiroErro})` : ''}.`);
@@ -16035,7 +16090,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
       }
     }
     // fica fixo na tela (não some sozinho) até o usuário fechar ou buscar de novo
-    mostrarResumoBuscaLicitacoes(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : (combosComErro>0 ? 'error' : 'info'));
+    mostrarResumoBuscaLicitacoes(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : ((combosComErro>0||geocodificacaoAbortada) ? 'error' : 'info'));
   }catch(err){
     console.error(err);
     mostrarResumoBuscaLicitacoes('Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). Tente de novo em instantes.', 'error');
