@@ -1749,8 +1749,30 @@ function abrirFormCliente(id, onCriado){
               <input type="text" id="f-nome" required value="${cliente?escapeAttr(cliente.nome):''}">
             </div>
             <div class="field">
+              <label>Nome Fantasia</label>
+              <input type="text" id="f-nome-fantasia" value="${cliente?escapeAttr(cliente.nomeFantasia||''):''}">
+            </div>
+            <div class="field">
               <label>CNPJ / CPF</label>
-              <input type="text" id="f-documento" value="${cliente?escapeAttr(cliente.documento||''):''}">
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="f-documento" style="flex:1;" value="${cliente?escapeAttr(cliente.documento||''):''}" placeholder="Só números, para buscar automático">
+                <button type="button" class="btn btn-sm" id="f-btn-buscar-cnpj" style="white-space:nowrap;">🔍 Buscar</button>
+              </div>
+              <div id="f-cnpj-status" style="margin-top:4px;"></div>
+            </div>
+            <div class="field">
+              <label>Tipo de Pessoa</label>
+              <select id="f-tipo-pessoa">
+                <option value="PJ" ${cliente&&cliente.tipoPessoa==='PF'?'':'selected'}>Jurídica (PJ)</option>
+                <option value="PF" ${cliente&&cliente.tipoPessoa==='PF'?'selected':''}>Física (PF)</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Nacionalidade</label>
+              <select id="f-nacionalidade">
+                <option value="Nacional" ${cliente&&cliente.nacionalidade==='Estrangeira'?'':'selected'}>Nacional</option>
+                <option value="Estrangeira" ${cliente&&cliente.nacionalidade==='Estrangeira'?'selected':''}>Estrangeira</option>
+              </select>
             </div>
             <div class="field">
               <label>Contato (telefone/e-mail)</label>
@@ -1784,9 +1806,49 @@ function abrirFormCliente(id, onCriado){
               <label>Observações</label>
               <textarea id="f-obs">${cliente?escapeHtml(cliente.obs||''):''}</textarea>
             </div>
+          </div>
+
+          <details style="margin-top:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+            <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;color:var(--ink);">📍 Endereço estruturado (CEP/UF/Cidade/Bairro/Número) <span class="hint">opcional, complementa o endereço acima</span></summary>
+            <div class="form-grid" style="padding-bottom:10px;">
+              <div class="field">
+                <label>CEP</label>
+                <input type="text" id="f-cep" maxlength="9" value="${cliente?escapeAttr(cliente.cep||''):''}">
+              </div>
+              <div class="field">
+                <label>Estado (UF)</label>
+                <select id="f-uf">
+                  <option value="">Selecione...</option>
+                  ${['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map(uf=>`<option value="${uf}" ${cliente&&cliente.uf===uf?'selected':''}>${uf}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field">
+                <label>Cidade</label>
+                <input type="text" id="f-cidade-estruturada" value="${cliente?escapeAttr(cliente.cidadeEstruturada||''):''}">
+              </div>
+              <div class="field">
+                <label>Bairro</label>
+                <input type="text" id="f-bairro" value="${cliente?escapeAttr(cliente.bairro||''):''}">
+              </div>
+              <div class="field">
+                <label>Número</label>
+                <input type="text" id="f-numero" value="${cliente?escapeAttr(cliente.numero||''):''}">
+              </div>
+            </div>
+          </details>
+
+          <div class="form-grid" style="margin-top:10px;">
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-cliente" style="width:auto;" ${!cliente || !cliente.papeis || cliente.papeis.cliente!==false?'checked':''}>
+              <label for="f-papel-cliente" style="margin:0;">👤 Cliente</label>
+            </div>
+            <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
+              <input type="checkbox" id="f-papel-fornecedor" style="width:auto;" ${cliente&&cliente.papeis&&cliente.papeis.fornecedor?'checked':''}>
+              <label for="f-papel-fornecedor" style="margin:0;">🏭 Fornecedor <span class="hint">também fornece produtos pra você</span></label>
+            </div>
             <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
               <input type="checkbox" id="f-papel-pagador" style="width:auto;" ${cliente&&cliente.papeis&&cliente.papeis.pagador?'checked':''}>
-              <label for="f-papel-pagador" style="margin:0;">🏦 Também é usado como Pagador <span class="hint">recebe/paga repasses de vendas em nome de outro cliente</span></label>
+              <label for="f-papel-pagador" style="margin:0;">🏦 Pagador <span class="hint">recebe/paga repasses de vendas em nome de outro cliente</span></label>
             </div>
           </div>
           <div class="form-actions">
@@ -1811,21 +1873,63 @@ function abrirFormCliente(id, onCriado){
     }
   );
 
+  // Busca automática por CNPJ (BrasilAPI) — preenche Razão Social, Nome
+  // Fantasia, Endereço (texto livre) e o endereço estruturado (CEP, Cidade,
+  // UF, Bairro, Número). Diferente da busca de NCM, aqui o preenchimento é
+  // direto (não é uma sugestão) porque é um dado oficial de cadastro (Receita).
+  document.getElementById('f-btn-buscar-cnpj').addEventListener('click', async ()=>{
+    const cnpjDigitos = document.getElementById('f-documento').value.replace(/\D/g,'');
+    const statusEl = document.getElementById('f-cnpj-status');
+    if(cnpjDigitos.length!==14){
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Informe um CNPJ válido (14 dígitos) para buscar.</span>`;
+      return;
+    }
+    statusEl.innerHTML = `<span class="help-text">Buscando dados do CNPJ...</span>`;
+    try{
+      const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjDigitos}`);
+      if(!resp.ok) throw new Error('CNPJ não encontrado');
+      const d = await resp.json();
+      if(d.razao_social) document.getElementById('f-nome').value = d.razao_social;
+      if(d.nome_fantasia) document.getElementById('f-nome-fantasia').value = d.nome_fantasia;
+      const enderecoMontado = [d.logradouro, d.numero, d.bairro].filter(Boolean).join(', ');
+      if(enderecoMontado) document.getElementById('f-endereco').value = `${enderecoMontado}${d.municipio?` - ${d.municipio}`:''}${d.uf?`/${d.uf}`:''}`;
+      if(d.cep) document.getElementById('f-cep').value = d.cep;
+      if(d.uf) document.getElementById('f-uf').value = d.uf;
+      if(d.municipio) document.getElementById('f-cidade-estruturada').value = d.municipio;
+      if(d.bairro) document.getElementById('f-bairro').value = d.bairro;
+      if(d.numero) document.getElementById('f-numero').value = d.numero;
+      document.querySelector('#modal-form-cliente details').open = true;
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--positive);">Dados preenchidos automaticamente. Confira antes de salvar.</span>`;
+    }catch(err){
+      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Não foi possível buscar esse CNPJ agora (sem internet, CNPJ inválido ou serviço fora do ar). Preencha manualmente.</span>`;
+    }
+  });
+
   document.getElementById('form-cliente').addEventListener('submit', (e)=>{
     e.preventDefault();
     const nome = document.getElementById('f-nome').value.trim();
     if(!nome){ showToast('Informe o nome do cliente.', 'error'); return; }
     const data = {
       nome,
+      nomeFantasia: document.getElementById('f-nome-fantasia').value.trim(),
       documento: document.getElementById('f-documento').value.trim(),
+      tipoPessoa: document.getElementById('f-tipo-pessoa').value,
+      nacionalidade: document.getElementById('f-nacionalidade').value,
       contato: document.getElementById('f-contato').value.trim(),
       pessoaContato: document.getElementById('f-pessoa-contato').value.trim(),
       cidade: document.getElementById('f-cidade').value.trim(),
       tipo: document.getElementById('f-tipo').value,
       endereco: document.getElementById('f-endereco').value.trim(),
+      cep: document.getElementById('f-cep').value.trim(),
+      uf: document.getElementById('f-uf').value,
+      cidadeEstruturada: document.getElementById('f-cidade-estruturada').value.trim(),
+      bairro: document.getElementById('f-bairro').value.trim(),
+      numero: document.getElementById('f-numero').value.trim(),
       obs: document.getElementById('f-obs').value.trim(),
       lat: latClienteSelecionado, lng: lngClienteSelecionado,
       papeis: Object.assign({cliente:true, fornecedor:false, pagador:false}, (cliente&&cliente.papeis)||{}, {
+        cliente: document.getElementById('f-papel-cliente').checked,
+        fornecedor: document.getElementById('f-papel-fornecedor').checked,
         pagador: document.getElementById('f-papel-pagador').checked
       }),
     };
@@ -6223,6 +6327,7 @@ function renderOrcamentos(){
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
             </select>
             <button type="button" class="btn btn-sm" id="orc-btn-novo-cliente" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+            <button type="button" class="btn btn-sm" id="orc-btn-editar-cliente" title="Editar dados deste cliente" style="flex-shrink:0;display:none;">✏️</button>
             <button type="button" class="btn btn-sm" id="orc-btn-historico-compras" title="Ver produtos que este cliente já comprou antes" style="flex-shrink:0;white-space:nowrap;display:none;">🧾 Histórico</button>
           </div>
         </div>
@@ -6446,11 +6551,23 @@ function renderOrcamentos(){
     const btnHist = document.getElementById('orc-btn-historico-compras');
     const temCompras = clienteId && STATE.vendas.some(v=>v.clienteId===clienteId && v.status!=='cancelada');
     btnHist.style.display = temCompras ? '' : 'none';
+    document.getElementById('orc-btn-editar-cliente').style.display = clienteId ? '' : 'none';
   }
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
   atualizarBotaoHistoricoComprasOrcamento();
   document.getElementById('orc-btn-historico-compras').addEventListener('click', ()=>{
     abrirHistoricoComprasCliente(document.getElementById('orc-cliente').value, 'orcamento');
+  });
+  // Reaproveita o MESMO formulário/componente de Cliente usado na aba
+  // Clientes — abre direto de dentro do Orçamento, sem precisar navegar.
+  document.getElementById('orc-btn-editar-cliente').addEventListener('click', ()=>{
+    const clienteId = document.getElementById('orc-cliente').value;
+    if(!clienteId) return;
+    abrirFormCliente(clienteId, (clienteAtualizado)=>{
+      const select = document.getElementById('orc-cliente');
+      select.innerHTML = `<option value="">Selecione...</option>` +
+        STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteAtualizado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
+    });
   });
 
   ativarComboboxProdutoOrcamento();
