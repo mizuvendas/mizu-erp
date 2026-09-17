@@ -998,6 +998,7 @@ table.data-table{ width:100%; font-size:13px; }
         <div style="font-size:11.5px;color:var(--ink-faint);margin-top:6px;">💡 "Publicado" filtra quando a compra foi divulgada no PNCP. "Prazo final p/ proposta" filtra pelo último dia pra enviar a proposta — deixe em branco pra trazer todas as que ainda estão abertas, sem se importar com o prazo exato.</div>
       </div>
       <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
+      <div id="licitacoes-busca-resumo" style="display:none;"></div>
       <div id="licitacoes-content"></div>
     </section>
 
@@ -15400,6 +15401,28 @@ function inicializarFiltrosDataLicitacoes(){
   _filtrosDataLicitacoesInicializados = true;
 }
 
+// Resumo final da busca de oportunidades no PNCP — diferente do showToast()
+// normal (que some sozinho em ~3s), esse aviso fica fixo na tela até o
+// usuário fechar ou até a próxima busca começar, porque o texto costuma ter
+// detalhe importante pra diagnosticar (quantas vieram do PNCP, quantas
+// ficaram de fora e por quê) e o usuário precisa de tempo pra ler ou printar.
+function mostrarResumoBuscaLicitacoes(msg, tipo){
+  const el = document.getElementById('licitacoes-busca-resumo');
+  if(!el) return;
+  const cores = {
+    success: { borda:'var(--positive)', fundo:'var(--positive-soft)', texto:'var(--positive)' },
+    info:    { borda:'var(--warning)',  fundo:'var(--warning-soft)',  texto:'var(--warning)' },
+    error:   { borda:'var(--negative)', fundo:'var(--negative-soft)', texto:'var(--negative)' }
+  };
+  const c = cores[tipo] || cores.info;
+  el.style.cssText = `display:block;border-left:4px solid ${c.borda};background:${c.fundo};border-radius:var(--radius-sm);padding:10px 34px 10px 14px;margin:0 0 10px;font-size:13px;line-height:1.5;color:var(--ink);position:relative;`;
+  el.innerHTML = `${escapeHtml(msg)}<button type="button" onclick="esconderResumoBuscaLicitacoes()" title="Fechar" style="position:absolute;top:6px;right:8px;background:none;border:none;cursor:pointer;font-size:15px;color:${c.texto};line-height:1;padding:4px;">✕</button>`;
+}
+function esconderResumoBuscaLicitacoes(){
+  const el = document.getElementById('licitacoes-busca-resumo');
+  if(el){ el.style.display = 'none'; el.innerHTML = ''; }
+}
+
 function buscarOportunidadesPNCP(){
   const area = STATE.config.licitacoesArea;
   if(!area){
@@ -15490,6 +15513,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
   const setStatus = (msg)=>{ if(statusEl) statusEl.textContent = msg; };
   btn.disabled = true;
   btn.textContent = '🔎 Buscando...';
+  esconderResumoBuscaLicitacoes(); // some o resumo da busca anterior, se tinha algum
 
   try{
     const hoje = todayISO();
@@ -15634,10 +15658,11 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         partesResumo.push('Todas as consultas falharam — o PNCP pode estar limitando muitas buscas seguidas (tente de novo daqui a 1-2 minutos) ou fora do ar no momento.');
       }
     }
-    showToast(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : 'info');
+    // fica fixo na tela (não some sozinho) até o usuário fechar ou buscar de novo
+    mostrarResumoBuscaLicitacoes(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : (combosComErro>0 ? 'error' : 'info'));
   }catch(err){
     console.error(err);
-    showToast('Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). Tente de novo em instantes.', 'error');
+    mostrarResumoBuscaLicitacoes('Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). Tente de novo em instantes.', 'error');
   }finally{
     btn.disabled = false;
     btn.textContent = '🔎 Buscar Oportunidades';
