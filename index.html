@@ -1016,24 +1016,7 @@ table.data-table{ width:100%; font-size:13px; }
           <button class="btn btn-sm" id="rev-btn-excluir-selecionadas">🗑️ Excluir selecionadas</button>
           <button class="btn btn-sm" id="rev-btn-excluir-resto">🗑️ Excluir todas as não selecionadas</button>
         </div>
-        <div style="overflow-x:auto;">
-          <table class="table" id="rev-tabela" style="min-width:900px;">
-            <thead>
-              <tr>
-                <th style="width:28px;"></th>
-                <th>Objeto</th>
-                <th>Órgão</th>
-                <th>Cidade/UF</th>
-                <th>Modalidade</th>
-                <th>Valor Est.</th>
-                <th>Publicado em</th>
-                <th>Prazo final p/ proposta</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody id="rev-tabela-body"></tbody>
-          </table>
-        </div>
+        <div id="rev-tabela-body"></div>
       </div>
       <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
       <div id="licitacoes-busca-resumo" style="display:none;"></div>
@@ -16316,24 +16299,33 @@ function renderRevisaoOportunidades(){
   }
   card.style.display = '';
 
+  // Cada oportunidade vira um "cartão" de linha inteira — o objeto (que é o
+  // que mais importa pra decidir se interessa) ocupa a largura toda, sem
+  // truncar, e o resto (órgão, cidade, modalidade, valor, datas) fica numa
+  // linha de informações logo abaixo, não espremido numa coluna estreita
+  // de tabela (pedido do usuário, que achou a descrição curta demais).
   tbody.innerHTML = lista.map(l=>{
     const marcado = _revisaoSelecionados.has(l.id);
     return `
-    <tr draggable="true" data-rev-id="${l.id}" style="cursor:grab;${marcado?'background:var(--bg-app);':''}">
-      <td><input type="checkbox" class="rev-check" data-id="${l.id}" ${marcado?'checked':''}></td>
-      <td style="max-width:280px;cursor:pointer;" onclick="abrirDetalheLicitacao('${l.id}')"><div style="font-weight:600;">${escapeHtml(l.objeto)}</div><div class="help-text">${l.numero?'Nº '+escapeHtml(l.numero):''}${l.modalidadeNome?(l.numero?' · ':'')+escapeHtml(l.modalidadeNome):''}</div></td>
-      <td>${escapeHtml(l.orgao||'—')}</td>
-      <td>${escapeHtml(l.municipioNome||'—')}${l.uf?'/'+escapeHtml(l.uf):''}${l.distanciaKm!=null?` <span class="help-text">(~${l.distanciaKm}km)</span>`:''}</td>
-      <td>${escapeHtml(l.modalidadeNome||'—')}</td>
-      <td>${fmtMoney(l.valorEstimado)}</td>
-      <td>${l.dataAberturaProposta?new Date(l.dataAberturaProposta).toLocaleDateString('pt-BR'):'—'}</td>
-      <td style="font-weight:600;">${l.dataEncerramentoProposta?new Date(l.dataEncerramentoProposta).toLocaleString('pt-BR'):'—'}</td>
-      <td style="white-space:nowrap;">
+    <div class="rev-item" draggable="true" data-rev-id="${l.id}" style="display:flex;gap:12px;align-items:flex-start;padding:12px 8px;border-bottom:1px solid var(--border-soft, #E7E5E0);cursor:grab;${marcado?'background:var(--bg-app);':''}">
+      <input type="checkbox" class="rev-check" data-id="${l.id}" ${marcado?'checked':''} style="margin-top:3px;flex-shrink:0;">
+      <div style="flex:1;min-width:0;cursor:pointer;" onclick="abrirDetalheLicitacao('${l.id}')">
+        <div style="font-weight:600;font-size:14.5px;line-height:1.5;">${escapeHtml(l.objeto)}</div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:7px;font-size:12.5px;color:var(--ink-soft);">
+          <span>🏛️ ${escapeHtml(l.orgao||'—')}</span>
+          <span>📍 ${escapeHtml(l.municipioNome||'—')}${l.uf?'/'+escapeHtml(l.uf):''}${l.distanciaKm!=null?` (~${l.distanciaKm}km)`:''}</span>
+          <span>📋 ${escapeHtml(l.modalidadeNome||'—')}${l.numero?' · Nº '+escapeHtml(l.numero):''}</span>
+          <span>💰 ${fmtMoney(l.valorEstimado)}</span>
+          <span>🗓️ Publicado ${l.dataAberturaProposta?new Date(l.dataAberturaProposta).toLocaleDateString('pt-BR'):'—'}</span>
+          <span style="font-weight:600;color:var(--ink);">⏰ Prazo final: ${l.dataEncerramentoProposta?new Date(l.dataEncerramentoProposta).toLocaleString('pt-BR'):'—'}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:4px;flex-shrink:0;">
         <button class="btn btn-sm" title="Ver detalhes" onclick="abrirDetalheLicitacao('${l.id}')">👁️</button>
         <button class="btn btn-sm btn-primary" title="Mover para Potencial" onclick="moverRevisaoParaPotencial(['${l.id}'])">➡️</button>
         <button class="btn btn-sm btn-danger" title="Excluir" onclick="excluirRevisao(['${l.id}'])">🗑️</button>
-      </td>
-    </tr>
+      </div>
+    </div>
   `;
   }).join('');
 
@@ -16342,18 +16334,18 @@ function renderRevisaoOportunidades(){
     chk.addEventListener('change', ()=>{
       const id = chk.getAttribute('data-id');
       if(chk.checked) _revisaoSelecionados.add(id); else _revisaoSelecionados.delete(id);
-      const tr = chk.closest('tr');
-      if(tr) tr.style.background = chk.checked ? 'var(--bg-app)' : '';
+      const item = chk.closest('.rev-item');
+      if(item) item.style.background = chk.checked ? 'var(--bg-app)' : '';
       const master = document.getElementById('rev-selecionar-todas');
       if(master) master.checked = _revisaoSelecionados.size===lista.length;
     });
   });
 
-  // arrastar linha (ou, se fizer parte da seleção atual, todas as
-  // selecionadas de uma vez) pra soltar na coluna "Potencial" do funil
-  tbody.querySelectorAll('tr[draggable="true"]').forEach(tr=>{
-    tr.addEventListener('dragstart', (ev)=>{
-      const id = tr.getAttribute('data-rev-id');
+  // arrastar o cartão (ou, se fizer parte da seleção atual, todos os
+  // selecionados de uma vez) pra soltar na coluna "Potencial" do funil
+  tbody.querySelectorAll('.rev-item[draggable="true"]').forEach(item=>{
+    item.addEventListener('dragstart', (ev)=>{
+      const id = item.getAttribute('data-rev-id');
       _revisaoArrastando = (_revisaoSelecionados.has(id) && _revisaoSelecionados.size>1) ? [..._revisaoSelecionados] : [id];
       ev.dataTransfer.effectAllowed = 'move';
       try{ ev.dataTransfer.setData('text/plain', _revisaoArrastando.join(',')); }catch(e){}
