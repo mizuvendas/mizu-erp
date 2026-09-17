@@ -7845,6 +7845,8 @@ function getDadosLogistica(){
 
   const entregas = orcamentosEmRota.map(o=>{
     const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    const c = calcularVenda(o);
+    const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
     return {
       orcamentoId: o.id,
       clienteId: o.clienteId,
@@ -7852,6 +7854,8 @@ function getDadosLogistica(){
       endereco: cliente ? cliente.endereco : '',
       lat: cliente ? cliente.lat : null,
       lng: cliente ? cliente.lng : null,
+      data: o.data,
+      valor: c.bruto + acrescimo,
       itens: o.itens.map(it=>({
         nome: it.nome, qtd: it.qtd,
         origemTipo: it.origemTipo, origemId: it.origemId, origemNome: it.origem
@@ -7972,7 +7976,75 @@ function calcularRoteiro(){
   // aparecem à parte, como pendência a resolver, não fazem parte da rota
   const entregasBloqueadas = entregasPendentes.filter(e=>e.itensRestantes.size>0);
 
-  return { roteiro, entregasBloqueadas };
+  return { roteiro: otimizarRoteiro2opt(roteiro), entregasBloqueadas };
+}
+
+// Segunda etapa de otimização (2-opt): o algoritmo guloso acima escolhe
+// sempre o ponto mais próximo NO MOMENTO, o que pode gerar zigue-zague
+// (ex: ir longe, voltar perto de onde já passou). O 2-opt testa inverter
+// trechos do roteiro pra ver se o trajeto total fica mais curto, mas só
+// aceita a troca se a ordem resultante continuar respeitando a regra de
+// precedência: uma entrega só pode vir depois de TODAS as coletas de que
+// ela depende. Roda algumas passadas (limitadas, pra não travar a tela em
+// rotas muito grandes) até não conseguir mais encurtar o trajeto.
+function otimizarRoteiro2opt(roteiro){
+  if(roteiro.length<4) return roteiro; // rotas curtas não têm o que reordenar
+
+  const dependenciasPorEntrega = new Map(); // orcamentoId -> Set de chaves de coleta necessárias
+  roteiro.forEach(stop=>{
+    if(stop.tipo==='entrega'){
+      const chaves = new Set((stop.itens||[]).filter(it=>it.origemTipo&&it.origemId).map(it=>`${it.origemTipo}:${it.origemId}`));
+      dependenciasPorEntrega.set(stop.orcamentoId, chaves);
+    }
+  });
+
+  function precedenciaValida(ordem){
+    const coletadoAteAqui = new Set();
+    for(const stop of ordem){
+      if(stop.tipo==='coleta'){
+        coletadoAteAqui.add(stop.chave);
+      }else{
+        const deps = dependenciasPorEntrega.get(stop.orcamentoId);
+        if(deps){ for(const dep of deps){ if(!coletadoAteAqui.has(dep)) return false; } }
+      }
+    }
+    return true;
+  }
+
+  function distanciaTotalRota(ordem){
+    let total = 0;
+    let lat = STATE.config.lojaLat, lng = STATE.config.lojaLng;
+    for(const stop of ordem){
+      if(lat!=null && lng!=null && stop.lat!=null && stop.lng!=null){
+        total += distanciaKm(lat, lng, stop.lat, stop.lng);
+      }
+      if(stop.lat!=null && stop.lng!=null){ lat = stop.lat; lng = stop.lng; }
+    }
+    return total;
+  }
+
+  let melhor = [...roteiro];
+  let melhorDist = distanciaTotalRota(melhor);
+  let melhorou = true;
+  let passadas = 0;
+  const LIMITE_PASSADAS = 25; // segurança: evita travar a tela em rotas muito grandes
+  while(melhorou && passadas < LIMITE_PASSADAS){
+    melhorou = false;
+    passadas++;
+    for(let i=0; i<melhor.length-1; i++){
+      for(let j=i+1; j<melhor.length; j++){
+        const candidato = melhor.slice(0,i).concat(melhor.slice(i,j+1).reverse(), melhor.slice(j+1));
+        if(!precedenciaValida(candidato)) continue;
+        const dist = distanciaTotalRota(candidato);
+        if(dist < melhorDist - 0.001){
+          melhor = candidato;
+          melhorDist = dist;
+          melhorou = true;
+        }
+      }
+    }
+  }
+  return melhor;
 }
 
 function renderLogistica(){
@@ -8007,10 +8079,17 @@ function renderLogistica(){
 
   const { roteiro, entregasBloqueadas } = calcularRoteiro();
 
+  // mapa orcamentoId -> nome do cliente, só pra mostrar na tela (nunca no
+  // PDF de coleta) pra qual cliente é cada item que precisa ser pego ali
+  const clienteNomePorOrcamento = new Map(entregas.map(e=>[e.orcamentoId, e.clienteNome]));
+
   const linhasRoteiro = roteiro.map((p,idx)=>{
     if(p.tipo==='coleta'){
       const itensAgrupados = p.itens.reduce((acc,it)=>{
-        acc[it.nome] = (acc[it.nome]||0) + it.qtd;
+        if(!acc[it.nome]) acc[it.nome] = { qtd:0, destinos:{} };
+        acc[it.nome].qtd += it.qtd;
+        const nomeCliente = clienteNomePorOrcamento.get(it.orcamentoId) || '?';
+        acc[it.nome].destinos[nomeCliente] = (acc[it.nome].destinos[nomeCliente]||0) + it.qtd;
         return acc;
       },{});
       return `
@@ -8023,8 +8102,13 @@ function renderLogistica(){
             </div>
           </div>
           <table class="data-table" style="margin-top:10px;">
-            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th></tr></thead>
-            <tbody>${Object.entries(itensAgrupados).map(([nome,qtd])=>`<tr><td>${escapeHtml(nome)}</td><td class="num">${fmtNum(qtd)}</td></tr>`).join('')}</tbody>
+            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th><th>Para quem é</th></tr></thead>
+            <tbody>${Object.entries(itensAgrupados).map(([nome,info])=>`
+              <tr>
+                <td>${escapeHtml(nome)}</td>
+                <td class="num">${fmtNum(info.qtd)}</td>
+                <td style="font-size:12px;color:var(--ink-soft);">${Object.entries(info.destinos).map(([cli,qtd])=>`${escapeHtml(cli)} (${fmtNum(qtd)})`).join(', ')}</td>
+              </tr>`).join('')}</tbody>
           </table>
         </div>`;
     }else{
@@ -8048,8 +8132,31 @@ function renderLogistica(){
       ${entregasBloqueadas.map(e=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);">${escapeHtml(e.clienteNome)} <button class="btn btn-sm" style="margin-left:8px;" onclick="verDetalheOrcamento('${e.orcamentoId}')">Ver Itens</button></div>`).join('')}
     </div>` : '';
 
-  box.innerHTML = cardPartida + `
+  // Visão resumida em tabela — pedida como um jeito mais rápido de ver todas
+  // as entregas em rota de uma vez (data, cliente, valor, status), com opção
+  // de marcar como entregue direto na linha, sem precisar rolar os cards.
+  const tabelaEntregas = `
     <div class="card">
+      <h3>📋 Entregas em Rota</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
+          <tbody>
+            ${entregas.map(e=>`
+              <tr>
+                <td>${fmtDate(e.data)}</td>
+                <td>${escapeHtml(e.clienteNome)}</td>
+                <td class="num">${fmtMoney(e.valor)}</td>
+                <td><span class="badge badge-warning">Em rota</span></td>
+                <td><button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${e.orcamentoId}')">✓ Marcar Entregue</button></td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>`;
+
+  box.innerHTML = cardPartida + tabelaEntregas + `
+    <div class="card" style="margin-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           <h3 style="margin:0;">Roteiro do dia</h3>
@@ -8130,14 +8237,16 @@ function gerarPdfRoteiro(){
         acc[it.nome] = (acc[it.nome]||0) + it.qtd;
         return acc;
       },{});
-      const itensTexto = Object.entries(itensAgrupados).map(([nome,qtd])=>`${escapeHtml(nome)} (${fmtNum(qtd)})`).join(' · ');
+      // itens em 3 colunas (em vez de um por linha) pra caber mais coisa
+      // numa folha só de impressão, como pedido.
+      const itensColunas = Object.entries(itensAgrupados).map(([nome,qtd])=>`<span>${escapeHtml(nome)} (${fmtNum(qtd)})</span>`).join('');
       return `
         <div class="parada parada-coleta">
           <div class="numero">${idx+1}</div>
           <div class="corpo">
             <div class="linha-topo"><span class="selo">COLETA</span><h3>📦 ${escapeHtml(p.nome)}</h3></div>
             <div class="endereco">${escapeHtml(p.endereco||'Endereço não cadastrado')}</div>
-            <div class="itens-compactos">${itensTexto}</div>
+            <div class="itens-3col">${itensColunas}</div>
           </div>
         </div>`;
     }else{
@@ -8180,7 +8289,7 @@ function gerarPdfRoteiro(){
         .selo-entrega{ background:#EDE4FA; color:#6B3FA0; }
         .corpo h3{ font-size:12.5px; margin:0; }
         .endereco{ font-size:10.5px; color:#666; margin-top:1px; }
-        .itens-compactos{ font-size:10.5px; color:#333; margin-top:2px; }
+        .itens-3col{ font-size:10.5px; color:#333; margin-top:3px; display:grid; grid-template-columns:repeat(3, 1fr); gap:2px 10px; }
         .bloqueadas{ margin-top:10px; font-size:10.5px; color:#B23B3B; background:#FBEAEA; padding:6px 10px; border-radius:6px; }
         @media print{ body{ padding:8px 14px; } .parada{ padding:4px 0; } }
       </style>
@@ -8249,7 +8358,7 @@ function abrirMapaRoteiro(){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-mapa-roteiro';
   modal.innerHTML = `
-    <div class="modal-box" style="max-width:720px;max-height:92vh;overflow-y:auto;">
+    <div class="modal-box" style="max-width:min(1180px, 96vw);width:1180px;max-height:94vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🗺️</div>
         <div>
@@ -8258,7 +8367,12 @@ function abrirMapaRoteiro(){
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <div id="mapa-roteiro-leaflet" style="width:100%;height:440px;border-radius:8px;background:#e9ecef;"></div>
+        <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+          <input type="text" id="mapa-roteiro-busca" placeholder="Buscar um endereço no mapa (ex: nome de rua)..." style="flex:1;min-width:220px;">
+          <button type="button" class="btn btn-sm" id="mapa-roteiro-btn-busca">🔍 Buscar</button>
+        </div>
+        <div id="mapa-roteiro-leaflet" style="width:100%;height:min(640px, 68vh);border-radius:8px;background:#e9ecef;"></div>
+        <div id="mapa-roteiro-status" class="help-text" style="margin-top:6px;"></div>
         <div class="form-actions">
           <button type="button" class="btn" id="mapa-roteiro-fechar">Fechar</button>
         </div>
@@ -8276,9 +8390,16 @@ function abrirMapaRoteiro(){
   setTimeout(()=>{
     try{
       const mapa = L.map('mapa-roteiro-leaflet');
+
+      // Duas camadas alternáveis (Mapa/Satélite) via o controle de camadas
+      // padrão do Leaflet, no canto do mapa.
       const camadaRuas = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
         maxZoom: 19, attribution: 'Tiles © Esri — Source: Esri, HERE, Garmin, USGS, Intermap, INCREMENT P'
       }).addTo(mapa);
+      const camadaSatelite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19, attribution: 'Tiles © Esri — Source: Esri, Maxar, Earthstar Geographics'
+      });
+      L.control.layers({ 'Mapa': camadaRuas, 'Satélite': camadaSatelite }).addTo(mapa);
 
       const pontosLatLng = comCoordenada.map(p=>[p.lat, p.lng]);
       mapa.fitBounds(pontosLatLng, { padding: [30,30] });
@@ -8299,10 +8420,56 @@ function abrirMapaRoteiro(){
           .bindPopup(`<strong>Parada ${idx+1} · ${p.tipo==='coleta'?'Coleta':'Entrega'}</strong><br>${escapeHtml(nomeExibicao)}`);
       });
 
-      // linha ligando as paradas na ordem calculada — só entre pontos que
-      // TÊM coordenada (pontos sem localização são "pulados" na linha
-      // visual, mas continuam existindo na lista/PDF do roteiro)
-      L.polyline(pontosLatLng, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
+      // linha reta entre as paradas — desenhada IMEDIATAMENTE, pra sempre
+      // ter alguma linha visível mesmo se a busca de rota real (abaixo)
+      // falhar ou demorar (sem internet, serviço fora do ar, etc.)
+      const linhaReta = L.polyline(pontosLatLng, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
+
+      // tenta buscar uma rota seguindo ruas de verdade (OSRM, serviço
+      // público gratuito) — se conseguir, troca a linha reta por essa;
+      // se falhar por qualquer motivo, a linha reta tracejada continua
+      // valendo, então o roteiro nunca fica sem uma linha visual.
+      if(pontosLatLng.length>=2){
+        const statusEl = document.getElementById('mapa-roteiro-status');
+        statusEl.textContent = 'Calculando trajeto seguindo as ruas...';
+        const coordsOsrm = pontosLatLng.map(([lat,lng])=>`${lng},${lat}`).join(';');
+        fetch(`https://router.project-osrm.org/route/v1/driving/${coordsOsrm}?overview=full&geometries=geojson`)
+          .then(r=>r.ok?r.json():Promise.reject(new Error('Falha na busca de rota')))
+          .then(dados=>{
+            if(dados.code!=='Ok' || !dados.routes || !dados.routes[0]) throw new Error('Sem rota encontrada');
+            const coordsRota = dados.routes[0].geometry.coordinates.map(([lng,lat])=>[lat,lng]);
+            mapa.removeLayer(linhaReta);
+            L.polyline(coordsRota, { color:'#1B4B5A', weight:4, opacity:0.8 }).addTo(mapa);
+            const km = (dados.routes[0].distance/1000).toFixed(1);
+            statusEl.textContent = `Trajeto seguindo as ruas — aproximadamente ${km} km.`;
+          })
+          .catch(()=>{
+            statusEl.textContent = 'Não foi possível calcular o trajeto seguindo as ruas agora — mostrando linha reta entre as paradas.';
+          });
+      }
+
+      // busca de endereço dentro do próprio mapa (Nominatim), só pra
+      // orientação — não adiciona ponto novo ao roteiro, só centraliza
+      // o mapa ali (ex: conferir onde fica uma rua antes de sair).
+      document.getElementById('mapa-roteiro-btn-busca').addEventListener('click', async ()=>{
+        const termo = document.getElementById('mapa-roteiro-busca').value.trim();
+        const statusEl = document.getElementById('mapa-roteiro-status');
+        if(!termo) return;
+        statusEl.textContent = 'Buscando endereço...';
+        try{
+          const resp = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(termo)}`, { headers:{'Accept-Language':'pt-BR'} });
+          const resultados = await resp.json();
+          if(!resultados || resultados.length===0){
+            statusEl.textContent = `Endereço "${termo}" não encontrado.`;
+            return;
+          }
+          const { lat, lon } = resultados[0];
+          mapa.setView([parseFloat(lat), parseFloat(lon)], 16);
+          statusEl.textContent = `Mostrando: ${resultados[0].display_name}`;
+        }catch(err){
+          statusEl.textContent = 'Não foi possível buscar esse endereço agora (sem internet ou serviço fora do ar).';
+        }
+      });
     }catch(err){
       console.error('Erro ao montar mapa do roteiro:', err);
     }
