@@ -6263,9 +6263,27 @@ function renderOrcamentos(){
 
     <div class="card">
       <h3>Orçamentos Lançados</h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <div class="field" style="margin:0;min-width:180px;">
+          <label style="font-size:12px;">Filtrar por status</label>
+          <select id="orc-lista-filtro-status" onchange="renderListaOrcamentos()">
+            <option value="">Todos</option>
+            <option value="pendente">Pendente</option>
+            <option value="aprovado">Aprovado</option>
+            <option value="enviado">Enviado</option>
+            <option value="recusado">Recusado</option>
+            <option value="expirado">Expirado</option>
+            <option value="convertido">Virou Venda</option>
+          </select>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:16px;">
+          <input type="checkbox" id="orc-lista-mostrar-convertidos" style="width:auto;" onchange="renderListaOrcamentos()">
+          Mostrar orçamentos já convertidos em venda
+        </label>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Locais de coleta</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
       </div>
@@ -6826,8 +6844,25 @@ const statusOrcamentoLabel = {
   aprovado: '<span class="badge badge-positive">Aprovado</span>',
   enviado: '<span class="badge badge-info">Enviado</span>',
   recusado: '<span class="badge badge-negative">Recusado</span>',
+  expirado: '<span class="badge" style="background:#F5E6D8;color:#A15C1E;">Expirado</span>',
   convertido: '<span class="badge badge-positive">Virou Venda</span>'
 };
+
+// Passa pra "Expirado" automaticamente todo orçamento ainda 'pendente' cuja
+// validade (data + validadeDias) já passou — orçamento aprovado/enviado/
+// recusado/convertido nunca expira sozinho, só pendente sem resposta do
+// cliente. Rodado sempre antes de renderizar a lista.
+function atualizarOrcamentosExpirados(){
+  const hoje = todayISO();
+  let mudou = false;
+  STATE.orcamentos.forEach(o=>{
+    if(o.status==='pendente' && addDays(o.data, o.validadeDias) < hoje){
+      o.status = 'expirado';
+      mudou = true;
+    }
+  });
+  if(mudou) saveState();
+}
 
 // Status de ENTREGA — independente do status comercial acima. Nasce
 // 'nenhum' (orçamento nem foi aprovado ainda), vira 'em_rota' automaticamente
@@ -6843,9 +6878,27 @@ const statusEntregaLabel = {
 function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
-  const orcamentosOrdenados = [...STATE.orcamentos].sort((a,b)=>b.data<a.data?-1:1);
+  atualizarOrcamentosExpirados();
+
+  const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
+  const mostrarConvertidos = document.getElementById('orc-lista-mostrar-convertidos') ? document.getElementById('orc-lista-mostrar-convertidos').checked : false;
+
+  let lista = [...STATE.orcamentos];
+  // por padrão, orçamento já convertido em venda sai da lista (o histórico
+  // dele já vive normalmente na aba Vendas, como venda de verdade) — só
+  // aparece aqui de volta se marcar "Mostrar convertidos" ou filtrar por
+  // esse status explicitamente
+  if(!mostrarConvertidos && filtroStatus!=='convertido'){
+    lista = lista.filter(o=>o.status!=='convertido');
+  }
+  if(filtroStatus){
+    lista = lista.filter(o=>o.status===filtroStatus);
+  }
+  // mais antigo primeiro (ordem cronológica) — pedido do usuário
+  const orcamentosOrdenados = lista.sort((a,b)=> a.data<b.data ? -1 : (a.data>b.data ? 1 : 0));
+
   if(orcamentosOrdenados.length===0){
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento lançado ainda.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
     return;
   }
   tbody.innerHTML = orcamentosOrdenados.map(o=>{
@@ -6853,14 +6906,12 @@ function renderListaOrcamentos(){
     const c = calcularVenda(o);
     const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
     const validadeAte = addDays(o.data, o.validadeDias);
-    const locais = getLocaisColetaOrcamento(o);
     const jaConvertido = o.status==='convertido';
-    // status COMERCIAL efetivo pro dropdown: uma vez convertido, o dropdown
-    // continua mostrando "Aprovado" selecionado (não existe opção
-    // "Convertido" nele) — o rótulo "Virou Venda" aparece à parte, na
-    // coluna de Entrega, pra não esconder de qual dos 4 status comerciais
-    // ele veio.
-    const statusComercialSelect = jaConvertido ? 'aprovado' : o.status;
+    // status COMERCIAL efetivo pro dropdown: convertido/expirado não são
+    // opções selecionáveis no dropdown (esse último é automático) — mapeia
+    // pro valor mais próximo, só pra manter o select coerente. Escolher
+    // manualmente outro status ali "reativa" um orçamento expirado.
+    const statusComercialSelect = jaConvertido ? 'aprovado' : (o.status==='expirado' ? 'pendente' : o.status);
     const statusEntrega = o.statusEntrega || 'nenhum';
     return `
       <tr>
@@ -6870,11 +6921,10 @@ function renderListaOrcamentos(){
         <td class="num">${fmtMoney(c.brutoOriginal+acrescimo)}</td>
         <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
         <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
-        <td>${locais.length ? locais.map(l=>`<span class="badge badge-neutral" style="margin:1px;">${escapeHtml(l)}</span>`).join('') : '<span class="help-text">A definir</span>'}</td>
         <td>
-          <select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
+          ${jaConvertido || o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
             ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-          </select>
+          </select>`}
         </td>
         <td>${statusEntregaLabel[statusEntrega]}</td>
         <td>
@@ -6882,7 +6932,9 @@ function renderListaOrcamentos(){
             <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
             <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
             ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+            ${!jaConvertido && o.status==='aprovado' ? `<button class="btn btn-sm btn-primary" onclick="converterOrcamentoEmVenda('${o.id}')">💰 Converter em Venda</button>` : ''}
             ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
+            <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
             ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
           </div>
         </td>
@@ -6890,16 +6942,43 @@ function renderListaOrcamentos(){
   }).join('');
 }
 
+// Copia um orçamento existente (cliente, itens, condições) como ponto de
+// partida pra um novo — útil pra cliente recorrente que compra sempre
+// parecido. A cópia já entra salva como 'pendente' e abre direto no
+// formulário de edição pra revisar/ajustar antes de mandar pro cliente.
+function duplicarOrcamento(id){
+  const original = STATE.orcamentos.find(o=>o.id===id);
+  if(!original) return;
+  const copia = {
+    ...original,
+    id: uid('orc'),
+    status: 'pendente',
+    statusEntrega: 'nenhum',
+    data: todayISO(),
+    criadoEm: new Date().toISOString(),
+    itens: original.itens.map(it=>({...it}))
+  };
+  delete copia.vendaGeradaId;
+  if(original.desconto) copia.desconto = {...original.desconto};
+  if(original.acrescimo) copia.acrescimo = {...original.acrescimo};
+  STATE.orcamentos.push(copia);
+  saveState();
+  showToast('Orçamento duplicado — revise e salve.', 'success');
+  renderListaOrcamentos();
+  editarOrcamento(copia.id);
+}
+
 function mudarStatusOrcamento(id, novoStatus){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
   orcamento.status = novoStatus;
-  // Ao aprovar, o orçamento vira venda de verdade automaticamente (entra nas
-  // contas e no dashboard igual qualquer venda) e já nasce "em rota de
-  // entrega" — não existe mais um passo manual de "Converter em Venda"
-  // separado, o próprio ato de aprovar já faz as duas coisas.
-  if(novoStatus==='aprovado'){
-    converterOrcamentoEmVendaAutomatico(orcamento);
+  // Aprovar NÃO converte mais em venda automaticamente — vira só "em rota de
+  // entrega", pra dar tempo de corrigir valores/itens antes da venda virar
+  // definitiva (o "Converter em Venda" agora é uma ação separada e manual,
+  // veja converterOrcamentoEmVenda). Só marca em_rota se a entrega ainda nem
+  // começou, pra não voltar atrás um pedido que já foi marcado como entregue.
+  if(novoStatus==='aprovado' && (!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum')){
+    orcamento.statusEntrega = 'em_rota';
   }
   saveState();
   showToast('Status atualizado.', 'success');
@@ -6995,37 +7074,35 @@ function executarConversaoOrcamentoEmVenda(orcamento){
   return venda;
 }
 
-// Fluxo MANUAL (botão "Converter em Venda", com confirmação) — mantido como
-// atalho pra orçamentos que já estavam aprovados antes desta função existir,
-// ou casos em que o usuário mudou o status sem querer e precisa converter
-// depois manualmente.
+// Ação MANUAL e ÚNICA de conversão (botão "Converter em Venda") — separada
+// de "aprovar" e de "marcar entrega feita" (marcarEntregaConcluida, em
+// Logística). As três ações são independentes: dá pra aprovar sem converter,
+// converter sem ter marcado entrega feita, ou marcar entrega feita antes de
+// converter — o usuário decide a ordem que faz sentido pro caso dele. A
+// baixa de estoque só acontece aqui, no momento da conversão de verdade.
 function converterOrcamentoEmVenda(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
+    showToast('Este orçamento já foi convertido em venda.', 'error');
+    return;
+  }
 
   confirmAction(
     'Converter em Venda',
-    'Isso vai gerar uma venda de verdade a partir deste orçamento, com o mesmo desconto, comissão e repasse já configurados. O orçamento fica marcado como "Virou Venda" e não pode mais ser editado. Deseja continuar?',
+    'Isso vai gerar uma venda de verdade a partir deste orçamento (com os valores atuais), dar baixa no estoque e somar ele nas contas/dashboard. O orçamento fica marcado como "Virou Venda" e sai da lista de Orçamentos Lançados. Deseja continuar?',
     ()=>{
       executarConversaoOrcamentoEmVenda(orcamento);
-      orcamento.statusEntrega = 'em_rota';
+      // só avança o status de entrega se ele ainda nem tinha começado —
+      // se já estava "em_rota" ou "entregue" (fluxo independente), preserva.
+      if(!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum'){
+        orcamento.statusEntrega = 'em_rota';
+      }
       saveState();
       showToast('Orçamento convertido em venda com sucesso.', 'success');
       renderListaOrcamentos();
     }
   );
-}
-
-// Fluxo AUTOMÁTICO — disparado direto de mudarStatusOrcamento() quando o
-// status vira 'aprovado': já converte em venda de verdade (entra nas contas
-// e no dashboard normalmente) e já marca como "em rota de entrega", sem
-// precisar de um clique extra em "Converter em Venda". Só age se ainda não
-// tiver sido convertido antes (evita duplicar venda se o usuário voltar o
-// status pra aprovado de novo por engano).
-function converterOrcamentoEmVendaAutomatico(orcamento){
-  if(orcamento.status==='convertido' || orcamento.vendaGeradaId) return;
-  executarConversaoOrcamentoEmVenda(orcamento);
-  orcamento.statusEntrega = 'em_rota';
 }
 
 // Gera o PDF do orçamento pra enviar ao cliente — com logo, dados da
