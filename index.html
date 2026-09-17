@@ -14255,12 +14255,23 @@ function gerarRelatorioPdfRepasses(modo){
   let pagamentosHtml = '', totalPagoRelatorio = 0, pagamentosDoRelatorio = [], saldoFinalLiquido = 0;
   if(!ehBruto){
     const pagadoresDoRelatorio = [...new Set(linhas.map(l=>l.pagadorId))];
-    // só entra no histórico do relatório o pagamento feito DENTRO do período
-    // filtrado — antes mostrava todo o histórico do pagador, mesmo pagamento
-    // de outra quinzena fora do período escolhido, o que confundia o relatório
+    // Quinzenas (vencimentos) realmente presentes nas vendas deste relatório —
+    // é contra ISSO que um pagamento precisa bater, não contra a data em que
+    // foi registrado. Ex: um pagamento feito em 11/09 pra quitar a quinzena de
+    // agosto tem pg.data dentro de uma janela de setembro, mas não pertence a
+    // ela — sem essa checagem ele "vazava" pro relatório de setembro.
+    const vencimentosDoRelatorio = new Set(linhas.map(l=>l.vencimento));
+    // Pagamentos lançados pelo "Fechar Quinzena" (fluxo atual) já vêm
+    // marcados com vencimentoQuinzena — esses são checados pela quinzena de
+    // verdade. Só os pagamentos genéricos antigos (modo legado, sem essa
+    // marcação, de antes dessa mudança) caem no fallback por data — é a
+    // única informação que existe pra eles, mas por isso mesmo são só uma
+    // aproximação, nunca uma vinculação exata a uma quinzena específica.
     pagamentosDoRelatorio = (STATE.pagamentosRepasse||[])
       .filter(pg=>pagadoresDoRelatorio.includes(pg.pagadorId))
-      .filter(pg=>pg.data>=periodo.ini && pg.data<=periodo.fim)
+      .filter(pg=> pg.vencimentoQuinzena
+        ? vencimentosDoRelatorio.has(pg.vencimentoQuinzena)
+        : (pg.data>=periodo.ini && pg.data<=periodo.fim))
       .sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
     // Saldo final: soma direta do saldo pendente já calculado em cada linha
