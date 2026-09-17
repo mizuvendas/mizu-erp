@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
 <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -970,9 +971,12 @@ table.data-table{ width:100%; font-size:13px; }
           <p class="subtitle">Funil completo: do potencial até a entrega</p>
         </div>
         <div class="header-actions">
+          <button class="btn" id="btn-config-licitacoes" title="Área de atendimento e modalidades">⚙️</button>
+          <button class="btn" id="btn-buscar-oportunidades">🔎 Buscar Oportunidades</button>
           <button class="btn btn-primary" id="btn-nova-licitacao">+ Nova Licitação</button>
         </div>
       </div>
+      <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
       <div id="licitacoes-content"></div>
     </section>
 
@@ -1155,6 +1159,10 @@ if(PDFJS_DISPONIVEL){
 }else{
   console.warn('Biblioteca de leitura de PDF não carregou (sem internet). A importação de orçamento em PDF ficará indisponível até haver conexão.');
 }
+// mesma proteção pra JSZip — usada só pra abrir o ZIP do edital baixado do
+// PNCP (Licitações); sem internet no carregamento da página, essa leitura
+// automática fica indisponível, mas o resto do sistema segue normal.
+const JSZIP_DISPONIVEL = (typeof JSZip !== 'undefined');
 </script>
 <script>
 /* =========================================================
@@ -1189,7 +1197,8 @@ function defaultState(){
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
-    licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[] }
+    licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[], origem:'manual'|'pncp', ...campos extras quando origem==='pncp', ver buscarOportunidadesPNCP() }
+    licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
     mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
@@ -1200,7 +1209,9 @@ function defaultState(){
       comissaoPct: 2,
       lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
       diasProdutoParado: 30, // configurável na tela de Estoque — "produto parado" = sem vender há esses dias
-      diasClienteInativo: 60 // configurável na tela de Clientes — "cliente inativo" = sem comprar há esses dias
+      diasClienteInativo: 60, // configurável na tela de Clientes — "cliente inativo" = sem comprar há esses dias
+      licitacoesArea: null, // { lat, lng, raioKm } — área de atendimento pra busca de oportunidades no PNCP (Licitações), configurável no botão ⚙️
+      licitacoesModalidades: [1,4,5,6,7,8,9,12,13] // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
     }
   };
 }
@@ -15169,11 +15180,433 @@ RENDERERS.receber = renderContasReceber;
 /* =========================================================
    MÓDULO: LICITAÇÕES (funil kanban)
    ========================================================= */
+
+/* ---- Busca de Oportunidades (PNCP) — constantes e utilitários ---- */
+
+// Tabela oficial de Modalidade de Contratação do PNCP (Manual de Integração)
+// — só os códigos que fazem sentido pro nosso caso (compra de materiais/
+// serviços) entram na lista de filtro; "Leilão" junta os dois códigos
+// (Eletrônico e Presencial) num filtro só, como o usuário pediu.
+const PNCP_MODALIDADES = [
+  { nome: 'Pregão Eletrônico', codigos: [6], participacaoEstimada: 'portal' },
+  { nome: 'Pregão Presencial', codigos: [7], participacaoEstimada: 'presencial' },
+  { nome: 'Dispensa de Licitação', codigos: [8], participacaoEstimada: 'email' },
+  { nome: 'Concorrência Eletrônica', codigos: [4], participacaoEstimada: 'portal' },
+  { nome: 'Concorrência Presencial', codigos: [5], participacaoEstimada: 'presencial' },
+  { nome: 'Inexigibilidade', codigos: [9], participacaoEstimada: 'email' },
+  { nome: 'Credenciamento', codigos: [12], participacaoEstimada: 'email' },
+  { nome: 'Leilão (Eletrônico e Presencial)', codigos: [1,13], participacaoEstimada: 'portal' }
+];
+function nomeModalidadePNCP(codigo){
+  const m = PNCP_MODALIDADES.find(x=>x.codigos.includes(codigo));
+  return m ? m.nome : `Modalidade ${codigo}`;
+}
+function participacaoEstimadaPorModalidade(codigo){
+  const m = PNCP_MODALIDADES.find(x=>x.codigos.includes(codigo));
+  return m ? m.participacaoEstimada : 'portal';
+}
+const FORMA_PARTICIPACAO_LABEL = {
+  email: '✉️ E-mail', portal: '🌐 Portal de Lances', presencial: '🧍 Presencial'
+};
+
+// Caixas delimitadoras (bounding box) APROXIMADAS de cada UF — usadas só
+// pra decidir rapidamente quais estados vale a pena consultar na API do
+// PNCP a partir do círculo de área de atendimento (ponto central + raio),
+// antes de fazer qualquer chamada. É uma pré-seleção grosseira e
+// generosamente alargada de propósito (é melhor consultar um estado a mais
+// à toa do que deixar de consultar um que realmente tem município dentro
+// do círculo) — o filtro fino de verdade é a distância real calculada
+// depois, por município (ver municipiosNoRaio). Formato: [latMin, latMax, lngMin, lngMax].
+const UF_BBOX = {
+  AC:[-11.5,-6.8,-74.2,-66.3], AL:[-10.8,-8.6,-38.5,-34.8], AP:[-1.8,4.7,-55.1,-49.6],
+  AM:[-10.1,3.0,-74.1,-55.8], BA:[-19.0,-8.1,-46.9,-36.8], CE:[-8.1,-2.3,-41.7,-36.8],
+  DF:[-16.3,-15.2,-48.5,-47.1], ES:[-21.6,-17.6,-42.1,-39.3], GO:[-19.7,-12.1,-53.5,-45.7],
+  MA:[-10.5,-0.8,-49.1,-41.5], MT:[-18.3,-7.1,-61.9,-50.0], MS:[-24.3,-17.0,-58.5,-50.7],
+  MG:[-23.1,-14.0,-51.3,-39.6], PA:[-10.4,2.8,-59.1,-45.8], PB:[-8.6,-5.8,-39.0,-34.5],
+  PR:[-27.0,-22.3,-54.9,-47.8], PE:[-9.7,-7.0,-41.6,-32.2], PI:[-11.1,-2.5,-46.1,-40.1],
+  RJ:[-23.6,-20.5,-45.1,-40.7], RN:[-7.1,-4.6,-38.8,-34.7], RS:[-34.1,-26.8,-58.0,-49.4],
+  RO:[-14.0,-7.7,-67.1,-59.5], RR:[0.7,5.6,-65.1,-58.7], SC:[-29.7,-25.7,-54.1,-48.1],
+  SP:[-25.6,-19.5,-53.4,-43.9], SE:[-11.8,-9.2,-38.5,-36.1], TO:[-13.8,-4.9,-51.1,-45.6]
+};
+
+// Distância aproximada entre dois pontos (fórmula de Haversine, em km) —
+// simples e suficiente pro raio de área de atendimento, não precisa da
+// precisão de rota real (isso já existe em calcularRoteiro, pra logística).
+function distanciaKm(lat1, lng1, lat2, lng2){
+  const R = 6371;
+  const dLat = (lat2-lat1) * Math.PI/180;
+  const dLng = (lng2-lng1) * Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// Quais UFs o círculo de atendimento (centro + raio) pode alcançar —
+// pré-filtro grosseiro (ver comentário de UF_BBOX acima).
+function ufsCandidatasPorArea(area){
+  const folgaGraus = area.raioKm/95; // ~1° de latitude ≈ 111km; usa 95 pra sobrar folga extra
+  const latMin = area.lat - folgaGraus, latMax = area.lat + folgaGraus;
+  const lngMin = area.lng - folgaGraus, lngMax = area.lng + folgaGraus;
+  return Object.keys(UF_BBOX).filter(uf=>{
+    const [bLatMin,bLatMax,bLngMin,bLngMax] = UF_BBOX[uf];
+    return latMin<=bLatMax && latMax>=bLatMin && lngMin<=bLngMax && lngMax>=bLngMin;
+  });
+}
+
+// Geocodifica (nome do município + UF -> lat/lng) via Nominatim/OpenStreetMap
+// (gratuito, sem chave), com cache permanente em STATE.licitacoesGeocodeCache
+// por código IBGE — cada município só precisa ser geocodificado UMA vez em
+// todo o histórico do sistema, mesmo em buscas futuras.
+async function geocodificarMunicipioPNCP(codigoIbge, municipioNome, uf){
+  if(!codigoIbge) return null;
+  const cache = STATE.licitacoesGeocodeCache[codigoIbge];
+  if(cache) return cache;
+  try{
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&country=Brazil&city=${encodeURIComponent(municipioNome)}&state=${encodeURIComponent(uf)}`;
+    const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+    const dados = await resp.json();
+    if(!dados || !dados[0]) return null;
+    const resultado = { lat: parseFloat(dados[0].lat), lng: parseFloat(dados[0].lon), municipio: municipioNome, uf };
+    STATE.licitacoesGeocodeCache[codigoIbge] = resultado;
+    saveState();
+    return resultado;
+  }catch(err){
+    return null;
+  }
+}
+
 const LICITACAO_STATUS = ['Potencial','Participando','Aguardando Resultado','Ganhamos','Comprando Itens','Entregue','Perdemos'];
 const LICITACAO_STATUS_COLOR = {
   'Potencial':'#8A93A0','Participando':'#1B4B5A','Aguardando Resultado':'#C98A2C',
   'Ganhamos':'#2E7D5B','Comprando Itens':'#2A6B7E','Entregue':'#0E3B2E','Perdemos':'#C4483D'
 };
+
+// Converte AAAA-MM-DD -> AAAAMMDD (formato de data exigido pela API do PNCP).
+function dataParaPNCP(iso){ return iso.replace(/-/g,''); }
+
+// Monta o link público do edital no site do PNCP a partir dos 3 campos que
+// identificam a compra (mesmo link que aparece no app oficial do PNCP).
+function linkEditalPNCP(cnpj, ano, sequencial){
+  return `https://pncp.gov.br/app/editais/${cnpj}/${ano}/${sequencial}`;
+}
+
+// Busca UMA página de contratações publicadas no PNCP pra uma combinação de
+// UF + modalidade + janela de datas. Cada chamada de API só aceita UM
+// código de modalidade por vez, por isso o loop de fora (buscarOportunidadesPNCP)
+// repete essa chamada pra cada combinação.
+async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina){
+  const url = `https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=${dataParaPNCP(dataInicial)}&dataFinal=${dataParaPNCP(dataFinal)}&codigoModalidadeContratacao=${codigoModalidade}&uf=${uf}&pagina=${pagina}&tamanhoPagina=50`;
+  const resp = await fetch(url);
+  if(resp.status===204) return { dados: [], totalPaginas: 0 }; // PNCP devolve 204 (sem corpo) quando não há nenhum resultado
+  if(!resp.ok) throw new Error(`PNCP respondeu ${resp.status}`);
+  const json = await resp.json();
+  return { dados: json.data||[], totalPaginas: json.totalPaginas||1 };
+}
+
+// Ação do botão "🔎 Buscar Oportunidades" — consulta a API do PNCP NA HORA
+// (não roda em segundo plano) pra cada combinação de UF candidata ×
+// modalidade selecionada, filtra pelas propostas ainda abertas, confirma
+// que o município está mesmo dentro do raio configurado (geocodificando com
+// cache) e cria um cartão novo na coluna "Potencial" pra cada oportunidade
+// nova (evita duplicar uma já importada antes, comparando numeroControlePNCP).
+const MAX_PAGINAS_POR_COMBINACAO = 4; // trava de segurança (até 200 resultados por UF×modalidade) — a área de atendimento já limita bastante o volume real
+async function buscarOportunidadesPNCP(){
+  const area = STATE.config.licitacoesArea;
+  if(!area){
+    showToast('Configure sua área de atendimento primeiro (botão ⚙️ Configurar Área).', 'error');
+    abrirConfigLicitacoes();
+    return;
+  }
+  const modalidadesSelecionadas = STATE.config.licitacoesModalidades||[];
+  if(modalidadesSelecionadas.length===0){
+    showToast('Selecione ao menos uma modalidade em ⚙️ Configurar Área.', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btn-buscar-oportunidades');
+  const statusEl = document.getElementById('licitacoes-busca-status');
+  const setStatus = (msg)=>{ if(statusEl) statusEl.textContent = msg; };
+  btn.disabled = true;
+  btn.textContent = '🔎 Buscando...';
+
+  try{
+    const ufs = ufsCandidatasPorArea(area);
+    if(ufs.length===0){
+      showToast('Não encontrei nenhum estado próximo da área configurada — confira o ponto central no mapa.', 'error');
+      return;
+    }
+
+    // janela de publicação: últimos 30 dias — uma compra publicada há mais
+    // tempo que isso normalmente já encerrou o prazo de proposta, mas o
+    // filtro real de "ainda aberta" é a data de encerramento da proposta,
+    // checada abaixo (então uma compra de prazo longo continua aparecendo).
+    const hoje = todayISO();
+    const dataInicial = addDays(hoje, -30);
+
+    // agrupa códigos de modalidade selecionados nos grupos da tabela PNCP_MODALIDADES
+    // (ex: "Leilão" = códigos 1 e 13 juntos, mas cada um precisa de uma chamada própria)
+    const codigosParaBuscar = PNCP_MODALIDADES
+      .filter(m=>m.codigos.some(c=>modalidadesSelecionadas.includes(c)))
+      .flatMap(m=>m.codigos.filter(c=>modalidadesSelecionadas.includes(c)));
+
+    const brutos = []; // resultados crus da API, antes de filtrar por raio
+    let combosComErro = 0;
+    let combosTotal = ufs.length * codigosParaBuscar.length;
+    let combosFeitos = 0;
+
+    for(const uf of ufs){
+      for(const codigoModalidade of codigosParaBuscar){
+        combosFeitos++;
+        setStatus(`Consultando PNCP... ${uf} · ${nomeModalidadePNCP(codigoModalidade)} (${combosFeitos}/${combosTotal})`);
+        try{
+          let pagina = 1, totalPaginas = 1;
+          do{
+            const { dados, totalPaginas: tp } = await buscarPaginaPNCP(uf, codigoModalidade, dataInicial, hoje, pagina);
+            totalPaginas = tp;
+            dados.forEach(d=>brutos.push({ ...d, _codigoModalidade: codigoModalidade }));
+            pagina++;
+          }while(pagina<=totalPaginas && pagina<=MAX_PAGINAS_POR_COMBINACAO);
+        }catch(err){
+          combosComErro++;
+          console.warn(`Falha ao consultar PNCP (${uf}, modalidade ${codigoModalidade}):`, err);
+        }
+      }
+    }
+
+    // dedupe por numeroControlePNCP (pode repetir entre páginas/combos) e
+    // remove o que já foi importado antes (mesmo numeroControlePNCP já
+    // presente em STATE.licitacoes, não importa em qual coluna esteja hoje)
+    const jaImportados = new Set(STATE.licitacoes.filter(l=>l.numeroControlePNCP).map(l=>l.numeroControlePNCP));
+    const vistos = new Set();
+    const candidatos = brutos.filter(d=>{
+      if(!d.numeroControlePNCP || vistos.has(d.numeroControlePNCP) || jaImportados.has(d.numeroControlePNCP)) return false;
+      vistos.add(d.numeroControlePNCP);
+      return true;
+    });
+
+    // só propostas ainda abertas (encerramento no futuro, ou sem data
+    // informada — melhor mostrar a mais do que deixar de mostrar uma válida)
+    const agora = new Date().toISOString();
+    const abertas = candidatos.filter(d=> !d.dataEncerramentoProposta || d.dataEncerramentoProposta >= agora);
+
+    setStatus(`Confirmando localização de ${abertas.length} oportunidade(s)...`);
+
+    // geocodifica (com cache) cada município distinto encontrado e mantém só
+    // quem está de fato dentro do raio configurado
+    const dentroDoRaio = [];
+    let semLocalizacaoConfirmada = 0;
+    for(const d of abertas){
+      const unidade = d.unidadeOrgao || {};
+      const codigoIbge = unidade.codigoIbge;
+      const municipioNome = unidade.municipioNome;
+      const ufSigla = unidade.ufSigla;
+      if(!codigoIbge || !municipioNome){ semLocalizacaoConfirmada++; continue; }
+      const geo = await geocodificarMunicipioPNCP(codigoIbge, municipioNome, ufSigla);
+      if(!geo){ semLocalizacaoConfirmada++; continue; }
+      const dist = distanciaKm(area.lat, area.lng, geo.lat, geo.lng);
+      if(dist <= area.raioKm) dentroDoRaio.push({ d, unidade, geo, dist });
+      // pausa curta entre geocodificações novas, respeitando o limite de uso
+      // do Nominatim (1 requisição/seg) — só acontece na 1ª vez de cada
+      // município (depois fica em cache e não pausa mais)
+    }
+
+    // cria um cartão novo em "Potencial" pra cada oportunidade dentro do raio
+    dentroDoRaio.forEach(({d, unidade, geo, dist})=>{
+      const orgaoEntidade = d.orgaoEntidade || {};
+      const cnpjOrgao = orgaoEntidade.cnpj;
+      // numeroControlePNCP vem no formato "CNPJ-1-SEQUENCIAL/ANO" — extrai ano/sequencial pra montar o link do edital
+      const partes = d.numeroControlePNCP.match(/(\d{14})-\d+-(\d+)\/(\d{4})/);
+      const anoReal = partes ? partes[3] : (d.dataPublicacaoPncp||'').slice(0,4);
+      const seqReal = partes ? String(Number(partes[2])) : null;
+
+      const licitacao = {
+        id: uid('lic'),
+        orgao: orgaoEntidade.razaoSocial || '(órgão não informado)',
+        objeto: d.objetoCompra || '(sem descrição)',
+        numero: d.numeroCompra || '',
+        status: 'Potencial',
+        valorEstimado: d.valorTotalEstimado || 0,
+        dataAbertura: (d.dataAberturaProposta||'').slice(0,10) || null,
+        dataResultado: null,
+        obs: '',
+        historico: [{de:null, para:'Potencial', em:new Date().toISOString()}],
+        // --- campos extras, só em oportunidades vindas do PNCP ---
+        origem: 'pncp',
+        numeroControlePNCP: d.numeroControlePNCP,
+        cnpjOrgao, anoCompra: anoReal, sequencialCompra: seqReal,
+        modalidadeId: d._codigoModalidade,
+        modalidadeNome: nomeModalidadePNCP(d._codigoModalidade),
+        municipioNome: unidade.municipioNome, uf: unidade.ufSigla, codigoIbge: unidade.codigoIbge,
+        distanciaKm: Math.round(dist),
+        dataAberturaProposta: d.dataAberturaProposta || null,
+        dataEncerramentoProposta: d.dataEncerramentoProposta || null,
+        linkEdital: (cnpjOrgao && anoReal && seqReal) ? linkEditalPNCP(cnpjOrgao, anoReal, seqReal) : (d.linkSistemaOrigem||null),
+        formaParticipacao: participacaoEstimadaPorModalidade(d._codigoModalidade),
+        formaParticipacaoEstimada: true, // vira false se a leitura do edital confirmar de verdade
+        emailContato: null,
+        prazoEntrega: null,
+        condicaoPagamentoTexto: null,
+        pdfLido: false,
+        pdfErro: null
+      };
+      STATE.licitacoes.push(licitacao);
+    });
+
+    saveState();
+    renderLicitacoes();
+
+    const partesResumo = [`${dentroDoRaio.length} nova(s) oportunidade(s) encontrada(s) dentro da sua área.`];
+    if(semLocalizacaoConfirmada>0) partesResumo.push(`${semLocalizacaoConfirmada} ignorada(s) por não ter sido possível confirmar a localização.`);
+    if(combosComErro>0) partesResumo.push(`${combosComErro} consulta(s) ao PNCP falharam e foram puladas.`);
+    showToast(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : 'info');
+  }catch(err){
+    console.error(err);
+    showToast('Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). Tente de novo em instantes.', 'error');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🔎 Buscar Oportunidades';
+    setStatus('');
+  }
+}
+
+let __configLicMapa = null, __configLicMarker = null, __configLicCirculo = null;
+
+// Tela de configuração (botão ⚙️): desenha a área de atendimento como um
+// círculo no mapa (clique define o centro, o campo de raio define o
+// tamanho) e escolhe quais modalidades entram na busca de oportunidades.
+function abrirConfigLicitacoes(){
+  const area = STATE.config.licitacoesArea;
+  const modalidadesSalvas = STATE.config.licitacoesModalidades || [];
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-config-licitacoes';
+  modal.innerHTML = `
+    <div class="modal-box" style="max-width:min(760px, 94vw);max-height:92vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">⚙️</div>
+        <div>
+          <h3>Área de Atendimento e Modalidades</h3>
+          <div class="sub">Só oportunidades dentro deste raio e nessas modalidades entram na busca</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field" style="display:flex; gap:8px; align-items:flex-end;">
+          <div style="flex:1;">
+            <label>Buscar local (pra centralizar o mapa)</label>
+            <input type="text" id="cl-busca-input" placeholder="Ex: Rio Verde - GO" value="Rio Verde - GO">
+          </div>
+          <button type="button" class="btn" id="cl-busca-btn" style="white-space:nowrap;">🔎 Buscar</button>
+        </div>
+        <div style="font-size:12px;color:var(--ink-faint);margin:4px 0 8px;">💡 Clique no mapa pra definir o ponto central da sua área de atendimento.</div>
+        <div id="cl-mapa" style="width:100%;height:340px;border-radius:8px;background:#e9ecef;"></div>
+        <div class="field" style="margin-top:12px;max-width:220px;">
+          <label>Raio de atendimento (km)</label>
+          <input type="number" min="1" step="1" id="cl-raio" value="${area?area.raioKm:80}">
+        </div>
+        <div id="cl-status" style="font-size:12.5px;color:var(--ink-faint);margin-top:6px;">${area?`Centro salvo: ${area.lat.toFixed(5)}, ${area.lng.toFixed(5)} · raio ${area.raioKm}km`:'Nenhuma área salva ainda — clique no mapa pra definir o centro.'}</div>
+
+        <hr class="section-divider">
+        <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Modalidades a trazer na busca:</label>
+        <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:8px;">
+          ${PNCP_MODALIDADES.map((m,i)=>`
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" class="cl-modalidade" data-codigos="${m.codigos.join(',')}" style="width:auto;" ${m.codigos.some(c=>modalidadesSalvas.includes(c))?'checked':''}>
+              ${escapeHtml(m.nome)}
+            </label>
+          `).join('')}
+        </div>
+
+        <div class="form-actions">
+          <button type="button" class="btn" id="cl-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="cl-salvar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+
+  const latInicial = area ? area.lat : -17.7975; // fallback: Rio Verde - GO
+  const lngInicial = area ? area.lng : -50.9264;
+  let centroAtual = { lat: latInicial, lng: lngInicial };
+
+  function desenharCirculo(){
+    const raioKm = Math.max(1, parseFloat(document.getElementById('cl-raio').value)||80);
+    if(__configLicCirculo){ __configLicCirculo.setLatLng(centroAtual); __configLicCirculo.setRadius(raioKm*1000); }
+    if(__configLicMarker){ __configLicMarker.setLatLng(centroAtual); }
+    const statusEl = document.getElementById('cl-status');
+    if(statusEl) statusEl.textContent = `Centro: ${centroAtual.lat.toFixed(5)}, ${centroAtual.lng.toFixed(5)} · raio ${raioKm}km`;
+  }
+
+  if(typeof L === 'undefined'){
+    document.getElementById('cl-mapa').innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-faint);font-size:13px;padding:12px;">Mapa indisponível no momento (sem conexão com a internet).</div>`;
+  }else{
+    setTimeout(()=>{
+      try{
+        __configLicMapa = L.map('cl-mapa').setView([latInicial, lngInicial], area?10:9);
+        const camadaRuas = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: 'Tiles © Esri' });
+        camadaRuas.addTo(__configLicMapa);
+        const iconePino = L.icon({
+          iconUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon.png',
+          iconRetinaUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+          shadowUrl: 'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/images/marker-shadow.png',
+          iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+        });
+        __configLicMarker = L.marker([latInicial, lngInicial], {icon: iconePino}).addTo(__configLicMapa);
+        const raioInicial = area ? area.raioKm : 80;
+        __configLicCirculo = L.circle([latInicial, lngInicial], { radius: raioInicial*1000, color:'#1B4B5A', fillColor:'#1B4B5A', fillOpacity:0.12 }).addTo(__configLicMapa);
+
+        __configLicMapa.on('click', (e)=>{
+          centroAtual = { lat: e.latlng.lat, lng: e.latlng.lng };
+          desenharCirculo();
+        });
+      }catch(err){
+        document.getElementById('cl-mapa').innerHTML = `<div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-faint);font-size:13px;padding:12px;">Não foi possível carregar o mapa agora.</div>`;
+      }
+    }, 50);
+  }
+
+  document.getElementById('cl-raio').addEventListener('input', desenharCirculo);
+
+  document.getElementById('cl-busca-btn').addEventListener('click', async ()=>{
+    const termo = document.getElementById('cl-busca-input').value.trim();
+    if(!termo) return;
+    const statusEl = document.getElementById('cl-status');
+    statusEl.textContent = 'Buscando local...';
+    try{
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=br&q=${encodeURIComponent(termo)}`;
+      const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
+      const dados = await resp.json();
+      if(!dados || !dados[0]){ statusEl.textContent = 'Local não encontrado — tente outro termo ou clique direto no mapa.'; return; }
+      centroAtual = { lat: parseFloat(dados[0].lat), lng: parseFloat(dados[0].lon) };
+      if(__configLicMapa) __configLicMapa.setView([centroAtual.lat, centroAtual.lng], 10);
+      desenharCirculo();
+    }catch(err){
+      statusEl.textContent = 'Não foi possível buscar agora (sem internet) — clique direto no mapa.';
+    }
+  });
+
+  function fecharModal(){
+    if(__configLicMapa){ __configLicMapa.remove(); __configLicMapa = null; __configLicMarker = null; __configLicCirculo = null; }
+    modal.remove();
+  }
+  document.getElementById('cl-cancelar').addEventListener('click', fecharModal);
+
+  document.getElementById('cl-salvar').addEventListener('click', ()=>{
+    const raioKm = Math.max(1, parseFloat(document.getElementById('cl-raio').value)||80);
+    const codigosSelecionados = [...document.querySelectorAll('.cl-modalidade:checked')]
+      .flatMap(cb=>cb.dataset.codigos.split(',').map(Number));
+    if(codigosSelecionados.length===0){
+      showToast('Selecione ao menos uma modalidade.', 'error');
+      return;
+    }
+    STATE.config.licitacoesArea = { lat: centroAtual.lat, lng: centroAtual.lng, raioKm };
+    STATE.config.licitacoesModalidades = codigosSelecionados;
+    saveState();
+    showToast('Área de atendimento salva.', 'success');
+    fecharModal();
+    renderLicitacoes();
+  });
+}
 
 function renderLicitacoes(){
   const box = document.getElementById('licitacoes-content');
@@ -15196,6 +15629,24 @@ function renderLicitacoes(){
 
     <div class="card">
       <h3>Funil de Licitações <span class="hint">clique em um cartão para ver detalhes e mudar o status</span></h3>
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <div class="field" style="margin:0;min-width:200px;">
+          <label style="font-size:12px;">Filtrar por modalidade</label>
+          <select id="lic-filtro-modalidade" onchange="renderKanban()">
+            <option value="">Todas</option>
+            ${PNCP_MODALIDADES.map(m=>`<option value="${m.codigos.join(',')}">${escapeHtml(m.nome)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="margin:0;min-width:180px;">
+          <label style="font-size:12px;">Filtrar por forma de participação</label>
+          <select id="lic-filtro-participacao" onchange="renderKanban()">
+            <option value="">Todas</option>
+            <option value="email">✉️ E-mail</option>
+            <option value="portal">🌐 Portal de Lances</option>
+            <option value="presencial">🧍 Presencial</option>
+          </select>
+        </div>
+      </div>
       <div class="kanban" id="licitacoes-kanban"></div>
     </div>
 
@@ -15208,17 +15659,31 @@ function renderLicitacoes(){
 
 function renderKanban(){
   const kanbanBox = document.getElementById('licitacoes-kanban');
+  const filtroModalidadeEl = document.getElementById('lic-filtro-modalidade');
+  const filtroParticipacaoEl = document.getElementById('lic-filtro-participacao');
+  const filtroModalidade = filtroModalidadeEl ? filtroModalidadeEl.value : '';
+  const filtroModalidadeCodigos = filtroModalidade ? filtroModalidade.split(',').map(Number) : null;
+  const filtroParticipacao = filtroParticipacaoEl ? filtroParticipacaoEl.value : '';
+
   kanbanBox.innerHTML = LICITACAO_STATUS.map(status=>{
-    const items = STATE.licitacoes.filter(l=>l.status===status);
-    const totalStatus = items.reduce((s,l)=>s+(l.valorEstimado||0),0);
+    let items = STATE.licitacoes.filter(l=>l.status===status);
+    if(filtroModalidadeCodigos) items = items.filter(l=>filtroModalidadeCodigos.includes(l.modalidadeId));
+    if(filtroParticipacao) items = items.filter(l=>l.formaParticipacao===filtroParticipacao);
     return `
       <div class="kanban-col">
         <h4 style="color:${LICITACAO_STATUS_COLOR[status]}"><span>${status}</span><span>${items.length}</span></h4>
         ${items.map(l=>`
           <div class="kanban-card" onclick="abrirDetalheLicitacao('${l.id}')">
             <div class="kc-title">${escapeHtml(l.objeto)}</div>
-            <div class="kc-meta">${escapeHtml(l.orgao)}${l.numero?' · Nº '+escapeHtml(l.numero):''}</div>
+            <div class="kc-meta">${escapeHtml(l.orgao)}${l.numero?' · Nº '+escapeHtml(l.numero):''}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}</div>
             ${l.dataAbertura ? `<div class="kc-meta">Abertura: ${fmtDate(l.dataAbertura)}</div>` : ''}
+            ${l.origem==='pncp' ? `
+              <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:4px;">
+                <span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10px;">PNCP</span>
+                <span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10px;">${escapeHtml(l.modalidadeNome||'')}</span>
+                ${l.formaParticipacao ? `<span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10px;">${FORMA_PARTICIPACAO_LABEL[l.formaParticipacao]}${l.formaParticipacaoEstimada?' (estimado)':''}</span>` : ''}
+              </div>
+            ` : ''}
             <div class="kc-value">${fmtMoney(l.valorEstimado)}</div>
           </div>
         `).join('') || '<div style="font-size:12px;color:var(--ink-faint);padding:8px;">Vazio</div>'}
@@ -15328,6 +15793,135 @@ function abrirFormLicitacao(id){
   });
 }
 
+// Leitura automática (melhor esforço) do edital de uma oportunidade vinda
+// do PNCP — a API de consulta não traz prazo de entrega, condição de
+// pagamento nem e-mail de contato como campos próprios, só existem dentro
+// do PDF do edital. Baixa o(s) documento(s) da compra, extrai o texto (do
+// PDF direto, ou de dentro de um ZIP — o PNCP costuma empacotar o edital
+// junto com outros anexos) e procura esses três dados por palavra-chave.
+// NÃO é garantido achar tudo: editais fora de padrão, digitalizados como
+// imagem (sem camada de texto) ou com informação só numa tabela/imagem não
+// são lidos corretamente — por isso o link pro edital completo sempre fica
+// disponível, pra conferência manual.
+async function extrairInfoEditalLicitacao(id){
+  const l = STATE.licitacoes.find(x=>x.id===id);
+  if(!l || l.origem!=='pncp') return;
+
+  if(!l.cnpjOrgao || !l.anoCompra || !l.sequencialCompra){
+    l.pdfErro = 'Não foi possível identificar os documentos desta compra.';
+    l.pdfLido = true;
+    saveState();
+    return;
+  }
+  if(!PDFJS_DISPONIVEL){
+    l.pdfErro = 'Leitura automática de PDF indisponível agora (sem internet no momento em que a página foi carregada) — recarregue a página com internet e tente de novo.';
+    l.pdfLido = true;
+    saveState();
+    return;
+  }
+
+  try{
+    const urlArquivos = `https://pncp.gov.br/api/pncp/v1/orgaos/${l.cnpjOrgao}/compras/${l.anoCompra}/${l.sequencialCompra}/arquivos`;
+    const respLista = await fetch(urlArquivos);
+    if(!respLista.ok) throw new Error(`lista de documentos indisponível (${respLista.status})`);
+    const documentos = await respLista.json();
+    if(!Array.isArray(documentos) || documentos.length===0) throw new Error('nenhum documento anexado a esta compra');
+
+    let doc = documentos.find(d=>/edital/i.test(d.titulo||'') || /edital/i.test(d.tipoDocumentoNome||''));
+    if(!doc) doc = documentos[0];
+    const urlArquivo = doc.url || doc.uri;
+    if(!urlArquivo) throw new Error('link do documento não disponível');
+
+    const respArquivo = await fetch(urlArquivo);
+    if(!respArquivo.ok) throw new Error(`não foi possível baixar o edital (${respArquivo.status})`);
+    const buffer = await respArquivo.arrayBuffer();
+
+    const texto = await extrairTextoDocumentoEdital(buffer);
+    if(!texto){
+      l.pdfErro = 'O documento não pôde ser lido automaticamente (formato não suportado, ou edital digitalizado como imagem sem texto).';
+    }else{
+      const info = extrairInfoDoTextoEdital(texto);
+      l.prazoEntrega = info.prazoEntrega;
+      l.condicaoPagamentoTexto = info.condicaoPagamento;
+      if(info.email){
+        l.emailContato = info.email;
+        l.formaParticipacao = 'email';
+        l.formaParticipacaoEstimada = false;
+      }
+      l.pdfErro = (!info.prazoEntrega && !info.condicaoPagamento && !info.email)
+        ? 'Não encontrei essas informações no texto do edital — confira manualmente pelo link.'
+        : null;
+    }
+  }catch(err){
+    console.warn('Falha ao analisar edital da licitação', id, err);
+    l.pdfErro = 'Não foi possível baixar/ler o edital agora (sem internet, ou o documento está fora do padrão esperado). Confira pelo link do edital completo.';
+  }finally{
+    l.pdfLido = true;
+    saveState();
+  }
+}
+
+// Extrai o texto de um documento de edital, seja ele um PDF direto ou um
+// ZIP (o PNCP costuma empacotar o edital + anexos num .zip só).
+async function extrairTextoDocumentoEdital(buffer){
+  const bytes = new Uint8Array(buffer.slice(0,4));
+  const ehPDF = bytes[0]===0x25 && bytes[1]===0x50 && bytes[2]===0x44 && bytes[3]===0x46; // assinatura "%PDF"
+  const ehZIP = bytes[0]===0x50 && bytes[1]===0x4B; // assinatura "PK"
+  if(ehPDF) return await extrairTextoPDF(buffer);
+  if(ehZIP && JSZIP_DISPONIVEL) return await extrairTextoDoZip(buffer, 0);
+  return null;
+}
+
+async function extrairTextoPDF(buffer){
+  if(!PDFJS_DISPONIVEL) return null;
+  const pdf = await pdfjsLib.getDocument({data: buffer}).promise;
+  const maxPaginas = Math.min(pdf.numPages, 25); // trava de segurança pra editais muito longos
+  let texto = '';
+  for(let i=1;i<=maxPaginas;i++){
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
+    texto += content.items.map(it=>it.str).join(' ') + '\n';
+  }
+  return texto;
+}
+
+async function extrairTextoDoZip(buffer, profundidade){
+  const zip = await JSZip.loadAsync(buffer);
+  const nomes = Object.keys(zip.files).filter(n=>!zip.files[n].dir);
+  let nomePdf = nomes.find(n=>/\.pdf$/i.test(n) && /edital/i.test(n));
+  if(!nomePdf) nomePdf = nomes.find(n=>/\.pdf$/i.test(n));
+  if(nomePdf){
+    const bufferPdf = await zip.files[nomePdf].async('arraybuffer');
+    return await extrairTextoPDF(bufferPdf);
+  }
+  if(profundidade < 1){ // zip dentro de zip — só 1 nível, pra evitar loop
+    const nomeZip = nomes.find(n=>/\.zip$/i.test(n));
+    if(nomeZip){
+      const bufferZip = await zip.files[nomeZip].async('arraybuffer');
+      return await extrairTextoDoZip(bufferZip, profundidade+1);
+    }
+  }
+  return null;
+}
+
+// Heurística simples por palavra-chave — não é garantida, é "melhor
+// esforço" (ver comentário de extrairInfoEditalLicitacao acima).
+function extrairInfoDoTextoEdital(texto){
+  const normalizado = texto.replace(/\s+/g,' ');
+  const resultado = { prazoEntrega: null, condicaoPagamento: null, email: null };
+
+  const matchEmail = normalizado.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+  if(matchEmail) resultado.email = matchEmail[0].replace(/[.,;]+$/,'');
+
+  const matchPrazo = normalizado.match(/prazo\s+(?:de|para)\s+entrega[^.;]{0,140}/i);
+  if(matchPrazo) resultado.prazoEntrega = matchPrazo[0].trim();
+
+  const matchPagamento = normalizado.match(/(?:condi[çc][ãa]o(?:es)?\s+de\s+pagamento|forma\s+de\s+pagamento|o\s+pagamento\s+ser[áa]\s+efetuado)[^.;]{0,180}/i);
+  if(matchPagamento) resultado.condicaoPagamento = matchPagamento[0].trim();
+
+  return resultado;
+}
+
 function abrirDetalheLicitacao(id){
   const l = STATE.licitacoes.find(x=>x.id===id);
   if(!l) return;
@@ -15360,6 +15954,36 @@ function abrirDetalheLicitacao(id){
         </div>
         ${l.obs ? `<p><strong>Obs:</strong> ${escapeHtml(l.obs)}</p>` : ''}
 
+        ${l.origem==='pncp' ? `
+        <hr class="section-divider">
+        <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Dados do PNCP:</label>
+        <div class="form-grid" style="margin-top:8px;">
+          <div><strong>Modalidade:</strong> ${escapeHtml(l.modalidadeNome||'—')}</div>
+          <div><strong>Cidade/UF:</strong> ${escapeHtml(l.municipioNome||'—')}${l.uf?'/'+escapeHtml(l.uf):''}${l.distanciaKm!=null?` (~${l.distanciaKm}km)`:''}</div>
+          <div><strong>Abertura da proposta:</strong> ${l.dataAberturaProposta?new Date(l.dataAberturaProposta).toLocaleString('pt-BR'):'—'}</div>
+          <div><strong>Prazo final p/ proposta:</strong> ${l.dataEncerramentoProposta?new Date(l.dataEncerramentoProposta).toLocaleString('pt-BR'):'—'}</div>
+          <div><strong>Forma de participação:</strong> ${l.formaParticipacao?FORMA_PARTICIPACAO_LABEL[l.formaParticipacao]:'—'}${l.formaParticipacaoEstimada?' <span class="help-text">(estimado pela modalidade)</span>':' <span class="help-text" style="color:var(--positive);">(confirmado no edital)</span>'}</div>
+          ${l.emailContato ? `<div><strong>E-mail de contato:</strong> ${escapeHtml(l.emailContato)}</div>` : ''}
+        </div>
+        <div style="margin-top:8px;">
+          ${l.linkEdital ? `<a href="${escapeAttr(l.linkEdital)}" target="_blank" rel="noopener" class="btn btn-sm">📄 Ver edital completo no PNCP</a>` : ''}
+        </div>
+
+        <div style="margin-top:12px;padding:10px 12px;background:var(--bg-app);border-radius:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+            <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Prazo de entrega e condição de pagamento (lidos do edital)</label>
+            <button class="btn btn-sm" id="dl-analisar-edital">${l.pdfLido?'🔎 Analisar novamente':'🔎 Analisar Edital Automaticamente'}</button>
+          </div>
+          <div id="dl-edital-status" style="font-size:12px;color:var(--ink-faint);margin-top:6px;">
+            ${l.pdfLido ? `
+              <div><strong>Prazo de entrega:</strong> ${l.prazoEntrega?escapeHtml(l.prazoEntrega):'não encontrado no edital — confira manualmente'}</div>
+              <div><strong>Condição de pagamento:</strong> ${l.condicaoPagamentoTexto?escapeHtml(l.condicaoPagamentoTexto):'não encontrada no edital — confira manualmente'}</div>
+              ${l.pdfErro?`<div style="color:var(--negative);margin-top:4px;">${escapeHtml(l.pdfErro)}</div>`:''}
+            ` : 'Ainda não analisado — a leitura automática do PDF é uma estimativa (o edital pode estar num formato que o sistema não consegue ler); sempre confira no edital completo antes de decidir.'}
+          </div>
+        </div>
+        ` : ''}
+
         <hr class="section-divider">
         <label style="font-size:12px;font-weight:600;color:var(--ink-soft);">Mover para novo status:</label>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">
@@ -15384,6 +16008,19 @@ function abrirDetalheLicitacao(id){
   `;
   document.body.appendChild(modal);
   document.getElementById('dl-fechar').addEventListener('click', ()=>modal.remove());
+  const btnAnalisar = document.getElementById('dl-analisar-edital');
+  if(btnAnalisar){
+    btnAnalisar.addEventListener('click', async ()=>{
+      btnAnalisar.disabled = true;
+      btnAnalisar.textContent = 'Lendo edital...';
+      document.getElementById('dl-edital-status').innerHTML = '<span class="help-text">Baixando e lendo o edital — pode levar alguns segundos...</span>';
+      await extrairInfoEditalLicitacao(l.id);
+      // reabre o modal com os dados atualizados (mais simples e seguro do
+      // que tentar remontar só o pedaço que mudou)
+      abrirDetalheLicitacao(l.id);
+      renderLicitacoes();
+    });
+  }
 }
 
 function moverStatusLicitacao(id, novoStatus){
@@ -15412,6 +16049,8 @@ function excluirLicitacao(id){
 }
 
 document.getElementById('btn-nova-licitacao').addEventListener('click', ()=>abrirFormLicitacao(null));
+document.getElementById('btn-config-licitacoes').addEventListener('click', abrirConfigLicitacoes);
+document.getElementById('btn-buscar-oportunidades').addEventListener('click', buscarOportunidadesPNCP);
 RENDERERS.licitacoes = renderLicitacoes;
 
 /* =========================================================
