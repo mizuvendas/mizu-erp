@@ -7728,7 +7728,11 @@ function renderListaOrcamentos(){
     const c = calcularVenda(o);
     const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
     const validadeAte = addDays(o.data, o.validadeDias);
-    const jaConvertido = o.status==='convertido';
+    // considera convertido tanto pelo status quanto pela venda já existir de
+    // verdade (vendaGeradaId) — os dois deveriam andar sempre juntos, mas
+    // checar os dois é uma segunda trava contra o mesmo tipo de inconsistência
+    // que já aconteceu (status voltando pra "aprovado" com a venda já lançada)
+    const jaConvertido = o.status==='convertido' || !!o.vendaGeradaId;
     // status COMERCIAL efetivo pro dropdown: convertido/expirado não são
     // opções selecionáveis no dropdown (esse último é automático) — mapeia
     // pro valor mais próximo, só pra manter o select coerente. Escolher
@@ -7744,9 +7748,9 @@ function renderListaOrcamentos(){
         <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
         <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
         <td>
-          ${jaConvertido || o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
+          ${jaConvertido ? statusOrcamentoLabel.convertido : (o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
             ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-          </select>`}
+          </select>`)}
         </td>
         <td>${statusEntregaLabel[statusEntrega]}</td>
         <td>
@@ -7798,6 +7802,19 @@ function duplicarOrcamento(id){
 function mudarStatusOrcamento(id, novoStatus){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  // Trava de segurança: um orçamento já convertido em venda de verdade
+  // (tem vendaGeradaId) nunca pode ter o status "rebaixado" de volta — isso
+  // já causou um bug real em produção (o dropdown de status, se ficasse
+  // numa tela ainda não atualizada, conseguia sobrescrever "convertido" de
+  // volta pra "aprovado" mesmo com a venda já lançada, fazendo o orçamento
+  // "esquecer" que já virou venda). O dropdown normalmente nem aparece mais
+  // pra esse caso, mas essa checagem aqui garante que não regride de jeito
+  // nenhum, não importa por onde a chamada vier.
+  if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
+    showToast('Este orçamento já foi convertido em venda — o status não pode mais ser alterado por aqui.', 'error');
+    renderListaOrcamentos();
+    return;
+  }
   orcamento.status = novoStatus;
   // Aprovar NÃO converte mais em venda automaticamente — vira só "em rota de
   // entrega", pra dar tempo de corrigir valores/itens antes da venda virar
