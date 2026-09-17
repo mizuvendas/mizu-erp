@@ -6062,6 +6062,50 @@ RENDERERS['lancar-venda'] = renderVenda;
    ========================================================= */
 let carrinhoOrcamentoAtual = [];
 let orcamentoEmEdicaoId = null;
+const RASCUNHO_ORCAMENTO_KEY = 'gv_rascunho_orcamento_v1';
+
+// Salva automaticamente o que está sendo digitado no formulário de
+// orçamento (cliente, data, itens, etc.) — se a aba fechar ou o navegador
+// travar antes de clicar em "Salvar Orçamento", dá pra retomar de onde
+// parou na próxima vez que abrir a aba de Orçamentos. Só salva rascunho
+// de verdade quando tem algo preenchido (cliente OU item), pra não sujar
+// o localStorage com rascunhos vazios.
+function salvarRascunhoOrcamento(){
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return; // formulário não está na tela
+  const clienteId = clienteEl.value;
+  if(!clienteId && carrinhoOrcamentoAtual.length===0){
+    localStorage.removeItem(RASCUNHO_ORCAMENTO_KEY);
+    return;
+  }
+  const rascunho = {
+    clienteId,
+    data: document.getElementById('orc-data').value,
+    validadeDias: document.getElementById('orc-validade').value,
+    vendedor: document.getElementById('orc-vendedor').value,
+    observacoes: document.getElementById('orc-obs').value,
+    itens: carrinhoOrcamentoAtual,
+    orcamentoEmEdicaoId,
+    salvoEm: new Date().toISOString()
+  };
+  localStorage.setItem(RASCUNHO_ORCAMENTO_KEY, JSON.stringify(rascunho));
+}
+function limparRascunhoOrcamento(){
+  localStorage.removeItem(RASCUNHO_ORCAMENTO_KEY);
+}
+// Confirmação nativa do navegador ao tentar sair/fechar a aba com um
+// orçamento em andamento (cliente escolhido ou item já adicionado, mas
+// ainda não salvo) — o texto exato é controlado pelo próprio navegador por
+// segurança, mas o aviso "tem certeza que quer sair?" aparece do mesmo jeito.
+window.addEventListener('beforeunload', (e)=>{
+  const clienteEl = document.getElementById('orc-cliente');
+  if(!clienteEl) return;
+  const temAlgoNaoSalvo = clienteEl.value || carrinhoOrcamentoAtual.length>0;
+  if(temAlgoNaoSalvo){
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 function renderOrcamentos(){
   const box = document.getElementById('orcamentos-content');
@@ -6080,6 +6124,7 @@ function renderOrcamentos(){
   }
 
   box.innerHTML = `
+    <div id="orc-rascunho-banner"></div>
     <div class="card">
       <h3 id="orc-form-titulo">1. Dados do Orçamento</h3>
       <div class="form-grid">
@@ -6203,8 +6248,8 @@ function renderOrcamentos(){
       <div class="help-text" id="orc-item-info" style="display:none;margin:-6px 0 10px 0;padding:6px 10px;background:#F5F8FA;border-radius:var(--radius-sm);"></div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Produto</th><th>Qtd</th><th>Preço Unit.</th><th>Origem</th><th>Subtotal</th><th></th></tr></thead>
-          <tbody id="orc-carrinho-body"><tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr></tbody>
+          <thead><tr><th>Produto</th><th>Unidade</th><th>Qtd</th><th>Preço Unit.</th><th>Origem</th><th>Subtotal</th><th></th></tr></thead>
+          <tbody id="orc-carrinho-body"><tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -6316,6 +6361,61 @@ function renderOrcamentos(){
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
   document.getElementById('orc-btn-cancelar-edicao').addEventListener('click', cancelarEdicaoOrcamento);
+
+  // Auto-save do rascunho: qualquer mudança dentro do formulário (campo ou
+  // item do carrinho) agenda um salvamento silencioso, com um pequeno atraso
+  // pra não salvar a cada tecla digitada.
+  let timeoutRascunho = null;
+  box.addEventListener('input', ()=>{
+    clearTimeout(timeoutRascunho);
+    timeoutRascunho = setTimeout(salvarRascunhoOrcamento, 800);
+  });
+  box.addEventListener('change', ()=>{
+    clearTimeout(timeoutRascunho);
+    timeoutRascunho = setTimeout(salvarRascunhoOrcamento, 300);
+  });
+
+  // Se existir um rascunho salvo (de uma sessão anterior que não chegou a
+  // salvar o orçamento), oferece retomar — só quando não estamos no meio de
+  // uma edição de orçamento já existente, pra não confundir os dois fluxos.
+  if(!orcamentoEmEdicaoId){
+    const rascunhoBruto = localStorage.getItem(RASCUNHO_ORCAMENTO_KEY);
+    if(rascunhoBruto){
+      try{
+        const rascunho = JSON.parse(rascunhoBruto);
+        if(rascunho && (rascunho.clienteId || (rascunho.itens&&rascunho.itens.length>0))){
+          const dataFmt = rascunho.salvoEm ? new Date(rascunho.salvoEm).toLocaleString('pt-BR') : '';
+          document.getElementById('orc-rascunho-banner').innerHTML = `
+            <div class="card" style="background:#FFF8E6;border:1px solid #E8C468;margin-bottom:14px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+                <div>💡 Você tem um orçamento não finalizado${dataFmt?` (salvo automaticamente em ${dataFmt})`:''}. Quer continuar de onde parou?</div>
+                <div class="cell-actions">
+                  <button class="btn btn-sm btn-primary" id="orc-rascunho-retomar">Retomar rascunho</button>
+                  <button class="btn btn-sm" id="orc-rascunho-descartar">Descartar</button>
+                </div>
+              </div>
+            </div>`;
+          document.getElementById('orc-rascunho-retomar').addEventListener('click', ()=>{
+            document.getElementById('orc-cliente').value = rascunho.clienteId||'';
+            document.getElementById('orc-data').value = rascunho.data||todayISO();
+            document.getElementById('orc-validade').value = rascunho.validadeDias||7;
+            document.getElementById('orc-vendedor').value = rascunho.vendedor||'';
+            document.getElementById('orc-obs').value = rascunho.observacoes||'';
+            carrinhoOrcamentoAtual = rascunho.itens||[];
+            atualizarBotaoHistoricoComprasOrcamento();
+            renderCarrinhoOrcamento();
+            atualizarResumoOrcamento();
+            document.getElementById('orc-rascunho-banner').innerHTML = '';
+            showToast('Rascunho retomado.', 'success');
+          });
+          document.getElementById('orc-rascunho-descartar').addEventListener('click', ()=>{
+            limparRascunhoOrcamento();
+            document.getElementById('orc-rascunho-banner').innerHTML = '';
+          });
+        }
+      }catch(e){ limparRascunhoOrcamento(); }
+    }
+  }
 
   // Mesma lógica de repasse já usada em Lançar Venda: marcar o checkbox
   // mostra pagador + percentual; desmarcar limpa tudo
@@ -6545,7 +6645,7 @@ function adicionarItemAoOrcamento(){
 
   carrinhoOrcamentoAtual.push({
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
-    custoUnit: p.custo, precoUnit: preco, qtd,
+    custoUnit: p.custo, precoUnit: preco, qtd, unidade: p.unidade||'UN',
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
   });
   renderCarrinhoOrcamento();
@@ -6625,21 +6725,16 @@ function renderCarrinhoOrcamento(){
   const tbody = document.getElementById('orc-carrinho-body');
   if(!tbody) return;
   if(carrinhoOrcamentoAtual.length===0){
-    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum item adicionado ainda.</td></tr>`;
     return;
   }
-  const opcoesOrigem = (selecionadoTipo, selecionadoId)=>`
-    <option value="">(a definir)</option>
-    ${fornecedoresComEndereco().length ? `<optgroup label="Fornecedores">${fornecedoresComEndereco().map(f=>`<option value="forn:${f.id}" ${selecionadoTipo==='forn'&&selecionadoId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}</optgroup>` : ''}
-    ${locaisCompraComEndereco().length ? `<optgroup label="Locais de Compra">${locaisCompraComEndereco().map(l=>`<option value="loc:${l.id}" ${selecionadoTipo==='loc'&&selecionadoId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}</optgroup>` : ''}
-    <option value="novo">➕ Cadastrar novo local de coleta...</option>
-  `;
   tbody.innerHTML = carrinhoOrcamentoAtual.map((it,idx)=>`
     <tr>
       <td>${escapeHtml(it.nome)}</td>
+      <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
       <td><input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)"></td>
       <td><input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)"></td>
-      <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${opcoesOrigem(it.origemTipo, it.origemId)}</select></td>
+      <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
       <td><button class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})">Remover</button></td>
     </tr>
@@ -6719,6 +6814,7 @@ function salvarOrcamento(){
     delete orcamento.desconto; if(desconto) orcamento.desconto = desconto;
     delete orcamento.acrescimo; if(acrescimo) orcamento.acrescimo = acrescimo;
     saveState();
+    limparRascunhoOrcamento();
     showToast('Orçamento atualizado.', 'success');
     orcamentoEmEdicaoId = null;
     renderOrcamentos();
@@ -6735,6 +6831,7 @@ function salvarOrcamento(){
 
   STATE.orcamentos.push(orcamento);
   saveState();
+  limparRascunhoOrcamento();
   showToast('Orçamento salvo.', 'success');
   renderOrcamentos();
 }
@@ -6837,6 +6934,18 @@ function fornecedoresComEndereco(){
 }
 function locaisCompraComEndereco(){
   return STATE.locaisCompra.filter(l=>l.endereco && l.endereco.trim());
+}
+
+// Select de origem de coleta reaproveitado tanto no carrinho de orçamento
+// (ainda não salvo) quanto no detalhe de um orçamento JÁ salvo (edição da
+// origem a partir do aviso de "entregas sem rota definida" em Logística).
+function renderOpcoesOrigemSelect(selecionadoTipo, selecionadoId){
+  return `
+    <option value="">(a definir)</option>
+    ${fornecedoresComEndereco().length ? `<optgroup label="Fornecedores">${fornecedoresComEndereco().map(f=>`<option value="forn:${f.id}" ${selecionadoTipo==='forn'&&selecionadoId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}</optgroup>` : ''}
+    ${locaisCompraComEndereco().length ? `<optgroup label="Locais de Compra">${locaisCompraComEndereco().map(l=>`<option value="loc:${l.id}" ${selecionadoTipo==='loc'&&selecionadoId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}</optgroup>` : ''}
+    <option value="novo">➕ Cadastrar novo local de coleta...</option>
+  `;
 }
 
 const statusOrcamentoLabel = {
@@ -7333,6 +7442,8 @@ function gerarPdfControleEntrega(id, opcoes){
 function verDetalheOrcamento(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  const modalExistente = document.getElementById('modal-detalhe-orcamento');
+  if(modalExistente) modalExistente.remove(); // evita duplicar a modal ao reabrir (ex: depois de editar origem)
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const c = calcularVenda(orcamento);
   const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
@@ -7350,15 +7461,17 @@ function verDetalheOrcamento(id){
         </div>
       </div>
       <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">💡 Pode trocar a origem de coleta de qualquer item aqui embaixo — assim que escolher, o roteiro de Logística é recalculado automaticamente.</p>
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Produto</th><th class="num">Qtd</th><th class="num">Preço Unit.</th><th>Origem</th><th class="num">Subtotal</th></tr></thead>
+            <thead><tr><th>Produto</th><th>Unidade</th><th class="num">Qtd</th><th class="num">Preço Unit.</th><th>Origem</th><th class="num">Subtotal</th></tr></thead>
             <tbody>
-              ${orcamento.itens.map(it=>`<tr>
+              ${orcamento.itens.map((it,idx)=>`<tr>
                 <td>${escapeHtml(it.nome)}</td>
+                <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
                 <td class="num">${fmtNum(it.qtd)}</td>
                 <td class="num">${fmtMoney(it.precoUnit)}</td>
-                <td>${escapeHtml(it.origem)}</td>
+                <td><select style="padding:4px 6px;font-size:12.5px;" onchange="editarOrigemItemOrcamentoSalvo('${orcamento.id}', ${idx}, this.value)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
                 <td class="num">${fmtMoney(it.qtd*it.precoUnit)}</td>
               </tr>`).join('')}
             </tbody>
@@ -7381,6 +7494,42 @@ function verDetalheOrcamento(id){
   `;
   document.body.appendChild(modal);
   document.getElementById('dorc-fechar').addEventListener('click', ()=>modal.remove());
+}
+
+// Edita a origem de coleta de um item de um orçamento JÁ SALVO (diferente de
+// editarOrigemItemOrcamento, que mexe no carrinho ainda não salvo) — usado
+// principalmente a partir do aviso "Entregas sem rota definida" em
+// Logística, pra resolver ali mesmo o item sem origem e já ver o roteiro
+// recalculado, sem precisar ir em Orçamentos > Editar.
+function editarOrigemItemOrcamentoSalvo(orcamentoId, idx, novoValor){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  const item = orcamento.itens[idx];
+  if(!item) return;
+  if(novoValor==='novo'){
+    abrirFormLocalCompraRapido(null, (novoLocal)=>{
+      item.origemTipo = 'loc'; item.origemId = novoLocal.id; item.origem = novoLocal.nome; item.origemEndereco = novoLocal.endereco||'';
+      saveState();
+      showToast('Origem atualizada — roteiro recalculado.', 'success');
+      verDetalheOrcamento(orcamentoId); // reabre o modal já com a origem nova
+      if(document.getElementById('logistica-content')) renderLogistica();
+    });
+    return;
+  }
+  if(!novoValor){
+    item.origemTipo = null; item.origemId = null; item.origem = '(a definir)'; item.origemEndereco = '';
+  }else{
+    const [tipo, id] = novoValor.split(':');
+    const lista = tipo==='forn' ? STATE.fornecedores : STATE.locaisCompra;
+    const encontrado = lista.find(x=>x.id===id);
+    if(encontrado){
+      item.origemTipo = tipo; item.origemId = id; item.origem = encontrado.nome; item.origemEndereco = encontrado.endereco||'';
+    }
+  }
+  saveState();
+  showToast('Origem atualizada — roteiro recalculado.', 'success');
+  verDetalheOrcamento(orcamentoId);
+  if(document.getElementById('logistica-content')) renderLogistica();
 }
 
 RENDERERS['orcamentos'] = renderOrcamentos;
