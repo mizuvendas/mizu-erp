@@ -14299,13 +14299,13 @@ function gerarRelatorioPdfRepasses(modo){
     // tabela de Quinzenas) cuja quinzena bate com a deste relatório.
     const pagamentosAgregados = pagamentosDoPagador
       .filter(pg=>pg.vencimentoQuinzena && vencimentosDoRelatorio.has(pg.vencimentoQuinzena))
-      .map(pg=>({ data: pg.data, pagadorNome: (STATE.pagadores.find(p=>p.id===pg.pagadorId)||{}).nome || '(pagador removido)', valor: pg.valor, obs: pg.obs||'—' }));
+      .map(pg=>({ data: pg.data, vencimento: pg.vencimentoQuinzena, pagadorNome: (STATE.pagadores.find(p=>p.id===pg.pagadorId)||{}).nome || '(pagador removido)', valor: pg.valor, obs: pg.obs||'—' }));
     // Origem 2: abatimentos lançados direto em cada venda ("✓ Marcar como
     // Pago" ou "Editar Desconto" na tabela detalhada) — cada um já pertence a
     // uma venda que está dentro de `linhas`, então já está automaticamente no
     // escopo certo da quinzena, sem precisar checar vencimentoQuinzena.
     const pagamentosPorVenda = linhas.flatMap(l =>
-      (l.abatimentos||[]).map(ab => ({ data: ab.data, pagadorNome: l.pagadorNome, valor: ab.valor, obs: `${ab.descricao||'Abatimento'} — ${l.descricao}` }))
+      (l.abatimentos||[]).map(ab => ({ data: ab.data, vencimento: l.vencimento, pagadorNome: l.pagadorNome, valor: ab.valor, obs: `${ab.descricao||'Abatimento'} — ${l.descricao}` }))
     );
     // Pagamentos genéricos antigos (modo legado, sem vencimentoQuinzena, de
     // antes do controle por quinzena) NUNCA entram aqui por tentativa de
@@ -14313,7 +14313,19 @@ function gerarRelatorioPdfRepasses(modo){
     // uma quinzena com o relatório de outra. Eles continuam existindo e
     // contando pro saldo geral do pagador (na tela, fora deste PDF), só não
     // aparecem misturados num relatório de uma quinzena específica.
-    pagamentosDoRelatorio = [...pagamentosAgregados, ...pagamentosPorVenda].sort((a,b)=>a.data<b.data?-1:1);
+    // Um mesmo pagamento (ex: R$2.000 recebido de uma vez) pode ter sido
+    // aplicado internamente sobre várias vendas/clientes diferentes — para o
+    // usuário isso é UM pagamento só, então consolidamos aqui por
+    // data + quinzena + pagador, somando os valores numa única linha, em vez
+    // de mostrar um lançamento por venda/abatimento.
+    const brutos = [...pagamentosAgregados, ...pagamentosPorVenda];
+    const grupos = new Map();
+    for(const pg of brutos){
+      const chave = `${pg.data}|${pg.vencimento}|${pg.pagadorNome}`;
+      if(!grupos.has(chave)) grupos.set(chave, { data: pg.data, vencimento: pg.vencimento, pagadorNome: pg.pagadorNome, valor: 0 });
+      grupos.get(chave).valor += pg.valor;
+    }
+    pagamentosDoRelatorio = [...grupos.values()].sort((a,b)=>a.data<b.data?-1:1);
     totalPagoRelatorio = pagamentosDoRelatorio.reduce((s,pg)=>s+pg.valor,0);
     // Total de pagamentos genéricos antigos (sem vínculo de quinzena) desses
     // mesmos pagadores — mostrado como nota à parte, só pra transparência,
@@ -14329,9 +14341,9 @@ function gerarRelatorioPdfRepasses(modo){
     pagamentosHtml = pagamentosDoRelatorio.map(pg=>`
         <tr>
           <td>${fmtDate(pg.data)}</td>
+          <td>${escapeHtml(rotuloQuinzena(pg.vencimento))}</td>
           <td>${escapeHtml(pg.pagadorNome)}</td>
           <td style="text-align:right;">${fmtMoney(pg.valor)}</td>
-          <td>${escapeHtml(pg.obs)}</td>
         </tr>`).join('');
   }
 
@@ -14394,11 +14406,11 @@ function gerarRelatorioPdfRepasses(modo){
       ${pagamentosDoRelatorio.length===0 ? `<p style="color:#888;font-size:12px;">Nenhum pagamento registrado ainda para ${pagadorFiltrado?escapeHtml(pagadorFiltrado.nome):'os pagadores deste relatório'}.</p>` : `
       <table>
         <thead>
-          <tr><th>Data</th><th>Pagador</th><th style="text-align:right;">Valor</th><th>Observação</th></tr>
+          <tr><th>Data</th><th>Quinzena</th><th>Pagador</th><th style="text-align:right;">Valor</th></tr>
         </thead>
         <tbody>${pagamentosHtml}</tbody>
         <tfoot>
-          <tr><td colspan="2" style="text-align:right;">Total já pago</td><td style="text-align:right;">${fmtMoney(totalPagoRelatorio)}</td><td></td></tr>
+          <tr><td colspan="3" style="text-align:right;">Total já pago</td><td style="text-align:right;">${fmtMoney(totalPagoRelatorio)}</td></tr>
         </tfoot>
       </table>
       `}
