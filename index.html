@@ -6454,12 +6454,22 @@ function renderOrcamentos(){
           </div>
         </div>
         <div class="field">
-          <label>Quantidade</label>
+          <label id="orc-item-qtd-label">Quantidade</label>
           <input type="number" id="orc-item-qtd" min="0.01" step="0.01" value="1" style="text-align:center;">
         </div>
         <div class="field">
           <label>Preço unit. (R$)</label>
           <input type="number" id="orc-item-preco" min="0" step="0.01" style="text-align:center;">
+        </div>
+        <div class="field" id="orc-item-caixa-wrap" style="display:none;min-width:170px;">
+          <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
+            <input type="checkbox" id="orc-item-vender-caixa" style="width:auto;">
+            📦 Vender em caixa <span id="orc-item-caixa-info" class="help-text" style="margin:0;"></span>
+          </label>
+          <label id="orc-item-caixa-padrao-wrap" style="display:none;align-items:center;gap:6px;font-size:12px;margin-top:4px;cursor:pointer;color:var(--ink-soft);">
+            <input type="checkbox" id="orc-item-caixa-padrao" style="width:auto;">
+            Tornar padrão para este produto
+          </label>
         </div>
         <div class="field">
           <label>Origem da coleta</label>
@@ -6798,6 +6808,35 @@ function mostrarHistoricoPrecoItemOrcamento(produtoId){
   box.style.display = '';
 }
 
+// Mostra/esconde o toggle "Vender em caixa" conforme o produto selecionado
+// tenha ou não um fator de conversão (Unidades por Caixa) cadastrado, e
+// pré-marca o toggle se esse for o padrão salvo no cadastro do produto.
+function atualizarToggleVenderCaixa(p){
+  const wrap = document.getElementById('orc-item-caixa-wrap');
+  const checkbox = document.getElementById('orc-item-vender-caixa');
+  const padraoWrap = document.getElementById('orc-item-caixa-padrao-wrap');
+  const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
+  const info = document.getElementById('orc-item-caixa-info');
+  const label = document.getElementById('orc-item-qtd-label');
+  if(!p || !p.unidadesPorCaixa || p.unidadesPorCaixa<=1){
+    wrap.style.display = 'none';
+    checkbox.checked = false;
+    padraoWrap.style.display = 'none';
+    label.textContent = 'Quantidade';
+    return;
+  }
+  wrap.style.display = '';
+  info.textContent = `(${p.unidadesPorCaixa} ${p.unidade||'UN'} cada)`;
+  checkbox.checked = !!p.venderEmCaixaPadrao;
+  padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
+  padraoCheckbox.checked = false;
+  label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+  checkbox.onchange = ()=>{
+    label.textContent = checkbox.checked ? 'Qtd. de caixas' : 'Quantidade';
+    padraoWrap.style.display = checkbox.checked ? 'flex' : 'none';
+  };
+}
+
 function ativarComboboxProdutoOrcamento(){
   const controlador = ativarComboboxProduto('orc-item-produto-busca', 'orc-item-produto', opcoesProdutosCombobox(), (opt)=>{
     const p = STATE.produtos.find(x=>x.id===opt.id);
@@ -6807,6 +6846,7 @@ function ativarComboboxProdutoOrcamento(){
     if(p && p.localCompraId) selectOrigem.value = `loc:${p.localCompraId}`;
     else if(p && p.fornecedorId) selectOrigem.value = `forn:${p.fornecedorId}`;
     else selectOrigem.value = '';
+    atualizarToggleVenderCaixa(p);
     mostrarHistoricoPrecoItemOrcamento(opt.id);
     atualizarPreviewItemOrcamento();
   }, {permitirCriar: true, aoCriarProduto: ativarComboboxProdutoOrcamento});
@@ -6871,9 +6911,28 @@ function adicionarItemAoOrcamento(){
     }
   }
 
+  // "Vender em caixa": quando marcado, a quantidade digitada é o número de
+  // CAIXAS, não de unidades — a quantidade real (usada em estoque, custo e
+  // total) é convertida pelo fator "Unidades por Caixa" do produto. A
+  // descrição da linha ("2 CX (24 UN)") fica editável depois, no carrinho.
+  const checkboxCaixa = document.getElementById('orc-item-vender-caixa');
+  const vendendoEmCaixaAtivo = !!(checkboxCaixa && checkboxCaixa.checked && p.unidadesPorCaixa>1);
+  let qtdCaixas = null, qtdReal = qtd, descricaoLinha = null;
+  if(vendendoEmCaixaAtivo){
+    qtdCaixas = qtd;
+    qtdReal = qtd * p.unidadesPorCaixa;
+    descricaoLinha = `${fmtNum(qtdCaixas)} CX (${fmtNum(qtdReal)} ${p.unidade||'UN'})`;
+    const padraoCheckbox = document.getElementById('orc-item-caixa-padrao');
+    if(padraoCheckbox && padraoCheckbox.checked){
+      p.venderEmCaixaPadrao = true;
+      saveState();
+    }
+  }
+
   carrinhoOrcamentoAtual.push({
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
-    custoUnit: p.custo, precoUnit: preco, qtd, unidade: p.unidade||'UN',
+    custoUnit: p.custo, precoUnit: preco, qtd: qtdReal, unidade: p.unidade||'UN',
+    vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?p.unidadesPorCaixa:null, descricaoLinha,
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
   });
   renderCarrinhoOrcamento();
@@ -6885,6 +6944,7 @@ function adicionarItemAoOrcamento(){
   document.getElementById('orc-item-preco').value = '';
   document.getElementById('orc-item-origem-id').value = '';
   document.getElementById('orc-item-info').style.display = 'none';
+  atualizarToggleVenderCaixa(null);
 }
 
 function removerItemOrcamento(idx){
@@ -6960,13 +7020,21 @@ function renderCarrinhoOrcamento(){
     <tr>
       <td>${escapeHtml(it.nome)}</td>
       <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
-      <td><input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)"></td>
+      <td>
+        <input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)">
+        ${it.vendidoEmCaixa ? `<input type="text" value="${escapeAttr(it.descricaoLinha||'')}" title="Descrição da linha (só exibição, editável)" style="width:110px;margin-top:3px;padding:2px 5px;font-size:11px;color:var(--ink-soft);display:block;" onchange="editarDescricaoLinhaItemOrcamento(${idx}, this.value)">` : ''}
+      </td>
       <td><input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)"></td>
       <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
       <td><button class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})">Remover</button></td>
     </tr>
   `).join('');
+}
+
+function editarDescricaoLinhaItemOrcamento(idx, novoValor){
+  if(!carrinhoOrcamentoAtual[idx]) return;
+  carrinhoOrcamentoAtual[idx].descricaoLinha = novoValor.trim();
 }
 
 // Edita quantidade/preço de um item JÁ no carrinho, direto na tabela — sem
@@ -7456,7 +7524,7 @@ function gerarPdfOrcamento(id){
 
   const linhasItens = orcamento.itens.map(it=>`
     <tr>
-      <td>${fmtNum(it.qtd)}</td>
+      <td>${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
       <td>${escapeHtml(it.nome)}${it.marca?` — ${escapeHtml(it.marca)}`:''}</td>
       <td style="text-align:right;">${fmtMoney(it.precoUnit)}</td>
       <td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>
@@ -7598,7 +7666,7 @@ function gerarPdfControleEntrega(id, opcoes){
       <td>${idx+1}</td>
       <td>${escapeHtml(it.nome)}</td>
       <td style="text-align:center;">${escapeHtml(it.unidade||'UN')}</td>
-      <td style="text-align:center;">${fmtNum(it.qtd)}</td>
+      <td style="text-align:center;">${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
       ${opcoes.comPreco ? `<td style="text-align:right;">${fmtMoney(it.precoUnit)}</td><td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>` : ''}
     </tr>
   `).join('');
