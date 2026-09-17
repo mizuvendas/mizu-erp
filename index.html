@@ -13878,6 +13878,7 @@ function renderTabelaRepasses(){
           ${(l.descontoPct!=null||l.descontoValorFixo!=null) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="marcarRepasseComoPago('${l.vendaId}')">✓ Marcar como Pago</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm" onclick="abrirFormAbatimentoRepasse('${l.vendaId}')">💵 Pagamento Parcial</button>` : ''}
+          ${(l.abatimentos&&l.abatimentos.length>0) ? `<button class="btn btn-sm" title="Ver, alterar ou cancelar os pagamentos já lançados nesta venda" onclick="verHistoricoAbatimentos('${l.vendaId}')">📜 Pagamentos${l.statusRecebimento==='quitado'?' (Quitado)':''}</button>` : ''}
           ${anexoControleEntregaBtn(l.vendaId)}
         </div>
       </td>
@@ -14392,7 +14393,12 @@ function verHistoricoAbatimentos(vendaId){
                       <td>${a.descricao ? escapeHtml(a.descricao) : '<span class="help-text">—</span>'}</td>
                       <td class="num">${fmtMoney(a.valor)}</td>
                       <td class="num" style="color:${saldoAcumulado>0.005?'var(--negative)':'var(--positive)'};font-weight:600;">${fmtMoney(Math.max(0,saldoAcumulado))}</td>
-                      <td><button class="btn btn-sm btn-danger" onclick="removerAbatimentoRepasse('${vendaId}','${a.id}')">Remover</button></td>
+                      <td>
+                        <div class="cell-actions">
+                          <button class="btn btn-sm" onclick="editarAbatimentoRepasse('${vendaId}','${a.id}')">Editar</button>
+                          <button class="btn btn-sm btn-danger" title="Cancela este pagamento e devolve o saldo devedor ao que era antes" onclick="removerAbatimentoRepasse('${vendaId}','${a.id}')">Cancelar Pagamento</button>
+                        </div>
+                      </td>
                     </tr>`;
                   }).join('');
                 })()}
@@ -14411,16 +14417,87 @@ function verHistoricoAbatimentos(vendaId){
   document.getElementById('rp-historico-fechar').addEventListener('click', ()=>modal.remove());
 }
 
-function removerAbatimentoRepasse(vendaId, abatimentoId){
+// Altera valor/data/descrição de um pagamento (abatimento) já lançado numa
+// venda específica — pedido do usuário: poder corrigir um pagamento errado
+// sem precisar cancelar e lançar tudo de novo do zero.
+function editarAbatimentoRepasse(vendaId, abatimentoId){
   const venda = STATE.vendas.find(v=>v.id===vendaId);
   if(!venda || !venda.repasse) return;
-  confirmAction('Remover abatimento', 'Esta ação não pode ser desfeita. Deseja continuar?', ()=>{
-    venda.repasse.abatimentos = venda.repasse.abatimentos.filter(a=>a.id!==abatimentoId);
+  const abatimento = (venda.repasse.abatimentos||[]).find(a=>a.id===abatimentoId);
+  if(!abatimento) return;
+  const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-editar-abatimento-repasse';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✎</div>
+        <div>
+          <h3>Editar Pagamento</h3>
+          <div class="sub">${linha?escapeHtml(linha.descricao):''}</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-grid">
+          <div class="field">
+            <label>Valor Recebido (R$) <span class="req">*</span></label>
+            <input type="number" step="0.01" min="0.01" id="eabat-valor" value="${abatimento.valor}">
+          </div>
+          <div class="field">
+            <label>Data do Recebimento</label>
+            <input type="date" id="eabat-data" value="${abatimento.data}">
+          </div>
+          <div class="field field-full">
+            <label>Descrição (opcional)</label>
+            <input type="text" id="eabat-descricao" value="${escapeAttr(abatimento.descricao||'')}">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="eabat-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="eabat-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('eabat-cancelar').addEventListener('click', ()=>modal.remove());
+
+  document.getElementById('eabat-confirmar').addEventListener('click', ()=>{
+    const valor = parseFloat(document.getElementById('eabat-valor').value);
+    const data = document.getElementById('eabat-data').value;
+    if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+    if(!data){ showToast('Informe a data.', 'error'); return; }
+    abatimento.valor = valor;
+    abatimento.data = data;
+    abatimento.descricao = document.getElementById('eabat-descricao').value.trim();
     saveState();
-    showToast('Abatimento removido.', 'success');
+    showToast('Pagamento atualizado.', 'success');
+    modal.remove();
     const modalAntigo = document.getElementById('modal-historico-abatimentos');
     if(modalAntigo) modalAntigo.remove();
     verHistoricoAbatimentos(vendaId);
+    renderKpisRepasses();
+    renderQuinzenasRepasse();
+    renderSaldoPorPagador();
+    renderTabelaRepasses();
+  });
+}
+
+function removerAbatimentoRepasse(vendaId, abatimentoId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda || !venda.repasse) return;
+  confirmAction('Cancelar pagamento', 'Isso vai cancelar este pagamento e devolver o saldo devedor da venda ao que era antes dele. Esta ação não pode ser desfeita. Deseja continuar?', ()=>{
+    venda.repasse.abatimentos = venda.repasse.abatimentos.filter(a=>a.id!==abatimentoId);
+    saveState();
+    showToast('Pagamento cancelado — saldo devedor restaurado.', 'success');
+    const modalAntigo = document.getElementById('modal-historico-abatimentos');
+    if(modalAntigo) modalAntigo.remove();
+    verHistoricoAbatimentos(vendaId);
+    renderKpisRepasses();
+    renderQuinzenasRepasse();
+    renderSaldoPorPagador();
     renderTabelaRepasses();
   });
 }
