@@ -16528,7 +16528,17 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
 
   try{
     const hoje = todayISO();
-    const dataInicial = filtrosData.publicadoDe;
+    // O PNCP responde erro 500 quando a data inicial e a data final da
+    // consulta são exatamente o mesmo dia (confirmado na prática: buscar só
+    // "hoje" falhava sempre nas 4 consultas; alargando pra 2 dias, funcionou
+    // normal) — então NUNCA mandamos um intervalo de 1 dia só pra API, mesmo
+    // que o usuário tenha pedido só um dia específico. Alargamos 1 dia pra
+    // trás só pra essa consulta, e filtramos de volta pela data real pedida
+    // logo depois (ver brutos.splice abaixo) — o dia extra buscado a mais
+    // nunca aparece pro usuário.
+    const dataInicial = filtrosData.publicadoDe===filtrosData.publicadoAte
+      ? addDays(filtrosData.publicadoDe, -1)
+      : filtrosData.publicadoDe;
     const dataFinalBusca = filtrosData.publicadoAte;
 
     const combos = ufs.flatMap(uf=>codigosParaBuscar.map(codigoModalidade=>({uf, codigoModalidade})));
@@ -16555,6 +16565,17 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         setStatus(`Consultando PNCP... ${uf} · ${nomeModalidadePNCP(codigoModalidade)} (${combosFeitos}/${combosTotal}) — ${brutos.length} encontrado(s) até agora`);
       }
     });
+
+    // Se alargamos a consulta em 1 dia (caso acima), tira de volta o que
+    // ficou fora da janela que o usuário realmente pediu — sem isso, o dia
+    // extra buscado só pra contornar o bug do PNCP apareceria nos
+    // resultados sem o usuário ter pedido. Quando não alargamos (mais de 1
+    // dia pedido), isso não remove nada.
+    const brutosDentroDaJanelaPedida = brutos.filter(d=>{
+      const dataPub = (d.dataPublicacaoPncp||'').slice(0,10);
+      return dataPub >= filtrosData.publicadoDe && dataPub <= filtrosData.publicadoAte;
+    });
+    brutos.splice(0, brutos.length, ...brutosDentroDaJanelaPedida);
 
     // dedupe por numeroControlePNCP (pode repetir entre páginas/combos) e
     // remove o que já foi importado antes (mesmo numeroControlePNCP já
@@ -16641,7 +16662,14 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         // tentando geocodificar centenas de município em vão.
         if(falhasSeguidasGeocodificacao>=8){ geocodificacaoAbortada = true; break; }
       }
-      await new Promise(r=>setTimeout(r, 250)); // respiro entre chamadas de verdade ao Nominatim
+      // O Nominatim (OpenStreetMap) só permite, pela política de uso deles,
+      // NO MÁXIMO 1 requisição por segundo — a pausa de 250ms usada antes
+      // (até 4 requisições/segundo) estourava esse limite toda vez que a
+      // área alcançava muitos municípios diferentes, e era bem provavelmente
+      // a causa real do "serviço de localização parou de responder" — o
+      // Nominatim passava a bloquear por excesso de requisições, não por
+      // estar fora do ar. 1100ms dá uma margem de segurança sobre o limite.
+      await new Promise(r=>setTimeout(r, 1100)); // respiro entre chamadas de verdade ao Nominatim
     }
 
     const dentroDoRaio = [];
