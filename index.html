@@ -13625,7 +13625,13 @@ function renderQuinzenasRepasse(){
         <td class="num" style="color:${q.totalAbatido>0?'var(--positive)':'var(--ink-faint)'}">${q.totalAbatido>0?fmtMoney(q.totalAbatido):'—'}</td>
         <td class="num" style="${q.saldoPendente>0.005?'color:var(--negative);font-weight:700;':'color:var(--positive);'}">${fmtMoney(Math.max(0,q.saldoPendente))}</td>
         <td><span style="color:${st.color};font-weight:600;">${st.label}</span></td>
-        <td>${q.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="abrirFormPagamentoQuinzena('${q.pagadorId}','${q.vencimento}')">+ Registrar Pagamento</button>` : '—'}</td>
+        <td>
+          <div class="cell-actions">
+            ${q.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="abrirFormPagamentoQuinzena('${q.pagadorId}','${q.vencimento}')">+ Registrar Pagamento</button>` : ''}
+            <button class="btn btn-sm" title="Gera o relatório em PDF só desta quinzena, já com os pagamentos dela" onclick='abrirEscolhaModoRelatorioRepasses(${JSON.stringify({pagadorId:q.pagadorId, vencimento:q.vencimento})})'>📄 Gerar Relatório</button>
+            <button class="btn btn-sm" title="Gera o relatório em texto pra mandar no WhatsApp, só desta quinzena" onclick='abrirEscolhaModoRelatorioWhatsappQuinzena(${JSON.stringify({pagadorId:q.pagadorId, vencimento:q.vencimento})})'>📲 WhatsApp</button>
+          </div>
+        </td>
       </tr>`;
   }).join('');
 }
@@ -14547,23 +14553,91 @@ document.getElementById('btn-relatorio-pdf-repasses').addEventListener('click', 
 // Relatório rápido em texto, formatado pra colar direto num grupo de
 // WhatsApp — usa *asteriscos* (negrito do WhatsApp) no nome do cliente e
 // nos valores, um bloco por venda selecionada via checkbox na tabela.
-function gerarRelatorioWhatsappRepasses(){
-  const checkboxesMarcados = document.querySelectorAll('.rp-checkbox-venda:checked');
-  if(checkboxesMarcados.length===0){
-    showToast('Selecione ao menos uma venda (checkbox na primeira coluna) para gerar o relatório.', 'error');
-    return;
+// gerarRelatorioWhatsappRepasses: dois jeitos de usar.
+// 1) SEM filtroQuinzena (botão principal "📲 Gerar Relatório WhatsApp (vendas
+//    selecionadas)" — comportamento ORIGINAL, sem nenhuma mudança): pega as
+//    vendas marcadas com checkbox na tabela detalhada e sempre mostra o
+//    valor bruto (sem desconto), sem nenhum resumo financeiro.
+// 2) COM filtroQuinzena {pagadorId, vencimento} (vem do botão "📲 WhatsApp"
+//    de uma linha da tabela de Quinzenas — abrirEscolhaModoRelatorioWhatsappQuinzena):
+//    pega automaticamente TODAS as vendas daquela quinzena, sem precisar
+//    marcar checkbox, e o usuário escolhe bruto ou líquido. No líquido,
+//    entra um resumo financeiro (total da quinzena, já pago e saldo final)
+//    usando a MESMA lógica anti-contagem-dobrada do relatório em PDF: o
+//    saldo pendente de cada venda já desconta os abatimentos lançados nela
+//    (Origem 2), então só é preciso subtrair à parte os pagamentos
+//    agregados por quinzena (Origem 1 — "Fechar Quinzena").
+function gerarRelatorioWhatsappRepasses(modo, filtroQuinzena){
+  let linhasSelecionadas;
+  if(filtroQuinzena){
+    linhasSelecionadas = getLinhasRepasse()
+      .filter(l=>l.pagadorId===filtroQuinzena.pagadorId && l.vencimento===filtroQuinzena.vencimento)
+      .sort((a,b)=>a.data<b.data?-1:1);
+    if(linhasSelecionadas.length===0){
+      showToast('Não há vendas nesta quinzena para gerar o relatório.', 'error');
+      return;
+    }
+  }else{
+    const checkboxesMarcados = document.querySelectorAll('.rp-checkbox-venda:checked');
+    if(checkboxesMarcados.length===0){
+      showToast('Selecione ao menos uma venda (checkbox na primeira coluna) para gerar o relatório.', 'error');
+      return;
+    }
+    const vendaIds = [...checkboxesMarcados].map(cb=>cb.dataset.vendaId);
+    const linhasTodas = getLinhasRepasse();
+    linhasSelecionadas = vendaIds
+      .map(id=>linhasTodas.find(l=>l.vendaId===id))
+      .filter(Boolean)
+      .sort((a,b)=>a.data<b.data?-1:1);
   }
-  const vendaIds = [...checkboxesMarcados].map(cb=>cb.dataset.vendaId);
-  const linhasTodas = getLinhasRepasse();
-  const linhasSelecionadas = vendaIds
-    .map(id=>linhasTodas.find(l=>l.vendaId===id))
-    .filter(Boolean)
-    .sort((a,b)=>a.data<b.data?-1:1);
 
-  const blocos = linhasSelecionadas.map(l=>
-    `*${l.clienteNome.toUpperCase()}*\n\nDATA: *${fmtDate(l.data)}*\nVALOR: *${fmtMoney(l.valorBruto)}*`
-  );
-  const textoFinal = blocos.join('\n\n———\n\n');
+  // Sem filtroQuinzena o modo é sempre "bruto" (igual sempre foi). Com
+  // filtroQuinzena, quem decide é a escolha do usuário no modal.
+  const ehBruto = filtroQuinzena ? (modo==='bruto') : true;
+  const pagadorNome = filtroQuinzena ? ((STATE.pagadores.find(p=>p.id===filtroQuinzena.pagadorId)||{}).nome || '') : '';
+
+  const blocos = linhasSelecionadas.map(l=>{
+    if(ehBruto){
+      return `*${l.clienteNome.toUpperCase()}*\n\nDATA: *${fmtDate(l.data)}*\nVALOR: *${fmtMoney(l.valorBruto)}*`;
+    }
+    const quitado = l.saldoPendente<=0.005;
+    return `*${l.clienteNome.toUpperCase()}*\n\nDATA: *${fmtDate(l.data)}*\nVALOR: *${fmtMoney(l.valorComDesconto)}*\nSALDO: *${quitado ? 'Pago ✓' : fmtMoney(Math.max(0,l.saldoPendente))}*`;
+  });
+
+  let cabecalho = '', resumoFinal = '';
+  if(filtroQuinzena){
+    cabecalho = `*RELATÓRIO — ${pagadorNome.toUpperCase()}*\nQuinzena: *${rotuloQuinzena(filtroQuinzena.vencimento)}* (vence ${fmtDate(filtroQuinzena.vencimento)})\n\n———\n\n`;
+
+    if(!ehBruto){
+      const totalVendas = linhasSelecionadas.reduce((s,l)=>s+l.valorComDesconto,0);
+      const totalPrincipal = linhasSelecionadas.reduce((s,l)=>s+Math.max(0,l.saldoPendente),0);
+      // Origem 1: pagamentos agregados por quinzena ("Fechar Quinzena") —
+      // como filtroQuinzena já restringe a UMA quinzena só, basta filtrar
+      // por pagadorId + vencimentoQuinzena, sem precisar de um Set.
+      const pagamentosAgregados = (STATE.pagamentosRepasse||[])
+        .filter(pg=>pg.pagadorId===filtroQuinzena.pagadorId && pg.vencimentoQuinzena===filtroQuinzena.vencimento)
+        .map(pg=>({ data: pg.data, valor: pg.valor }));
+      // Origem 2: abatimentos lançados direto em cada venda ("Marcar como
+      // Pago"/"Pagamento Parcial") — já estão embutidos em l.saldoPendente,
+      // então entram na lista de pagamentos individuais mas NÃO podem ser
+      // somados de novo no saldo final (senão conta em dobro).
+      const pagamentosPorVenda = linhasSelecionadas.flatMap(l =>
+        (l.abatimentos||[]).map(ab => ({ data: ab.data, valor: ab.valor }))
+      );
+      const totalPagamentosAgregadosQuinzena = pagamentosAgregados.reduce((s,pg)=>s+pg.valor,0);
+      const saldoFinal = Math.max(0, totalPrincipal - totalPagamentosAgregadosQuinzena);
+      const todosPagamentos = [...pagamentosAgregados, ...pagamentosPorVenda].sort((a,b)=>a.data<b.data?-1:1);
+      const totalJaPago = todosPagamentos.reduce((s,pg)=>s+pg.valor,0);
+
+      const listaPagamentosTxt = todosPagamentos.length
+        ? todosPagamentos.map(pg=>`${fmtDate(pg.data)}: *${fmtMoney(pg.valor)}*`).join('\n')
+        : 'Nenhum pagamento registrado ainda.';
+
+      resumoFinal = `\n\n———\n\n*RESUMO FINANCEIRO*\n\nTotal da quinzena: *${fmtMoney(totalVendas)}*\nJá pago: *${fmtMoney(totalJaPago)}*\nSaldo final ainda a receber: *${fmtMoney(saldoFinal)}*\n\n*Pagamentos:*\n${listaPagamentosTxt}`;
+    }
+  }
+
+  const textoFinal = cabecalho + blocos.join('\n\n———\n\n') + resumoFinal;
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -14574,7 +14648,7 @@ function gerarRelatorioWhatsappRepasses(){
         <div class="ic-rapido">📲</div>
         <div>
           <h3>Relatório para WhatsApp</h3>
-          <div class="sub">${linhasSelecionadas.length} venda(s) selecionada(s) — copie e cole no grupo</div>
+          <div class="sub">${filtroQuinzena ? `Quinzena ${escapeHtml(rotuloQuinzena(filtroQuinzena.vencimento))} — ${escapeHtml(pagadorNome)} · ${linhasSelecionadas.length} venda(s)` : `${linhasSelecionadas.length} venda(s) selecionada(s) — copie e cole no grupo`}</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
@@ -14597,6 +14671,39 @@ function gerarRelatorioWhatsappRepasses(){
       showToast('Não foi possível copiar automaticamente. Selecione o texto e copie manualmente (Ctrl+C).', 'error');
     });
   });
+}
+
+// Antes de gerar o relatório de WhatsApp de UMA quinzena específica,
+// pergunta se deve mostrar o valor BRUTO (sem desconto, sem resumo
+// financeiro) ou o valor LÍQUIDO (com desconto + resumo de pagamentos e
+// saldo) — mesmo padrão do relatório em PDF (abrirEscolhaModoRelatorioRepasses).
+function abrirEscolhaModoRelatorioWhatsappQuinzena(filtroQuinzena){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-modo-relatorio-whatsapp-repasses';
+  const pagadorNome = (STATE.pagadores.find(p=>p.id===filtroQuinzena.pagadorId)||{}).nome || '';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📲</div>
+        <div>
+          <h3>Gerar Relatório WhatsApp</h3>
+          <div class="sub">Só da quinzena ${escapeHtml(rotuloQuinzena(filtroQuinzena.vencimento))} — ${escapeHtml(pagadorNome)} · escolha como mostrar os valores</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-actions" style="flex-direction:column;gap:8px;">
+          <button type="button" class="btn btn-primary" style="width:100%;" id="mrwq-bruto">Valor Bruto <span style="font-weight:400;">(sem desconto)</span></button>
+          <button type="button" class="btn btn-primary" style="width:100%;" id="mrwq-liquido">Valor Líquido <span style="font-weight:400;">(com desconto + resumo de pagamentos)</span></button>
+          <button type="button" class="btn" style="width:100%;" id="mrwq-cancelar">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('mrwq-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('mrwq-bruto').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioWhatsappRepasses('bruto', filtroQuinzena); });
+  document.getElementById('mrwq-liquido').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioWhatsappRepasses('liquido', filtroQuinzena); });
 }
 
 function gerarRelatorioEvolucaoRepasses(){
@@ -14706,17 +14813,22 @@ function gerarRelatorioEvolucaoRepasses(){
 // Antes de gerar o PDF, pergunta se o relatório deve mostrar o valor BRUTO
 // (sem desconto) ou o valor LÍQUIDO (já com desconto aplicado) — o usuário
 // nunca mistura os dois no mesmo documento, cada envio é de um tipo só.
-function abrirEscolhaModoRelatorioRepasses(){
+// filtroQuinzena (opcional): {pagadorId, vencimento} — quando vem do botão
+// "📄 Gerar Relatório" de uma linha específica da tabela de Quinzenas, o
+// relatório é gerado só com as vendas e pagamentos DAQUELA quinzena, em vez
+// de respeitar os filtros gerais (pagador/período) da tela.
+function abrirEscolhaModoRelatorioRepasses(filtroQuinzena){
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-modo-relatorio-repasses';
+  const pagadorNome = filtroQuinzena ? (STATE.pagadores.find(p=>p.id===filtroQuinzena.pagadorId)||{}).nome : null;
   modal.innerHTML = `
     <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📄</div>
         <div>
           <h3>Gerar Relatório PDF</h3>
-          <div class="sub">Escolha como mostrar os valores</div>
+          <div class="sub">${filtroQuinzena ? `Só da quinzena ${escapeHtml(rotuloQuinzena(filtroQuinzena.vencimento))} — ${escapeHtml(pagadorNome||'')} · escolha como mostrar os valores` : 'Escolha como mostrar os valores'}</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
@@ -14730,8 +14842,8 @@ function abrirEscolhaModoRelatorioRepasses(){
   `;
   document.body.appendChild(modal);
   document.getElementById('mrr-cancelar').addEventListener('click', ()=>modal.remove());
-  document.getElementById('mrr-bruto').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioPdfRepasses('bruto'); });
-  document.getElementById('mrr-liquido').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioPdfRepasses('liquido'); });
+  document.getElementById('mrr-bruto').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioPdfRepasses('bruto', filtroQuinzena); });
+  document.getElementById('mrr-liquido').addEventListener('click', ()=>{ modal.remove(); gerarRelatorioPdfRepasses('liquido', filtroQuinzena); });
 }
 
 /* =========================================================
@@ -14742,14 +14854,24 @@ function abrirEscolhaModoRelatorioRepasses(){
    impressão do próprio navegador. Respeita os mesmos filtros
    (pagador e período) que já estão aplicados na tela.
    ========================================================= */
-function gerarRelatorioPdfRepasses(modo){
+// filtroQuinzena (opcional): {pagadorId, vencimento} — vem do botão "📄 Gerar
+// Relatório" de uma linha da tabela de Quinzenas. Quando presente, IGNORA os
+// filtros gerais de pagador/período da tela e restringe o relatório só às
+// vendas daquela quinzena específica (pedido do usuário: gerar de uma vez só
+// o que falta E o que já foi pago daquela quinzena, sem precisar mexer nos
+// filtros gerais pra isolar o período certo).
+function gerarRelatorioPdfRepasses(modo, filtroQuinzena){
   // modo: 'bruto' (valor cheio da venda, sem desconto e sem pagamentos —
   // documento que acompanha a entrega) ou 'liquido' (valor já com desconto e
   // saldo devedor — documento financeiro de cobrança). Nunca mistura os dois.
   let linhas = getLinhasRepasse();
-  if(repasseFiltroPagador) linhas = linhas.filter(l=>l.pagadorId===repasseFiltroPagador);
-  const periodo = getPeriodoFiltroRepasses();
-  linhas = linhas.filter(l=>l.data>=periodo.ini && l.data<=periodo.fim);
+  if(filtroQuinzena){
+    linhas = linhas.filter(l=>l.pagadorId===filtroQuinzena.pagadorId && l.vencimento===filtroQuinzena.vencimento);
+  }else{
+    if(repasseFiltroPagador) linhas = linhas.filter(l=>l.pagadorId===repasseFiltroPagador);
+    const periodo = getPeriodoFiltroRepasses();
+    linhas = linhas.filter(l=>l.data>=periodo.ini && l.data<=periodo.fim);
+  }
   linhas.sort((a,b)=>a.vencimento<b.vencimento?-1:1);
 
   if(linhas.length===0){
@@ -14757,7 +14879,9 @@ function gerarRelatorioPdfRepasses(modo){
     return;
   }
 
-  const pagadorFiltrado = repasseFiltroPagador ? STATE.pagadores.find(p=>p.id===repasseFiltroPagador) : null;
+  const pagadorFiltrado = filtroQuinzena
+    ? STATE.pagadores.find(p=>p.id===filtroQuinzena.pagadorId)
+    : (repasseFiltroPagador ? STATE.pagadores.find(p=>p.id===repasseFiltroPagador) : null);
   const ehBruto = modo==='bruto';
 
   let linhasHtml, colunaValorLabel, totalPrincipal, totalPrincipalLabel;
@@ -14895,6 +15019,7 @@ function gerarRelatorioPdfRepasses(modo){
       <div class="meta">
         Gerado em: ${fmtDate(todayISO())}<br>
         ${pagadorFiltrado ? `Pagador: ${escapeHtml(pagadorFiltrado.nome)}<br>` : 'Pagador: Todos<br>'}
+        ${filtroQuinzena ? `Quinzena: ${escapeHtml(rotuloQuinzena(filtroQuinzena.vencimento))} (vence ${fmtDate(filtroQuinzena.vencimento)})<br>` : ''}
         Total de vendas no período: ${linhas.length}<br>
         ${!ehBruto?'<span style="color:#888;">Vencimento calculado pela quinzena: vendas do dia 1 ao 15 vencem no dia 15; vendas do dia 16 ao fim do mês vencem no último dia do mês.</span>':''}
       </div>
