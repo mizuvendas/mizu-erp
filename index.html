@@ -493,6 +493,31 @@ table.data-table{ width:100%; font-size:13px; }
 .toast-item.error{ background:var(--negative); }
 @keyframes slideIn{ from{transform:translateY(10px);opacity:0;} to{transform:translateY(0);opacity:1;} }
 
+/* notificações globais — igual ao toast, mas NÃO somem sozinhas (ficam até o
+   usuário fechar ou clicar), pra avisar sobre coisas que rodam em segundo
+   plano (ex: busca de oportunidades no PNCP) mesmo se o usuário já saiu da
+   tela de Licitações nesse meio tempo. Empilham acima do toast normal. */
+#notificacoes-globais{
+  position:fixed; bottom:22px; right:22px; z-index:1001;
+  display:flex; flex-direction:column-reverse; gap:10px; max-width:min(380px, calc(100vw - 44px));
+}
+.notificacao-global{
+  background:#fff; border:1px solid var(--border); border-left:4px solid var(--ink-faint);
+  border-radius:var(--radius-sm); box-shadow:0 6px 20px rgba(0,0,0,0.18);
+  padding:12px 34px 12px 14px; position:relative; cursor:pointer; animation:slideIn .25s ease;
+}
+.notificacao-global:hover{ background:var(--primary-soft); }
+.notificacao-global.success{ border-left-color:var(--positive); }
+.notificacao-global.error{ border-left-color:var(--negative); }
+.notificacao-global.info{ border-left-color:var(--warning); }
+.notificacao-global .ng-titulo{ font-weight:700; font-size:13px; margin-bottom:3px; color:var(--ink); }
+.notificacao-global .ng-msg{ font-size:12.5px; color:var(--ink-soft); line-height:1.4; }
+.notificacao-global .ng-fechar{
+  position:absolute; top:8px; right:8px; background:none; border:none; cursor:pointer;
+  font-size:14px; color:var(--ink-faint); line-height:1; padding:4px;
+}
+.notificacao-global .ng-fechar:hover{ color:var(--ink); }
+
 /* modal */
 .modal-overlay{
   display:none; position:fixed; inset:0; background:rgba(18,35,43,0.5);
@@ -680,6 +705,7 @@ table.data-table{ width:100%; font-size:13px; }
 <body>
 
 <div id="toast"></div>
+<div id="notificacoes-globais"></div>
 
 <div class="app">
   <!-- SIDEBAR -->
@@ -1404,6 +1430,32 @@ function showToast(msg, type){
   el.textContent = msg;
   box.appendChild(el);
   setTimeout(()=>{ el.remove(); }, 3200);
+}
+
+// Notificação global — parecida com o toast, mas NÃO some sozinha (fica até
+// o usuário fechar ou clicar nela) e o container fica fora de qualquer
+// página específica (ver <div id="notificacoes-globais">, logo no início do
+// <body>) — por isso aparece em cima de QUALQUER tela do sistema, mesmo que
+// o usuário tenha navegado pra outro lugar desde que a ação começou. Feita
+// pra avisar sobre coisas que podem terminar em segundo plano, como a busca
+// de oportunidades no PNCP tentando de novo sozinha (ver
+// executarBuscaOportunidadesPNCP). `aoClicar`, se passado, roda ao clicar no
+// corpo da notificação (ex: levar direto pra tela relevante) e já fecha ela.
+function mostrarNotificacaoGlobal(titulo, mensagem, tipo, aoClicar){
+  const box = document.getElementById('notificacoes-globais');
+  if(!box) return;
+  const el = document.createElement('div');
+  el.className = 'notificacao-global' + (tipo ? ' '+tipo : '');
+  el.innerHTML = `
+    <div class="ng-titulo">${escapeHtml(titulo)}</div>
+    <div class="ng-msg">${escapeHtml(mensagem)}</div>
+    <button type="button" class="ng-fechar" title="Fechar">✕</button>
+  `;
+  el.querySelector('.ng-fechar').addEventListener('click', (ev)=>{ ev.stopPropagation(); el.remove(); });
+  if(aoClicar){
+    el.addEventListener('click', ()=>{ aoClicar(); el.remove(); });
+  }
+  box.appendChild(el);
 }
 
 /* =========================================================
@@ -16325,6 +16377,39 @@ function linkEditalPNCP(cnpj, ano, sequencial){
 const PNCP_CORS_PROXY_URL = (urlReal) => `https://api.allorigins.win/raw?url=${encodeURIComponent(urlReal)}`;
 let _pncpUsouProxyCors = false; // marca se algum resultado desta busca só saiu via proxy, pra avisar no resumo final
 
+// Retentativa automática da Busca de Oportunidades — quando a busca falha
+// por causa de instabilidade FORA do nosso controle (o PNCP respondendo
+// erro/timeout, ou o Nominatim bloqueando), o sistema tenta de novo sozinho
+// mais tarde em vez de exigir que o usuário fique voltando pra tela pra
+// clicar de novo manualmente. Uma nova busca manual sempre cancela qualquer
+// retentativa pendente e reinicia a contagem (ver início de
+// executarBuscaOportunidadesPNCP).
+const MAX_TENTATIVAS_AUTOMATICAS_BUSCA_LICITACOES = 3;
+const INTERVALO_RETENTATIVA_BUSCA_LICITACOES_MS = 5*60*1000; // 5 minutos
+let _timerRetentativaBuscaLicitacoes = null;
+let _tentativasAutomaticasRestantesBuscaLicitacoes = 0;
+function cancelarRetentativaBuscaLicitacoesPendente(){
+  if(_timerRetentativaBuscaLicitacoes){ clearTimeout(_timerRetentativaBuscaLicitacoes); _timerRetentativaBuscaLicitacoes = null; }
+}
+// Chamada quando uma busca termina com falha "de verdade" (instabilidade do
+// PNCP ou do Nominatim, não falta de resultado). Se ainda sobrar tentativa
+// automática, agenda a próxima e devolve o texto explicando quando ela vai
+// rodar; se já esgotou, devolve um aviso pra tentar manualmente. O texto
+// devolvido entra tanto no resumo da tela quanto na notificação global.
+function agendarRetentativaBuscaLicitacoesSeSobrar(area, ufs, codigosParaBuscar, combosTotal, filtrosData){
+  if(_tentativasAutomaticasRestantesBuscaLicitacoes<=0){
+    return `Já tentei ${MAX_TENTATIVAS_AUTOMATICAS_BUSCA_LICITACOES} vezes sozinho e não consegui — clique em "Buscar Oportunidades" quando quiser tentar de novo manualmente.`;
+  }
+  _tentativasAutomaticasRestantesBuscaLicitacoes--;
+  const tentativaAtual = MAX_TENTATIVAS_AUTOMATICAS_BUSCA_LICITACOES - _tentativasAutomaticasRestantesBuscaLicitacoes;
+  cancelarRetentativaBuscaLicitacoesPendente();
+  _timerRetentativaBuscaLicitacoes = setTimeout(()=>{
+    _timerRetentativaBuscaLicitacoes = null;
+    executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData, true);
+  }, INTERVALO_RETENTATIVA_BUSCA_LICITACOES_MS);
+  return `Vou tentar de novo sozinho em ${Math.round(INTERVALO_RETENTATIVA_BUSCA_LICITACOES_MS/60000)} minutos (tentativa ${tentativaAtual}/${MAX_TENTATIVAS_AUTOMATICAS_BUSCA_LICITACOES}) — não precisa ficar clicando, e vou te avisar aqui assim que terminar.`;
+}
+
 async function buscarPaginaPNCP(uf, codigoModalidade, dataInicial, dataFinal, pagina, viaProxy){
   const urlReal = `https://pncp.gov.br/api/consulta/v1/contratacoes/publicacao?dataInicial=${dataParaPNCP(dataInicial)}&dataFinal=${dataParaPNCP(dataFinal)}&codigoModalidadeContratacao=${codigoModalidade}&uf=${uf}&pagina=${pagina}&tamanhoPagina=50`;
   const resp = await fetch(viaProxy ? PNCP_CORS_PROXY_URL(urlReal) : urlReal);
@@ -16517,12 +16602,22 @@ function buscarOportunidadesPNCP(){
   executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData);
 }
 
-async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData){
+async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, combosTotal, filtrosData, ehRetentativaAutomatica){
+  // Uma busca MANUAL nova (usuário clicou o botão, não é o sistema tentando
+  // de novo sozinho) sempre cancela qualquer retentativa pendente da busca
+  // anterior e reinicia a contagem — evita ficar tentando duas buscas
+  // "antigas" ao mesmo tempo em segundo plano.
+  if(!ehRetentativaAutomatica){
+    cancelarRetentativaBuscaLicitacoesPendente();
+    _tentativasAutomaticasRestantesBuscaLicitacoes = MAX_TENTATIVAS_AUTOMATICAS_BUSCA_LICITACOES;
+  }
   const btn = document.getElementById('btn-buscar-oportunidades');
   const statusEl = document.getElementById('licitacoes-busca-status');
   const setStatus = (msg)=>{ if(statusEl) statusEl.textContent = msg; };
-  btn.disabled = true;
-  btn.textContent = '🔎 Buscando...';
+  // btn/statusEl podem não existir se a tela de Licitações ainda nunca foi
+  // aberta nesta sessão (ela só monta o HTML da página na primeira vez) —
+  // não impede a retentativa automática de rodar em segundo plano.
+  if(btn){ btn.disabled = true; btn.textContent = '🔎 Buscando...'; }
   esconderResumoBuscaLicitacoes(); // some o resumo da busca anterior, se tinha algum
   _pncpUsouProxyCors = false;
 
@@ -16776,14 +16871,31 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
           : 'Todas as consultas falharam — o PNCP pode estar limitando muitas buscas seguidas (tente de novo daqui a 1-2 minutos) ou fora do ar no momento.');
       }
     }
+    const tipoResumo = dentroDoRaio.length>0 ? 'success' : ((combosComErro>0||geocodificacaoAbortada) ? 'error' : 'info');
+    const falhouDeVerdade = combosComErro>0 || geocodificacaoAbortada; // instabilidade fora do nosso controle — vale tentar de novo sozinho
+    if(falhouDeVerdade){
+      partesResumo.push(agendarRetentativaBuscaLicitacoesSeSobrar(area, ufs, codigosParaBuscar, combosTotal, filtrosData));
+    }else{
+      cancelarRetentativaBuscaLicitacoesPendente(); // deu certo — não precisa mais de nenhuma retentativa pendente
+    }
+    const mensagemResumo = partesResumo.join(' ');
     // fica fixo na tela (não some sozinho) até o usuário fechar ou buscar de novo
-    mostrarResumoBuscaLicitacoes(partesResumo.join(' '), dentroDoRaio.length>0 ? 'success' : ((combosComErro>0||geocodificacaoAbortada) ? 'error' : 'info'));
+    mostrarResumoBuscaLicitacoes(mensagemResumo, tipoResumo);
+    // notificação global: aparece em qualquer tela do sistema, não só na de
+    // Licitações — importante principalmente pras retentativas automáticas,
+    // que podem terminar enquanto o usuário está em outra parte do sistema.
+    mostrarNotificacaoGlobal(
+      dentroDoRaio.length>0 ? '🔎 Busca de oportunidades concluída' : (falhouDeVerdade ? '⚠️ Busca de oportunidades com falha' : '🔎 Busca de oportunidades concluída'),
+      mensagemResumo, tipoResumo, ()=>navigateTo('licitacoes')
+    );
   }catch(err){
     console.error(err);
-    mostrarResumoBuscaLicitacoes('Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). Tente de novo em instantes.', 'error');
+    const msgFinal = 'Não foi possível concluir a busca no PNCP agora (sem internet ou serviço fora do ar). ' +
+      agendarRetentativaBuscaLicitacoesSeSobrar(area, ufs, codigosParaBuscar, combosTotal, filtrosData);
+    mostrarResumoBuscaLicitacoes(msgFinal, 'error');
+    mostrarNotificacaoGlobal('⚠️ Busca de oportunidades com falha', msgFinal, 'error', ()=>navigateTo('licitacoes'));
   }finally{
-    btn.disabled = false;
-    btn.textContent = '🔎 Buscar Oportunidades';
+    if(btn){ btn.disabled = false; btn.textContent = '🔎 Buscar Oportunidades'; }
     setStatus('');
   }
 }
