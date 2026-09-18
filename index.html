@@ -14845,11 +14845,18 @@ function gerarRelatorioPdfRepasses(modo){
     totalLegadoForaEscopo = pagamentosDoPagador
       .filter(pg=>!pg.vencimentoQuinzena)
       .reduce((s,pg)=>s+pg.valor,0);
-    // Saldo final: soma direta do saldo pendente já calculado em cada linha
-    // (l.saldoPendente já considera TANTO os pagamentos "por pagador geral"
-    // quanto os abatimentos lançados direto na venda, como o "Marcar como
-    // Pago" — por isso é a fonte confiável, em vez de recalcular por fora)
-    saldoFinalLiquido = linhas.reduce((s,l)=>s+Math.max(0,l.saldoPendente),0);
+    // Saldo final: totalPrincipal (soma de l.saldoPendente) JÁ desconta os
+    // abatimentos lançados direto em cada venda (Origem 2 acima — "Marcar
+    // como Pago"/"Pagamento Parcial"), mas NUNCA os pagamentos agregados por
+    // quinzena (Origem 1 — "Fechar Quinzena"), porque esses não ficam presos
+    // a nenhuma venda específica (de propósito, ver abrirFormPagamentoQuinzena).
+    // Por isso é preciso subtrair só a Origem 1 aqui — subtrair
+    // totalPagoRelatorio inteiro contaria a Origem 2 em dobro (ela já está
+    // embutida dentro de totalPrincipal). Sem essa subtração, "Saldo Final"
+    // saía igual ao total das vendas mesmo depois de pagamentos de quinzena
+    // já registrados — o bug que o usuário reportou.
+    const totalPagamentosAgregadosQuinzena = pagamentosAgregados.reduce((s,pg)=>s+pg.valor,0);
+    saldoFinalLiquido = Math.max(0, totalPrincipal - totalPagamentosAgregadosQuinzena);
     pagamentosHtml = pagamentosDoRelatorio.map(pg=>`
         <tr>
           <td>${fmtDate(pg.data)}</td>
