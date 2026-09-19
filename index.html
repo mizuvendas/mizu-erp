@@ -17969,6 +17969,10 @@ function renderDashboard(){
 
   const kpisDespesa = calcularKpisDespesas();
   const licitacoesAndamento = STATE.licitacoes.filter(l=>['Potencial','Participando','Aguardando Resultado'].includes(l.status)).length;
+  // só mostra os gráficos de repasse se houver pelo menos uma venda com
+  // pagador (terceiro) vinculado — sem isso, um gráfico de pizza vazio só
+  // ocuparia espaço à toa pra quem não usa repasse
+  const linhasRepasseDash = getLinhasRepasse();
 
   box.innerHTML = `
     ${renderResumoBomDia(linhasMes, totalBrutoMes)}
@@ -17992,6 +17996,19 @@ function renderDashboard(){
         <div class="kpi-value">${licitacoesAndamento}</div>
       </div>
     </div>
+
+    ${linhasRepasseDash.length>0 ? `
+    <div class="chart-row even">
+      <div class="card">
+        <h3>Repasse por Pagador <span class="hint">total de repasse, dividido por terceiro</span></h3>
+        <div class="chart-box"><canvas id="dash-chart-repasse-pagador"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Repasse: Recebido × A Receber <span class="hint">de tudo que já passou por repasse</span></h3>
+        <div class="chart-box"><canvas id="dash-chart-repasse-status"></canvas></div>
+      </div>
+    </div>
+    ` : ''}
 
     <div class="chart-row">
       <div class="card">
@@ -18291,6 +18308,44 @@ function renderMetaChartPizza(totalLucro, totalDespesas, superavit){
 
 function renderDashCharts(linhas){
   Object.values(dashCharts).forEach(c=>c&&c.destroy());
+
+  // Repasse por Pagador e Recebido × A Receber — mesma lógica anti-dobra
+  // já usada no Relatório de Repasses (PDF): o saldo pendente de cada venda
+  // (l.saldoPendente) já desconta os abatimentos lançados nela (Origem 2 —
+  // "Marcar como Pago"/"Pagamento Parcial"), mas NUNCA os pagamentos
+  // agregados por quinzena (Origem 1 — "Fechar Quinzena"), que não ficam
+  // presos a nenhuma venda específica. Por isso o total pago some as duas
+  // origens, mas o saldo final só desconta a Origem 1 por cima do que
+  // l.saldoPendente já desconta — subtrair as duas contaria a Origem 2 em
+  // dobro.
+  const linhasRepasseChart = getLinhasRepasse();
+  if(linhasRepasseChart.length>0){
+    const totalGeralRepasse = linhasRepasseChart.reduce((s,l)=>s+l.valorComDesconto,0);
+    const saldoPendenteRepasse = linhasRepasseChart.reduce((s,l)=>s+Math.max(0,l.saldoPendente),0);
+    const totalPagamentosAgregados = (STATE.pagamentosRepasse||[]).reduce((s,pg)=>s+pg.valor,0);
+    const saldoFinalRepasse = Math.max(0, saldoPendenteRepasse - totalPagamentosAgregados);
+    const recebidoRepasse = Math.max(0, totalGeralRepasse - saldoFinalRepasse);
+
+    const porPagadorRepasse = {};
+    linhasRepasseChart.forEach(l=>{ porPagadorRepasse[l.pagadorNome] = (porPagadorRepasse[l.pagadorNome]||0) + l.valorComDesconto; });
+    const pagadoresOrd = Object.entries(porPagadorRepasse).sort((a,b)=>b[1]-a[1]);
+    dashCharts.repassePagador = criarGraficoSeguro('dash-chart-repasse-pagador', {
+      type:'pie',
+      data:{ labels: pagadoresOrd.map(x=>x[0]), datasets:[{data:pagadoresOrd.map(x=>x[1]), backgroundColor:['#1B4B5A','#2E7D5B','#C98A2C','#C4483D','#7C9CB0','#8A5FBF','#3D8FA6']}]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{
+        legend:{position:'bottom', labels:{boxWidth:10,font:{size:10.5}}},
+        tooltip:{callbacks:{label:ctx=>ctx.label+': '+fmtMoney(ctx.parsed)}}
+      }}
+    });
+    dashCharts.repasseStatus = criarGraficoSeguro('dash-chart-repasse-status', {
+      type:'pie',
+      data:{ labels:['Recebido','A Receber'], datasets:[{data:[recebidoRepasse, saldoFinalRepasse], backgroundColor:['#2E7D5B','#C4483D']}]},
+      options:{ responsive:true, maintainAspectRatio:false, plugins:{
+        legend:{position:'bottom', labels:{boxWidth:10,font:{size:10.5}}},
+        tooltip:{callbacks:{label:ctx=>ctx.label+': '+fmtMoney(ctx.parsed)}}
+      }}
+    });
+  }
 
   // evolução últimos 6 meses
   const porMes = {};
