@@ -8257,10 +8257,12 @@ function gerarPdfOrcamento(id){
   const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
   const validadeAte = addDays(orcamento.data, orcamento.validadeDias);
 
-  const linhasItens = orcamento.itens.map(it=>`
+  const linhasItens = orcamento.itens.map((it,idx)=>`
     <tr>
-      <td>${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
-      <td>${escapeHtml(it.nome)}${it.marca?` — ${escapeHtml(it.marca)}`:''}</td>
+      <td style="text-align:center;">${idx+1}</td>
+      <td>${escapeHtml(it.nome)}</td>
+      <td style="text-align:center;">${escapeHtml(it.unidade||'UN')}</td>
+      <td style="text-align:center;">${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
       <td style="text-align:right;">${fmtMoney(it.precoUnit)}</td>
       <td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>
     </tr>
@@ -8284,7 +8286,9 @@ function gerarPdfOrcamento(id){
         .meta{ font-size:12px; color:#444; margin-bottom:10px; }
         table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:8px; }
         th{ background:#1B4B5A; color:#fff; text-align:left; padding:8px; }
+        th:first-child{ width:40px; }
         td{ padding:7px 8px; border-bottom:1px solid #ddd; }
+        td:first-child{ color:#666; }
         tfoot td{ font-weight:bold; border-top:2px solid #1B4B5A; font-size:13px; }
         .obs{ margin-top:14px; font-size:11.5px; color:#555; }
         .validade{ margin-top:6px; font-size:11.5px; color:#993C1D; font-weight:bold; }
@@ -8313,11 +8317,11 @@ function gerarPdfOrcamento(id){
       <div class="validade">Válido até: ${fmtDate(validadeAte)}</div>
 
       <table>
-        <thead><tr><th>Qtd</th><th>Produto</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Valor Total</th></tr></thead>
+        <thead><tr><th style="text-align:center;">Item</th><th>Produto</th><th style="text-align:center;">Und.</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Valor Total</th></tr></thead>
         <tbody>${linhasItens}</tbody>
-        ${acrescimo>0 ? `<tr><td colspan="3" style="text-align:right;">Acréscimo${orcamento.acrescimo.descricao?' ('+escapeHtml(orcamento.acrescimo.descricao)+')':''}</td><td style="text-align:right;">${fmtMoney(acrescimo)}</td></tr>` : ''}
-        ${c.temDesconto ? `<tr><td colspan="3" style="text-align:right;">Desconto</td><td style="text-align:right;">-${fmtMoney(c.brutoOriginal-c.bruto)}</td></tr>` : ''}
-        <tfoot><tr><td colspan="3" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto+acrescimo)}</td></tr></tfoot>
+        ${acrescimo>0 ? `<tr><td colspan="5" style="text-align:right;">Acréscimo${orcamento.acrescimo.descricao?' ('+escapeHtml(orcamento.acrescimo.descricao)+')':''}</td><td style="text-align:right;">${fmtMoney(acrescimo)}</td></tr>` : ''}
+        ${c.temDesconto ? `<tr><td colspan="5" style="text-align:right;">Desconto</td><td style="text-align:right;">-${fmtMoney(c.brutoOriginal-c.bruto)}</td></tr>` : ''}
+        <tfoot><tr><td colspan="5" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto+acrescimo)}</td></tr></tfoot>
       </table>
 
       ${orcamento.observacoes ? `<div class="obs"><strong>Observações:</strong> ${escapeHtml(orcamento.observacoes)}</div>` : ''}
