@@ -9298,11 +9298,6 @@ function marcarEntregaConcluida(orcamentoId){
     orcamento.statusEntrega = 'entregue';
     if(vaiConverter){
       executarConversaoOrcamentoEmVenda(orcamento);
-      // marca que a venda nasceu DESTA confirmação de entrega (não de um
-      // "Converter em Venda" manual anterior) — é o que permite
-      // desfazerEntregaOrcamento() saber que pode desfazer a venda junto
-      // com a entrega com segurança, se for clicado "sem querer".
-      orcamento.vendaGeradaAoEntregar = true;
     }
     saveState();
     showToast(vaiConverter ? 'Entrega confirmada e orçamento convertido em venda.' : 'Entrega confirmada.', 'success');
@@ -9310,15 +9305,14 @@ function marcarEntregaConcluida(orcamentoId){
   }, 'Confirmar');
 }
 
-// Desfaz uma entrega marcada por engano. Dois cenários bem diferentes:
-// 1) A venda nasceu JUNTO com essa confirmação de entrega (marcarEntregaConcluida
-//    acima marcou vendaGeradaAoEntregar) e ainda não tem nenhum recebimento/
-//    pagamento de repasse lançado nela — aí dá pra desfazer TUDO com segurança:
-//    apaga a venda, devolve o estoque baixado e volta o orçamento pra "Aprovado".
-// 2) Qualquer outro caso (a venda já existia antes por uma conversão manual
-//    separada, ou já tem recebimento/pagamento registrado) — não mexe na
-//    venda nem no estoque, só volta o status de entrega, e avisa que o
-//    ajuste financeiro/estoque precisa ser manual se for o caso.
+// Desfaz uma entrega marcada por engano — e junto, sempre que der pra fazer
+// com segurança, desfaz TAMBÉM a venda gerada a partir dela (devolve o
+// estoque baixado, remove o lançamento, e volta o orçamento pro status
+// "Aprovado", com a opção de editar/aprovar/recusar de novo, igual antes de
+// converter). A única situação em que NÃO mexe na venda é quando ela já tem
+// algum recebimento ou pagamento de repasse registrado nela de verdade —
+// apagar isso perderia histórico financeiro real, então nesse caso só volta
+// o status de entrega e avisa que o ajuste na venda precisa ser manual.
 function desfazerEntregaOrcamento(orcamentoId){
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
@@ -9331,10 +9325,10 @@ function desfazerEntregaOrcamento(orcamentoId){
     (venda.repasse && (venda.repasse.abatimentos||[]).length>0)
   );
 
-  if(orcamento.vendaGeradaAoEntregar && venda && !vendaTemAtividade){
+  if(venda && !vendaTemAtividade){
     confirmAction(
       'Desfazer entrega',
-      'Como este pedido ainda não tinha nenhum recebimento ou pagamento de repasse lançado, desfazer aqui também desfaz a venda que foi gerada automaticamente ao marcar como entregue: devolve o estoque baixado e remove o lançamento. O pedido volta pro status "Aprovado" e pra rota de entrega. Deseja continuar?',
+      'Isso desfaz a entrega E a venda gerada a partir deste orçamento: devolve o estoque baixado, remove o lançamento financeiro, e o pedido volta pro status "Aprovado" — com a opção de editar, aprovar ou recusar de novo — e pra rota de entrega. Deseja continuar?',
       ()=>{
         (STATE.movimentosEstoque||[]).filter(m=>m.refId===venda.id).forEach(m=>{
           const produto = STATE.produtos.find(p=>p.id===m.produtoId);
@@ -9343,11 +9337,10 @@ function desfazerEntregaOrcamento(orcamentoId){
         STATE.movimentosEstoque = (STATE.movimentosEstoque||[]).filter(m=>m.refId!==venda.id);
         STATE.vendas = STATE.vendas.filter(v=>v.id!==venda.id);
         delete orcamento.vendaGeradaId;
-        delete orcamento.vendaGeradaAoEntregar;
         orcamento.status = 'aprovado';
         orcamento.statusEntrega = 'em_rota';
         saveState();
-        showToast('Entrega e venda desfeitas — o pedido voltou pra rota, com o estoque restaurado.', 'success');
+        showToast('Entrega e venda desfeitas — o pedido voltou pra rota, editável de novo.', 'success');
         renderListaOrcamentos();
         renderLogistica();
       },
@@ -9359,13 +9352,11 @@ function desfazerEntregaOrcamento(orcamentoId){
   if(venda){
     confirmAction(
       'Desfazer entrega',
-      vendaTemAtividade
-        ? 'Este pedido já tem recebimento ou pagamento de repasse registrado na venda gerada — por segurança, não mexo nela. O pedido volta pra "Em Rota de Entrega", mas a venda e a baixa de estoque já feitas continuam valendo; ajuste manualmente em Vendas/Estoque se precisar.'
-        : 'A venda deste pedido já existia antes de marcar como entregue (veio de uma conversão manual separada) — por segurança, não mexo nela. O pedido só volta pra "Em Rota de Entrega".',
+      'Este pedido já tem recebimento ou pagamento de repasse registrado na venda gerada — por segurança, não apago essa venda (perderia esse histórico). O pedido volta pra "Em Rota de Entrega", mas continua com o selo "Virou Venda" e sem opção de editar; ajuste manualmente em Vendas/Estoque se precisar desfazer isso também.',
       ()=>{
         orcamento.statusEntrega = 'em_rota';
         saveState();
-        showToast('Entrega desfeita — o pedido voltou pra rota.', 'success');
+        showToast('Entrega desfeita — o pedido voltou pra rota (a venda com pagamento registrado foi preservada).', 'success');
         renderListaOrcamentos();
         renderLogistica();
       },
