@@ -7505,6 +7505,108 @@ function removerItemOrcamento(idx){
   atualizarResumoOrcamento();
 }
 
+// Modal de edição completa de um item JÁ no carrinho do orçamento — além do
+// que já dava pra editar direto na tabela (quantidade, preço, origem), aqui
+// dá pra ajustar nome, marca, fornecedor, unidade e custo, tudo num só
+// lugar. Vale só pra este orçamento — nunca mexe no cadastro do produto.
+function abrirEditarItemCarrinhoOrcamento(idx){
+  const item = carrinhoOrcamentoAtual[idx];
+  if(!item) return;
+  const unidadesPadrao = ['UN','CX','KG','L','M','PCT','PAR'];
+  const opcoesUnidade = unidadesPadrao.includes(item.unidade) ? unidadesPadrao : [...unidadesPadrao, item.unidade].filter(Boolean);
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-editar-item-carrinho-orcamento';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✏️</div>
+        <div>
+          <h3>Editar Item</h3>
+          <div class="sub">Vale só pra este orçamento — não muda o cadastro do produto</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Nome do produto <span class="req">*</span></label>
+          <input type="text" id="eic-nome" value="${escapeAttr(item.nome)}">
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Marca</label>
+          <input type="text" id="eic-marca" value="${escapeAttr(item.marca||'')}">
+        </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Fornecedor</label>
+          <input type="text" id="eic-fornecedor" value="${escapeAttr(item.fornecedor||'')}">
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+          <div class="field" style="flex:1;min-width:100px;margin:0;">
+            <label>Unidade</label>
+            <select id="eic-unidade">${opcoesUnidade.map(u=>`<option value="${escapeAttr(u)}" ${u===item.unidade?'selected':''}>${escapeHtml(u)}</option>`).join('')}</select>
+          </div>
+          <div class="field" style="flex:1;min-width:100px;margin:0;">
+            <label>Quantidade <span class="req">*</span></label>
+            <input type="number" min="0.01" step="0.01" id="eic-qtd" value="${item.qtd}">
+          </div>
+        </div>
+        <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
+          <div class="field" style="flex:1;min-width:100px;margin:0;">
+            <label>Valor Unit. (R$) <span class="req">*</span></label>
+            <input type="number" min="0" step="0.01" id="eic-preco" value="${item.precoUnit}">
+          </div>
+          <div class="field" style="flex:1;min-width:100px;margin:0;">
+            <label>Custo Unit. (R$)</label>
+            <input type="number" min="0" step="0.01" id="eic-custo" value="${item.custoUnit}">
+          </div>
+        </div>
+        ${item.vendidoEmCaixa ? `<p class="help-text" style="margin-top:10px;">Este item está marcado como "vendido em caixa" — como a quantidade aqui é sempre em unidades, salvar aqui desliga esse modo (a linha volta a mostrar só a quantidade normal).</p>` : ''}
+        <div class="form-actions">
+          <button type="button" class="btn" id="eic-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="eic-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('eic-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('eic-nome').focus();
+  document.getElementById('eic-confirmar').addEventListener('click', ()=>salvarEdicaoItemCarrinhoOrcamento(idx, modal));
+}
+
+function salvarEdicaoItemCarrinhoOrcamento(idx, modal){
+  const item = carrinhoOrcamentoAtual[idx];
+  if(!item) return;
+  const nome = document.getElementById('eic-nome').value.trim();
+  const qtd = parseFloat(document.getElementById('eic-qtd').value);
+  const preco = parseFloat(document.getElementById('eic-preco').value);
+  const custoRaw = document.getElementById('eic-custo').value;
+  const custo = custoRaw==='' ? item.custoUnit : parseFloat(custoRaw);
+  if(!nome){ showToast('Informe o nome do produto.', 'error'); return; }
+  if(isNaN(qtd) || qtd<=0){ showToast('Informe uma quantidade válida.', 'error'); return; }
+  if(isNaN(preco) || preco<0){ showToast('Informe um valor unitário válido.', 'error'); return; }
+  if(isNaN(custo) || custo<0){ showToast('Informe um custo unitário válido.', 'error'); return; }
+
+  item.nome = nome;
+  item.marca = document.getElementById('eic-marca').value.trim();
+  item.fornecedor = document.getElementById('eic-fornecedor').value.trim();
+  item.unidade = document.getElementById('eic-unidade').value;
+  item.qtd = qtd;
+  item.precoUnit = preco;
+  item.custoUnit = custo;
+  // se o item era "vendido em caixa", a descrição da linha (ex: "2 CX (24
+  // UN)") ficaria desatualizada com uma quantidade editada aqui (sempre em
+  // unidades reais) — mais simples e honesto é sair do modo caixa nesse caso.
+  if(item.vendidoEmCaixa){
+    item.vendidoEmCaixa = false; item.qtdCaixas = null; item.unidadesPorCaixa = null; item.descricaoLinha = null;
+  }
+
+  renderCarrinhoOrcamento();
+  atualizarResumoOrcamento();
+  modal.remove();
+  showToast('Item atualizado.', 'success');
+}
+
 // Edita a origem de coleta de um item JÁ adicionado ao carrinho — direto
 // na tabela, sem modal. Sempre referencia um fornecedor/local CADASTRADO
 // (com endereço), nunca mais texto livre — o Planejador de Rotas depende
@@ -7579,7 +7681,10 @@ function renderCarrinhoOrcamento(){
       <td><input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)"></td>
       <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
-      <td><button class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})">Remover</button></td>
+      <td class="cell-actions">
+        <button class="btn btn-sm" onclick="abrirEditarItemCarrinhoOrcamento(${idx})">✏️ Editar</button>
+        <button class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})">Remover</button>
+      </td>
     </tr>
   `).join('');
 }
@@ -8625,7 +8730,13 @@ function getDadosLogistica(){
     };
   });
 
-  // pontos de coleta únicos, coletando de todas as entregas ao mesmo tempo
+  return { entregas, pontosColeta: computarPontosColeta(entregas) };
+}
+
+// Monta os pontos de coleta únicos a partir de um conjunto de entregas —
+// separado de getDadosLogistica() pra poder ser recalculado só com o
+// subconjunto de entregas que o usuário selecionar (ver logisticaEntregasSelecionadas).
+function computarPontosColeta(entregas){
   const pontosMap = new Map(); // chave "tipo:id" -> ponto
   entregas.forEach(entrega=>{
     entrega.itens.forEach(it=>{
@@ -8643,8 +8754,35 @@ function getDadosLogistica(){
       pontosMap.get(chave).itens.push({ nome: it.nome, qtd: it.qtd, orcamentoId: entrega.orcamentoId });
     });
   });
+  return [...pontosMap.values()];
+}
 
-  return { entregas, pontosColeta: [...pontosMap.values()] };
+// Quais entregas ("rotas") o usuário marcou pra entrar na análise do roteiro
+// — por padrão, TODA entrega nova começa marcada (preserva o comportamento
+// de antes, que sempre considerava tudo). O usuário pode desmarcar as que
+// não quer nessa rodada de cálculo; a escolha fica só na tela (não precisa
+// salvar no STATE) mas sobrevive a re-renderizações da própria página.
+let logisticaEntregasSelecionadas = new Set();
+let logisticaIdsConhecidosLogistica = new Set();
+
+function garantirSelecaoLogistica(entregas){
+  entregas.forEach(e=>{
+    if(!logisticaIdsConhecidosLogistica.has(e.orcamentoId)){
+      logisticaEntregasSelecionadas.add(e.orcamentoId); // entrega nova (recém aprovada) entra selecionada por padrão
+      logisticaIdsConhecidosLogistica.add(e.orcamentoId);
+    }
+  });
+  // limpa quem não é mais uma entrega em rota (foi marcada como entregue, por exemplo)
+  const idsAtuais = new Set(entregas.map(e=>e.orcamentoId));
+  [...logisticaIdsConhecidosLogistica].forEach(id=>{
+    if(!idsAtuais.has(id)){ logisticaIdsConhecidosLogistica.delete(id); logisticaEntregasSelecionadas.delete(id); }
+  });
+}
+
+function getEntregasSelecionadasLogistica(){
+  const { entregas } = getDadosLogistica();
+  garantirSelecaoLogistica(entregas);
+  return entregas.filter(e=>logisticaEntregasSelecionadas.has(e.orcamentoId));
 }
 
 // Monta o roteiro final: alterna coleta e entrega conforme a restrição de
@@ -8652,8 +8790,9 @@ function getDadosLogistica(){
 // tiverem sido coletados). Algoritmo guloso — a cada passo, escolhe o
 // próximo ponto (coleta OU entrega já liberada) mais próximo do ponto
 // atual; sem coordenadas, cai pro final da fila em vez de travar o roteiro.
-function calcularRoteiro(){
-  const { entregas, pontosColeta } = getDadosLogistica();
+function calcularRoteiro(entregasParaRoteiro){
+  const entregas = entregasParaRoteiro || getEntregasSelecionadasLogistica();
+  const pontosColeta = computarPontosColeta(entregas);
 
   const coletasPendentes = pontosColeta.map(p=>({...p, tipo:'coleta'}));
   // cada entrega rastreia quantos itens dela ainda faltam coletar
@@ -8839,7 +8978,10 @@ function renderLogistica(){
     return;
   }
 
-  const { roteiro, entregasBloqueadas } = calcularRoteiro();
+  garantirSelecaoLogistica(entregas);
+  const entregasSelecionadas = entregas.filter(e=>logisticaEntregasSelecionadas.has(e.orcamentoId));
+  const todasSelecionadas = entregas.length>0 && entregas.every(e=>logisticaEntregasSelecionadas.has(e.orcamentoId));
+  const { roteiro, entregasBloqueadas } = calcularRoteiro(entregasSelecionadas);
 
   // mapa orcamentoId -> nome do cliente, só pra mostrar na tela (nunca no
   // PDF de coleta) pra qual cliente é cada item que precisa ser pego ali
@@ -8900,12 +9042,14 @@ function renderLogistica(){
   const tabelaEntregas = `
     <div class="card">
       <h3>📋 Entregas em Rota</h3>
+      <p class="help-text" style="margin-top:-4px;">Marque quais entregas entram no cálculo do roteiro abaixo — desmarcadas ficam de fora da análise, sem sumir da lista.</p>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Data</th><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
+          <thead><tr><th style="width:34px;"><input type="checkbox" id="logistica-selecionar-todas" title="Selecionar/desmarcar todas" ${todasSelecionadas?'checked':''}></th><th>Data</th><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
           <tbody>
             ${entregas.map(e=>`
               <tr>
+                <td><input type="checkbox" class="logistica-checkbox-entrega" data-id="${e.orcamentoId}" ${logisticaEntregasSelecionadas.has(e.orcamentoId)?'checked':''}></td>
                 <td>${fmtDate(e.data)}</td>
                 <td>${escapeHtml(e.clienteNome)}</td>
                 <td class="num">${fmtMoney(e.valor)}</td>
@@ -8917,22 +9061,25 @@ function renderLogistica(){
       </div>
     </div>`;
 
+  const qtdColetasNoRoteiro = roteiro.filter(p=>p.tipo==='coleta').length;
+  const semSelecao = entregasSelecionadas.length===0;
+
   box.innerHTML = cardPartida + tabelaEntregas + `
     <div class="card" style="margin-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           <h3 style="margin:0;">Roteiro do dia</h3>
-          <p class="help-text" style="margin:2px 0 0;">${pontosColeta.length} ponto(s) de coleta · ${entregas.length} entrega(s) pendente(s)</p>
+          <p class="help-text" style="margin:2px 0 0;">${entregasSelecionadas.length} de ${entregas.length} entrega(s) selecionada(s) para o roteiro${semSelecao?'':` · ${qtdColetasNoRoteiro} ponto(s) de coleta`}</p>
         </div>
         <div class="cell-actions">
-          <button class="btn" id="logistica-btn-pdf-roteiro">📄 Baixar Roteiro (PDF)</button>
-          <button class="btn" id="logistica-btn-whatsapp">📱 Copiar para WhatsApp</button>
-          <button class="btn" id="logistica-btn-mapa">🗺️ Ver no Mapa</button>
+          <button class="btn" id="logistica-btn-pdf-roteiro" ${semSelecao?'disabled':''}>📄 Baixar Roteiro (PDF)</button>
+          <button class="btn" id="logistica-btn-whatsapp" ${semSelecao?'disabled':''}>📱 Copiar para WhatsApp</button>
+          <button class="btn" id="logistica-btn-mapa" ${semSelecao?'disabled':''}>🗺️ Ver no Mapa</button>
         </div>
       </div>
     </div>
     <div style="margin-top:14px;">
-      ${linhasRoteiro}
+      ${semSelecao ? `<div class="card"><div class="empty-state"><div class="ic">☑️</div><p>Nenhuma entrega marcada pra entrar na análise do roteiro. Marque pelo menos uma na tabela acima.</p></div></div>` : linhasRoteiro}
     </div>
     ${blocoBloqueadas}
   `;
@@ -8940,6 +9087,21 @@ function renderLogistica(){
   document.getElementById('logistica-btn-pdf-roteiro').addEventListener('click', gerarPdfRoteiro);
   document.getElementById('logistica-btn-whatsapp').addEventListener('click', copiarRoteiroWhatsApp);
   document.getElementById('logistica-btn-mapa').addEventListener('click', abrirMapaRoteiro);
+  document.querySelectorAll('.logistica-checkbox-entrega').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const id = cb.dataset.id;
+      if(cb.checked) logisticaEntregasSelecionadas.add(id); else logisticaEntregasSelecionadas.delete(id);
+      renderLogistica();
+    });
+  });
+  const selTodas = document.getElementById('logistica-selecionar-todas');
+  if(selTodas){
+    selTodas.addEventListener('change', ()=>{
+      if(selTodas.checked){ entregas.forEach(e=>logisticaEntregasSelecionadas.add(e.orcamentoId)); }
+      else{ entregas.forEach(e=>logisticaEntregasSelecionadas.delete(e.orcamentoId)); }
+      renderLogistica();
+    });
+  }
   ativarCardPartidaLogistica();
 }
 
