@@ -6757,6 +6757,36 @@ let carrinhoOrcamentoAtual = [];
 let orcamentoEmEdicaoId = null;
 const RASCUNHO_ORCAMENTO_KEY = 'gv_rascunho_orcamento_v1';
 
+// Ordem/filtro da lista de "Orçamentos Lançados" — lembrados entre
+// visitas (localStorage) pra não ter que reconfigurar toda vez. Por
+// padrão: mais recente primeiro. "Esconder já entregues e virados em
+// venda" começa DESMARCADO (mostra tudo, como sempre foi) — histórico
+// financeiro nunca some sozinho sem o usuário pedir; é uma opção pra
+// quem quiser ligar, não um comportamento automático.
+const PREFS_LISTA_ORCAMENTOS_KEY = 'gv_prefs_lista_orcamentos_v1';
+function carregarPrefsListaOrcamentos(){
+  try{
+    const salvo = JSON.parse(localStorage.getItem(PREFS_LISTA_ORCAMENTOS_KEY)||'{}');
+    return { ordemData: salvo.ordemData==='asc' ? 'asc' : 'desc', esconderFinalizados: salvo.esconderFinalizados===true };
+  }catch(e){ return { ordemData: 'desc', esconderFinalizados: false }; }
+}
+const _prefsListaOrcamentosIniciais = carregarPrefsListaOrcamentos();
+let orcamentoListaOrdemData = _prefsListaOrcamentosIniciais.ordemData;
+let orcamentoListaEsconderFinalizados = _prefsListaOrcamentosIniciais.esconderFinalizados;
+function salvarPrefsListaOrcamentos(){
+  localStorage.setItem(PREFS_LISTA_ORCAMENTOS_KEY, JSON.stringify({ ordemData: orcamentoListaOrdemData, esconderFinalizados: orcamentoListaEsconderFinalizados }));
+}
+function alternarOrdemDataOrcamentos(){
+  orcamentoListaOrdemData = orcamentoListaOrdemData==='desc' ? 'asc' : 'desc';
+  salvarPrefsListaOrcamentos();
+  renderListaOrcamentos();
+}
+function alternarEsconderFinalizadosOrcamentos(marcado){
+  orcamentoListaEsconderFinalizados = !!marcado;
+  salvarPrefsListaOrcamentos();
+  renderListaOrcamentos();
+}
+
 // Salva automaticamente o que está sendo digitado no formulário de
 // orçamento (cliente, data, itens, etc.) — se a aba fechar ou o navegador
 // travar antes de clicar em "Salvar Orçamento", dá pra retomar de onde
@@ -7022,7 +7052,7 @@ function renderOrcamentos(){
 
     <div class="card">
       <h3>Orçamentos Lançados</h3>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
         <div class="field" style="margin:0;min-width:180px;">
           <label style="font-size:12px;">Filtrar por status</label>
           <select id="orc-lista-filtro-status" onchange="renderListaOrcamentos()">
@@ -7035,10 +7065,14 @@ function renderOrcamentos(){
             <option value="convertido">Virou Venda</option>
           </select>
         </div>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;padding-bottom:2px;">
+          <input type="checkbox" id="orc-lista-esconder-finalizados" style="width:auto;" onchange="alternarEsconderFinalizadosOrcamentos(this.checked)">
+          Esconder já entregues e virados em venda
+        </label>
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Data</th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
       </div>
@@ -7550,15 +7584,28 @@ function abrirEditarItemCarrinhoOrcamento(idx){
             <input type="number" min="0.01" step="0.01" id="eic-qtd" value="${item.qtd}">
           </div>
         </div>
+        <div class="field" style="margin-top:10px;">
+          <label>Preço de Tabela (R$) <span class="req">*</span></label>
+          <input type="number" min="0" step="0.01" id="eic-preco-tabela" value="${item.precoUnitOriginal!=null?item.precoUnitOriginal:item.precoUnit}">
+        </div>
         <div style="display:flex;gap:10px;margin-top:10px;flex-wrap:wrap;">
-          <div class="field" style="flex:1;min-width:100px;margin:0;">
-            <label>Valor Unit. (R$) <span class="req">*</span></label>
-            <input type="number" min="0" step="0.01" id="eic-preco" value="${item.precoUnit}">
+          <div class="field" style="flex:1;min-width:130px;margin:0;">
+            <label>Desconto no item</label>
+            <select id="eic-desconto-tipo">
+              <option value="" ${!item.descontoItemTipo?'selected':''}>Sem desconto</option>
+              <option value="pct" ${item.descontoItemTipo==='pct'?'selected':''}>Porcentagem (%)</option>
+              <option value="valor" ${item.descontoItemTipo==='valor'?'selected':''}>Valor (R$)</option>
+            </select>
           </div>
           <div class="field" style="flex:1;min-width:100px;margin:0;">
-            <label>Custo Unit. (R$)</label>
-            <input type="number" min="0" step="0.01" id="eic-custo" value="${item.custoUnit}">
+            <label>Valor do desconto</label>
+            <input type="number" min="0" step="0.01" id="eic-desconto-valor" value="${item.descontoItemValor!=null?item.descontoItemValor:''}" ${item.descontoItemTipo?'':'disabled'}>
           </div>
+        </div>
+        <p class="help-text" style="margin-top:6px;">Valor Unit. com desconto: <strong id="eic-preco-final-preview">${fmtMoney(item.precoUnit)}</strong> · Subtotal: <strong id="eic-subtotal-preview">${fmtMoney(item.qtd*item.precoUnit)}</strong></p>
+        <div class="field" style="margin-top:10px;">
+          <label>Custo Unit. (R$)</label>
+          <input type="number" min="0" step="0.01" id="eic-custo" value="${item.custoUnit}">
         </div>
         ${item.vendidoEmCaixa ? `<p class="help-text" style="margin-top:10px;">Este item está marcado como "vendido em caixa" — como a quantidade aqui é sempre em unidades, salvar aqui desliga esse modo (a linha volta a mostrar só a quantidade normal).</p>` : ''}
         <div class="form-actions">
@@ -7572,6 +7619,40 @@ function abrirEditarItemCarrinhoOrcamento(idx){
   document.getElementById('eic-cancelar').addEventListener('click', ()=>modal.remove());
   document.getElementById('eic-nome').focus();
   document.getElementById('eic-confirmar').addEventListener('click', ()=>salvarEdicaoItemCarrinhoOrcamento(idx, modal));
+
+  ['eic-preco-tabela','eic-desconto-tipo','eic-desconto-valor','eic-qtd'].forEach(id=>{
+    document.getElementById(id).addEventListener('input', atualizarPreviewDescontoItemCarrinhoModal);
+    document.getElementById(id).addEventListener('change', atualizarPreviewDescontoItemCarrinhoModal);
+  });
+  atualizarPreviewDescontoItemCarrinhoModal();
+}
+
+// Recalcula ao vivo, dentro do modal de edição de item, o "Valor Unit. com
+// desconto" e o subtotal, conforme o preço de tabela / tipo / valor do
+// desconto (ou a quantidade) mudam — só atualiza a prévia, quem grava de
+// verdade é salvarEdicaoItemCarrinhoOrcamento().
+function atualizarPreviewDescontoItemCarrinhoModal(){
+  const campoTabela = document.getElementById('eic-preco-tabela');
+  const campoTipo = document.getElementById('eic-desconto-tipo');
+  const campoValor = document.getElementById('eic-desconto-valor');
+  const campoQtd = document.getElementById('eic-qtd');
+  if(!campoTabela || !campoTipo || !campoValor || !campoQtd) return;
+
+  const tabela = parseFloat(campoTabela.value);
+  const tipo = campoTipo.value;
+  campoValor.disabled = !tipo;
+  if(!tipo) campoValor.value = '';
+  const valorDesconto = parseFloat(campoValor.value);
+  const qtd = parseFloat(campoQtd.value);
+
+  let precoFinal = isNaN(tabela) ? 0 : tabela;
+  if(tipo==='pct' && !isNaN(valorDesconto)){
+    precoFinal = tabela * (1 - Math.min(100, Math.max(0, valorDesconto))/100);
+  }else if(tipo==='valor' && !isNaN(valorDesconto)){
+    precoFinal = Math.max(0, tabela - valorDesconto);
+  }
+  document.getElementById('eic-preco-final-preview').textContent = fmtMoney(precoFinal);
+  document.getElementById('eic-subtotal-preview').textContent = fmtMoney(precoFinal * (isNaN(qtd)?0:qtd));
 }
 
 function salvarEdicaoItemCarrinhoOrcamento(idx, modal){
@@ -7579,20 +7660,32 @@ function salvarEdicaoItemCarrinhoOrcamento(idx, modal){
   if(!item) return;
   const nome = document.getElementById('eic-nome').value.trim();
   const qtd = parseFloat(document.getElementById('eic-qtd').value);
-  const preco = parseFloat(document.getElementById('eic-preco').value);
+  const precoTabela = parseFloat(document.getElementById('eic-preco-tabela').value);
+  const descontoTipo = document.getElementById('eic-desconto-tipo').value || null;
+  const descontoValor = descontoTipo ? parseFloat(document.getElementById('eic-desconto-valor').value) : null;
   const custoRaw = document.getElementById('eic-custo').value;
   const custo = custoRaw==='' ? item.custoUnit : parseFloat(custoRaw);
   if(!nome){ showToast('Informe o nome do produto.', 'error'); return; }
   if(isNaN(qtd) || qtd<=0){ showToast('Informe uma quantidade válida.', 'error'); return; }
-  if(isNaN(preco) || preco<0){ showToast('Informe um valor unitário válido.', 'error'); return; }
+  if(isNaN(precoTabela) || precoTabela<0){ showToast('Informe um preço de tabela válido.', 'error'); return; }
+  if(descontoTipo && (isNaN(descontoValor) || descontoValor<0)){ showToast('Informe um valor de desconto válido.', 'error'); return; }
+  if(descontoTipo==='pct' && descontoValor>100){ showToast('O desconto em porcentagem não pode passar de 100%.', 'error'); return; }
   if(isNaN(custo) || custo<0){ showToast('Informe um custo unitário válido.', 'error'); return; }
+
+  let precoFinal = precoTabela;
+  if(descontoTipo==='pct') precoFinal = precoTabela * (1 - descontoValor/100);
+  else if(descontoTipo==='valor') precoFinal = Math.max(0, precoTabela - descontoValor);
+  precoFinal = Math.round(precoFinal*100)/100;
 
   item.nome = nome;
   item.marca = document.getElementById('eic-marca').value.trim();
   item.fornecedor = document.getElementById('eic-fornecedor').value.trim();
   item.unidade = document.getElementById('eic-unidade').value;
   item.qtd = qtd;
-  item.precoUnit = preco;
+  item.precoUnitOriginal = precoTabela;
+  item.descontoItemTipo = descontoTipo;
+  item.descontoItemValor = descontoTipo ? descontoValor : null;
+  item.precoUnit = precoFinal;
   item.custoUnit = custo;
   // se o item era "vendido em caixa", a descrição da linha (ex: "2 CX (24
   // UN)") ficaria desatualizada com uma quantidade editada aqui (sempre em
@@ -7678,7 +7771,10 @@ function renderCarrinhoOrcamento(){
         <input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)">
         ${it.vendidoEmCaixa ? `<input type="text" value="${escapeAttr(it.descricaoLinha||'')}" title="Descrição da linha (só exibição, editável)" style="width:110px;margin-top:3px;padding:2px 5px;font-size:11px;color:var(--ink-soft);display:block;" onchange="editarDescricaoLinhaItemOrcamento(${idx}, this.value)">` : ''}
       </td>
-      <td><input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)"></td>
+      <td>
+        <input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)">
+        ${it.descontoItemTipo ? `<div style="font-size:10.5px;color:var(--negative);margin-top:2px;text-align:center;">🏷️ ${it.descontoItemTipo==='pct'?`-${fmtNum(it.descontoItemValor)}%`:`-${fmtMoney(it.descontoItemValor)}`} <span style="color:var(--ink-faint);text-decoration:line-through;">${fmtMoney(it.precoUnitOriginal)}</span></div>` : ''}
+      </td>
       <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
       <td class="cell-actions">
@@ -7708,7 +7804,14 @@ function editarQtdItemOrcamento(idx, novoValor){
 function editarPrecoItemOrcamento(idx, novoValor){
   const preco = parseFloat(novoValor);
   if(isNaN(preco) || preco<0){ showToast('Preço inválido.', 'error'); renderCarrinhoOrcamento(); return; }
-  carrinhoOrcamentoAtual[idx].precoUnit = preco;
+  const item = carrinhoOrcamentoAtual[idx];
+  item.precoUnit = preco;
+  // editar o preço direto aqui (fora do modal) substitui qualquer desconto
+  // de item configurado em "Editar" — evita ficar com um desconto "fantasma"
+  // calculado em cima de um preço de tabela que não é mais o atual.
+  item.descontoItemTipo = null;
+  item.descontoItemValor = null;
+  item.precoUnitOriginal = preco;
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
 }
@@ -8098,6 +8201,10 @@ function renderListaOrcamentos(){
   renderOrcamentosEmAndamento();
 
   const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
+  const checkboxEsconder = document.getElementById('orc-lista-esconder-finalizados');
+  if(checkboxEsconder) checkboxEsconder.checked = orcamentoListaEsconderFinalizados;
+  const setaOrdem = document.getElementById('orc-lista-seta-ordem');
+  if(setaOrdem) setaOrdem.textContent = orcamentoListaOrdemData==='desc' ? '▼' : '▲';
 
   // Pré-vendas e rascunhos ainda NÃO fazem parte dos "Orçamentos Lançados"
   // de verdade — ficam só na lista de "Orçamentos em Andamento" (ver
@@ -8112,8 +8219,20 @@ function renderListaOrcamentos(){
   if(filtroStatus){
     lista = lista.filter(o=>o.status===filtroStatus);
   }
-  // mais antigo primeiro (ordem cronológica) — pedido do usuário
-  const orcamentosOrdenados = lista.sort((a,b)=> a.data<b.data ? -1 : (a.data>b.data ? 1 : 0));
+  if(orcamentoListaEsconderFinalizados){
+    // "finalizado" = já foi entregue E já virou venda — o par que não
+    // precisa mais de nenhuma ação. Só sai da vista por padrão, continua
+    // tudo salvo e reaparece desmarcando a caixinha ou filtrando por status.
+    lista = lista.filter(o=>!(o.statusEntrega==='entregue' && (o.status==='convertido' || !!o.vendaGeradaId)));
+  }
+  // Mais recente primeiro por padrão (data, com a hora de criação como
+  // desempate dentro do mesmo dia) — clicar no cabeçalho "Data" inverte.
+  const orcamentosOrdenados = lista.sort((a,b)=>{
+    if(a.data!==b.data) return orcamentoListaOrdemData==='desc' ? (a.data<b.data?1:-1) : (a.data<b.data?-1:1);
+    const criadoA = a.criadoEm||'', criadoB = b.criadoEm||'';
+    if(criadoA===criadoB) return 0;
+    return orcamentoListaOrdemData==='desc' ? (criadoA<criadoB?1:-1) : (criadoA<criadoB?-1:1);
+  });
 
   if(orcamentosOrdenados.length===0){
     tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
@@ -8158,6 +8277,7 @@ function renderListaOrcamentos(){
                 <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
                 <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+                ${statusEntrega==='entregue' ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer Entrega</button>` : ''}
                 ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
                 <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
                 ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
@@ -9150,11 +9270,94 @@ function marcarEntregaConcluida(orcamentoId){
     orcamento.statusEntrega = 'entregue';
     if(vaiConverter){
       executarConversaoOrcamentoEmVenda(orcamento);
+      // marca que a venda nasceu DESTA confirmação de entrega (não de um
+      // "Converter em Venda" manual anterior) — é o que permite
+      // desfazerEntregaOrcamento() saber que pode desfazer a venda junto
+      // com a entrega com segurança, se for clicado "sem querer".
+      orcamento.vendaGeradaAoEntregar = true;
     }
     saveState();
     showToast(vaiConverter ? 'Entrega confirmada e orçamento convertido em venda.' : 'Entrega confirmada.', 'success');
     renderLogistica();
   }, 'Confirmar');
+}
+
+// Desfaz uma entrega marcada por engano. Dois cenários bem diferentes:
+// 1) A venda nasceu JUNTO com essa confirmação de entrega (marcarEntregaConcluida
+//    acima marcou vendaGeradaAoEntregar) e ainda não tem nenhum recebimento/
+//    pagamento de repasse lançado nela — aí dá pra desfazer TUDO com segurança:
+//    apaga a venda, devolve o estoque baixado e volta o orçamento pra "Aprovado".
+// 2) Qualquer outro caso (a venda já existia antes por uma conversão manual
+//    separada, ou já tem recebimento/pagamento registrado) — não mexe na
+//    venda nem no estoque, só volta o status de entrega, e avisa que o
+//    ajuste financeiro/estoque precisa ser manual se for o caso.
+function desfazerEntregaOrcamento(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  if(orcamento.statusEntrega!=='entregue'){ showToast('Este pedido não está marcado como entregue.', 'error'); return; }
+
+  const venda = orcamento.vendaGeradaId ? STATE.vendas.find(v=>v.id===orcamento.vendaGeradaId) : null;
+  const vendaTemAtividade = !!venda && (
+    (venda.receber && venda.receber.recebido) ||
+    (venda.parcelasReceber||[]).some(p=>p.recebido) ||
+    (venda.repasse && (venda.repasse.abatimentos||[]).length>0)
+  );
+
+  if(orcamento.vendaGeradaAoEntregar && venda && !vendaTemAtividade){
+    confirmAction(
+      'Desfazer entrega',
+      'Como este pedido ainda não tinha nenhum recebimento ou pagamento de repasse lançado, desfazer aqui também desfaz a venda que foi gerada automaticamente ao marcar como entregue: devolve o estoque baixado e remove o lançamento. O pedido volta pro status "Aprovado" e pra rota de entrega. Deseja continuar?',
+      ()=>{
+        (STATE.movimentosEstoque||[]).filter(m=>m.refId===venda.id).forEach(m=>{
+          const produto = STATE.produtos.find(p=>p.id===m.produtoId);
+          if(produto) produto.estoqueAtual = (produto.estoqueAtual||0) + m.qtd;
+        });
+        STATE.movimentosEstoque = (STATE.movimentosEstoque||[]).filter(m=>m.refId!==venda.id);
+        STATE.vendas = STATE.vendas.filter(v=>v.id!==venda.id);
+        delete orcamento.vendaGeradaId;
+        delete orcamento.vendaGeradaAoEntregar;
+        orcamento.status = 'aprovado';
+        orcamento.statusEntrega = 'em_rota';
+        saveState();
+        showToast('Entrega e venda desfeitas — o pedido voltou pra rota, com o estoque restaurado.', 'success');
+        renderListaOrcamentos();
+        renderLogistica();
+      },
+      'Desfazer tudo'
+    );
+    return;
+  }
+
+  if(venda){
+    confirmAction(
+      'Desfazer entrega',
+      vendaTemAtividade
+        ? 'Este pedido já tem recebimento ou pagamento de repasse registrado na venda gerada — por segurança, não mexo nela. O pedido volta pra "Em Rota de Entrega", mas a venda e a baixa de estoque já feitas continuam valendo; ajuste manualmente em Vendas/Estoque se precisar.'
+        : 'A venda deste pedido já existia antes de marcar como entregue (veio de uma conversão manual separada) — por segurança, não mexo nela. O pedido só volta pra "Em Rota de Entrega".',
+      ()=>{
+        orcamento.statusEntrega = 'em_rota';
+        saveState();
+        showToast('Entrega desfeita — o pedido voltou pra rota.', 'success');
+        renderListaOrcamentos();
+        renderLogistica();
+      },
+      'Voltar pra rota'
+    );
+    return;
+  }
+
+  confirmAction(
+    'Desfazer entrega',
+    'Confirma que este pedido volta pra "Em Rota de Entrega"?',
+    ()=>{
+      orcamento.statusEntrega = 'em_rota';
+      saveState();
+      showToast('Entrega desfeita — o pedido voltou pra rota.', 'success');
+      renderListaOrcamentos();
+      renderLogistica();
+    },
+    'Voltar pra rota'
+  );
 }
 
 RENDERERS['logistica'] = renderLogistica;
