@@ -7558,7 +7558,7 @@ function abrirEditarItemCarrinhoOrcamento(idx){
         <div class="ic-rapido">✏️</div>
         <div>
           <h3>Editar Item</h3>
-          <div class="sub">Vale só pra este orçamento — não muda o cadastro do produto</div>
+          <div class="sub">Por padrão vale só pra este orçamento — dá pra marcar abaixo pra atualizar o cadastro do produto também</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
@@ -7607,6 +7607,12 @@ function abrirEditarItemCarrinhoOrcamento(idx){
           <label>Custo Unit. (R$)</label>
           <input type="number" min="0" step="0.01" id="eic-custo" value="${item.custoUnit}">
         </div>
+        ${item.produtoId ? `
+        <label style="display:flex;align-items:flex-start;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:12px;">
+          <input type="checkbox" id="eic-atualizar-cadastro" style="width:auto;margin-top:2px;">
+          <span>Também atualizar o cadastro deste produto (nome, marca, fornecedor, unidade, custo e preço de tabela) — vale pra todos os próximos orçamentos, não só este</span>
+        </label>
+        ` : ''}
         ${item.vendidoEmCaixa ? `<p class="help-text" style="margin-top:10px;">Este item está marcado como "vendido em caixa" — como a quantidade aqui é sempre em unidades, salvar aqui desliga esse modo (a linha volta a mostrar só a quantidade normal).</p>` : ''}
         <div class="form-actions">
           <button type="button" class="btn" id="eic-cancelar">Cancelar</button>
@@ -7694,10 +7700,32 @@ function salvarEdicaoItemCarrinhoOrcamento(idx, modal){
     item.vendidoEmCaixa = false; item.qtdCaixas = null; item.unidadesPorCaixa = null; item.descricaoLinha = null;
   }
 
+  // Opcional: quando marcado, propaga nome/marca/fornecedor/unidade/custo/
+  // preço de tabela pro CADASTRO do produto de verdade (STATE.produtos),
+  // não só pra este orçamento — pedido explícito do usuário pra poder
+  // corrigir o cadastro direto por aqui quando quiser, sem precisar ir em
+  // Produtos separadamente. Usa o preço de TABELA (sem o desconto deste
+  // orçamento), já que o desconto é específico desta venda, não do produto.
+  const checkboxAtualizarCadastro = document.getElementById('eic-atualizar-cadastro');
+  let cadastroAtualizado = false;
+  if(checkboxAtualizarCadastro && checkboxAtualizarCadastro.checked && item.produtoId){
+    const produto = STATE.produtos.find(p=>p.id===item.produtoId);
+    if(produto){
+      produto.nome = nome;
+      produto.marca = item.marca;
+      produto.fornecedor = item.fornecedor;
+      produto.unidade = item.unidade;
+      produto.custo = custo;
+      produto.precoVenda = precoTabela;
+      saveState();
+      cadastroAtualizado = true;
+    }
+  }
+
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
   modal.remove();
-  showToast('Item atualizado.', 'success');
+  showToast(cadastroAtualizado ? 'Item e cadastro do produto atualizados.' : 'Item atualizado.', 'success');
 }
 
 // Edita a origem de coleta de um item JÁ adicionado ao carrinho — direto
