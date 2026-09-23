@@ -8195,6 +8195,21 @@ const statusOrcamentoLabel = {
   rascunho: '<span class="badge" style="background:#EEEEEE;color:#666666;">Rascunho</span>'
 };
 
+// Mesmo padrão de cores do statusOrcamentoLabel acima, só que em forma de
+// par background/texto pra aplicar como estilo inline no <select> da lista
+// (o dropdown em si também muda de cor conforme o status escolhido, não só
+// o selo fixo dos já convertidos/expirados).
+const corStatusOrcamentoSelect = {
+  pendente: { bg:'#EEF0F3', cor:'#5B6672' },
+  aprovado: { bg:'#E7F4EE', cor:'#2E7D5B' },
+  enviado: { bg:'#E6F1FB', cor:'#185FA5' },
+  recusado: { bg:'#FBEAE8', cor:'#C4483D' }
+};
+function estiloCorStatusSelect(status){
+  const c = corStatusOrcamentoSelect[status] || corStatusOrcamentoSelect.pendente;
+  return `background:${c.bg};color:${c.cor};border-color:${c.cor};font-weight:600;`;
+}
+
 // Passa pra "Expirado" automaticamente todo orçamento ainda 'pendente' cuja
 // validade (data + validadeDias) já passou — orçamento aprovado/enviado/
 // recusado/convertido nunca expira sozinho, só pendente sem resposta do
@@ -8291,7 +8306,7 @@ function renderListaOrcamentos(){
         <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
         <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
         <td>
-          ${jaConvertido ? statusOrcamentoLabel.convertido : (o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;">
+          ${jaConvertido ? statusOrcamentoLabel.convertido : (o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;border-radius:6px;${estiloCorStatusSelect(statusComercialSelect)}">
             ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
           </select>`)}
         </td>
@@ -8367,6 +8382,13 @@ function mudarStatusOrcamento(id, novoStatus){
   // começou, pra não voltar atrás um pedido que já foi marcado como entregue.
   if(novoStatus==='aprovado' && (!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum')){
     orcamento.statusEntrega = 'em_rota';
+  } else if(novoStatus!=='aprovado' && orcamento.statusEntrega==='em_rota'){
+    // Voltou de "aprovado" pra pendente/enviado/recusado antes de qualquer
+    // entrega ter sido confirmada de verdade — sai da rota de entrega da
+    // Logística também, senão ficaria "em rota" um pedido que nem está mais
+    // aprovado (bug relatado: aprovar, depois voltar pra pendente deixava
+    // ele preso em "Em Rota de Entrega").
+    orcamento.statusEntrega = 'nenhum';
   }
   saveState();
   showToast('Status atualizado.', 'success');
@@ -15937,6 +15959,7 @@ function renderTabelaReceber(){
         <div class="cell-actions">
           ${!l.recebido ? `<button class="btn btn-sm" onclick="marcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Marcar recebido</button>` : `<button class="btn btn-sm" onclick="desmarcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Desfazer</button>`}
           <button class="btn btn-sm" onclick="abrirEditarVencimentoReceber('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">📅 Vencimento</button>
+          ${l.origem==='manual' ? `<button class="btn btn-sm" onclick="abrirEditarContaReceberManual('${l.id}')">✏️ Editar</button>` : ''}
           ${l.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirContaReceberManual('${l.id}')">Excluir</button>` : ''}
         </div>
       </td>
@@ -16080,6 +16103,90 @@ function excluirContaReceberManual(id){
     STATE.contasReceberManuais = STATE.contasReceberManuais.filter(c=>c.id!==id);
     saveState();
     showToast('Conta removida.', 'success');
+    renderContasReceber();
+  });
+}
+
+// Edita uma conta a receber avulsa (cadastrada manualmente, não vinda de
+// venda) já lançada — descrição, cliente, valor e vencimento. Cada parcela
+// de uma conta parcelada já é seu próprio registro independente em
+// STATE.contasReceberManuais, então editar aqui só ajusta esse registro,
+// sem precisar reabrir o parcelamento inteiro.
+function abrirEditarContaReceberManual(id){
+  const conta = (STATE.contasReceberManuais||[]).find(c=>c.id===id);
+  if(!conta) return;
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-editar-conta-receber-manual';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✏️</div>
+        <div>
+          <h3>Editar Conta a Receber</h3>
+          <div class="sub">Avulsa — não vinculada a uma venda do sistema</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-grid">
+          <div class="field field-full">
+            <label>Descrição <span class="req">*</span></label>
+            <input type="text" id="ecrm-descricao" value="${escapeHtml(conta.descricao)}">
+          </div>
+          <div class="field">
+            <label>Cliente (opcional)</label>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <select id="ecrm-cliente" style="flex:1;min-width:120px;">
+                <option value="">— não vincular a um cliente —</option>
+                ${STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===conta.clienteId?'selected':''}>${escapeHtml(c.nome)}</option>`).join('')}
+              </select>
+              <button type="button" class="btn btn-sm" id="ecrm-btn-novo-cliente" title="Cadastrar novo cliente sem sair daqui" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+            </div>
+          </div>
+          <div class="field">
+            <label>Valor (R$) <span class="req">*</span></label>
+            <input type="number" step="0.01" min="0.01" id="ecrm-valor" value="${conta.valor}">
+          </div>
+          <div class="field">
+            <label>Vencimento <span class="req">*</span></label>
+            <input type="date" id="ecrm-vencimento" value="${conta.vencimento}">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="ecrm-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ecrm-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('ecrm-cancelar').addEventListener('click', ()=>modal.remove());
+
+  document.getElementById('ecrm-btn-novo-cliente').addEventListener('click', ()=>{
+    abrirFormCliente(null, (clienteCriado)=>{
+      const select = document.getElementById('ecrm-cliente');
+      select.innerHTML = `<option value="">— não vincular a um cliente —</option>` +
+        STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteCriado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
+    });
+  });
+
+  document.getElementById('ecrm-confirmar').addEventListener('click', ()=>{
+    const descricao = document.getElementById('ecrm-descricao').value.trim();
+    const clienteId = document.getElementById('ecrm-cliente').value || null;
+    const valor = parseFloat(document.getElementById('ecrm-valor').value);
+    const vencimento = document.getElementById('ecrm-vencimento').value;
+    if(!descricao){ showToast('Informe a descrição.', 'error'); return; }
+    if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+    if(!vencimento){ showToast('Informe o vencimento.', 'error'); return; }
+
+    conta.descricao = descricao;
+    conta.clienteId = clienteId;
+    conta.valor = valor;
+    conta.vencimento = vencimento;
+    saveState();
+    showToast('Conta a receber atualizada.', 'success');
+    modal.remove();
     renderContasReceber();
   });
 }
