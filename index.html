@@ -15614,6 +15614,11 @@ function getLinhasReceber(){
       if(recebido) statusCalc = 'recebido';
       else if(vencimento < todayISO()) statusCalc = 'atrasado';
       else statusCalc = 'pendente';
+      // Por padrão o valor a receber é o total calculado da venda — mas dá
+      // pra sobrescrever esse valor (v.receber.valorAjustado) quando o
+      // cliente negociou um valor diferente do lançado originalmente, sem
+      // precisar reabrir/alterar os itens da venda em si.
+      const valor = v.receber.valorAjustado!=null ? v.receber.valorAjustado : calc.bruto;
       return {
         origem: 'venda',
         id: v.id,
@@ -15624,7 +15629,7 @@ function getLinhasReceber(){
         clienteId: v.clienteId,
         data: v.data,
         vencimento,
-        valor: calc.bruto,
+        valor,
         lucro: calc.lucro,
         recebido,
         dataRecebimento: v.receber.dataRecebimento||'',
@@ -15991,7 +15996,9 @@ function renderTabelaReceber(){
         <div class="cell-actions">
           ${!l.recebido ? `<button class="btn btn-sm" onclick="marcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Marcar recebido</button>` : `<button class="btn btn-sm" onclick="desmarcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Desfazer</button>`}
           <button class="btn btn-sm" onclick="abrirEditarVencimentoReceber('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">📅 Vencimento</button>
-          ${l.origem==='manual' ? `<button class="btn btn-sm" onclick="abrirEditarContaReceberManual('${l.id}')">✏️ Editar</button>` : ''}
+          ${l.origem==='manual'
+            ? `<button class="btn btn-sm" onclick="abrirEditarContaReceberManual('${l.id}')">✏️ Editar</button>`
+            : `<button class="btn btn-sm" onclick="abrirEditarValorReceberVenda('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">✏️ Editar</button>`}
           ${l.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirContaReceberManual('${l.id}')">Excluir</button>` : ''}
         </div>
       </td>
@@ -16078,6 +16085,87 @@ function abrirEditarVencimentoReceber(id, origem, vendaId, parcelaIdx){
     }
     saveState();
     showToast('Vencimento atualizado.', 'success');
+    modal.remove();
+    renderTabelaReceber();
+  });
+}
+
+// Edita o VALOR de uma conta a receber que veio de uma venda (Boleto ou
+// parcela de Crediário) — a contraparte de abrirEditarContaReceberManual()
+// pras contas manuais. Antes só dava pra editar o vencimento dessas linhas
+// (abrirEditarVencimentoReceber), o valor ficava sempre travado no total
+// calculado da venda, o que gerava a sensação de "uns itens deixam editar,
+// outros não". Pra parcela de Crediário, edita o valor daquela parcela
+// específica direto (cada parcela já guarda seu próprio valor). Pra Boleto,
+// como o valor normalmente vem calculado a partir dos itens da venda, grava
+// um "valor ajustado" (venda.receber.valorAjustado) que passa a valer no
+// lugar do calculado — útil quando o cliente negociou um valor diferente do
+// lançado, sem precisar reabrir/alterar os itens da venda em si.
+function abrirEditarValorReceberVenda(id, origem, vendaId, parcelaIdx){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  let valorAtual, descricaoLinha;
+  if(parcelaIdx!=null && venda.parcelasReceber){
+    valorAtual = venda.parcelasReceber[parcelaIdx].valor;
+    descricaoLinha = `Parcela ${venda.parcelasReceber[parcelaIdx].numero}/${venda.parcelasReceber[parcelaIdx].total}`;
+  }else if(venda.receber){
+    valorAtual = venda.receber.valorAjustado!=null ? venda.receber.valorAjustado : calcularVenda(venda).bruto;
+    descricaoLinha = 'Boleto';
+  }else{
+    return;
+  }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-editar-valor-receber-venda';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(540px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✏️</div>
+        <div>
+          <h3>Editar Valor</h3>
+          <div class="sub">${escapeHtml(descricaoLinha)} — vinculado a uma venda</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text">${parcelaIdx!=null ? 'Ajusta o valor dessa parcela específica.' : 'Por padrão o valor é calculado a partir dos itens da venda — ajuste aqui só se o valor a receber combinado com o cliente for diferente.'}</p>
+        <div class="field">
+          <label>Valor (R$) <span class="req">*</span></label>
+          <input type="number" min="0" step="0.01" id="evrv-valor" value="${valorAtual}">
+        </div>
+        <div class="form-actions">
+          ${parcelaIdx==null ? `<button type="button" class="btn" id="evrv-restaurar" title="Volta a usar o valor calculado da venda, descartando o ajuste manual">Restaurar valor calculado</button>` : ''}
+          <button type="button" class="btn" id="evrv-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="evrv-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('evrv-cancelar').addEventListener('click', ()=>modal.remove());
+
+  const botaoRestaurar = document.getElementById('evrv-restaurar');
+  if(botaoRestaurar){
+    botaoRestaurar.addEventListener('click', ()=>{
+      delete venda.receber.valorAjustado;
+      saveState();
+      showToast('Valor voltou a ser calculado a partir dos itens da venda.', 'success');
+      modal.remove();
+      renderTabelaReceber();
+    });
+  }
+
+  document.getElementById('evrv-confirmar').addEventListener('click', ()=>{
+    const novoValor = parseFloat(document.getElementById('evrv-valor').value);
+    if(isNaN(novoValor) || novoValor<0){ showToast('Informe um valor válido.', 'error'); return; }
+
+    if(parcelaIdx!=null && venda.parcelasReceber){
+      venda.parcelasReceber[parcelaIdx].valor = novoValor;
+    }else if(venda.receber){
+      venda.receber.valorAjustado = novoValor;
+    }
+    saveState();
+    showToast('Valor atualizado.', 'success');
     modal.remove();
     renderTabelaReceber();
   });
