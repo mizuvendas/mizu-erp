@@ -7784,6 +7784,22 @@ function tratarSelecaoOrigemCarrinho(idx, selectEl){
   editarOrigemItemOrcamento(idx, selectEl.value);
 }
 
+// Quando o item está marcado como "vendido em caixa", o carrinho e a
+// impressão do orçamento devem mostrar tudo em termos de CAIXA (unidade
+// "CX", quantidade = nº de caixas, preço = preço da caixa) — não em
+// unidades reais, que é como fica guardado internamente pra estoque/custo
+// continuarem batendo certinho. Essas três funções só convertem pra exibição
+// (e pra interpretar o que o usuário digita de volta nos campos editáveis).
+function itemQtdExibicao(it){
+  return (it.vendidoEmCaixa && it.qtdCaixas!=null) ? it.qtdCaixas : it.qtd;
+}
+function itemUnidadeExibicao(it){
+  return it.vendidoEmCaixa ? 'CX' : (it.unidade||'UN');
+}
+function itemPrecoUnitExibicao(it){
+  return (it.vendidoEmCaixa && it.unidadesPorCaixa) ? it.precoUnit*it.unidadesPorCaixa : it.precoUnit;
+}
+
 function renderCarrinhoOrcamento(){
   const tbody = document.getElementById('orc-carrinho-body');
   if(!tbody) return;
@@ -7794,14 +7810,14 @@ function renderCarrinhoOrcamento(){
   tbody.innerHTML = carrinhoOrcamentoAtual.map((it,idx)=>`
     <tr>
       <td>${escapeHtml(it.nome)}</td>
-      <td><span class="badge badge-neutral">${escapeHtml(it.unidade||'UN')}</span></td>
+      <td><span class="badge badge-neutral">${escapeHtml(itemUnidadeExibicao(it))}</span></td>
       <td>
-        <input type="number" min="0.01" step="0.01" value="${it.qtd}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)">
+        <input type="number" min="0.01" step="0.01" value="${itemQtdExibicao(it)}" style="width:70px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarQtdItemOrcamento(${idx}, this.value)">
         ${it.vendidoEmCaixa ? `<input type="text" value="${escapeAttr(it.descricaoLinha||'')}" title="Descrição da linha (só exibição, editável)" style="width:110px;margin-top:3px;padding:2px 5px;font-size:11px;color:var(--ink-soft);display:block;" onchange="editarDescricaoLinhaItemOrcamento(${idx}, this.value)">` : ''}
       </td>
       <td>
-        <input type="number" min="0" step="0.01" value="${it.precoUnit}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)">
-        ${it.descontoItemTipo ? `<div style="font-size:10.5px;color:var(--negative);margin-top:2px;text-align:center;">🏷️ ${it.descontoItemTipo==='pct'?`-${fmtNum(it.descontoItemValor)}%`:`-${fmtMoney(it.descontoItemValor)}`} <span style="color:var(--ink-faint);text-decoration:line-through;">${fmtMoney(it.precoUnitOriginal)}</span></div>` : ''}
+        <input type="number" min="0" step="0.01" value="${itemPrecoUnitExibicao(it)}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)">
+        ${it.descontoItemTipo && !it.vendidoEmCaixa ? `<div style="font-size:10.5px;color:var(--negative);margin-top:2px;text-align:center;">🏷️ ${it.descontoItemTipo==='pct'?`-${fmtNum(it.descontoItemValor)}%`:`-${fmtMoney(it.descontoItemValor)}`} <span style="color:var(--ink-faint);text-decoration:line-through;">${fmtMoney(it.precoUnitOriginal)}</span></div>` : ''}
       </td>
       <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
@@ -7823,23 +7839,35 @@ function editarDescricaoLinhaItemOrcamento(idx, novoValor){
 // quantidade/preço do formulário de cima, só que aplicado a um item que já
 // está na lista.
 function editarQtdItemOrcamento(idx, novoValor){
-  const qtd = parseFloat(novoValor);
-  if(isNaN(qtd) || qtd<=0){ showToast('Quantidade inválida.', 'error'); renderCarrinhoOrcamento(); return; }
-  carrinhoOrcamentoAtual[idx].qtd = qtd;
+  const qtdDigitada = parseFloat(novoValor);
+  if(isNaN(qtdDigitada) || qtdDigitada<=0){ showToast('Quantidade inválida.', 'error'); renderCarrinhoOrcamento(); return; }
+  const item = carrinhoOrcamentoAtual[idx];
+  if(item.vendidoEmCaixa && item.unidadesPorCaixa){
+    // O campo mostra/edita a quantidade de CAIXAS — converte pra unidades
+    // reais (usado em estoque/custo/total) e atualiza a descrição da linha.
+    item.qtdCaixas = qtdDigitada;
+    item.qtd = qtdDigitada * item.unidadesPorCaixa;
+    item.descricaoLinha = `${fmtNum(item.qtdCaixas)} CX (${fmtNum(item.qtd)} ${item.unidade||'UN'})`;
+  }else{
+    item.qtd = qtdDigitada;
+  }
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
 }
 function editarPrecoItemOrcamento(idx, novoValor){
-  const preco = parseFloat(novoValor);
-  if(isNaN(preco) || preco<0){ showToast('Preço inválido.', 'error'); renderCarrinhoOrcamento(); return; }
+  const precoDigitado = parseFloat(novoValor);
+  if(isNaN(precoDigitado) || precoDigitado<0){ showToast('Preço inválido.', 'error'); renderCarrinhoOrcamento(); return; }
   const item = carrinhoOrcamentoAtual[idx];
-  item.precoUnit = preco;
+  // Em modo caixa, o campo mostra/edita o preço DA CAIXA — converte de volta
+  // pro preço por unidade real, que é o que fica guardado internamente.
+  const precoPorUnidadeReal = (item.vendidoEmCaixa && item.unidadesPorCaixa) ? precoDigitado/item.unidadesPorCaixa : precoDigitado;
+  item.precoUnit = precoPorUnidadeReal;
   // editar o preço direto aqui (fora do modal) substitui qualquer desconto
   // de item configurado em "Editar" — evita ficar com um desconto "fantasma"
   // calculado em cima de um preço de tabela que não é mais o atual.
   item.descontoItemTipo = null;
   item.descontoItemValor = null;
-  item.precoUnitOriginal = preco;
+  item.precoUnitOriginal = precoPorUnidadeReal;
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
 }
@@ -8231,9 +8259,13 @@ function atualizarOrcamentosExpirados(){
 // assim que o orçamento é aprovado (junto da conversão em venda), e passa pra
 // 'entregue' quando confirmado na aba de Logística. Cores propositalmente
 // diferentes das do status comercial pra não confundir as duas colunas.
+// O rótulo do estado 'em_rota' é "Em Separação" (não "Em Rota de Entrega")
+// porque, nesse momento, o pedido só está aprovado e aguardando ser
+// organizado — ele só entra numa rota de verdade quando o usuário vai em
+// Logística e marca quais entregas fazem parte do roteiro daquele dia.
 const statusEntregaLabel = {
   nenhum: '',
-  em_rota: '<span class="badge" style="background:#EDE4FA;color:#6B3FA0;">🚚 Em Rota de Entrega</span>',
+  em_rota: '<span class="badge" style="background:#EDE4FA;color:#6B3FA0;">📦 Em Separação</span>',
   entregue: '<span class="badge" style="background:#DCEFE3;color:#1F7A4D;">✅ Entregue</span>'
 };
 
@@ -8385,9 +8417,9 @@ function mudarStatusOrcamento(id, novoStatus){
   } else if(novoStatus!=='aprovado' && orcamento.statusEntrega==='em_rota'){
     // Voltou de "aprovado" pra pendente/enviado/recusado antes de qualquer
     // entrega ter sido confirmada de verdade — sai da rota de entrega da
-    // Logística também, senão ficaria "em rota" um pedido que nem está mais
-    // aprovado (bug relatado: aprovar, depois voltar pra pendente deixava
-    // ele preso em "Em Rota de Entrega").
+    // Logística também, senão ficaria "em separação" um pedido que nem está
+    // mais aprovado (bug relatado: aprovar, depois voltar pra pendente
+    // deixava ele preso na rota de entrega).
     orcamento.statusEntrega = 'nenhum';
   }
   saveState();
@@ -8536,9 +8568,9 @@ function gerarPdfOrcamento(id){
     <tr>
       <td style="text-align:center;">${idx+1}</td>
       <td>${escapeHtml(it.nome)}</td>
-      <td style="text-align:center;">${escapeHtml(it.unidade||'UN')}</td>
-      <td style="text-align:center;">${it.vendidoEmCaixa && it.descricaoLinha ? escapeHtml(it.descricaoLinha) : fmtNum(it.qtd)}</td>
-      <td style="text-align:right;">${fmtMoney(it.precoUnit)}</td>
+      <td style="text-align:center;">${escapeHtml(itemUnidadeExibicao(it))}</td>
+      <td style="text-align:center;">${fmtNum(itemQtdExibicao(it))}</td>
+      <td style="text-align:right;">${fmtMoney(itemPrecoUnitExibicao(it))}</td>
       <td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>
     </tr>
   `).join('');
@@ -9374,7 +9406,7 @@ function desfazerEntregaOrcamento(orcamentoId){
   if(venda){
     confirmAction(
       'Desfazer entrega',
-      'Este pedido já tem recebimento ou pagamento de repasse registrado na venda gerada — por segurança, não apago essa venda (perderia esse histórico). O pedido volta pra "Em Rota de Entrega", mas continua com o selo "Virou Venda" e sem opção de editar; ajuste manualmente em Vendas/Estoque se precisar desfazer isso também.',
+      'Este pedido já tem recebimento ou pagamento de repasse registrado na venda gerada — por segurança, não apago essa venda (perderia esse histórico). O pedido volta pra "Em Separação", mas continua com o selo "Virou Venda" e sem opção de editar; ajuste manualmente em Vendas/Estoque se precisar desfazer isso também.',
       ()=>{
         orcamento.statusEntrega = 'em_rota';
         saveState();
@@ -9389,7 +9421,7 @@ function desfazerEntregaOrcamento(orcamentoId){
 
   confirmAction(
     'Desfazer entrega',
-    'Confirma que este pedido volta pra "Em Rota de Entrega"?',
+    'Confirma que este pedido volta pra "Em Separação"?',
     ()=>{
       orcamento.statusEntrega = 'em_rota';
       saveState();
