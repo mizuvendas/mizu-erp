@@ -6833,6 +6833,16 @@ window.addEventListener('beforeunload', (e)=>{
   }
 });
 
+// Próximo número de orçamento sugerido — sempre o maior número já usado + 1
+// (ignora números "furados"/deletados, então não reaproveita automaticamente
+// um número de um orçamento excluído). O campo no formulário vem pré-
+// preenchido com isso, mas o usuário pode digitar outro número por cima se
+// quiser (ex: pra manter uma numeração antiga, ou pular um número riscado).
+function proximoNumeroOrcamento(){
+  const maior = STATE.orcamentos.reduce((max,o)=>Math.max(max, parseInt(o.numero)||0), 0);
+  return maior + 1;
+}
+
 function renderOrcamentos(){
   const box = document.getElementById('orcamentos-content');
   carrinhoOrcamentoAtual = [];
@@ -6854,6 +6864,10 @@ function renderOrcamentos(){
     <div class="card">
       <h3 id="orc-form-titulo">1. Dados do Orçamento</h3>
       <div class="form-grid">
+        <div class="field">
+          <label>Nº do Orçamento <span class="req">*</span></label>
+          <input type="number" id="orc-numero" min="1" step="1" value="${proximoNumeroOrcamento()}">
+        </div>
         <div class="field">
           <label>Cliente <span class="req">*</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
@@ -7072,7 +7086,7 @@ function renderOrcamentos(){
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nº</th><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
       </div>
@@ -7880,7 +7894,9 @@ function editarPrecoItemOrcamento(idx, novoValor){
 function coletarDadosOrcamentoEmAndamento(){
   const temRepasse = document.getElementById('orc-tem-repasse').checked;
   const condicaoPagamento = document.getElementById('orc-condicao-pagamento').value;
+  const numeroDigitado = parseInt(document.getElementById('orc-numero').value);
   return {
+    numero: isNaN(numeroDigitado) ? null : numeroDigitado,
     clienteId: document.getElementById('orc-cliente').value,
     data: document.getElementById('orc-data').value || todayISO(),
     validadeDias: parseInt(document.getElementById('orc-validade').value)||7,
@@ -8002,6 +8018,7 @@ function renderOrcamentosEmAndamento(){
 }
 
 function salvarOrcamento(){
+  const numero = parseInt(document.getElementById('orc-numero').value);
   const clienteId = document.getElementById('orc-cliente').value;
   const data = document.getElementById('orc-data').value;
   const validadeDias = parseInt(document.getElementById('orc-validade').value)||7;
@@ -8014,6 +8031,9 @@ function salvarOrcamento(){
   const condicaoPagamento = document.getElementById('orc-condicao-pagamento').value; // 'vista' | 'crediario' | 'boleto'
   const vencimentoReceber = document.getElementById('orc-vencimento-receber').value;
 
+  if(isNaN(numero) || numero<=0){ showToast('Informe o número do orçamento.', 'error'); return; }
+  const jaExisteComEsseNumero = STATE.orcamentos.some(o=>o.numero===numero && o.id!==orcamentoEmEdicaoId);
+  if(jaExisteComEsseNumero){ showToast(`Já existe um orçamento com o número ${numero} — escolha outro.`, 'error'); return; }
   if(!clienteId){ showToast('Selecione o cliente.', 'error'); return; }
   if(!data){ showToast('Informe a data.', 'error'); return; }
   if(carrinhoOrcamentoAtual.length===0){ showToast('Adicione ao menos um item ao orçamento.', 'error'); return; }
@@ -8025,7 +8045,7 @@ function salvarOrcamento(){
 
   // Dados comuns tanto pra criar quanto pra atualizar um orçamento existente
   const dadosBase = {
-    clienteId, data, validadeDias, observacoes, vendedor, temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
+    numero, clienteId, data, validadeDias, observacoes, vendedor, temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
     condicaoPagamento, vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
     crediarioDia: condicaoPagamento==='crediario' ? (Math.min(31, Math.max(1, parseInt(document.getElementById('orc-crediario-dia').value)||10))) : null,
@@ -8093,6 +8113,7 @@ function editarOrcamento(id){
   orcamentoEmEdicaoId = id;
   carrinhoOrcamentoAtual = orcamento.itens.map(it=>({...it}));
 
+  document.getElementById('orc-numero').value = orcamento.numero || proximoNumeroOrcamento();
   document.getElementById('orc-cliente').value = orcamento.clienteId;
   // Preencher o campo via JS não dispara o evento "change" sozinho — sem
   // isso, o botão "🧾 Histórico" (e o "✏️" de editar cliente) ficavam
@@ -8310,7 +8331,7 @@ function renderListaOrcamentos(){
   });
 
   if(orcamentosOrdenados.length===0){
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
     return;
   }
   tbody.innerHTML = orcamentosOrdenados.map(o=>{
@@ -8331,6 +8352,7 @@ function renderListaOrcamentos(){
     const statusEntrega = o.statusEntrega || 'nenhum';
     return `
       <tr>
+        <td>${o.numero!=null ? '#'+escapeHtml(String(o.numero)) : '—'}</td>
         <td>${fmtDate(o.data)}</td>
         <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
         <td>${fmtDate(validadeAte)}</td>
@@ -8374,6 +8396,7 @@ function duplicarOrcamento(id){
   const copia = {
     ...original,
     id: uid('orc'),
+    numero: proximoNumeroOrcamento(), // nunca repete o número do original
     status: 'pendente',
     statusEntrega: 'nenhum',
     data: todayISO(),
@@ -8581,7 +8604,7 @@ function gerarPdfOrcamento(id){
     <html>
     <head>
       <meta charset="utf-8">
-      <title>Orçamento - ${escapeHtml(cliente?cliente.nome:'')}</title>
+      <title>Orçamento${orcamento.numero!=null ? ' Nº '+orcamento.numero : ''} - ${escapeHtml(cliente?cliente.nome:'')}</title>
       <style>
         body{ font-family: Arial, sans-serif; color:#1a1a1a; padding:30px; }
         .cabecalho{ display:flex; align-items:center; gap:16px; border-bottom:3px solid #1B4B5A; padding-bottom:14px; margin-bottom:16px; }
@@ -8616,7 +8639,7 @@ function gerarPdfOrcamento(id){
         </div>
       </div>
 
-      <h2>Orçamento</h2>
+      <h2>Orçamento${orcamento.numero!=null ? ' Nº '+escapeHtml(String(orcamento.numero)) : ''}</h2>
       <div class="meta">
         Cliente: <strong>${escapeHtml(cliente?cliente.nome:'')}</strong><br>
         Data: ${fmtDate(orcamento.data)}
@@ -8805,7 +8828,7 @@ function verDetalheOrcamento(id){
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📋</div>
         <div>
-          <h3>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</h3>
+          <h3>${orcamento.numero!=null ? 'Orçamento #'+escapeHtml(String(orcamento.numero))+' — ' : ''}${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</h3>
           <div class="sub">${fmtDate(orcamento.data)} · Validade: ${orcamento.validadeDias} dias · ${statusOrcamentoLabel[orcamento.status]}</div>
         </div>
       </div>
