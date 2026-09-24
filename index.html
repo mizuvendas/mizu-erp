@@ -16754,7 +16754,10 @@ function renderLinhaHistoricoHaver(haverId, le){
         ${le.controleEntregaAnexo?`<button class="btn btn-sm" onclick="verAnexoHaver('${haverId}','${le.id}','ce')">📎 Entrega</button>`:''}
         ${(!le.notaFiscalAnexo && !le.controleEntregaAnexo)?'<span style="color:var(--ink-faint);">—</span>':''}
       </td>
-      <td><button class="btn btn-sm btn-danger" title="Excluir lançamento" onclick="excluirLancamentoHaver('${haverId}','${le.id}')">🗑️</button></td>
+      <td style="white-space:nowrap;">
+        <button class="btn btn-sm" title="Editar lançamento" onclick="abrirModalEditarLancamentoHaver('${haverId}','${le.id}')">✏️ Editar</button>
+        <button class="btn btn-sm btn-danger" title="Excluir lançamento" onclick="excluirLancamentoHaver('${haverId}','${le.id}')">🗑️</button>
+      </td>
     </tr>
   `;
 }
@@ -16835,6 +16838,16 @@ function abrirModalRegistrarHaver(){
           <label>Observação (opcional)</label>
           <input type="text" id="hav-reg-obs" placeholder="Ex: valor de devolução de itens, adiantamento, etc.">
         </div>
+        <div class="field field-full">
+          <label>Nota Fiscal (opcional)</label>
+          <input type="file" id="hav-reg-nf" accept="image/*,application/pdf">
+          <div class="help-text" id="hav-reg-nf-status"></div>
+        </div>
+        <div class="field field-full">
+          <label>Controle de Entrega (opcional)</label>
+          <input type="file" id="hav-reg-ce" accept="image/*,application/pdf">
+          <div class="help-text" id="hav-reg-ce-status"></div>
+        </div>
         <div class="form-actions">
           <button type="button" class="btn" id="hav-reg-cancelar">Cancelar</button>
           <button type="button" class="btn btn-primary" id="hav-reg-confirmar">Registrar</button>
@@ -16844,6 +16857,18 @@ function abrirModalRegistrarHaver(){
   `;
   document.body.appendChild(modal);
   document.getElementById('hav-reg-cancelar').addEventListener('click', ()=>modal.remove());
+
+  let nfAnexoPronto = null;
+  let ceAnexoPronto = null;
+  document.getElementById('hav-reg-nf').addEventListener('change', (e)=>{
+    nfAnexoPronto = null;
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hav-reg-nf-status'), (anexo)=>{ nfAnexoPronto = anexo; });
+  });
+  document.getElementById('hav-reg-ce').addEventListener('change', (e)=>{
+    ceAnexoPronto = null;
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hav-reg-ce-status'), (anexo)=>{ ceAnexoPronto = anexo; });
+  });
+
   document.getElementById('hav-reg-confirmar').addEventListener('click', ()=>{
     const clienteId = document.getElementById('hav-reg-cliente').value;
     const valor = parseFloat(document.getElementById('hav-reg-valor').value);
@@ -16853,7 +16878,10 @@ function abrirModalRegistrarHaver(){
     if(!valor || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
     STATE.haveres.push({
       id: uid('hav'), clienteId, criadoEm: new Date().toISOString(),
-      historico: [{ id: uid('have'), tipo:'credito', valor, data, obs, notaFiscalAnexo:null, controleEntregaAnexo:null, criadoEm: new Date().toISOString() }]
+      historico: [{ id: uid('have'), tipo:'credito', valor, data, obs,
+        notaFiscalAnexo: nfAnexoPronto ? {...nfAnexoPronto, criadoEm:new Date().toISOString()} : null,
+        controleEntregaAnexo: ceAnexoPronto ? {...ceAnexoPronto, criadoEm:new Date().toISOString()} : null,
+        criadoEm: new Date().toISOString() }]
     });
     saveState();
     showToast('Haver registrado.', 'success');
@@ -16965,6 +16993,128 @@ function abrirModalLancamentoHaver(haverId, tipoPadrao){
     });
     saveState();
     showToast(tipo==='credito' ? 'Crédito adicionado ao haver.' : 'Abatimento registrado.', 'success');
+    modal.remove();
+    renderHaver();
+  });
+}
+
+// Editar um lançamento já existente do histórico de haver (tanto o crédito
+// inicial quanto qualquer lançamento posterior) — permite corrigir tipo,
+// valor, data, observação, e trocar/remover/incluir os anexos (Nota Fiscal
+// e Controle de Entrega), já que antes só dava pra excluir o lançamento
+// inteiro e lançar de novo.
+function abrirModalEditarLancamentoHaver(haverId, lancamentoId){
+  const haver = STATE.haveres.find(h=>h.id===haverId);
+  if(!haver) return;
+  const le = (haver.historico||[]).find(l=>l.id===lancamentoId);
+  if(!le) return;
+  const cliente = STATE.clientes.find(c=>c.id===haver.clienteId);
+
+  const renderAnexoAtual = (anexo, campo, label) => anexo
+    ? `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;" id="hle-edit-anexo-atual-${campo}">
+         <button type="button" class="btn btn-sm" onclick="verAnexoHaver('${haverId}','${lancamentoId}','${campo}')">${campo==='nf'?'📄':'📎'} ${escapeHtml(anexo.nomeArquivo||label)}</button>
+         <button type="button" class="btn btn-sm btn-danger" id="hle-edit-remover-${campo}">🗑️ Remover</button>
+       </div>`
+    : '';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-editar-lancamento-haver';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✏️</div>
+        <div>
+          <h3>Editar Lançamento — ${escapeHtml(cliente?cliente.nome:'')}</h3>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Tipo</label>
+          <select id="hle-edit-tipo">
+            <option value="credito" ${le.tipo==='credito'?'selected':''}>Crédito (aumentar o haver)</option>
+            <option value="abatimento" ${le.tipo==='abatimento'?'selected':''}>Abatimento (usar o haver)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>Valor</label>
+          <input type="number" id="hle-edit-valor" step="0.01" min="0.01" value="${le.valor}">
+        </div>
+        <div class="field">
+          <label>Data</label>
+          <input type="date" id="hle-edit-data" value="${le.data||todayISO()}">
+        </div>
+        <div class="field field-full">
+          <label>Observação (opcional)</label>
+          <input type="text" id="hle-edit-obs" value="${escapeAttr(le.obs||'')}">
+        </div>
+        <div class="field field-full">
+          <label>Nota Fiscal (opcional)</label>
+          ${renderAnexoAtual(le.notaFiscalAnexo, 'nf', 'Nota Fiscal')}
+          <input type="file" id="hle-edit-nf" accept="image/*,application/pdf">
+          <div class="help-text" id="hle-edit-nf-status"></div>
+        </div>
+        <div class="field field-full">
+          <label>Controle de Entrega (opcional)</label>
+          ${renderAnexoAtual(le.controleEntregaAnexo, 'ce', 'Controle de Entrega')}
+          <input type="file" id="hle-edit-ce" accept="image/*,application/pdf">
+          <div class="help-text" id="hle-edit-ce-status"></div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="hle-edit-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="hle-edit-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('hle-edit-cancelar').addEventListener('click', ()=>modal.remove());
+
+  // undefined = não mexeu no anexo (mantém o que já tinha); null = marcado
+  // pra remover; objeto = novo anexo escolhido (substitui o que já tinha)
+  let nfAnexoNovo;
+  let ceAnexoNovo;
+
+  const btnRemoverNf = document.getElementById('hle-edit-remover-nf');
+  if(btnRemoverNf){
+    btnRemoverNf.addEventListener('click', ()=>{
+      nfAnexoNovo = null;
+      document.getElementById('hle-edit-anexo-atual-nf').remove();
+      showToast('A Nota Fiscal será removida ao salvar.', 'success');
+    });
+  }
+  const btnRemoverCe = document.getElementById('hle-edit-remover-ce');
+  if(btnRemoverCe){
+    btnRemoverCe.addEventListener('click', ()=>{
+      ceAnexoNovo = null;
+      document.getElementById('hle-edit-anexo-atual-ce').remove();
+      showToast('O Controle de Entrega será removido ao salvar.', 'success');
+    });
+  }
+
+  document.getElementById('hle-edit-nf').addEventListener('change', (e)=>{
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hle-edit-nf-status'), (anexo)=>{ nfAnexoNovo = anexo; });
+  });
+  document.getElementById('hle-edit-ce').addEventListener('change', (e)=>{
+    lerArquivoComoAnexo(e.target.files[0], document.getElementById('hle-edit-ce-status'), (anexo)=>{ ceAnexoNovo = anexo; });
+  });
+
+  document.getElementById('hle-edit-confirmar').addEventListener('click', ()=>{
+    const tipo = document.getElementById('hle-edit-tipo').value;
+    const valor = parseFloat(document.getElementById('hle-edit-valor').value);
+    const data = document.getElementById('hle-edit-data').value || todayISO();
+    const obs = document.getElementById('hle-edit-obs').value.trim();
+    if(!valor || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+
+    le.tipo = tipo;
+    le.valor = valor;
+    le.data = data;
+    le.obs = obs;
+    if(nfAnexoNovo!==undefined) le.notaFiscalAnexo = nfAnexoNovo ? {...nfAnexoNovo, criadoEm:new Date().toISOString()} : null;
+    if(ceAnexoNovo!==undefined) le.controleEntregaAnexo = ceAnexoNovo ? {...ceAnexoNovo, criadoEm:new Date().toISOString()} : null;
+
+    saveState();
+    showToast('Lançamento atualizado.', 'success');
     modal.remove();
     renderHaver();
   });
