@@ -617,9 +617,9 @@ table.data-table{ width:100%; font-size:13px; }
 .calendario-dia.calendario-dia-vazio{ background:#FAFBFC; }
 .calendario-dia.calendario-dia-livre{ color:var(--ink-faint); }
 .calendario-dia.calendario-dia-hoje{ background:#DCEAEC; }
-.calendario-dia.calendario-dia-atrasado{ box-shadow:inset 3px 0 0 var(--negative); }
-.calendario-dia.calendario-dia-pago{ box-shadow:inset 3px 0 0 var(--positive); }
-.calendario-dia.calendario-dia-hoje.calendario-dia-atrasado{ box-shadow:inset 3px 0 0 var(--negative); background:#DCEAEC; }
+.calendario-dia.calendario-dia-atrasado{ box-shadow:inset 6px 0 0 var(--negative); }
+.calendario-dia.calendario-dia-pago{ box-shadow:inset 6px 0 0 var(--positive); }
+.calendario-dia.calendario-dia-hoje.calendario-dia-atrasado{ box-shadow:inset 6px 0 0 var(--negative); background:#DCEAEC; }
 .calendario-dia.calendario-dia-clicavel{ cursor:pointer; }
 .calendario-dia.calendario-dia-clicavel:hover{ background:#F0F4F5; }
 .calendario-dia.calendario-dia-hoje.calendario-dia-clicavel:hover{ background:#CFE3E6; }
@@ -12651,7 +12651,7 @@ function renderCalendarioVisualDespesas(){
     if(despesaFiltroStatus && p.statusCalc!==despesaFiltroStatus) return;
     const dia = p.vencimento.slice(8,10);
     if(!porDia[dia]) porDia[dia] = [];
-    porDia[dia].push({descricao:p.descricao, valor:p.valor, pago:p.pago});
+    porDia[dia].push({descricao:p.descricao, valor:p.valor, pago:p.pago, despesaId:p.despesaId, parcelaIdx:p.parcelaIdx});
   });
 
   const diasSemanaLabels = ['D','S','T','Q','Q','S','S'];
@@ -12719,20 +12719,55 @@ function renderCalendarioVisualDespesas(){
   `;
 
   box.querySelectorAll('[data-dia-detalhe]').forEach(el=>{
-    el.addEventListener('click', ()=>abrirDetalheDiaCalendario(el.dataset.diaDetalhe, porDia[el.dataset.diaDetalhe.slice(8,10)]||[]));
+    el.addEventListener('click', ()=>abrirDetalheDiaCalendario(el.dataset.diaDetalhe));
   });
 }
 
-function abrirDetalheDiaCalendario(dataCompleta, itens){
+// Reconstrói as contas de um dia específico do calendário de Despesas,
+// respeitando os mesmos filtros de tipo/status já aplicados na tela — usado
+// tanto pra abrir o modal quanto pra atualizá-lo na hora depois de marcar/
+// desmarcar uma conta como paga, sem precisar fechar e reabrir.
+function getItensCalendarioDespesasDoDia(dataCompleta){
+  return getParcelasExpandidas()
+    .filter(p=>p.vencimento===dataCompleta)
+    .filter(p=>!despesaFiltroTipo || p.tipo===despesaFiltroTipo)
+    .filter(p=>!despesaFiltroStatus || p.statusCalc===despesaFiltroStatus)
+    .map(p=>({descricao:p.descricao, valor:p.valor, pago:p.pago, despesaId:p.despesaId, parcelaIdx:p.parcelaIdx}));
+}
+
+// marcarParcelaPaga/desmarcarParcelaPaga chamam renderDespesas() por dentro,
+// que reseta calendarioMesAtual pro mês atual (comportamento normal ao vir
+// da tabela) — aqui, vindo de dentro do modal do calendário, isso faria a
+// grade "pular" de volta pro mês de hoje debaixo do modal, bem estranho se o
+// usuário estava vendo um mês diferente. Essas duas funções só reaplicam o
+// mês certo (o do dia clicado) depois, e reabrem o modal já atualizado.
+function marcarParcelaPagaDoCalendario(despesaId, idx, dataCompleta){
+  marcarParcelaPaga(despesaId, idx);
+  calendarioMesAtual = dataCompleta.slice(0,7);
+  renderCalendarioVisualDespesas();
+  abrirDetalheDiaCalendario(dataCompleta);
+}
+function desmarcarParcelaPagaDoCalendario(despesaId, idx, dataCompleta){
+  desmarcarParcelaPaga(despesaId, idx);
+  calendarioMesAtual = dataCompleta.slice(0,7);
+  renderCalendarioVisualDespesas();
+  abrirDetalheDiaCalendario(dataCompleta);
+}
+
+function abrirDetalheDiaCalendario(dataCompleta){
+  const itens = getItensCalendarioDespesasDoDia(dataCompleta);
   const total = itens.reduce((s,it)=>s+it.valor,0);
   const totalPendente = itens.filter(it=>!it.pago).reduce((s,it)=>s+it.valor,0);
   const [ano,mes,dia] = dataCompleta.split('-');
+
+  const modalExistente = document.getElementById('modal-detalhe-dia-calendario');
+  if(modalExistente) modalExistente.remove();
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-detalhe-dia-calendario';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📅</div>
         <div>
@@ -12743,19 +12778,23 @@ function abrirDetalheDiaCalendario(dataCompleta, itens){
       <div class="modal-rapido-corpo">
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Descrição</th><th class="num">Valor</th><th>Status</th></tr></thead>
+            <thead><tr><th>Descrição</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
             <tbody>
               ${itens.map(it=>`
                 <tr>
                   <td>${escapeHtml(it.descricao)}</td>
                   <td class="num">${fmtMoney(it.valor)}</td>
                   <td>${it.pago ? '<span class="badge badge-positive">Pago</span>' : '<span class="badge badge-warning">Pendente</span>'}</td>
+                  <td>${it.pago
+                    ? `<button type="button" class="btn btn-sm" onclick="desmarcarParcelaPagaDoCalendario('${it.despesaId}', ${it.parcelaIdx}, '${dataCompleta}')">Desfazer</button>`
+                    : `<button type="button" class="btn btn-sm btn-primary" onclick="marcarParcelaPagaDoCalendario('${it.despesaId}', ${it.parcelaIdx}, '${dataCompleta}')">Marcar pago</button>`}
+                  </td>
                 </tr>
               `).join('')}
             </tbody>
             <tfoot>
-              <tr><td>Total do dia</td><td class="num">${fmtMoney(total)}</td><td></td></tr>
-              ${totalPendente<total ? `<tr><td style="color:var(--negative);font-weight:700;">Ainda em aberto</td><td class="num" style="color:var(--negative);font-weight:700;">${fmtMoney(totalPendente)}</td><td></td></tr>` : ''}
+              <tr><td>Total do dia</td><td class="num">${fmtMoney(total)}</td><td colspan="2"></td></tr>
+              ${totalPendente<total ? `<tr><td style="color:var(--negative);font-weight:700;">Ainda em aberto</td><td class="num" style="color:var(--negative);font-weight:700;">${fmtMoney(totalPendente)}</td><td colspan="2"></td></tr>` : ''}
             </tfoot>
           </table>
         </div>
@@ -15891,7 +15930,7 @@ function renderCalendarioVisualReceber(){
     if(l.vencimento.slice(0,7)!==calendarioReceberMesAtual) return;
     const dia = l.vencimento.slice(8,10);
     if(!porDia[dia]) porDia[dia] = [];
-    porDia[dia].push({descricao:l.clienteNome, valor:l.valor, pago:l.recebido});
+    porDia[dia].push({descricao:l.clienteNome, valor:l.valor, pago:l.recebido, id:l.id, origem:l.origem, vendaId:l.vendaId, parcelaIdx:l.parcelaIdx});
   });
 
   const diasSemanaLabels = ['D','S','T','Q','Q','S','S'];
@@ -15943,10 +15982,89 @@ function renderCalendarioVisualReceber(){
   `;
 
   box.querySelectorAll('[data-dia-detalhe-receber]').forEach(el=>{
-    el.addEventListener('click', ()=>{
-      showToast('Veja o detalhe completo na tabela "Lista de Recebimentos" abaixo.', 'success');
-    });
+    el.addEventListener('click', ()=>abrirDetalheDiaCalendarioReceber(el.dataset.diaDetalheReceber));
   });
+}
+
+// Mesma ideia de getItensCalendarioDespesasDoDia(), só que pras contas a
+// receber — reconstrói as linhas de um dia específico do calendário,
+// usado tanto pra abrir o modal quanto pra atualizá-lo na hora depois de
+// marcar/desmarcar um recebimento, sem precisar fechar e reabrir.
+function getItensCalendarioReceberDoDia(dataCompleta){
+  return getLinhasReceber()
+    .filter(l=>l.vencimento===dataCompleta)
+    .map(l=>({descricao:l.clienteNome, valor:l.valor, pago:l.recebido, id:l.id, origem:l.origem, vendaId:l.vendaId, parcelaIdx:l.parcelaIdx}));
+}
+
+// marcarContaRecebida/desmarcarContaRecebida chamam renderContasReceber()
+// por dentro, que reseta calendarioReceberMesAtual pro mês atual — igual ao
+// mesmo cuidado tomado em marcarParcelaPagaDoCalendario() pras Despesas,
+// pra não fazer a grade "pular" de mês debaixo do modal aberto.
+function marcarContaRecebidaDoCalendario(id, origem, vendaId, parcelaIdx, dataCompleta){
+  marcarContaRecebida(id, origem, vendaId, parcelaIdx);
+  calendarioReceberMesAtual = dataCompleta.slice(0,7);
+  renderCalendarioVisualReceber();
+  abrirDetalheDiaCalendarioReceber(dataCompleta);
+}
+function desmarcarContaRecebidaDoCalendario(id, origem, vendaId, parcelaIdx, dataCompleta){
+  desmarcarContaRecebida(id, origem, vendaId, parcelaIdx);
+  calendarioReceberMesAtual = dataCompleta.slice(0,7);
+  renderCalendarioVisualReceber();
+  abrirDetalheDiaCalendarioReceber(dataCompleta);
+}
+
+function abrirDetalheDiaCalendarioReceber(dataCompleta){
+  const itens = getItensCalendarioReceberDoDia(dataCompleta);
+  const total = itens.reduce((s,it)=>s+it.valor,0);
+  const totalPendente = itens.filter(it=>!it.pago).reduce((s,it)=>s+it.valor,0);
+  const [ano,mes,dia] = dataCompleta.split('-');
+
+  const modalExistente = document.getElementById('modal-detalhe-dia-calendario-receber');
+  if(modalExistente) modalExistente.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-detalhe-dia-calendario-receber';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📅</div>
+        <div>
+          <h3>${dia}/${mes}/${ano}</h3>
+          <div class="sub">${itens.length} recebimento${itens.length===1?'':'s'} neste dia</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
+            <tbody>
+              ${itens.map(it=>`
+                <tr>
+                  <td>${escapeHtml(it.descricao)}</td>
+                  <td class="num">${fmtMoney(it.valor)}</td>
+                  <td>${it.pago ? '<span class="badge badge-positive">Recebido</span>' : '<span class="badge badge-warning">Pendente</span>'}</td>
+                  <td>${it.pago
+                    ? `<button type="button" class="btn btn-sm" onclick="desmarcarContaRecebidaDoCalendario('${it.id}','${it.origem}','${it.vendaId||it.id}',${it.parcelaIdx!=null?it.parcelaIdx:'null'},'${dataCompleta}')">Desfazer</button>`
+                    : `<button type="button" class="btn btn-sm btn-primary" onclick="marcarContaRecebidaDoCalendario('${it.id}','${it.origem}','${it.vendaId||it.id}',${it.parcelaIdx!=null?it.parcelaIdx:'null'},'${dataCompleta}')">Marcar recebido</button>`}
+                  </td>
+                </tr>
+              `).join('')}
+            </tbody>
+            <tfoot>
+              <tr><td>Total do dia</td><td class="num">${fmtMoney(total)}</td><td colspan="2"></td></tr>
+              ${totalPendente<total ? `<tr><td style="color:var(--negative);font-weight:700;">Ainda em aberto</td><td class="num" style="color:var(--negative);font-weight:700;">${fmtMoney(totalPendente)}</td><td colspan="2"></td></tr>` : ''}
+            </tfoot>
+          </table>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="fechar-detalhe-dia-receber">Fechar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('fechar-detalhe-dia-receber').addEventListener('click', ()=>modal.remove());
 }
 
 let receberFiltroCliente = '';
