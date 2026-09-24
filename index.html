@@ -763,6 +763,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="haver" href="#">
       <span class="ic">💵</span> Haver de Clientes
     </a>
+    <a class="nav-item" data-page="vale" href="#">
+      <span class="ic">🎫</span> Vale de Funcionários
+    </a>
 
     <div class="nav-section-label">Relatórios</div>
     <a class="nav-item" data-page="analise-vendas" href="#">
@@ -1004,6 +1007,20 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="haver-content"></div>
+    </section>
+
+    <!-- ============ VALE DE FUNCIONÁRIOS ============ -->
+    <section class="page" id="page-vale">
+      <div class="page-header">
+        <div>
+          <h2>Vale de Funcionários</h2>
+          <p class="subtitle">Vales/adiantamentos dados a cada funcionário, separados por pessoa, com data e valor</p>
+        </div>
+        <div class="header-actions">
+          <button class="btn btn-primary" id="btn-registrar-vale">+ Registrar Vale</button>
+        </div>
+      </div>
+      <div id="vale-content"></div>
     </section>
 
     <!-- ============ LICITAÇÕES ============ -->
@@ -1292,6 +1309,8 @@ function defaultState(){
     contasReceberManuais: [], // { id, descricao, clienteId, valor, vencimento, recebido, dataRecebimento, obs, criadoEm }
     orcamentos: [], // { id, clienteId, data, validadeDias, observacoes, itens:[{produtoId,nome,marca,fornecedor,qtd,custo,precoVenda,origem}], status, criadoEm }
     haveres: [], // { id, clienteId, criadoEm, historico:[{id, tipo:'credito'|'abatimento', valor, data, obs, notaFiscalAnexo:{dataUrl,nomeArquivo,tipo,criadoEm}|null, controleEntregaAnexo:{...mesmo formato}|null, criadoEm}] } — saldo único por cliente (crédito quando ele deixa dinheiro, abatimento quando usa), ver calcularSaldoHaver()
+    funcionarios: [], // { id, nome, criadoEm } — cadastro simples de funcionário, usado só pra separar os vales por pessoa
+    vales: [], // { id, funcionarioId, data, valor, observacao, criadoEm } — vale/adiantamento dado a um funcionário
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -16954,6 +16973,264 @@ function abrirModalLancamentoHaver(haverId, tipoPadrao){
 document.getElementById('btn-registrar-haver').addEventListener('click', abrirModalRegistrarHaver);
 
 RENDERERS.haver = renderHaver;
+
+/* =========================================================
+   MÓDULO: VALE DE FUNCIONÁRIOS
+   Cadastro simples de funcionário (só o nome) + lista de vales/
+   adiantamentos dados a cada um, com data e valor — cada funcionário
+   tem seu próprio card com o total e o histórico, pra ficar separado
+   e fácil de conferir quem já pegou quanto.
+   ========================================================= */
+
+function renderVale(){
+  const box = document.getElementById('vale-content');
+  if(!box) return;
+  const funcionarios = STATE.funcionarios || [];
+
+  if(funcionarios.length===0){
+    box.innerHTML = `
+      <div class="card">
+        <div class="empty-state">
+          <div class="ic">🎫</div>
+          <p>Nenhum funcionário cadastrado ainda.<br>Use "+ Registrar Vale" pra cadastrar o funcionário e lançar o primeiro vale.</p>
+        </div>
+      </div>`;
+    return;
+  }
+
+  const linhas = funcionarios.map(f=>{
+    const vales = (STATE.vales||[]).filter(v=>v.funcionarioId===f.id)
+      .sort((a,b)=>(b.data||'').localeCompare(a.data||'') || (b.criadoEm||'').localeCompare(a.criadoEm||''));
+    const total = vales.reduce((s,v)=>s+(Number(v.valor)||0), 0);
+    return { funcionario:f, vales, total };
+  }).sort((a,b)=>a.funcionario.nome.localeCompare(b.funcionario.nome));
+
+  const totalGeral = linhas.reduce((s,l)=>s+l.total, 0);
+
+  box.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="kpi-label">Funcionários</div><div class="kpi-value">${linhas.length}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Total em vales</div><div class="kpi-value negative">${fmtMoney(totalGeral)}</div></div>
+    </div>
+    ${linhas.map(renderCardValeFuncionario).join('')}
+  `;
+  ativarColapsoEmTodosCards(box);
+}
+
+function renderCardValeFuncionario(l){
+  const { funcionario, vales, total } = l;
+  return `
+    <div class="card">
+      <h3>${escapeHtml(funcionario.nome)} <span class="hint">Total em vales: <strong style="color:var(--negative);">${fmtMoney(total)}</strong></span></h3>
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+        <div style="font-size:12.5px;color:var(--ink-soft);">${vales.length} vale${vales.length===1?'':'s'} registrado${vales.length===1?'':'s'}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" onclick="abrirModalRegistrarVale('${funcionario.id}')">+ Novo Vale</button>
+          <button class="btn btn-sm" title="Renomear funcionário" onclick="abrirModalRenomearFuncionario('${funcionario.id}')">✏️ Renomear</button>
+          <button class="btn btn-sm btn-danger" title="Excluir funcionário e todos os vales dele(a)" onclick="excluirFuncionario('${funcionario.id}')">🗑️</button>
+        </div>
+      </div>
+      ${vales.length===0 ? '<div class="help-text">Nenhum vale registrado ainda.</div>' : `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th class="num">Valor</th><th>Observação</th><th>Ações</th></tr></thead>
+          <tbody>
+            ${vales.map(v=>`
+              <tr>
+                <td>${fmtDate(v.data)}</td>
+                <td class="num" style="font-weight:600;color:var(--negative);">${fmtMoney(v.valor)}</td>
+                <td>${escapeHtml(v.observacao||'—')}</td>
+                <td><button class="btn btn-sm btn-danger" title="Excluir vale" onclick="excluirVale('${v.id}')">🗑️</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>
+  `;
+}
+
+function excluirVale(id){
+  confirmAction('Excluir vale', 'Isso vai excluir esse vale. Essa ação não pode ser desfeita. Continuar?', ()=>{
+    STATE.vales = (STATE.vales||[]).filter(v=>v.id!==id);
+    saveState();
+    showToast('Vale excluído.', 'success');
+    renderVale();
+  }, 'Excluir');
+}
+
+function excluirFuncionario(id){
+  const funcionario = (STATE.funcionarios||[]).find(f=>f.id===id);
+  if(!funcionario) return;
+  const qtdVales = (STATE.vales||[]).filter(v=>v.funcionarioId===id).length;
+  confirmAction(
+    'Excluir funcionário',
+    `Isso vai excluir ${escapeHtml(funcionario.nome)}${qtdVales>0 ? ` e ${qtdVales===1?'o vale':`os ${qtdVales} vales`} dele(a)` : ''}. Essa ação não pode ser desfeita. Continuar?`,
+    ()=>{
+      STATE.funcionarios = STATE.funcionarios.filter(f=>f.id!==id);
+      STATE.vales = (STATE.vales||[]).filter(v=>v.funcionarioId!==id);
+      saveState();
+      showToast('Funcionário excluído.', 'success');
+      renderVale();
+    },
+    'Excluir'
+  );
+}
+
+// Modal mínimo só com o nome — usado tanto pelo botão avulso quanto pelo
+// "+ Novo" dentro do formulário de registrar vale (mesmo padrão de
+// abrirFormCliente(null, callback) usado em Orçamento). O callback recebe o
+// funcionário recém-criado, pra já vir selecionado onde foi chamado.
+function abrirModalNovoFuncionario(aoSalvar){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-novo-funcionario';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(420px, 94vw);">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🎫</div>
+        <div><h3>Novo Funcionário</h3></div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Nome <span class="req">*</span></label>
+          <input type="text" id="nf-nome" placeholder="Nome do funcionário">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="nf-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="nf-confirmar">Cadastrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('nf-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('nf-nome').focus();
+  document.getElementById('nf-confirmar').addEventListener('click', ()=>{
+    const nome = document.getElementById('nf-nome').value.trim();
+    if(!nome){ showToast('Informe o nome.', 'error'); return; }
+    if(!STATE.funcionarios) STATE.funcionarios = [];
+    const novo = { id: uid('func'), nome, criadoEm: new Date().toISOString() };
+    STATE.funcionarios.push(novo);
+    saveState();
+    showToast('Funcionário cadastrado.', 'success');
+    modal.remove();
+    if(aoSalvar) aoSalvar(novo);
+  });
+}
+
+function abrirModalRenomearFuncionario(id){
+  const funcionario = (STATE.funcionarios||[]).find(f=>f.id===id);
+  if(!funcionario) return;
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-renomear-funcionario';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(420px, 94vw);">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✏️</div>
+        <div><h3>Renomear Funcionário</h3></div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Nome <span class="req">*</span></label>
+          <input type="text" id="rf-nome" value="${escapeAttr(funcionario.nome)}">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="rf-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="rf-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('rf-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('rf-nome').focus();
+  document.getElementById('rf-confirmar').addEventListener('click', ()=>{
+    const nome = document.getElementById('rf-nome').value.trim();
+    if(!nome){ showToast('Informe o nome.', 'error'); return; }
+    funcionario.nome = nome;
+    saveState();
+    showToast('Nome atualizado.', 'success');
+    modal.remove();
+    renderVale();
+  });
+}
+
+function abrirModalRegistrarVale(funcionarioIdPreSelecionado){
+  const funcionarios = STATE.funcionarios||[];
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-registrar-vale';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(480px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🎫</div>
+        <div>
+          <h3>Registrar Vale</h3>
+          <div class="sub">Vale/adiantamento dado a um funcionário</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field field-full">
+          <label>Funcionário</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <select id="val-reg-funcionario" style="flex:1;min-width:120px;">
+              ${funcionarios.length===0
+                ? '<option value="">Nenhum cadastrado ainda — clique em "+ Novo"</option>'
+                : funcionarios.map(f=>`<option value="${f.id}" ${f.id===funcionarioIdPreSelecionado?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-sm" id="val-reg-btn-novo-funcionario" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+          </div>
+        </div>
+        <div class="field">
+          <label>Valor <span class="req">*</span></label>
+          <input type="number" id="val-reg-valor" step="0.01" min="0.01" placeholder="0,00">
+        </div>
+        <div class="field">
+          <label>Data <span class="req">*</span></label>
+          <input type="date" id="val-reg-data" value="${todayISO()}">
+        </div>
+        <div class="field field-full">
+          <label>Observação (opcional)</label>
+          <input type="text" id="val-reg-obs" placeholder="Ex: motivo do vale">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="val-reg-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="val-reg-confirmar">Registrar</button>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(modal);
+  document.getElementById('val-reg-cancelar').addEventListener('click', ()=>modal.remove());
+
+  document.getElementById('val-reg-btn-novo-funcionario').addEventListener('click', ()=>{
+    abrirModalNovoFuncionario((novoFuncionario)=>{
+      const select = document.getElementById('val-reg-funcionario');
+      select.innerHTML = STATE.funcionarios.map(f=>`<option value="${f.id}" ${f.id===novoFuncionario.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('');
+    });
+  });
+
+  document.getElementById('val-reg-confirmar').addEventListener('click', ()=>{
+    const funcionarioId = document.getElementById('val-reg-funcionario').value;
+    const valor = parseFloat(document.getElementById('val-reg-valor').value);
+    const data = document.getElementById('val-reg-data').value || todayISO();
+    const observacao = document.getElementById('val-reg-obs').value.trim();
+    if(!funcionarioId){ showToast('Selecione ou cadastre um funcionário.', 'error'); return; }
+    if(!valor || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+    if(!STATE.vales) STATE.vales = [];
+    STATE.vales.push({ id: uid('vale'), funcionarioId, data, valor, observacao, criadoEm: new Date().toISOString() });
+    saveState();
+    showToast('Vale registrado.', 'success');
+    modal.remove();
+    renderVale();
+  });
+}
+
+document.getElementById('btn-registrar-vale').addEventListener('click', ()=>abrirModalRegistrarVale(null));
+
+RENDERERS.vale = renderVale;
 
 /* =========================================================
    MÓDULO: LICITAÇÕES (funil kanban)
