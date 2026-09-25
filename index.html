@@ -545,6 +545,12 @@ table.data-table{ width:100%; font-size:13px; }
 }
 .modal-rapido-cabecalho h3{ margin:0; font-size:15px; color:#fff; }
 .modal-rapido-cabecalho .sub{ font-size:11.5px; color:rgba(255,255,255,0.75); margin-top:1px; }
+.modal-rapido-cabecalho .modal-rapido-fechar-x{
+  margin-left:auto; background:rgba(255,255,255,0.18); border:none; color:#fff;
+  width:28px; height:28px; min-width:28px; border-radius:50%; font-size:15px; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0; line-height:1;
+}
+.modal-rapido-cabecalho .modal-rapido-fechar-x:hover{ background:rgba(255,255,255,0.32); }
 .modal-rapido-corpo{ padding:18px 22px 22px 22px; }
 .modal-rapido-voltar{
   font-size:12px; color:var(--ink-faint); display:flex; align-items:center; gap:6px; margin-bottom:14px;
@@ -12351,6 +12357,89 @@ function abrirDetalheVendaCliente(vendaId){
   document.getElementById('dvc-fechar').addEventListener('click', ()=>modal.remove());
 }
 
+// "Baixar" o que foi vendido numa venda específica — usado no botão de
+// download das Contas a Receber (tanto na lista quanto no modal do
+// calendário), só quando a linha em questão veio de uma venda de verdade
+// (Boleto/Crediário); contas criadas manualmente não têm venda associada,
+// então essas linhas não oferecem esse botão. Abre uma página simples pra
+// impressão/"Salvar como PDF", no mesmo padrão já usado em
+// gerarPdfControleEntrega/gerarPdfOrcamento.
+function gerarPdfVenda(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda){ showToast('Venda não encontrada (pode já ter sido excluída).', 'error'); return; }
+  const cliente = STATE.clientes.find(c=>c.id===venda.clienteId);
+  const calc = calcularVenda(venda);
+  const condicaoLabel = { vista:'À vista', boleto:'Boleto', crediario:'Crediário' };
+
+  const linhasItens = (venda.itens||[]).map((it,idx)=>{
+    const subtotal = calcularSubtotalItemComDesconto(it);
+    const bruto = it.qtd*it.precoUnit;
+    return `
+    <tr>
+      <td>${idx+1}</td>
+      <td>${escapeHtml(it.nome)}</td>
+      <td style="text-align:center;">${fmtNum(it.qtd)}</td>
+      <td style="text-align:right;">${fmtMoney(it.precoUnit)}</td>
+      <td style="text-align:right;">${fmtMoney(subtotal)}</td>
+    </tr>`;
+  }).join('');
+
+  const janela = window.open('', '_blank');
+  janela.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Venda - ${escapeHtml(cliente?cliente.nome:'')}</title>
+      <style>
+        body{ font-family: Arial, sans-serif; color:#1a1a1a; padding:30px; }
+        .cabecalho{ display:flex; align-items:center; gap:16px; border-bottom:3px solid #6B3FA0; padding-bottom:14px; margin-bottom:16px; }
+        .cabecalho img{ width:64px; height:64px; object-fit:contain; border-radius:8px; }
+        .cabecalho h1{ font-size:18px; margin:0; color:#6B3FA0; }
+        .selo{ display:inline-block; background:#EDE4FA; color:#6B3FA0; font-size:11px; font-weight:bold; padding:3px 10px; border-radius:12px; margin-top:4px; }
+        .meta{ font-size:13px; color:#333; margin-bottom:4px; line-height:1.6; }
+        .meta strong{ color:#000; }
+        table{ width:100%; border-collapse:collapse; font-size:12px; margin-top:10px; }
+        th{ background:#6B3FA0; color:#fff; text-align:left; padding:8px; }
+        th:first-child{ width:36px; text-align:center; }
+        td{ padding:7px 8px; border-bottom:1px solid #ddd; }
+        td:first-child{ text-align:center; color:#666; }
+        tfoot td{ font-weight:bold; border-bottom:none; border-top:2px solid #6B3FA0; padding-top:9px; }
+        .obs{ margin-top:14px; font-size:11.5px; color:#555; }
+        @media print{ body{ padding:12px; } }
+      </style>
+    </head>
+    <body>
+      <div class="cabecalho">
+        <img src="${getLogoMizuBase64()}" alt="Logo">
+        <div>
+          <h1>${DADOS_EMPRESA.nomeFantasia}</h1>
+          <div class="selo">🧾 Detalhe da Venda</div>
+        </div>
+      </div>
+
+      <div class="meta">
+        <strong>Cliente:</strong> ${escapeHtml(cliente?cliente.nome:'')}<br>
+        <strong>Data da venda:</strong> ${fmtDate(venda.data)}<br>
+        <strong>Condição de pagamento:</strong> ${condicaoLabel[venda.condicaoPagamento]||'—'}
+        ${venda.vendedor ? `<br><strong>Vendedor:</strong> ${escapeHtml(venda.vendedor)}` : ''}
+        ${venda.referencia ? `<br><strong>Referência:</strong> ${escapeHtml(venda.referencia)}` : ''}
+      </div>
+
+      <table>
+        <thead><tr><th>Item</th><th>Produto</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Vlr Unit.</th><th style="text-align:right;">Subtotal</th></tr></thead>
+        <tbody>${linhasItens}</tbody>
+        <tfoot><tr><td colspan="4" style="text-align:right;">Valor Total</td><td style="text-align:right;">${fmtMoney(calc.bruto)}</td></tr></tfoot>
+      </table>
+
+      ${venda.status==='cancelada' ? `<div class="obs" style="color:#B3261E;font-weight:bold;">⚠️ Esta venda está cancelada.</div>` : ''}
+      <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
+    </body>
+    </html>
+  `);
+  janela.document.close();
+}
+
 // Relatório em PDF — dois modos:
 // 'interno': mostra tudo (custo, imposto, comissão, repasse, lucro) — uso da Mizu
 // 'cliente': só o essencial pro cliente conferir o que precisa pagar, sem
@@ -16052,17 +16141,19 @@ function abrirDetalheDiaCalendarioReceber(dataCompleta){
           <h3>${dia}/${mes}/${ano}</h3>
           <div class="sub">${itens.length} recebimento${itens.length===1?'':'s'} neste dia</div>
         </div>
+        <button type="button" class="modal-rapido-fechar-x" id="fechar-x-detalhe-dia-receber" title="Fechar">✕</button>
       </div>
       <div class="modal-rapido-corpo">
         <div class="table-wrap">
           <table class="data-table">
-            <thead><tr><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Ações</th></tr></thead>
+            <thead><tr><th>Cliente</th><th class="num">Valor</th><th>Status</th><th>Venda</th><th>Ações</th></tr></thead>
             <tbody>
               ${itens.map(it=>`
                 <tr>
                   <td>${escapeHtml(it.descricao)}</td>
                   <td class="num">${fmtMoney(it.valor)}</td>
                   <td>${it.pago ? '<span class="badge badge-positive">Recebido</span>' : '<span class="badge badge-warning">Pendente</span>'}</td>
+                  <td>${it.origem==='venda' ? `<button type="button" class="btn btn-sm" title="Baixar o que foi vendido" onclick="gerarPdfVenda('${it.vendaId}')">⬇️ Baixar</button>` : ''}</td>
                   <td>${it.pago
                     ? `<button type="button" class="btn btn-sm" onclick="desmarcarContaRecebidaDoCalendario('${it.id}','${it.origem}','${it.vendaId||it.id}',${it.parcelaIdx!=null?it.parcelaIdx:'null'},'${dataCompleta}')">Desfazer</button>`
                     : `<button type="button" class="btn btn-sm btn-primary" onclick="marcarContaRecebidaDoCalendario('${it.id}','${it.origem}','${it.vendaId||it.id}',${it.parcelaIdx!=null?it.parcelaIdx:'null'},'${dataCompleta}')">Marcar recebido</button>`}
@@ -16071,8 +16162,8 @@ function abrirDetalheDiaCalendarioReceber(dataCompleta){
               `).join('')}
             </tbody>
             <tfoot>
-              <tr><td>Total do dia</td><td class="num">${fmtMoney(total)}</td><td colspan="2"></td></tr>
-              ${totalPendente<total ? `<tr><td style="color:var(--negative);font-weight:700;">Ainda em aberto</td><td class="num" style="color:var(--negative);font-weight:700;">${fmtMoney(totalPendente)}</td><td colspan="2"></td></tr>` : ''}
+              <tr><td>Total do dia</td><td class="num">${fmtMoney(total)}</td><td colspan="3"></td></tr>
+              ${totalPendente<total ? `<tr><td style="color:var(--negative);font-weight:700;">Ainda em aberto</td><td class="num" style="color:var(--negative);font-weight:700;">${fmtMoney(totalPendente)}</td><td colspan="3"></td></tr>` : ''}
             </tfoot>
           </table>
         </div>
@@ -16084,6 +16175,7 @@ function abrirDetalheDiaCalendarioReceber(dataCompleta){
   `;
   document.body.appendChild(modal);
   document.getElementById('fechar-detalhe-dia-receber').addEventListener('click', ()=>modal.remove());
+  document.getElementById('fechar-x-detalhe-dia-receber').addEventListener('click', ()=>modal.remove());
 }
 
 let receberFiltroCliente = '';
@@ -16159,6 +16251,7 @@ function renderTabelaReceber(){
           ${l.origem==='manual'
             ? `<button class="btn btn-sm" onclick="abrirEditarContaReceberManual('${l.id}')">✏️ Editar</button>`
             : `<button class="btn btn-sm" onclick="abrirEditarValorReceberVenda('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">✏️ Editar</button>`}
+          ${l.origem==='venda' ? `<button class="btn btn-sm" title="Baixar o que foi vendido" onclick="gerarPdfVenda('${l.vendaId}')">⬇️ Baixar</button>` : ''}
           ${l.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirContaReceberManual('${l.id}')">Excluir</button>` : ''}
         </div>
       </td>
