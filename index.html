@@ -850,6 +850,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="vale" href="#">
       <span class="ic ic-financeiro">🎫</span> Vale de Funcionários
     </a>
+    <a class="nav-item" data-page="fechamento-mes" href="#">
+      <span class="ic ic-financeiro">📅</span> Fechamento do Mês
+    </a>
 
     <div class="nav-section-label"><span class="nav-dot nav-dot-relatorios"></span>Relatórios</div>
     <a class="nav-item" data-page="analise-vendas" href="#">
@@ -1141,6 +1144,10 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="vale-content"></div>
+    </section>
+
+    <section class="page" id="page-fechamento-mes">
+      <div id="fechamento-mes-content"></div>
     </section>
 
     <!-- ============ LICITAÇÕES ============ -->
@@ -1438,6 +1445,7 @@ function defaultState(){
       fechamentos: [] // { id, data, saldoSistema, saldoContado, diferenca, obs, criadoEm } — conferência periódica: quanto o sistema calcula x quanto foi contado fisicamente
     },
     lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
+    fechamentosMes: [], // { mes:'AAAA-MM', fechado, fechadoEm, obs, faturamento, lucro, despesasPagas, saldoCaixaFinal, atualizadoEm } — um registro por mês, painel interativo de fechamento (não trava nada, só documenta e ajuda a resolver pendências)
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -18290,6 +18298,214 @@ function abrirModalRegistrarVale(funcionarioIdPreSelecionado){
 document.getElementById('btn-registrar-vale').addEventListener('click', ()=>abrirModalRegistrarVale(null));
 
 RENDERERS.vale = renderVale;
+
+/* =========================================================
+   MÓDULO: FECHAMENTO DO MÊS
+   Painel interativo (não é só um relatório): mostra os números do mês
+   escolhido, lista as pendências (despesas a pagar, contas a receber)
+   com botão de resolver ali mesmo, guarda uma observação livre por mês
+   e permite marcar o mês como fechado (ou reabrir depois). Fechar o
+   mês NUNCA trava ou remove nada — é só um registro/checklist.
+   ========================================================= */
+let fechamentoMesRef = todayISO().slice(0,7);
+
+function ultimoDiaDoMesISO(ym){
+  const [y,m] = ym.split('-').map(Number);
+  return new Date(y, m, 0).toISOString().slice(0,10);
+}
+
+function getFechamentoMesRegistro(mes){
+  return (STATE.fechamentosMes||[]).find(f=>f.mes===mes) || null;
+}
+
+function calcularNumerosFechamentoMes(mes){
+  const linhasVenda = getLinhasVenda().filter(l=>l.mes===mes);
+  const faturamento = linhasVenda.reduce((s,l)=>s+l.bruto,0);
+  const lucro = linhasVenda.reduce((s,l)=>s+l.lucro,0);
+  const despesasPagas = getParcelasExpandidas().filter(l=>l.pago && l.dataPagamento && l.dataPagamento.slice(0,7)===mes).reduce((s,l)=>s+l.valor,0);
+  const saldoCaixaFinal = getSaldoCaixa(ultimoDiaDoMesISO(mes)).saldoAtual;
+  return { faturamento, lucro, despesasPagas, saldoCaixaFinal };
+}
+
+function salvarObsFechamentoMes(mes, obs){
+  if(!STATE.fechamentosMes) STATE.fechamentosMes = [];
+  let reg = getFechamentoMesRegistro(mes);
+  if(!reg){
+    reg = { mes, fechado:false, fechadoEm:'', obs:'', faturamento:0, lucro:0, despesasPagas:0, saldoCaixaFinal:0 };
+    STATE.fechamentosMes.push(reg);
+  }
+  reg.obs = obs;
+  reg.atualizadoEm = new Date().toISOString();
+  saveState();
+}
+
+function fecharMes(mes){
+  const numeros = calcularNumerosFechamentoMes(mes);
+  confirmAction('Fechar o mês', `Isso registra o fechamento de ${monthLabel(mes)} com os números de hoje (${fmtMoney(numeros.faturamento)} de faturamento). Você pode reabrir e refazer quando quiser — não trava nada no sistema. Confirmar?`, ()=>{
+    if(!STATE.fechamentosMes) STATE.fechamentosMes = [];
+    let reg = getFechamentoMesRegistro(mes);
+    if(!reg){ reg = { mes, obs:'' }; STATE.fechamentosMes.push(reg); }
+    Object.assign(reg, numeros, { fechado:true, fechadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() });
+    saveState();
+    showToast('Mês fechado.', 'success');
+    renderFechamentoMes();
+  });
+}
+
+function reabrirMes(mes){
+  const reg = getFechamentoMesRegistro(mes);
+  if(!reg) return;
+  confirmAction('Reabrir o mês', `Isso volta ${monthLabel(mes)} pra "em aberto" — os números registrados no fechamento ficam guardados até você fechar de novo. Confirmar?`, ()=>{
+    reg.fechado = false;
+    reg.atualizadoEm = new Date().toISOString();
+    saveState();
+    showToast('Mês reaberto.', 'success');
+    renderFechamentoMes();
+  });
+}
+
+function renderFechamentoMes(){
+  const box = document.getElementById('fechamento-mes-content');
+  const mes = fechamentoMesRef;
+  const numerosAtuais = calcularNumerosFechamentoMes(mes);
+  const reg = getFechamentoMesRegistro(mes);
+  const fechado = !!(reg && reg.fechado);
+
+  const despesasPendentesMes = getParcelasExpandidas().filter(l=>!l.pago && l.vencimento && l.vencimento.slice(0,7)===mes);
+  const contasPendentesMes = getLinhasReceber().filter(l=>!l.recebido && l.vencimento && l.vencimento.slice(0,7)===mes);
+  const totalPendencias = despesasPendentesMes.length + contasPendentesMes.length;
+
+  box.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>📅 Fechamento do Mês</h2>
+        <p class="subtitle">Painel interativo pra revisar o mês, resolver o que falta e guardar um registro do que foi apurado</p>
+      </div>
+      <div class="header-actions">
+        <input type="month" id="fm-mes" value="${mes}">
+      </div>
+    </div>
+
+    <div class="card" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:${fechado?'#EAF7F0':'#FFF9EC'};border:1px solid ${fechado?'#BFE6D2':'#F0DEB0'};">
+      <div>
+        <strong style="font-size:15px;">${fechado ? `✅ ${monthLabel(mes)} está fechado` : `🔓 ${monthLabel(mes)} está em aberto`}</strong>
+        ${fechado && reg.fechadoEm ? `<div class="help-text" style="margin:2px 0 0;">Fechado em ${new Date(reg.fechadoEm).toLocaleDateString('pt-BR')}</div>` : ''}
+        ${!fechado && totalPendencias>0 ? `<div class="help-text" style="margin:2px 0 0;">${totalPendencias} pendência(s) em aberto nesse mês — pode fechar mesmo assim, é só um registro.</div>` : ''}
+      </div>
+      <button class="btn ${fechado?'':'btn-primary'}" id="fm-btn-toggle">${fechado ? '🔓 Reabrir o Mês' : '🔒 Fechar o Mês'}</button>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card acc-blue">
+        <div class="kpi-icon">💰</div>
+        <div class="kpi-label">Faturamento do Mês</div>
+        <div class="kpi-value">${fmtMoney(numerosAtuais.faturamento)}</div>
+      </div>
+      <div class="kpi-card ${numerosAtuais.lucro>=0?'acc-green':'acc-red'}">
+        <div class="kpi-icon">📈</div>
+        <div class="kpi-label">Lucro do Mês</div>
+        <div class="kpi-value ${numerosAtuais.lucro>=0?'positive':'negative'}">${fmtMoney(numerosAtuais.lucro)}</div>
+      </div>
+      <div class="kpi-card acc-gold">
+        <div class="kpi-icon">🧾</div>
+        <div class="kpi-label">Despesas Pagas no Mês</div>
+        <div class="kpi-value">${fmtMoney(numerosAtuais.despesasPagas)}</div>
+      </div>
+      <div class="kpi-card acc-blue">
+        <div class="kpi-icon">🗄️</div>
+        <div class="kpi-label">Saldo de Caixa (fim do mês)</div>
+        <div class="kpi-value">${fmtMoney(numerosAtuais.saldoCaixaFinal)}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Pendências do Mês <span class="hint">resolve aqui mesmo, sem precisar trocar de tela</span></h3>
+      <div id="fm-pendencias"></div>
+    </div>
+
+    <div class="card">
+      <h3>Notas do Mês <span class="hint">observações livres, salva automático ao sair do campo</span></h3>
+      <textarea id="fm-obs" rows="3" style="width:100%;font-family:inherit;font-size:13px;padding:10px;border:1px solid var(--border);border-radius:8px;" placeholder="Ex: fechamento revisado com o contador, pendência do fornecedor X ainda em aberto, etc.">${escapeHtml(reg&&reg.obs||'')}</textarea>
+    </div>
+
+    <div class="card">
+      <h3>Histórico de Fechamentos</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Mês</th><th>Status</th><th class="num">Faturamento</th><th class="num">Lucro</th><th class="num">Saldo Final</th><th></th></tr></thead>
+          <tbody id="fm-historico-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  const boxPendencias = document.getElementById('fm-pendencias');
+  if(totalPendencias===0){
+    boxPendencias.innerHTML = `<p class="help-text" style="margin:0;">Nenhuma pendência em ${monthLabel(mes)}. 🎉</p>`;
+  }else{
+    boxPendencias.innerHTML = `
+      ${despesasPendentesMes.length>0 ? `
+        <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Despesas a pagar (${despesasPendentesMes.length})</p>
+        <div class="table-wrap" style="margin-bottom:14px;">
+          <table class="data-table">
+            <tbody>
+              ${despesasPendentesMes.map(l=>`
+                <tr>
+                  <td>${escapeHtml(l.descricao)}</td>
+                  <td>${fmtDate(l.vencimento)}</td>
+                  <td class="num">${fmtMoney(l.valor)}</td>
+                  <td><button class="btn btn-sm btn-primary" onclick="marcarParcelaPaga('${l.despesaId}', ${l.parcelaIdx}); renderFechamentoMes();">✅ Marcar Paga</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+      ${contasPendentesMes.length>0 ? `
+        <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Contas a receber (${contasPendentesMes.length})</p>
+        <div class="table-wrap">
+          <table class="data-table">
+            <tbody>
+              ${contasPendentesMes.map(l=>`
+                <tr>
+                  <td>${escapeHtml(l.descricao)}</td>
+                  <td>${fmtDate(l.vencimento)}</td>
+                  <td class="num">${fmtMoney(l.valor)}</td>
+                  <td><button class="btn btn-sm btn-primary" onclick="marcarContaRecebida('${l.id}', '${l.origem}', ${l.vendaId?`'${l.vendaId}'`:'null'}, ${l.parcelaIdx!=null?l.parcelaIdx:'null'}); renderFechamentoMes();">✅ Marcar Recebida</button></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      ` : ''}
+    `;
+  }
+
+  const historico = (STATE.fechamentosMes||[]).filter(f=>f.fechado || f.obs).slice().sort((a,b)=> a.mes===b.mes?0:(a.mes<b.mes?1:-1));
+  document.getElementById('fm-historico-body').innerHTML = historico.length ? historico.map(f=>`
+    <tr>
+      <td>${monthLabel(f.mes)}</td>
+      <td>${f.fechado ? '✅ Fechado' : '🔓 Em aberto'}</td>
+      <td class="num">${fmtMoney(f.faturamento||0)}</td>
+      <td class="num">${fmtMoney(f.lucro||0)}</td>
+      <td class="num">${fmtMoney(f.saldoCaixaFinal||0)}</td>
+      <td><button class="btn btn-sm" onclick="fechamentoMesRef='${f.mes}'; document.getElementById('fm-mes').value='${f.mes}'; renderFechamentoMes();">Ver</button></td>
+    </tr>
+  `).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum mês fechado ainda.</td></tr>`;
+
+  document.getElementById('fm-mes').addEventListener('change', (e)=>{
+    fechamentoMesRef = e.target.value || todayISO().slice(0,7);
+    renderFechamentoMes();
+  });
+  document.getElementById('fm-btn-toggle').addEventListener('click', ()=>{
+    if(fechado) reabrirMes(mes); else fecharMes(mes);
+  });
+  document.getElementById('fm-obs').addEventListener('blur', (e)=>{
+    salvarObsFechamentoMes(mes, e.target.value);
+  });
+}
+
+RENDERERS['fechamento-mes'] = renderFechamentoMes;
 
 /* =========================================================
    MÓDULO: LICITAÇÕES (funil kanban)
