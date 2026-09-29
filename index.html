@@ -242,12 +242,25 @@ table{border-collapse:collapse;}
   margin-bottom:20px;
 }
 .kpi-card{
+  position:relative;
+  overflow:hidden;
   background:var(--bg-card);
   border:1px solid var(--border);
   border-radius:var(--radius);
-  padding:16px 18px;
+  padding:18px 18px 16px 18px;
   box-shadow:var(--shadow);
 }
+/* Faixa colorida no topo de todo card de KPI do sistema (mesma linguagem
+   visual do Dashboard/Menu) — azul por padrão, e verde/vermelho sozinha
+   quando o valor do card já usa .positive/.negative (lucro, saldo, etc.),
+   sem precisar mexer em cada tela que usa .kpi-card. */
+.kpi-card::before{
+  content:'';
+  position:absolute; top:0; left:0; right:0; height:4px;
+  background:#0081A7;
+}
+.kpi-card:has(.kpi-value.positive)::before{ background:#2E7D5B; }
+.kpi-card:has(.kpi-value.negative)::before{ background:#C4483D; }
 .kpi-label{
   font-size:11.5px;
   color:var(--ink-soft);
@@ -259,7 +272,7 @@ table{border-collapse:collapse;}
 }
 .kpi-value{
   font-size:24px;
-  font-weight:700;
+  font-weight:800;
   font-variant-numeric:tabular-nums;
   color:var(--ink);
   margin-bottom:4px;
@@ -6846,7 +6859,64 @@ function cancelarVenda(vendaId){
       venda.canceladaEm = new Date().toISOString();
       saveState();
       showToast('Venda cancelada e estoque estornado.', 'success');
-      renderVendasRecentes();
+      if(document.getElementById('v-vendas-recentes-body')) renderVendasRecentes();
+      if(typeof renderResultadoVendasPorCliente==='function' && document.getElementById('vc-resultado')) renderResultadoVendasPorCliente();
+    }
+  );
+}
+
+// Duplica uma venda existente como uma nova venda ATIVA de hoje (mesmo
+// cliente, mesmos itens e condição de pagamento) — dá baixa de estoque
+// normalmente, como se fosse uma venda nova. A cópia pode ser cancelada
+// depois, igual qualquer outra venda (ver cancelarVenda).
+function clonarVenda(vendaId){
+  const original = STATE.vendas.find(v=>v.id===vendaId);
+  if(!original) return;
+  confirmAction(
+    'Clonar venda',
+    'Isso cria uma nova venda de hoje com os mesmos itens, cliente e forma de pagamento desta — e já baixa o estoque normalmente, como uma venda nova. Deseja continuar?',
+    ()=>{
+      const nova = {
+        ...original,
+        id: uid('venda'),
+        data: todayISO(),
+        status: 'ativa',
+        criadoEm: new Date().toISOString(),
+        itens: original.itens.map(it=>({...it}))
+      };
+      delete nova.canceladaEm;
+      if(original.desconto) nova.desconto = {...original.desconto};
+      if(original.acrescimo) nova.acrescimo = {...original.acrescimo};
+      if(original.repasse) nova.repasse = { abatimentos: [], desconto: {...original.repasse.desconto} };
+      if(original.receber) nova.receber = { vencimento: original.receber.vencimento, recebido: false, dataRecebimento: '' };
+      if(original.parcelasReceber) nova.parcelasReceber = original.parcelasReceber.map(p=>({...p, recebido:false, dataRecebimento:''}));
+
+      STATE.vendas.push(nova);
+
+      const avisosEstoque = [];
+      nova.itens.forEach(it=>{
+        const produto = STATE.produtos.find(p=>p.id===it.produtoId);
+        if(produto){
+          if(produto.criadoRapido){
+            registrarMovimentoEstoque(produto.id, 'entrada', it.qtd, 'Compra local (simultânea à venda) '+fmtDate(nova.data), nova.id);
+            registrarMovimentoEstoque(produto.id, 'saida', it.qtd, 'Venda '+fmtDate(nova.data), nova.id);
+          }else{
+            produto.estoqueAtual = (produto.estoqueAtual||0) - it.qtd;
+            registrarMovimentoEstoque(produto.id, 'saida', it.qtd, 'Venda '+fmtDate(nova.data), nova.id);
+            if(produto.estoqueMin!=null && produto.estoqueAtual < produto.estoqueMin){
+              avisosEstoque.push(produto.nome);
+            }
+          }
+        }
+      });
+
+      saveState();
+      showToast('Venda clonada com sucesso.', 'success');
+      if(avisosEstoque.length>0){
+        showToast('Estoque baixo: ' + avisosEstoque.join(', '), 'error');
+      }
+      if(typeof renderResultadoVendasPorCliente==='function' && document.getElementById('vc-resultado')) renderResultadoVendasPorCliente();
+      if(typeof renderVendasRecentes==='function' && document.getElementById('v-vendas-recentes-body')) renderVendasRecentes();
     }
   );
 }
@@ -12319,6 +12389,12 @@ function renderResultadoVendasPorCliente(){
     </div>
   `;
 
+  // Reaplica a classe sorted-asc/sorted-desc no <th> correspondente — sem isso
+  // o clique seguinte sempre lê "sem classe" e volta pra 'asc' (bug relatado:
+  // ordenação por Data sempre ia só do menor pro maior).
+  const thOrdenacaoAtual = resultBox.querySelector(`th[data-sort="${vendasClienteSort.key}"]`);
+  if(thOrdenacaoAtual) thOrdenacaoAtual.classList.add(vendasClienteSort.dir==='asc' ? 'sorted-asc' : 'sorted-desc');
+
   const condicaoLabel = { vista:'À vista', boleto:'Boleto', crediario:'Crediário' };
   document.getElementById('vc-table-body').innerHTML = pagina.length ? pagina.map(v=>{
     const cli = STATE.clientes.find(c=>c.id===v.clienteId);
@@ -12340,7 +12416,13 @@ function renderResultadoVendasPorCliente(){
         <td class="num">${f.valorRepasse>0?fmtMoney(f.valorRepasse):'—'}</td>
         <td class="num" style="color:${f.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(f.lucro)}</td>
         <td>${v.status==='cancelada' ? '<span class="badge badge-negative">Cancelada</span>' : '<span class="badge badge-positive">Ativa</span>'}</td>
-        <td><button class="btn btn-sm" onclick="abrirDetalheVendaCliente('${v.id}')">Detalhes</button></td>
+        <td style="white-space:nowrap;">
+          <div class="cell-actions">
+            <button class="btn btn-sm" onclick="abrirDetalheVendaCliente('${v.id}')">Detalhes</button>
+            <button class="btn btn-sm" onclick="clonarVenda('${v.id}')" title="Clonar como nova venda de hoje">📋 Clonar</button>
+            ${v.status!=='cancelada' ? `<button class="btn btn-sm btn-danger" onclick="cancelarVenda('${v.id}')">Cancelar</button>` : ''}
+          </div>
+        </td>
       </tr>`;
   }).join('') : `<tr><td colspan="13" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma venda encontrada para os filtros selecionados.</td></tr>`;
 
