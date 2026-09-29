@@ -798,6 +798,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item active" data-page="dashboard" href="#">
       <span class="ic">📊</span> Dashboard
     </a>
+    <a class="nav-item" data-page="lembretes" href="#">
+      <span class="ic">📌</span> Lembretes <span class="nav-badge" id="nav-badge-lembretes" style="display:none;"></span>
+    </a>
 
     <div class="nav-section-label"><span class="nav-dot nav-dot-cadastros"></span>Cadastros</div>
     <a class="nav-item" data-page="clientes" href="#">
@@ -891,6 +894,17 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="dash-content"></div>
+    </section>
+
+    <!-- ============ LEMBRETES ============ -->
+    <section class="page" id="page-lembretes">
+      <div class="page-header">
+        <div>
+          <h2>Lembretes</h2>
+          <p class="subtitle">Qualquer coisa que precise ser lembrada, sem vínculo com nenhuma outra tela</p>
+        </div>
+      </div>
+      <div id="lembretes-content"></div>
     </section>
 
     <!-- ============ CLIENTES ============ -->
@@ -1408,6 +1422,7 @@ function defaultState(){
       dataInicial: '', // data de referência do saldo inicial (fica vazia até o usuário configurar)
       lancamentosManuais: [] // { id, data, tipo:'entrada'|'saida', descricao, valor, criadoEm } — movimentação solta que não vem de despesa/conta a receber/venda (ex: combustível, dinheiro recebido fora do fluxo)
     },
+    lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -1505,6 +1520,13 @@ function atualizarBadgesMenu(){
       .filter(l=>!l.pago && l.vencimento<hoje).length;
     if(atrasadas>0){ badgeDesp.textContent = atrasadas; badgeDesp.style.display = ''; }
     else{ badgeDesp.style.display = 'none'; }
+  }
+  const badgeLemb = document.getElementById('nav-badge-lembretes');
+  if(badgeLemb){
+    const hoje = todayISO();
+    const atrasados = (STATE.lembretes||[]).filter(l=>!l.concluido && l.dataLembrete && l.dataLembrete<hoje).length;
+    if(atrasados>0){ badgeLemb.textContent = atrasados; badgeLemb.style.display = ''; }
+    else{ badgeLemb.style.display = 'none'; }
   }
 }
 
@@ -13045,6 +13067,104 @@ function excluirLancamentoCaixaManual(id){
 }
 
 RENDERERS['caixa'] = renderCaixa;
+
+/* =========================================================
+   MÓDULO: LEMBRETES
+   Lista simples e solta, sem vínculo com nenhum outro módulo — pra
+   anotar qualquer coisa que precise ser lembrada (ligar pro fornecedor,
+   buscar orçamento em algum lugar, etc.). Data é opcional; quando tem
+   data e já passou (e ainda não foi concluído), o lembrete some em
+   destaque como atrasado.
+   ========================================================= */
+function renderLembretes(){
+  const box = document.getElementById('lembretes-content');
+  const lembretes = STATE.lembretes||[];
+  const hoje = todayISO();
+  const pendentes = lembretes.filter(l=>!l.concluido)
+    .sort((a,b)=>{
+      // sem data vai por último; com data, mais antiga (mais urgente) primeiro
+      if(!a.dataLembrete && !b.dataLembrete) return (a.criadoEm||'').localeCompare(b.criadoEm||'');
+      if(!a.dataLembrete) return 1;
+      if(!b.dataLembrete) return -1;
+      return a.dataLembrete.localeCompare(b.dataLembrete);
+    });
+  const concluidos = lembretes.filter(l=>l.concluido)
+    .sort((a,b)=>(b.concluidoEm||'').localeCompare(a.concluidoEm||''));
+
+  const linhaLembrete = (l) => {
+    const atrasado = !l.concluido && l.dataLembrete && l.dataLembrete<hoje;
+    return `
+      <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--border);">
+        <input type="checkbox" style="width:auto;margin-top:3px;" ${l.concluido?'checked':''} onchange="alternarConcluidoLembrete('${l.id}')">
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13.5px;color:var(--ink);${l.concluido?'text-decoration:line-through;color:var(--ink-faint);':''}">${escapeHtml(l.texto)}</div>
+          ${l.dataLembrete ? `<div style="font-size:11.5px;margin-top:2px;color:${atrasado?'var(--negative)':'var(--ink-faint)'};font-weight:${atrasado?'700':'400'};">${atrasado?'⚠️ Atrasado — ':''}${fmtDate(l.dataLembrete)}</div>` : ''}
+        </div>
+        <button class="btn btn-sm btn-danger" onclick="excluirLembrete('${l.id}')">🗑️</button>
+      </div>`;
+  };
+
+  box.innerHTML = `
+    <div class="card">
+      <h3>+ Novo Lembrete</h3>
+      <div class="form-grid">
+        <div class="field" style="grid-column:1/-1;">
+          <label>O que precisa ser lembrado?</label>
+          <input type="text" id="lemb-texto" placeholder="Ex: Ligar pro fornecedor X, buscar orçamento de embalagem...">
+        </div>
+        <div class="field">
+          <label>Data (opcional)</label>
+          <input type="date" id="lemb-data">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="lemb-btn-adicionar">Adicionar Lembrete</button>
+    </div>
+
+    <div class="card">
+      <h3>Pendentes <span class="hint">${pendentes.length} no total</span></h3>
+      <div id="lemb-lista-pendentes">
+        ${pendentes.length ? pendentes.map(linhaLembrete).join('') : '<p class="help-text" style="margin:0;">Nenhum lembrete pendente.</p>'}
+      </div>
+    </div>
+
+    ${concluidos.length ? `
+    <div class="card">
+      <h3>Concluídos <span class="hint">${concluidos.length} no total</span></h3>
+      <div>${concluidos.map(linhaLembrete).join('')}</div>
+    </div>` : ''}
+  `;
+
+  document.getElementById('lemb-btn-adicionar').addEventListener('click', ()=>{
+    const texto = document.getElementById('lemb-texto').value.trim();
+    const dataLembrete = document.getElementById('lemb-data').value || '';
+    if(!texto){ showToast('Escreva o que precisa ser lembrado.', 'error'); return; }
+    if(!STATE.lembretes) STATE.lembretes = [];
+    STATE.lembretes.push({ id: uid('lemb'), texto, dataLembrete, concluido:false, concluidoEm:'', criadoEm: new Date().toISOString() });
+    saveState();
+    showToast('Lembrete adicionado.', 'success');
+    renderLembretes();
+  });
+}
+
+function alternarConcluidoLembrete(id){
+  const l = (STATE.lembretes||[]).find(x=>x.id===id);
+  if(!l) return;
+  l.concluido = !l.concluido;
+  l.concluidoEm = l.concluido ? new Date().toISOString() : '';
+  saveState();
+  renderLembretes();
+}
+
+function excluirLembrete(id){
+  confirmAction('Excluir lembrete', 'Deseja excluir este lembrete?', ()=>{
+    STATE.lembretes = (STATE.lembretes||[]).filter(l=>l.id!==id);
+    saveState();
+    showToast('Lembrete excluído.', 'success');
+    renderLembretes();
+  });
+}
+
+RENDERERS['lembretes'] = renderLembretes;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
