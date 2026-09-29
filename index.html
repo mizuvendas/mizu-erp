@@ -870,6 +870,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="saude-margem" href="#">
       <span class="ic ic-relatorios">🩺</span> Saúde de Margem <span class="nav-badge" id="nav-badge-margem" style="display:none;"></span>
     </a>
+    <a class="nav-item" data-page="auditoria" href="#">
+      <span class="ic ic-relatorios">🕵️</span> Trilha de Auditoria
+    </a>
 
     <div class="sidebar-footer">
       <div class="status-conexao" id="status-conexao">
@@ -1066,6 +1069,11 @@ table.data-table{ width:100%; font-size:13px; }
     <!-- ============ SAÚDE DE MARGEM ============ -->
     <section class="page" id="page-saude-margem">
       <div id="saude-margem-content"></div>
+    </section>
+
+    <!-- ============ TRILHA DE AUDITORIA ============ -->
+    <section class="page" id="page-auditoria">
+      <div id="auditoria-content"></div>
     </section>
 
     <!-- ============ CAIXA ============ -->
@@ -1454,6 +1462,7 @@ function defaultState(){
     },
     lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
     fechamentosMes: [], // { mes:'AAAA-MM', fechado, fechadoEm, obs, faturamento, lucro, despesasPagas, saldoCaixaFinal, atualizadoEm } — um registro por mês, painel interativo de fechamento (não trava nada, só documenta e ajuda a resolver pendências)
+    auditoria: [], // { id, dataHora (ISO), tipo, descricao, valor|null } — trilha de auditoria financeira: registra ações que mexem com dinheiro (pagar, receber, cancelar, lançamentos de caixa, fechamentos). Mantém só os 1000 mais recentes — ver registrarAuditoria()
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -1530,6 +1539,26 @@ function saveState(){
     showToast('Erro ao salvar dados. Veja o console.', 'error');
   }
   atualizarBadgesMenu();
+}
+
+/* =========================================================
+   TRILHA DE AUDITORIA FINANCEIRA
+   Registro simples e cronológico de ações que mexem com dinheiro —
+   despesa paga, conta recebida, venda cancelada, lançamento/fechamento
+   de caixa, fechamento de mês. Não impede nem desfaz nada, é só um
+   histórico pra consulta/conferência depois. Mantém só os 1000 mais
+   recentes pra não pesar o armazenamento.
+   ========================================================= */
+function registrarAuditoria(tipo, descricao, valor){
+  if(!STATE.auditoria) STATE.auditoria = [];
+  STATE.auditoria.unshift({
+    id: uid('aud'),
+    dataHora: new Date().toISOString(),
+    tipo,
+    descricao,
+    valor: (valor!=null && !isNaN(valor)) ? valor : null
+  });
+  if(STATE.auditoria.length>1000) STATE.auditoria.length = 1000;
 }
 
 /* =========================================================
@@ -6937,6 +6966,9 @@ function cancelarVenda(vendaId){
       });
       venda.status = 'cancelada';
       venda.canceladaEm = new Date().toISOString();
+      const clienteAud = STATE.clientes.find(c=>c.id===venda.clienteId);
+      const valorAud = getValoresFinanceirosVenda(venda).valorFinal;
+      registrarAuditoria('venda_cancelada', `Venda cancelada — ${clienteAud?clienteAud.nome:'(cliente removido)'} (${fmtDate(venda.data)})`, valorAud);
       saveState();
       showToast('Venda cancelada e estoque estornado.', 'success');
       if(document.getElementById('v-vendas-recentes-body')) renderVendasRecentes();
@@ -13117,6 +13149,7 @@ function abrirModalLancamentoCaixa(){
     if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
     if(!STATE.caixa.lancamentosManuais) STATE.caixa.lancamentosManuais = [];
     STATE.caixa.lancamentosManuais.push({ id: uid('lcx'), data, tipo, descricao, valor, criadoEm: new Date().toISOString() });
+    registrarAuditoria(tipo==='entrada'?'caixa_lancamento_entrada':'caixa_lancamento_saida', `Lançamento manual no Caixa: ${descricao}`, valor);
     saveState();
     showToast('Lançamento adicionado ao Caixa.', 'success');
     modal.remove();
@@ -13126,7 +13159,9 @@ function abrirModalLancamentoCaixa(){
 
 function excluirLancamentoCaixaManual(id){
   confirmAction('Excluir lançamento', 'Isso remove esse lançamento manual do Caixa. Deseja continuar?', ()=>{
+    const lancamento = (STATE.caixa.lancamentosManuais||[]).find(l=>l.id===id);
     STATE.caixa.lancamentosManuais = (STATE.caixa.lancamentosManuais||[]).filter(l=>l.id!==id);
+    if(lancamento) registrarAuditoria('caixa_lancamento_excluido', `Lançamento manual do Caixa excluído: ${lancamento.descricao}`, lancamento.valor);
     saveState();
     showToast('Lançamento removido.', 'success');
     renderCaixa();
@@ -13187,6 +13222,7 @@ function abrirModalFechamentoCaixa(){
     const diferenca = saldoContado - saldoSistema;
     if(!STATE.caixa.fechamentos) STATE.caixa.fechamentos = [];
     STATE.caixa.fechamentos.push({ id: uid('fch'), data, saldoSistema, saldoContado, diferenca, obs, criadoEm: new Date().toISOString() });
+    registrarAuditoria('caixa_fechamento', `Fechamento de Caixa em ${fmtDate(data)} — diferença de ${fmtMoney(diferenca)}`, diferenca);
     saveState();
     showToast(Math.abs(diferenca)<0.01 ? 'Fechamento registrado — tudo bateu certinho!' : 'Fechamento registrado — há diferença entre o sistema e a contagem.', Math.abs(diferenca)<0.01 ? 'success' : 'error');
     modal.remove();
@@ -13196,7 +13232,9 @@ function abrirModalFechamentoCaixa(){
 
 function excluirFechamentoCaixa(id){
   confirmAction('Excluir fechamento', 'Isso remove esse registro de conferência do Caixa. Deseja continuar?', ()=>{
+    const fechamento = (STATE.caixa.fechamentos||[]).find(f=>f.id===id);
     STATE.caixa.fechamentos = (STATE.caixa.fechamentos||[]).filter(f=>f.id!==id);
+    if(fechamento) registrarAuditoria('caixa_fechamento_excluido', `Registro de Fechamento de Caixa de ${fmtDate(fechamento.data)} excluído`, null);
     saveState();
     showToast('Fechamento removido.', 'success');
     renderCaixa();
@@ -13533,6 +13571,118 @@ function renderSaudeMargem(){
 }
 
 RENDERERS['saude-margem'] = renderSaudeMargem;
+
+/* =========================================================
+   MÓDULO: TRILHA DE AUDITORIA FINANCEIRA
+   Só exibe o que já foi registrado por registrarAuditoria() (ver
+   perto de saveState()) — não é editável, é um histórico de
+   consulta/conferência.
+   ========================================================= */
+const AUDITORIA_TIPO_LABEL = {
+  despesa_paga: { texto: '💳 Despesa Paga', cor: 'var(--negative)' },
+  despesa_despaga: { texto: '↩️ Despesa Desmarcada', cor: 'var(--ink-faint)' },
+  conta_recebida: { texto: '💰 Conta Recebida', cor: 'var(--positive)' },
+  conta_despaga: { texto: '↩️ Recebimento Desmarcado', cor: 'var(--ink-faint)' },
+  venda_cancelada: { texto: '🚫 Venda Cancelada', cor: 'var(--negative)' },
+  caixa_lancamento_entrada: { texto: '⬆️ Lançamento de Caixa (Entrada)', cor: 'var(--positive)' },
+  caixa_lancamento_saida: { texto: '⬇️ Lançamento de Caixa (Saída)', cor: 'var(--negative)' },
+  caixa_lancamento_excluido: { texto: '🗑️ Lançamento de Caixa Excluído', cor: 'var(--ink-faint)' },
+  caixa_fechamento: { texto: '🔒 Fechamento de Caixa', cor: 'var(--ink)' },
+  caixa_fechamento_excluido: { texto: '🗑️ Fechamento de Caixa Excluído', cor: 'var(--ink-faint)' },
+  repasse_quinzena_pago: { texto: '🔁 Repasse Pago', cor: 'var(--positive)' },
+  mes_fechado: { texto: '📅 Mês Fechado', cor: 'var(--ink)' },
+  mes_reaberto: { texto: '📅 Mês Reaberto', cor: 'var(--ink-faint)' }
+};
+
+let auditoriaFiltroTipo = 'todos';
+let auditoriaFiltroDias = 'todos';
+
+function getLinhasAuditoria(){
+  let linhas = STATE.auditoria || [];
+  if(auditoriaFiltroTipo!=='todos') linhas = linhas.filter(a=>a.tipo===auditoriaFiltroTipo);
+  if(auditoriaFiltroDias!=='todos'){
+    const desde = addDays(todayISO(), -parseInt(auditoriaFiltroDias,10));
+    linhas = linhas.filter(a=>a.dataHora && a.dataHora.slice(0,10)>=desde);
+  }
+  return linhas;
+}
+
+function renderAuditoria(){
+  const box = document.getElementById('auditoria-content');
+  const linhas = getLinhasAuditoria();
+  const tiposUsados = Object.keys(AUDITORIA_TIPO_LABEL);
+
+  box.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>🕵️ Trilha de Auditoria Financeira</h2>
+        <p class="subtitle">Histórico cronológico de ações que mexem com dinheiro — só consulta, nada aqui pode ser desfeito</p>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Filtros</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label>Tipo de ação</label>
+          <select id="aud-tipo">
+            <option value="todos">Todos os tipos</option>
+            ${tiposUsados.map(t=>`<option value="${t}" ${auditoriaFiltroTipo===t?'selected':''}>${AUDITORIA_TIPO_LABEL[t].texto}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Período</label>
+          <select id="aud-periodo">
+            <option value="todos" ${auditoriaFiltroDias==='todos'?'selected':''}>Todo o histórico</option>
+            <option value="7" ${auditoriaFiltroDias==='7'?'selected':''}>Últimos 7 dias</option>
+            <option value="30" ${auditoriaFiltroDias==='30'?'selected':''}>Últimos 30 dias</option>
+            <option value="90" ${auditoriaFiltroDias==='90'?'selected':''}>Últimos 90 dias</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Ações Registradas <span class="hint">${linhas.length} no total</span></h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data/Hora</th><th>Tipo</th><th>Descrição</th><th class="num">Valor</th></tr></thead>
+          <tbody id="aud-tabela-body"></tbody>
+        </table>
+      </div>
+      <div id="aud-paginacao"></div>
+    </div>
+  `;
+
+  const renderTabela = () => {
+    const pagina = aplicarPaginacao('auditoria', linhas);
+    document.getElementById('aud-tabela-body').innerHTML = pagina.length ? pagina.map(a=>{
+      const tipoInfo = AUDITORIA_TIPO_LABEL[a.tipo] || { texto: a.tipo, cor: 'var(--ink)' };
+      return `
+        <tr>
+          <td>${new Date(a.dataHora).toLocaleString('pt-BR')}</td>
+          <td style="color:${tipoInfo.cor};font-weight:600;">${tipoInfo.texto}</td>
+          <td>${escapeHtml(a.descricao)}</td>
+          <td class="num">${a.valor!=null ? fmtMoney(a.valor) : '—'}</td>
+        </tr>
+      `;
+    }).join('') : `<tr><td colspan="4" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma ação registrada com esse filtro.</td></tr>`;
+    document.getElementById('aud-paginacao').innerHTML = renderControlePaginacao('auditoria', linhas.length);
+    ativarControlePaginacao('auditoria', renderTabela);
+  };
+  renderTabela();
+
+  document.getElementById('aud-tipo').addEventListener('change', (e)=>{
+    auditoriaFiltroTipo = e.target.value;
+    renderAuditoria();
+  });
+  document.getElementById('aud-periodo').addEventListener('change', (e)=>{
+    auditoriaFiltroDias = e.target.value;
+    renderAuditoria();
+  });
+}
+
+RENDERERS['auditoria'] = renderAuditoria;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
@@ -14293,6 +14443,7 @@ function marcarParcelaPaga(despesaId, idx){
     });
   }
 
+  registrarAuditoria('despesa_paga', `Despesa "${d.descricao}" marcada como paga`, d.parcelasDetalhe[idx].valor);
   saveState();
   renderDespesas();
   showToast('Parcela marcada como paga.', 'success');
@@ -14300,6 +14451,7 @@ function marcarParcelaPaga(despesaId, idx){
 function desmarcarParcelaPaga(despesaId, idx){
   const d = STATE.despesas.find(x=>x.id===despesaId);
   if(!d) return;
+  registrarAuditoria('despesa_despaga', `Despesa "${d.descricao}" desmarcada como paga`, d.parcelasDetalhe[idx].valor);
   d.parcelasDetalhe[idx].pago = false;
   d.parcelasDetalhe[idx].dataPagamento = '';
   saveState();
@@ -15183,6 +15335,8 @@ function abrirFormPagamentoQuinzena(pagadorId, vencimento){
       vencimentoQuinzena: vencimento,
       criadoEm: new Date().toISOString()
     });
+    const pagadorAud = STATE.pagadores.find(p=>p.id===pagadorId);
+    registrarAuditoria('repasse_quinzena_pago', `Pagamento de quinzena — ${pagadorAud?pagadorAud.nome:'(pagador removido)'} (${rotuloQuinzena(vencimento)})`, valor);
 
     saveState();
     showToast('Pagamento da quinzena registrado.', 'success');
@@ -15384,6 +15538,8 @@ function abrirFormPagamentoRepasse(pagadorIdPre){
     if(!data){ showToast('Informe a data.', 'error'); return; }
     if(!STATE.pagamentosRepasse) STATE.pagamentosRepasse = [];
     STATE.pagamentosRepasse.push({ id: uid('pgrp'), pagadorId, data, valor, obs, criadoEm: new Date().toISOString() });
+    const pagadorAud2 = STATE.pagadores.find(p=>p.id===pagadorId);
+    registrarAuditoria('repasse_quinzena_pago', `Pagamento de repasse — ${pagadorAud2?pagadorAud2.nome:'(pagador removido)'}`, valor);
     saveState();
     showToast('Pagamento registrado.', 'success');
     modal.remove();
@@ -17407,48 +17563,63 @@ function abrirEditarValorReceberVenda(id, origem, vendaId, parcelaIdx){
 }
 
 function marcarContaRecebida(id, origem, vendaId, parcelaIdx){
+  let descricaoAud = '', valorAud = null;
   if(origem==='manual'){
     const conta = STATE.contasReceberManuais.find(c=>c.id===id);
     if(!conta) return;
     conta.recebido = true;
     conta.dataRecebimento = todayISO();
+    descricaoAud = `Conta a receber "${conta.descricao}" marcada como recebida`;
+    valorAud = conta.valor;
   }else{
     const venda = STATE.vendas.find(v=>v.id===(vendaId||id));
     if(!venda) return;
+    const cliente = STATE.clientes.find(c=>c.id===venda.clienteId);
     if(parcelaIdx!=null && venda.parcelasReceber){
       venda.parcelasReceber[parcelaIdx].recebido = true;
       venda.parcelasReceber[parcelaIdx].dataRecebimento = todayISO();
+      descricaoAud = `Parcela de venda recebida — ${cliente?cliente.nome:'(cliente removido)'}`;
+      valorAud = venda.parcelasReceber[parcelaIdx].valor;
     }else if(venda.receber){
       venda.receber.recebido = true;
       venda.receber.dataRecebimento = todayISO();
+      descricaoAud = `Venda a prazo recebida — ${cliente?cliente.nome:'(cliente removido)'}`;
+      valorAud = venda.receber.valorAjustado!=null ? venda.receber.valorAjustado : null;
     }else{
       return;
     }
   }
+  registrarAuditoria('conta_recebida', descricaoAud, valorAud);
   saveState();
   showToast('Recebimento registrado.', 'success');
   renderContasReceber();
 }
 
 function desmarcarContaRecebida(id, origem, vendaId, parcelaIdx){
+  let descricaoAud = '';
   if(origem==='manual'){
     const conta = STATE.contasReceberManuais.find(c=>c.id===id);
     if(!conta) return;
     conta.recebido = false;
     conta.dataRecebimento = '';
+    descricaoAud = `Conta a receber "${conta.descricao}" desmarcada como recebida`;
   }else{
     const venda = STATE.vendas.find(v=>v.id===(vendaId||id));
     if(!venda) return;
+    const cliente = STATE.clientes.find(c=>c.id===venda.clienteId);
     if(parcelaIdx!=null && venda.parcelasReceber){
       venda.parcelasReceber[parcelaIdx].recebido = false;
       venda.parcelasReceber[parcelaIdx].dataRecebimento = '';
+      descricaoAud = `Parcela de venda desmarcada como recebida — ${cliente?cliente.nome:'(cliente removido)'}`;
     }else if(venda.receber){
       venda.receber.recebido = false;
       venda.receber.dataRecebimento = '';
+      descricaoAud = `Venda a prazo desmarcada como recebida — ${cliente?cliente.nome:'(cliente removido)'}`;
     }else{
       return;
     }
   }
+  registrarAuditoria('conta_despaga', descricaoAud, null);
   saveState();
   renderContasReceber();
 }
@@ -18504,6 +18675,7 @@ function fecharMes(mes){
     let reg = getFechamentoMesRegistro(mes);
     if(!reg){ reg = { mes, obs:'' }; STATE.fechamentosMes.push(reg); }
     Object.assign(reg, numeros, { fechado:true, fechadoEm: new Date().toISOString(), atualizadoEm: new Date().toISOString() });
+    registrarAuditoria('mes_fechado', `Mês de ${monthLabel(mes)} fechado`, numeros.faturamento);
     saveState();
     showToast('Mês fechado.', 'success');
     renderFechamentoMes();
@@ -18516,6 +18688,7 @@ function reabrirMes(mes){
   confirmAction('Reabrir o mês', `Isso volta ${monthLabel(mes)} pra "em aberto" — os números registrados no fechamento ficam guardados até você fechar de novo. Confirmar?`, ()=>{
     reg.fechado = false;
     reg.atualizadoEm = new Date().toISOString();
+    registrarAuditoria('mes_reaberto', `Mês de ${monthLabel(mes)} reaberto`, null);
     saveState();
     showToast('Mês reaberto.', 'success');
     renderFechamentoMes();
