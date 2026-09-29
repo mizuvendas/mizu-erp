@@ -20739,6 +20739,63 @@ function renderResumoBomDia(linhasMes, totalBrutoMes){
   `;
 }
 
+/* =========================================================
+   RANKING DE CLIENTES DO MÊS (card no Dashboard)
+   Quem mais comprou no mês, por faturamento — com lucro e margem
+   junto, pra não só ver "quem compra mais" mas "quem é mais rentável".
+   ========================================================= */
+function getRankingClientesMes(mesRef, limite){
+  const linhas = getLinhasVenda().filter(l=>l.mes===mesRef);
+  const porCliente = {};
+  linhas.forEach(l=>{
+    const chave = l.clienteId || l.clienteNome;
+    if(!porCliente[chave]) porCliente[chave] = { clienteId: l.clienteId, clienteNome: l.clienteNome, bruto: 0, lucro: 0, vendasSet: new Set() };
+    porCliente[chave].bruto += l.bruto;
+    porCliente[chave].lucro += l.lucro;
+    porCliente[chave].vendasSet.add(l.vendaId);
+  });
+  return Object.values(porCliente)
+    .map(c=>({ clienteId: c.clienteId, clienteNome: c.clienteNome, bruto: c.bruto, lucro: c.lucro, qtdVendas: c.vendasSet.size, margemPct: c.bruto>0 ? (c.lucro/c.bruto*100) : 0 }))
+    .sort((a,b)=>b.bruto-a.bruto)
+    .slice(0, limite||10);
+}
+
+const MEDALHA_POSICAO = ['🥇','🥈','🥉'];
+
+function renderRankingClientesMesHtml(mesRef){
+  const ranking = getRankingClientesMes(mesRef, 10);
+  if(ranking.length===0){
+    return `
+      <div class="card">
+        <h3>🏆 Ranking de Clientes do Mês <span class="hint">${monthLabel(mesRef)}</span></h3>
+        <p class="help-text" style="margin:0;">Nenhuma venda em ${monthLabel(mesRef)} ainda.</p>
+      </div>
+    `;
+  }
+  return `
+    <div class="card">
+      <h3>🏆 Ranking de Clientes do Mês <span class="hint">${monthLabel(mesRef)} — por faturamento</span></h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th></th><th>Cliente</th><th class="num">Compras</th><th class="num">Faturamento</th><th class="num">Lucro</th><th class="num">Margem</th></tr></thead>
+          <tbody>
+            ${ranking.map((c,idx)=>`
+              <tr>
+                <td style="font-size:16px;">${MEDALHA_POSICAO[idx] || (idx+1)+'º'}</td>
+                <td>${escapeHtml(c.clienteNome)}</td>
+                <td class="num">${fmtNum(c.qtdVendas)}</td>
+                <td class="num">${fmtMoney(c.bruto)}</td>
+                <td class="num" style="color:${c.lucro>=0?'var(--positive)':'var(--negative)'};">${fmtMoney(c.lucro)}</td>
+                <td class="num" style="font-weight:700;color:${c.margemPct>=0?'var(--positive)':'var(--negative)'};">${c.margemPct.toFixed(1)}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
 function renderDashboard(){
   const box = document.getElementById('dash-content');
   const linhas = getLinhasVenda();
@@ -20836,6 +20893,8 @@ function renderDashboard(){
         <div class="chart-box"><canvas id="dash-chart-fluxo"></canvas></div>
       </div>
     </div>
+
+    ${renderRankingClientesMesHtml(mesAtual)}
 
     <div class="chart-row even">
       <div class="card">
