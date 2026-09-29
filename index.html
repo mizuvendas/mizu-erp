@@ -6985,58 +6985,60 @@ function cancelarVenda(vendaId){
   );
 }
 
-// Duplica uma venda existente como uma nova venda ATIVA de hoje (mesmo
-// cliente, mesmos itens e condição de pagamento) — dá baixa de estoque
-// normalmente, como se fosse uma venda nova. A cópia pode ser cancelada
-// depois, igual qualquer outra venda (ver cancelarVenda).
+// Duplica uma venda existente como um novo ORÇAMENTO (mesmo cliente, mesmos
+// itens e forma de pagamento) e já abre no formulário de Orçamentos pra
+// revisão — dá pra alterar quantidade/preço, adicionar ou remover item,
+// trocar cliente, etc. antes de confirmar. NÃO baixa estoque nem gera venda
+// na hora — só quando o usuário clicar em "Converter em Venda" no orçamento
+// gerado (fluxo normal, o mesmo de qualquer orçamento).
 function clonarVenda(vendaId){
   const original = STATE.vendas.find(v=>v.id===vendaId);
   if(!original) return;
   confirmAction(
     'Clonar venda',
-    'Isso cria uma nova venda de hoje com os mesmos itens, cliente e forma de pagamento desta — e já baixa o estoque normalmente, como uma venda nova. Deseja continuar?',
+    'Isso cria um novo orçamento com os mesmos itens, cliente e forma de pagamento desta venda, pra você revisar, alterar ou adicionar o que quiser antes de confirmar. Nada é lançado nem baixa do estoque ainda — só quando você converter o orçamento em venda. Deseja continuar?',
     ()=>{
-      const nova = {
-        ...original,
-        id: uid('venda'),
-        data: todayISO(),
-        status: 'ativa',
-        criadoEm: new Date().toISOString(),
-        itens: original.itens.map(it=>({...it}))
-      };
-      delete nova.canceladaEm;
-      if(original.desconto) nova.desconto = {...original.desconto};
-      if(original.acrescimo) nova.acrescimo = {...original.acrescimo};
-      if(original.repasse) nova.repasse = { abatimentos: [], desconto: {...original.repasse.desconto} };
-      if(original.receber) nova.receber = { vencimento: original.receber.vencimento, recebido: false, dataRecebimento: '' };
-      if(original.parcelasReceber) nova.parcelasReceber = original.parcelasReceber.map(p=>({...p, recebido:false, dataRecebimento:''}));
-
-      STATE.vendas.push(nova);
-
-      const avisosEstoque = [];
-      nova.itens.forEach(it=>{
-        const produto = STATE.produtos.find(p=>p.id===it.produtoId);
-        if(produto){
-          if(produto.criadoRapido){
-            registrarMovimentoEstoque(produto.id, 'entrada', it.qtd, 'Compra local (simultânea à venda) '+fmtDate(nova.data), nova.id);
-            registrarMovimentoEstoque(produto.id, 'saida', it.qtd, 'Venda '+fmtDate(nova.data), nova.id);
-          }else{
-            produto.estoqueAtual = (produto.estoqueAtual||0) - it.qtd;
-            registrarMovimentoEstoque(produto.id, 'saida', it.qtd, 'Venda '+fmtDate(nova.data), nova.id);
-            if(produto.estoqueMin!=null && produto.estoqueAtual < produto.estoqueMin){
-              avisosEstoque.push(produto.nome);
-            }
-          }
+      // repasse: tenta recuperar o percentual exato usado, não só o valor em
+      // reais já calculado (repassePctOrigem é gravado quando a venda nasceu
+      // de um orçamento — ver executarConversaoOrcamentoEmVenda)
+      let repassePct = null;
+      if(original.pagadorId && original.repasse && original.repasse.desconto){
+        const d = original.repasse.desconto;
+        if(d.repassePctOrigem!=null) repassePct = d.repassePctOrigem;
+        else if(d.pct!=null) repassePct = d.pct;
+        else if(d.valor!=null){
+          const brutoOriginal = calcularVenda(original).bruto;
+          repassePct = brutoOriginal>0 ? Math.round((d.valor/brutoOriginal*100)*100)/100 : 0;
         }
-      });
-
-      saveState();
-      showToast('Venda clonada com sucesso.', 'success');
-      if(avisosEstoque.length>0){
-        showToast('Estoque baixo: ' + avisosEstoque.join(', '), 'error');
       }
-      if(typeof renderResultadoVendasPorCliente==='function' && document.getElementById('vc-resultado')) renderResultadoVendasPorCliente();
-      if(typeof renderVendasRecentes==='function' && document.getElementById('v-vendas-recentes-body')) renderVendasRecentes();
+      const condicaoPagamento = original.condicaoPagamento || 'vista';
+      const novoOrcamento = {
+        id: uid('orc'),
+        numero: proximoNumeroOrcamento(),
+        clienteId: original.clienteId,
+        data: todayISO(),
+        validadeDias: 7,
+        observacoes: `Clonado da venda de ${fmtDate(original.data)}`,
+        vendedor: original.vendedor || '',
+        temComissao: !!original.temComissao,
+        pagadorId: original.pagadorId || null,
+        repassePct,
+        condicaoPagamento,
+        vencimentoReceber: condicaoPagamento==='boleto' ? (original.receber ? original.receber.vencimento : addDays(todayISO(), 30)) : null,
+        crediarioParcelas: condicaoPagamento==='crediario' ? ((original.parcelasReceber && original.parcelasReceber.length) || 2) : null,
+        crediarioDia: condicaoPagamento==='crediario' ? ((original.parcelasReceber && original.parcelasReceber[0]) ? parseInt(original.parcelasReceber[0].vencimento.slice(8,10),10) : 10) : null,
+        itens: original.itens.map(it=>({...it})),
+        status: 'pendente',
+        criadoEm: new Date().toISOString()
+      };
+      if(original.desconto) novoOrcamento.desconto = {...original.desconto};
+      if(original.acrescimo) novoOrcamento.acrescimo = {...original.acrescimo};
+
+      STATE.orcamentos.push(novoOrcamento);
+      saveState();
+      showToast('Orçamento criado a partir da venda — revise e confirme quando quiser.', 'success');
+      navigateTo('orcamentos');
+      editarOrcamento(novoOrcamento.id);
     }
   );
 }
@@ -12627,7 +12629,7 @@ function renderResultadoVendasPorCliente(){
         <td style="white-space:nowrap;">
           <div class="cell-actions">
             <button class="btn btn-sm" onclick="abrirDetalheVendaCliente('${v.id}')">Detalhes</button>
-            <button class="btn btn-sm" onclick="clonarVenda('${v.id}')" title="Clonar como nova venda de hoje">📋 Clonar</button>
+            <button class="btn btn-sm" onclick="clonarVenda('${v.id}')" title="Clonar como orçamento, pra revisar antes de confirmar">📋 Clonar</button>
             ${v.status!=='cancelada' ? `<button class="btn btn-sm btn-danger" onclick="cancelarVenda('${v.id}')">Cancelar</button>` : ''}
           </div>
         </td>
@@ -18913,42 +18915,63 @@ function renderFechamentoMes(){
   }else{
     boxPendencias.innerHTML = `
       ${despesasPendentesMes.length>0 ? `
-        <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Despesas a pagar (${despesasPendentesMes.length})</p>
-        <div class="table-wrap" style="margin-bottom:14px;">
-          <table class="data-table">
-            <thead><tr><th>Descrição</th><th>Vencimento</th><th class="num">Valor</th><th style="text-align:center;">Ação</th></tr></thead>
-            <tbody>
-              ${despesasPendentesMes.map(l=>`
-                <tr>
-                  <td>${escapeHtml(l.descricao)}</td>
-                  <td>${fmtDate(l.vencimento)}</td>
-                  <td class="num">${fmtMoney(l.valor)}</td>
-                  <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarParcelaPaga('${l.despesaId}', ${l.parcelaIdx}); renderFechamentoMes();">✅ Marcar Paga</button></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+        <div style="border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:${contasPendentesMes.length>0?'14px':'0'};">
+          <p style="font-weight:600;font-size:13px;margin:0 0 8px;">💳 Despesas a pagar (${despesasPendentesMes.length})</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th style="cursor:default;">Descrição</th><th style="cursor:default;">Vencimento</th><th class="num" style="cursor:default;">Valor</th><th style="text-align:center;cursor:default;">Ação</th></tr></thead>
+              <tbody id="fm-despesas-pend-body"></tbody>
+            </table>
+          </div>
+          <div id="fm-despesas-pend-paginacao"></div>
         </div>
       ` : ''}
       ${contasPendentesMes.length>0 ? `
-        <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Contas a receber (${contasPendentesMes.length})</p>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead><tr><th>Descrição</th><th>Vencimento</th><th class="num">Valor</th><th style="text-align:center;">Ação</th></tr></thead>
-            <tbody>
-              ${contasPendentesMes.map(l=>`
-                <tr>
-                  <td>${escapeHtml(l.descricao)}</td>
-                  <td>${fmtDate(l.vencimento)}</td>
-                  <td class="num">${fmtMoney(l.valor)}</td>
-                  <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarContaRecebida('${l.id}', '${l.origem}', ${l.vendaId?`'${l.vendaId}'`:'null'}, ${l.parcelaIdx!=null?l.parcelaIdx:'null'}); renderFechamentoMes();">✅ Marcar Recebida</button></td>
-                </tr>
-              `).join('')}
-            </tbody>
-          </table>
+        <div style="border:1px solid var(--border);border-radius:10px;padding:12px;">
+          <p style="font-weight:600;font-size:13px;margin:0 0 8px;">💰 Contas a receber (${contasPendentesMes.length})</p>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th style="cursor:default;">Descrição</th><th style="cursor:default;">Vencimento</th><th class="num" style="cursor:default;">Valor</th><th style="text-align:center;cursor:default;">Ação</th></tr></thead>
+              <tbody id="fm-contas-pend-body"></tbody>
+            </table>
+          </div>
+          <div id="fm-contas-pend-paginacao"></div>
         </div>
       ` : ''}
     `;
+
+    if(despesasPendentesMes.length>0){
+      const renderDespesasPend = () => {
+        const pagina = aplicarPaginacao('fm-despesas-pend', despesasPendentesMes);
+        document.getElementById('fm-despesas-pend-body').innerHTML = pagina.map(l=>`
+          <tr>
+            <td>${escapeHtml(l.descricao)}</td>
+            <td>${fmtDate(l.vencimento)}</td>
+            <td class="num">${fmtMoney(l.valor)}</td>
+            <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarParcelaPaga('${l.despesaId}', ${l.parcelaIdx}); renderFechamentoMes();">✅ Marcar Paga</button></td>
+          </tr>
+        `).join('');
+        document.getElementById('fm-despesas-pend-paginacao').innerHTML = renderControlePaginacao('fm-despesas-pend', despesasPendentesMes.length);
+        ativarControlePaginacao('fm-despesas-pend', renderDespesasPend);
+      };
+      renderDespesasPend();
+    }
+    if(contasPendentesMes.length>0){
+      const renderContasPend = () => {
+        const pagina = aplicarPaginacao('fm-contas-pend', contasPendentesMes);
+        document.getElementById('fm-contas-pend-body').innerHTML = pagina.map(l=>`
+          <tr>
+            <td>${escapeHtml(l.descricao)}</td>
+            <td>${fmtDate(l.vencimento)}</td>
+            <td class="num">${fmtMoney(l.valor)}</td>
+            <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarContaRecebida('${l.id}', '${l.origem}', ${l.vendaId?`'${l.vendaId}'`:'null'}, ${l.parcelaIdx!=null?l.parcelaIdx:'null'}); renderFechamentoMes();">✅ Marcar Recebida</button></td>
+          </tr>
+        `).join('');
+        document.getElementById('fm-contas-pend-paginacao').innerHTML = renderControlePaginacao('fm-contas-pend', contasPendentesMes.length);
+        ativarControlePaginacao('fm-contas-pend', renderContasPend);
+      };
+      renderContasPend();
+    }
   }
 
   const historico = (STATE.fechamentosMes||[]).filter(f=>f.fechado || f.obs).slice().sort((a,b)=> a.mes===b.mes?0:(a.mes<b.mes?1:-1));
