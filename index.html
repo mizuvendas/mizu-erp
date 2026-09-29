@@ -876,6 +876,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="rentabilidade-canal" href="#">
       <span class="ic ic-relatorios">📡</span> Rentabilidade por Canal
     </a>
+    <a class="nav-item" data-page="historico-precos" href="#">
+      <span class="ic ic-relatorios">📈</span> Histórico de Preço de Compra
+    </a>
 
     <div class="sidebar-footer">
       <div class="status-conexao" id="status-conexao">
@@ -1082,6 +1085,11 @@ table.data-table{ width:100%; font-size:13px; }
     <!-- ============ RENTABILIDADE POR CANAL ============ -->
     <section class="page" id="page-rentabilidade-canal">
       <div id="rentabilidade-canal-content"></div>
+    </section>
+
+    <!-- ============ HISTÓRICO DE PREÇO DE COMPRA ============ -->
+    <section class="page" id="page-historico-precos">
+      <div id="historico-precos-content"></div>
     </section>
 
     <!-- ============ CAIXA ============ -->
@@ -1471,6 +1479,7 @@ function defaultState(){
     lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
     fechamentosMes: [], // { mes:'AAAA-MM', fechado, fechadoEm, obs, faturamento, lucro, despesasPagas, saldoCaixaFinal, atualizadoEm } — um registro por mês, painel interativo de fechamento (não trava nada, só documenta e ajuda a resolver pendências)
     auditoria: [], // { id, dataHora (ISO), tipo, descricao, valor|null } — trilha de auditoria financeira: registra ações que mexem com dinheiro (pagar, receber, cancelar, lançamentos de caixa, fechamentos). Mantém só os 1000 mais recentes — ver registrarAuditoria()
+    historicoPrecosCompra: [], // { id, produtoId, produtoNome, fornecedorId, fornecedorNome, custoAnterior, custoNovo, variacaoPct, data, criadoEm } — registrado automaticamente sempre que o custo de compra de um produto muda (edição inline ou formulário). Mantém só os 2000 mais recentes — ver registrarHistoricoPreco()
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -1567,6 +1576,33 @@ function registrarAuditoria(tipo, descricao, valor){
     valor: (valor!=null && !isNaN(valor)) ? valor : null
   });
   if(STATE.auditoria.length>1000) STATE.auditoria.length = 1000;
+}
+
+// Registra uma mudança no custo de compra de um produto, pra alimentar o
+// relatório de Histórico de Preço de Compra por Fornecedor. Chamada nos dois
+// pontos onde produto.custo pode mudar: a edição inline da tabela de Produtos
+// e o formulário completo de edição de produto (abrirFormProduto). Só grava
+// quando o valor realmente muda — não registra nada na criação do produto.
+function registrarHistoricoPreco(produto, custoAnterior){
+  if(!produto) return;
+  if(!STATE.historicoPrecosCompra) STATE.historicoPrecosCompra = [];
+  const custoNovo = produto.custo;
+  if(custoAnterior==null || isNaN(custoAnterior)) return;
+  if(custoNovo==null || isNaN(custoNovo)) return;
+  if(custoAnterior===custoNovo) return;
+  STATE.historicoPrecosCompra.unshift({
+    id: uid('hpc'),
+    produtoId: produto.id,
+    produtoNome: produto.nome,
+    fornecedorId: produto.fornecedorId || null,
+    fornecedorNome: produto.fornecedor || '',
+    custoAnterior,
+    custoNovo,
+    variacaoPct: custoAnterior>0 ? ((custoNovo-custoAnterior)/custoAnterior*100) : null,
+    data: todayISO(),
+    criadoEm: new Date().toISOString()
+  });
+  if(STATE.historicoPrecosCompra.length>2000) STATE.historicoPrecosCompra.length = 2000;
 }
 
 /* =========================================================
@@ -3411,7 +3447,9 @@ function ativarEdicaoInlineProdutos(){
         }
         if(campo==='estoqueAtual' && novoValor==null){ novoValor = 0; }
 
+        const custoAnterior = campo==='custo' ? produto.custo : null;
         produto[campo] = novoValor;
+        if(campo==='custo') registrarHistoricoPreco(produto, custoAnterior);
         saveState();
         renderProdutos();
         showToast('Produto atualizado.', 'success');
@@ -4045,7 +4083,9 @@ function abrirFormProduto(id, onSalvo){
       data.estoqueAtual = estoqueAtualEl ? (parseFloat(estoqueAtualEl.value)||0) : 0;
     }
     if(produto){
+      const custoAnterior = produto.custo;
       Object.assign(produto, data);
+      registrarHistoricoPreco(produto, custoAnterior);
       showToast('Produto atualizado.', 'success');
     }else{
       data.id = uid('prod');
@@ -13822,6 +13862,132 @@ function renderRentabilidadeCanal(){
 }
 
 RENDERERS['rentabilidade-canal'] = renderRentabilidadeCanal;
+
+/* =========================================================
+   MÓDULO: HISTÓRICO DE PREÇO DE COMPRA POR FORNECEDOR
+   Só exibe o que já foi registrado por registrarHistoricoPreco() (chamada
+   sempre que produto.custo muda, seja pela edição inline da tabela de
+   Produtos ou pelo formulário completo) — não é editável, é um histórico
+   de consulta, pra ajudar a perceber se algum fornecedor está subindo o
+   preço com o tempo.
+   ========================================================= */
+let historicoPrecosFiltroFornecedor = 'todos';
+let historicoPrecosFiltroProduto = 'todos';
+
+function renderHistoricoPrecos(){
+  const box = document.getElementById('historico-precos-content');
+  const todasLinhas = STATE.historicoPrecosCompra || [];
+
+  // opções de filtro construídas a partir do que já tem histórico registrado
+  const fornecedoresUsados = [];
+  const vistoForn = new Set();
+  todasLinhas.forEach(h=>{
+    const chave = h.fornecedorId || (h.fornecedorNome ? 'nome:'+h.fornecedorNome : 'sem-fornecedor');
+    if(!vistoForn.has(chave)){
+      vistoForn.add(chave);
+      fornecedoresUsados.push({ chave, label: h.fornecedorNome || 'Sem fornecedor definido' });
+    }
+  });
+  fornecedoresUsados.sort((a,b)=>a.label.localeCompare(b.label));
+  const produtosUsados = [];
+  const vistoProd = new Set();
+  todasLinhas.forEach(h=>{
+    if(!vistoProd.has(h.produtoId)){
+      vistoProd.add(h.produtoId);
+      produtosUsados.push({ id: h.produtoId, nome: h.produtoNome });
+    }
+  });
+  produtosUsados.sort((a,b)=>a.nome.localeCompare(b.nome));
+
+  let linhas = todasLinhas;
+  if(historicoPrecosFiltroFornecedor!=='todos'){
+    linhas = linhas.filter(h=>{
+      const chave = h.fornecedorId || (h.fornecedorNome ? 'nome:'+h.fornecedorNome : 'sem-fornecedor');
+      return chave===historicoPrecosFiltroFornecedor;
+    });
+  }
+  if(historicoPrecosFiltroProduto!=='todos') linhas = linhas.filter(h=>h.produtoId===historicoPrecosFiltroProduto);
+
+  box.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>📈 Histórico de Preço de Compra</h2>
+        <p class="subtitle">Toda mudança no custo de compra de um produto fica registrada aqui, com o fornecedor da época — ajuda a ver se algum fornecedor está subindo o preço com o tempo</p>
+      </div>
+    </div>
+
+    ${todasLinhas.length===0 ? `
+      <div class="card">
+        <p class="help-text" style="margin:0;">Nenhuma mudança de custo registrada ainda. Assim que você alterar o custo de compra de um produto (na tela de Produtos), o histórico aparece aqui.</p>
+      </div>
+    ` : `
+      <div class="card">
+        <h3>Filtros</h3>
+        <div class="form-grid">
+          <div class="field">
+            <label>Fornecedor</label>
+            <select id="hp-fornecedor">
+              <option value="todos">Todos os fornecedores</option>
+              ${fornecedoresUsados.map(f=>`<option value="${escapeAttr(f.chave)}" ${historicoPrecosFiltroFornecedor===f.chave?'selected':''}>${escapeHtml(f.label)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Produto</label>
+            <select id="hp-produto">
+              <option value="todos">Todos os produtos</option>
+              ${produtosUsados.map(p=>`<option value="${p.id}" ${historicoPrecosFiltroProduto===p.id?'selected':''}>${escapeHtml(p.nome)}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Mudanças de Custo <span class="hint">${linhas.length} no total</span></h3>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr><th>Data</th><th>Produto</th><th>Fornecedor</th><th class="num">Custo Anterior</th><th class="num">Custo Novo</th><th class="num">Variação</th></tr></thead>
+            <tbody id="hp-tabela-body"></tbody>
+          </table>
+        </div>
+        <div id="hp-paginacao"></div>
+      </div>
+    `}
+  `;
+
+  if(todasLinhas.length===0) return;
+
+  const renderTabela = () => {
+    const pagina = aplicarPaginacao('historico-precos', linhas);
+    document.getElementById('hp-tabela-body').innerHTML = pagina.length ? pagina.map(h=>{
+      const subiu = h.custoNovo > h.custoAnterior;
+      const variacaoTexto = h.variacaoPct!=null ? `${subiu?'▲':'▼'} ${Math.abs(h.variacaoPct).toFixed(1)}%` : '—';
+      return `
+        <tr>
+          <td>${fmtDate(h.data)}</td>
+          <td>${escapeHtml(h.produtoNome)}</td>
+          <td>${escapeHtml(h.fornecedorNome || '—')}</td>
+          <td class="num">${fmtMoney(h.custoAnterior)}</td>
+          <td class="num">${fmtMoney(h.custoNovo)}</td>
+          <td class="num" style="font-weight:700;color:${subiu?'var(--negative)':'var(--positive)'};">${variacaoTexto}</td>
+        </tr>
+      `;
+    }).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma mudança de custo com esse filtro.</td></tr>`;
+    document.getElementById('hp-paginacao').innerHTML = renderControlePaginacao('historico-precos', linhas.length);
+    ativarControlePaginacao('historico-precos', renderTabela);
+  };
+  renderTabela();
+
+  document.getElementById('hp-fornecedor').addEventListener('change', (e)=>{
+    historicoPrecosFiltroFornecedor = e.target.value;
+    renderHistoricoPrecos();
+  });
+  document.getElementById('hp-produto').addEventListener('change', (e)=>{
+    historicoPrecosFiltroProduto = e.target.value;
+    renderHistoricoPrecos();
+  });
+}
+
+RENDERERS['historico-precos'] = renderHistoricoPrecos;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
