@@ -829,6 +829,9 @@ table.data-table{ width:100%; font-size:13px; }
          via navigateTo('lancar-venda') a partir de quem precisar dele. -->
 
     <div class="nav-section-label"><span class="nav-dot nav-dot-financeiro"></span>Financeiro</div>
+    <a class="nav-item" data-page="caixa" href="#">
+      <span class="ic ic-financeiro">🗄️</span> Caixa
+    </a>
     <a class="nav-item" data-page="despesas" href="#">
       <span class="ic ic-financeiro">💳</span> Despesas <span class="nav-badge" id="nav-badge-despesas" style="display:none;"></span>
     </a>
@@ -1024,6 +1027,17 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="vendas-cliente-content"></div>
+    </section>
+
+    <!-- ============ CAIXA ============ -->
+    <section class="page" id="page-caixa">
+      <div class="page-header">
+        <div>
+          <h2>Caixa</h2>
+          <p class="subtitle">Saldo real do dinheiro da loja — atualiza sozinho com despesas pagas e recebimentos, mais lançamentos manuais soltos</p>
+        </div>
+      </div>
+      <div id="caixa-content"></div>
     </section>
 
     <!-- ============ DESPESAS ============ -->
@@ -1389,6 +1403,11 @@ function defaultState(){
     haveres: [], // { id, clienteId, criadoEm, historico:[{id, tipo:'credito'|'abatimento', valor, data, obs, notaFiscalAnexo:{dataUrl,nomeArquivo,tipo,criadoEm}|null, controleEntregaAnexo:{...mesmo formato}|null, criadoEm}] } — saldo único por cliente (crédito quando ele deixa dinheiro, abatimento quando usa), ver calcularSaldoHaver()
     funcionarios: [], // { id, nome, criadoEm } — cadastro simples de funcionário, usado só pra separar os vales por pessoa
     vales: [], // { id, funcionarioId, data, valor, observacao, criadoEm } — vale/adiantamento dado a um funcionário
+    caixa: {
+      saldoInicial: 0, // saldo definido pelo usuário no dia em que começou a usar o Caixa
+      dataInicial: '', // data de referência do saldo inicial (fica vazia até o usuário configurar)
+      lancamentosManuais: [] // { id, data, tipo:'entrada'|'saida', descricao, valor, criadoEm } — movimentação solta que não vem de despesa/conta a receber/venda (ex: combustível, dinheiro recebido fora do fluxo)
+    },
     config: {
       impostoPct: 4,
       comissaoPct: 2,
@@ -1415,6 +1434,7 @@ function loadState(){
     // inteiro em vez de completar só o que falta).
     const state = Object.assign(defaultState(), parsed);
     state.config = Object.assign(defaultState().config, parsed.config||{});
+    state.caixa = Object.assign(defaultState().caixa, parsed.caixa||{});
     migrarFornecedoresELocaisCompra(state);
     migrarPagadoresParaClientes(state);
     return state;
@@ -12804,6 +12824,227 @@ function gerarRelatorioVendasCliente(modo){
 }
 
 RENDERERS['vendas-cliente'] = renderVendasPorCliente;
+
+/* =========================================================
+   MÓDULO: CAIXA (saldo real do dinheiro da loja)
+   Não guarda saldo calculado em lugar nenhum — sempre recalcula na hora,
+   a partir do saldo inicial + tudo que já está registrado no sistema
+   (despesa paga, conta a receber recebida, venda à vista, quinzena paga)
+   mais os lançamentos manuais soltos. Assim nunca desalinha do resto do
+   sistema, mesmo que uma despesa seja des-marcada como paga depois, etc.
+   ========================================================= */
+function getMovimentosCaixa(){
+  const mov = [];
+
+  // Despesas pagas -> saída, na data em que foram pagas
+  getParcelasExpandidas().filter(l=>l.pago && l.dataPagamento).forEach(l=>{
+    mov.push({ id:'desp-'+l.despesaId+'-'+l.parcelaIdx, data:l.dataPagamento, tipo:'saida', origem:'despesa', descricao:l.descricao||'Despesa', valor:l.valor });
+  });
+
+  // Contas a receber manuais recebidas -> entrada
+  (STATE.contasReceberManuais||[]).filter(c=>c.recebido && c.dataRecebimento).forEach(c=>{
+    mov.push({ id:'crm-'+c.id, data:c.dataRecebimento, tipo:'entrada', origem:'conta_receber', descricao:c.descricao||'Conta a receber', valor:c.valor });
+  });
+
+  // Vendas (sem pagador terceiro — repasse entra só quando a quinzena é paga, mais abaixo)
+  STATE.vendas.forEach(v=>{
+    if(v.status==='cancelada' || v.pagadorId) return;
+    const f = getValoresFinanceirosVenda(v);
+    if(v.condicaoPagamento==='vista'){
+      // à vista (dinheiro/Pix/cartão na hora): entra automático na data da venda
+      mov.push({ id:'venda-'+v.id, data:v.data, tipo:'entrada', origem:'venda', descricao:'Venda à vista', valor:f.valorFinal });
+    }else if(v.condicaoPagamento==='boleto' && v.receber && v.receber.recebido && v.receber.dataRecebimento){
+      mov.push({ id:'venda-'+v.id, data:v.receber.dataRecebimento, tipo:'entrada', origem:'venda', descricao:'Venda (boleto recebido)', valor:f.valorFinal });
+    }else if(v.condicaoPagamento==='crediario'){
+      (v.parcelasReceber||[]).filter(p=>p.recebido && p.dataRecebimento).forEach(p=>{
+        mov.push({ id:'parc-'+p.id, data:p.dataRecebimento, tipo:'entrada', origem:'venda', descricao:`Venda (parcela ${p.numero}/${p.total})`, valor:p.valor });
+      });
+    }
+  });
+
+  // Quinzena (repasse) paga -> entrada, pelo valor real recebido do pagador
+  (STATE.pagamentosRepasse||[]).forEach(pg=>{
+    const pagador = STATE.pagadores.find(p=>p.id===pg.pagadorId);
+    mov.push({ id:'repasse-'+pg.id, data:pg.data, tipo:'entrada', origem:'repasse', descricao:`Pagamento de quinzena${pagador?' — '+pagador.nome:''}`, valor:pg.valor });
+  });
+
+  // Lançamentos manuais soltos
+  (STATE.caixa.lancamentosManuais||[]).forEach(l=>{
+    mov.push({ id:'manual-'+l.id, refId:l.id, data:l.data, tipo:l.tipo, origem:'manual', descricao:l.descricao, valor:l.valor });
+  });
+
+  return mov.filter(m=>m.data).sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1)); // mais recente primeiro
+}
+
+function getSaldoCaixa(){
+  const movs = getMovimentosCaixa();
+  const totalEntradas = movs.filter(m=>m.tipo==='entrada').reduce((s,m)=>s+m.valor,0);
+  const totalSaidas = movs.filter(m=>m.tipo==='saida').reduce((s,m)=>s+m.valor,0);
+  const saldoInicial = (STATE.caixa && STATE.caixa.saldoInicial) || 0;
+  return { saldoInicial, totalEntradas, totalSaidas, saldoAtual: saldoInicial + totalEntradas - totalSaidas };
+}
+
+const ORIGEM_CAIXA_LABEL = {
+  despesa: '💳 Despesa',
+  conta_receber: '💰 Conta a Receber',
+  venda: '🛒 Venda',
+  repasse: '🔁 Quinzena',
+  manual: '✋ Manual'
+};
+
+function renderCaixa(){
+  const box = document.getElementById('caixa-content');
+  const s = getSaldoCaixa();
+  const movs = getMovimentosCaixa();
+  const mesAtual = todayISO().slice(0,7);
+  const movsMes = movs.filter(m=>m.data.slice(0,7)===mesAtual);
+  const entradasMes = movsMes.filter(m=>m.tipo==='entrada').reduce((acc,m)=>acc+m.valor,0);
+  const saidasMes = movsMes.filter(m=>m.tipo==='saida').reduce((acc,m)=>acc+m.valor,0);
+
+  box.innerHTML = `
+    <div class="kpi-row">
+      <div class="kpi-card acc-blue">
+        <div class="kpi-icon">🗄️</div>
+        <div class="kpi-label">Saldo Atual em Caixa</div>
+        <div class="kpi-value">${fmtMoney(s.saldoAtual)}</div>
+        <div class="kpi-sub">Saldo inicial: ${fmtMoney(s.saldoInicial)}${STATE.caixa.dataInicial?' em '+fmtDate(STATE.caixa.dataInicial):''}</div>
+      </div>
+      <div class="kpi-card acc-green">
+        <div class="kpi-icon">⬆️</div>
+        <div class="kpi-label">Entradas do Mês</div>
+        <div class="kpi-value positive">${fmtMoney(entradasMes)}</div>
+      </div>
+      <div class="kpi-card acc-red">
+        <div class="kpi-icon">⬇️</div>
+        <div class="kpi-label">Saídas do Mês</div>
+        <div class="kpi-value negative">${fmtMoney(saidasMes)}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>⚙️ Saldo Inicial <span class="hint">o ponto de partida do seu Caixa</span></h3>
+      <p class="help-text" style="margin-top:-4px;">A partir daqui o Caixa atualiza sozinho: desconta quando uma despesa é marcada como paga, credita quando uma conta a receber é marcada como recebida ou uma quinzena é paga, e entra automático quando você lança uma venda à vista. Pra qualquer outra movimentação solta (combustível, fornecedor pago na hora, dinheiro recebido fora do fluxo), use o Lançamento Manual abaixo.</p>
+      <div class="form-grid">
+        <div class="field">
+          <label>Valor que você tem em caixa hoje</label>
+          <input type="number" id="caixa-saldo-inicial" step="0.01" value="${s.saldoInicial}">
+        </div>
+        <div class="field">
+          <label>Data de referência</label>
+          <input type="date" id="caixa-data-inicial" value="${STATE.caixa.dataInicial||todayISO()}">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="caixa-btn-salvar-saldo-inicial">Salvar Saldo Inicial</button>
+    </div>
+
+    <div class="card">
+      <h3>Movimentações <span class="hint">tudo que entrou e saiu do caixa, mais recente primeiro</span></h3>
+      <div class="header-actions" style="margin-bottom:10px;">
+        <button class="btn btn-primary" id="caixa-btn-novo-lancamento">+ Novo Lançamento Manual</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Descrição</th><th>Origem</th><th class="num">Valor</th><th></th></tr></thead>
+          <tbody id="caixa-movimentos-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('caixa-movimentos-body').innerHTML = movs.length ? movs.map(m=>`
+    <tr>
+      <td>${fmtDate(m.data)}</td>
+      <td>${escapeHtml(m.descricao)}</td>
+      <td>${ORIGEM_CAIXA_LABEL[m.origem]||m.origem}</td>
+      <td class="num" style="color:${m.tipo==='entrada'?'var(--positive)':'var(--negative)'};font-weight:600;">${m.tipo==='entrada'?'+':'−'} ${fmtMoney(m.valor)}</td>
+      <td>${m.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirLancamentoCaixaManual('${m.refId}')">🗑️</button>` : ''}</td>
+    </tr>
+  `).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma movimentação ainda.</td></tr>`;
+
+  document.getElementById('caixa-btn-salvar-saldo-inicial').addEventListener('click', ()=>{
+    const valor = parseFloat(document.getElementById('caixa-saldo-inicial').value);
+    const data = document.getElementById('caixa-data-inicial').value;
+    if(isNaN(valor)){ showToast('Informe um valor válido.', 'error'); return; }
+    if(!data){ showToast('Informe a data de referência.', 'error'); return; }
+    STATE.caixa.saldoInicial = valor;
+    STATE.caixa.dataInicial = data;
+    saveState();
+    showToast('Saldo inicial salvo.', 'success');
+    renderCaixa();
+  });
+  document.getElementById('caixa-btn-novo-lancamento').addEventListener('click', abrirModalLancamentoCaixa);
+}
+
+function abrirModalLancamentoCaixa(){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-lancamento-caixa';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✋</div>
+        <div>
+          <h3>Novo Lançamento no Caixa</h3>
+          <div class="sub">Entrada ou saída solta, fora do fluxo automático</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-grid">
+          <div class="field">
+            <label>Tipo</label>
+            <select id="lcx-tipo">
+              <option value="saida">Saída (dinheiro saindo)</option>
+              <option value="entrada">Entrada (dinheiro entrando)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Data</label>
+            <input type="date" id="lcx-data" value="${todayISO()}">
+          </div>
+          <div class="field" style="grid-column:1/-1;">
+            <label>Descrição</label>
+            <input type="text" id="lcx-descricao" placeholder="Ex: Combustível, fornecedor pago na hora, dinheiro recebido fora do fluxo...">
+          </div>
+          <div class="field">
+            <label>Valor</label>
+            <input type="number" id="lcx-valor" step="0.01" min="0">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="lcx-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="lcx-confirmar">Salvar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('lcx-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('lcx-confirmar').addEventListener('click', ()=>{
+    const tipo = document.getElementById('lcx-tipo').value;
+    const data = document.getElementById('lcx-data').value;
+    const descricao = document.getElementById('lcx-descricao').value.trim();
+    const valor = parseFloat(document.getElementById('lcx-valor').value);
+    if(!data){ showToast('Informe a data.', 'error'); return; }
+    if(!descricao){ showToast('Informe a descrição.', 'error'); return; }
+    if(isNaN(valor) || valor<=0){ showToast('Informe um valor válido.', 'error'); return; }
+    if(!STATE.caixa.lancamentosManuais) STATE.caixa.lancamentosManuais = [];
+    STATE.caixa.lancamentosManuais.push({ id: uid('lcx'), data, tipo, descricao, valor, criadoEm: new Date().toISOString() });
+    saveState();
+    showToast('Lançamento adicionado ao Caixa.', 'success');
+    modal.remove();
+    renderCaixa();
+  });
+}
+
+function excluirLancamentoCaixaManual(id){
+  confirmAction('Excluir lançamento', 'Isso remove esse lançamento manual do Caixa. Deseja continuar?', ()=>{
+    STATE.caixa.lancamentosManuais = (STATE.caixa.lancamentosManuais||[]).filter(l=>l.id!==id);
+    saveState();
+    showToast('Lançamento removido.', 'success');
+    renderCaixa();
+  });
+}
+
+RENDERERS['caixa'] = renderCaixa;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
