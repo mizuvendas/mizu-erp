@@ -861,6 +861,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="licitacoes" href="#">
       <span class="ic ic-relatorios">🏛️</span> Licitações
     </a>
+    <a class="nav-item" data-page="sugestao-compra" href="#">
+      <span class="ic ic-relatorios">🛒</span> Sugestão de Compra
+    </a>
 
     <div class="sidebar-footer">
       <div class="status-conexao" id="status-conexao">
@@ -1041,6 +1044,17 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="vendas-cliente-content"></div>
+    </section>
+
+    <!-- ============ SUGESTÃO DE COMPRA ============ -->
+    <section class="page" id="page-sugestao-compra">
+      <div class="page-header">
+        <div>
+          <h2>Sugestão de Compra</h2>
+          <p class="subtitle">Filtre por mês e veja, por produto, quanto foi vendido e quanto sugerimos comprar pra repor</p>
+        </div>
+      </div>
+      <div id="sugestao-compra-content"></div>
     </section>
 
     <!-- ============ CAIXA ============ -->
@@ -13165,6 +13179,94 @@ function excluirLembrete(id){
 }
 
 RENDERERS['lembretes'] = renderLembretes;
+
+/* =========================================================
+   MÓDULO: SUGESTÃO DE COMPRA
+   De propósito bem simples pra começar (pedido explícito do usuário):
+   sugestão = quantidade vendida no período MENOS estoque atual, nunca
+   negativa. Sem multiplicador de segurança, sem previsão — só um ponto de
+   partida pra não ficar sem produto, que pode ficar mais elaborado depois.
+   ========================================================= */
+let sugestaoCompraMes = todayISO().slice(0,7);
+let sugestaoCompraEsconderZerados = true;
+
+function getSugestaoCompra(mesRef){
+  const linhas = getLinhasVenda().filter(l=>l.mes===mesRef);
+  const porProduto = {};
+  linhas.forEach(l=>{
+    if(!porProduto[l.produtoId]) porProduto[l.produtoId] = { produtoId:l.produtoId, produtoNome:l.produtoNome, qtdVendida:0 };
+    porProduto[l.produtoId].qtdVendida += l.qtd;
+  });
+  return Object.values(porProduto).map(p=>{
+    const produto = STATE.produtos.find(pr=>pr.id===p.produtoId);
+    const estoqueAtual = produto ? (produto.estoqueAtual||0) : 0;
+    const sugestao = Math.max(0, p.qtdVendida - estoqueAtual);
+    return { ...p, estoqueAtual, sugestao, unidade: produto ? (produto.unidade||'UN') : 'UN' };
+  }).sort((a,b)=> b.sugestao-a.sugestao || b.qtdVendida-a.qtdVendida);
+}
+
+function renderSugestaoCompra(){
+  const box = document.getElementById('sugestao-compra-content');
+  box.innerHTML = `
+    <div class="card">
+      <h3>Filtro</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label>Mês de referência</label>
+          <input type="month" id="sc-mes" value="${sugestaoCompraMes}">
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:8px;">
+        <input type="checkbox" id="sc-esconder-zerados" style="width:auto;" ${sugestaoCompraEsconderZerados?'checked':''}>
+        Esconder produtos sem sugestão de compra (estoque já cobre o que foi vendido)
+      </label>
+    </div>
+
+    <div class="card">
+      <h3>Sugestão de Compra <span class="hint">quantidade vendida no mês menos o que já tem em estoque</span></h3>
+      <div id="sc-tabela"></div>
+    </div>
+  `;
+
+  const renderTabela = () => {
+    let linhas = getSugestaoCompra(sugestaoCompraMes);
+    if(sugestaoCompraEsconderZerados) linhas = linhas.filter(l=>l.sugestao>0);
+    const tabelaBox = document.getElementById('sc-tabela');
+    if(linhas.length===0){
+      tabelaBox.innerHTML = `<p class="help-text" style="margin:0;">Nenhum produto vendido em ${monthLabel(sugestaoCompraMes)}${sugestaoCompraEsconderZerados?' precisando de compra':''}.</p>`;
+      return;
+    }
+    tabelaBox.innerHTML = `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Produto</th><th class="num">Vendido no Período</th><th class="num">Estoque Atual</th><th class="num">Sugestão de Compra</th></tr></thead>
+          <tbody>
+            ${linhas.map(l=>`
+              <tr>
+                <td>${escapeHtml(l.produtoNome)}</td>
+                <td class="num">${fmtNum(l.qtdVendida)} ${escapeHtml(l.unidade)}</td>
+                <td class="num">${fmtNum(l.estoqueAtual)} ${escapeHtml(l.unidade)}</td>
+                <td class="num" style="font-weight:700;color:${l.sugestao>0?'var(--negative)':'var(--positive)'};">${l.sugestao>0?fmtNum(l.sugestao)+' '+escapeHtml(l.unidade):'—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  };
+  renderTabela();
+
+  document.getElementById('sc-mes').addEventListener('change', (e)=>{
+    sugestaoCompraMes = e.target.value || todayISO().slice(0,7);
+    renderTabela();
+  });
+  document.getElementById('sc-esconder-zerados').addEventListener('change', (e)=>{
+    sugestaoCompraEsconderZerados = e.target.checked;
+    renderTabela();
+  });
+}
+
+RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
