@@ -89,36 +89,65 @@ table{border-collapse:collapse;}
   font-size:11.5px;color:#7C8B92;margin:0;
 }
 .nav-section-label{
+  display:flex;
+  align-items:center;
+  gap:7px;
   font-size:10.5px;
   text-transform:uppercase;
   letter-spacing:0.8px;
-  color:#5E6E75;
+  color:#8C9EA6;
   padding:14px 20px 6px 20px;
-  font-weight:600;
+  font-weight:700;
 }
+.nav-dot{ width:6px;height:6px;border-radius:50%;flex-shrink:0; }
+.nav-dot-cadastros{ background:#4FC3E0; }
+.nav-dot-operacao{ background:#E0BB70; }
+.nav-dot-financeiro{ background:#5FD79A; }
+.nav-dot-relatorios{ background:#BCA6E8; }
 .nav-item{
   display:flex;
   align-items:center;
-  gap:10px;
-  padding:9px 20px;
+  gap:9px;
+  margin:1px 8px;
+  padding:7px 12px;
+  border-radius:8px;
   color:#B6C4C9;
   text-decoration:none;
   font-size:13.5px;
   font-weight:500;
-  border-left:3px solid transparent;
   transition:background .12s ease;
   user-select:none;
 }
 .nav-item .ic{
-  width:18px;height:18px;flex-shrink:0;
+  width:22px;height:22px;flex-shrink:0;border-radius:6px;
   display:flex;align-items:center;justify-content:center;
+  font-size:12px;
+}
+.nav-item .ic-cadastros{ background:rgba(79,195,224,0.16); }
+.nav-item .ic-operacao{ background:rgba(224,187,112,0.18); }
+.nav-item .ic-financeiro{ background:rgba(95,215,154,0.18); }
+.nav-item .ic-relatorios{ background:rgba(188,166,232,0.18); }
+.nav-badge{
+  margin-left:auto;
+  background:var(--negative,#C4483D);
+  color:#fff;
+  font-size:9.5px;
+  font-weight:700;
+  border-radius:9px;
+  min-width:16px;
+  height:16px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:0 4px;
 }
 .nav-item:hover{ background:var(--bg-sidebar-hover); color:#fff; }
 .nav-item.active{
-  background:var(--bg-sidebar-active);
+  background:#0081A7;
   color:#fff;
-  border-left-color:#5FC9A8;
+  font-weight:700;
 }
+.nav-item.active .ic{ background:rgba(255,255,255,0.22); }
 .sidebar-footer{
   margin-top:auto;
   padding:14px 20px;
@@ -238,6 +267,36 @@ table{border-collapse:collapse;}
 .kpi-value.positive{ color:var(--positive); }
 .kpi-value.negative{ color:var(--negative); }
 .kpi-sub{ font-size:12px; color:var(--ink-faint); }
+.dash-kpi-row .kpi-card{
+  position:relative;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  gap:5px;
+}
+.dash-kpi-row .kpi-card::before{
+  content:'';
+  position:absolute; top:0; left:0; right:0; height:4px;
+}
+.dash-kpi-row .kpi-card.acc-blue::before{ background:#0081A7; }
+.dash-kpi-row .kpi-card.acc-green::before{ background:#2E7D5B; }
+.dash-kpi-row .kpi-card.acc-red::before{ background:#C4483D; }
+.dash-kpi-row .kpi-card.acc-gold::before{ background:#C89B4A; }
+.dash-kpi-row .kpi-card.acc-purple::before{ background:#9B7FD4; }
+.dash-kpi-row .kpi-icon{
+  width:26px;height:26px;border-radius:7px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:13px;margin-bottom:2px;
+}
+.dash-kpi-row .kpi-card.acc-blue .kpi-icon{ background:#EAF6FA; }
+.dash-kpi-row .kpi-card.acc-green .kpi-icon{ background:#E7F4EE; }
+.dash-kpi-row .kpi-card.acc-red .kpi-icon{ background:#FBEAE8; }
+.dash-kpi-row .kpi-card.acc-gold .kpi-icon{ background:#FBF1E2; }
+.dash-kpi-row .kpi-card.acc-purple .kpi-icon{ background:#F1ECFA; }
+.dash-kpi-row .kpi-card .kpi-value{ font-size:22px; font-weight:800; }
+.dash-kpi-row .kpi-card.acc-blue .kpi-value{ color:#0081A7; }
+.dash-kpi-row .kpi-card.acc-gold .kpi-value{ color:#C89B4A; }
+.dash-kpi-row .kpi-card.acc-purple .kpi-value{ color:#9B7FD4; }
 
 .card{
   background:var(--bg-card);
@@ -727,61 +786,61 @@ table.data-table{ width:100%; font-size:13px; }
       <span class="ic">📊</span> Dashboard
     </a>
 
-    <div class="nav-section-label">Cadastros</div>
+    <div class="nav-section-label"><span class="nav-dot nav-dot-cadastros"></span>Cadastros</div>
     <a class="nav-item" data-page="clientes" href="#">
-      <span class="ic">👤</span> Clientes
+      <span class="ic ic-cadastros">👤</span> Clientes
     </a>
     <a class="nav-item" data-page="produtos" href="#">
-      <span class="ic">📦</span> Produtos
+      <span class="ic ic-cadastros">📦</span> Produtos
     </a>
     <a class="nav-item" data-page="fornecedores" href="#">
-      <span class="ic">🏭</span> Fornecedores
+      <span class="ic ic-cadastros">🏭</span> Fornecedores
     </a>
     <a class="nav-item" data-page="locais-compra" href="#">
-      <span class="ic">📍</span> Locais de Compra
+      <span class="ic ic-cadastros">📍</span> Locais de Compra
     </a>
 
-    <div class="nav-section-label">Operação</div>
+    <div class="nav-section-label"><span class="nav-dot nav-dot-operacao"></span>Operação</div>
     <a class="nav-item" data-page="orcamentos" href="#">
-      <span class="ic">📋</span> Orçamentos
+      <span class="ic ic-operacao">📋</span> Orçamentos <span class="nav-badge" id="nav-badge-orcamentos" style="display:none;"></span>
     </a>
     <a class="nav-item" data-page="logistica" href="#">
-      <span class="ic">🚚</span> Logística
+      <span class="ic ic-operacao">🚚</span> Logística
     </a>
     <a class="nav-item" data-page="estoque" href="#">
-      <span class="ic">📊</span> Estoque
+      <span class="ic ic-operacao">📊</span> Estoque
     </a>
     <!-- "Lançar Venda" saiu do menu (pedido explícito no relatório de
          alterações) mas a página/motor continuam existindo — a importação
          de PDF de Nota Fiscal ainda depende dela. Acesso continua possível
          via navigateTo('lancar-venda') a partir de quem precisar dele. -->
 
-    <div class="nav-section-label">Financeiro</div>
+    <div class="nav-section-label"><span class="nav-dot nav-dot-financeiro"></span>Financeiro</div>
     <a class="nav-item" data-page="despesas" href="#">
-      <span class="ic">💳</span> Despesas
+      <span class="ic ic-financeiro">💳</span> Despesas <span class="nav-badge" id="nav-badge-despesas" style="display:none;"></span>
     </a>
     <a class="nav-item" data-page="receber" href="#">
-      <span class="ic">💰</span> Contas a Receber
+      <span class="ic ic-financeiro">💰</span> Contas a Receber
     </a>
     <a class="nav-item" data-page="repasses" href="#">
-      <span class="ic">🔁</span> Repasses (Pagador Terceiro)
+      <span class="ic ic-financeiro">🔁</span> Repasses (Pagador Terceiro)
     </a>
     <a class="nav-item" data-page="haver" href="#">
-      <span class="ic">💵</span> Haver de Clientes
+      <span class="ic ic-financeiro">💵</span> Haver de Clientes
     </a>
     <a class="nav-item" data-page="vale" href="#">
-      <span class="ic">🎫</span> Vale de Funcionários
+      <span class="ic ic-financeiro">🎫</span> Vale de Funcionários
     </a>
 
-    <div class="nav-section-label">Relatórios</div>
+    <div class="nav-section-label"><span class="nav-dot nav-dot-relatorios"></span>Relatórios</div>
     <a class="nav-item" data-page="analise-vendas" href="#">
-      <span class="ic">🔍</span> Análise de Vendas
+      <span class="ic ic-relatorios">🔍</span> Análise de Vendas
     </a>
     <a class="nav-item" data-page="vendas-cliente" href="#">
-      <span class="ic">👥</span> Vendas por Cliente
+      <span class="ic ic-relatorios">👥</span> Vendas por Cliente
     </a>
     <a class="nav-item" data-page="licitacoes" href="#">
-      <span class="ic">🏛️</span> Licitações
+      <span class="ic ic-relatorios">🏛️</span> Licitações
     </a>
 
     <div class="sidebar-footer">
@@ -1389,6 +1448,30 @@ function saveState(){
   }catch(e){
     console.error(e);
     showToast('Erro ao salvar dados. Veja o console.', 'error');
+  }
+  atualizarBadgesMenu();
+}
+
+/* =========================================================
+   BADGES DE PENDÊNCIA NO MENU LATERAL
+   Mostra, direto no menu, quantos orçamentos estão em separação
+   e quantas parcelas de despesa estão atrasadas — sem precisar
+   entrar na página pra saber que tem algo pendente.
+   ========================================================= */
+function atualizarBadgesMenu(){
+  const badgeOrc = document.getElementById('nav-badge-orcamentos');
+  if(badgeOrc){
+    const emSeparacao = (STATE.orcamentos||[]).filter(o=>o.statusEntrega==='em_rota').length;
+    if(emSeparacao>0){ badgeOrc.textContent = emSeparacao; badgeOrc.style.display = ''; }
+    else{ badgeOrc.style.display = 'none'; }
+  }
+  const badgeDesp = document.getElementById('nav-badge-despesas');
+  if(badgeDesp){
+    const hoje = todayISO();
+    const atrasadas = (typeof getParcelasExpandidas==='function' ? getParcelasExpandidas() : [])
+      .filter(l=>!l.pago && l.vencimento<hoje).length;
+    if(atrasadas>0){ badgeDesp.textContent = atrasadas; badgeDesp.style.display = ''; }
+    else{ badgeDesp.style.display = 'none'; }
   }
 }
 
@@ -19252,22 +19335,26 @@ function renderDashboard(){
 
   box.innerHTML = `
     ${renderResumoBomDia(linhasMes, totalBrutoMes)}
-    <div class="kpi-row">
-      <div class="kpi-card">
+    <div class="kpi-row dash-kpi-row">
+      <div class="kpi-card acc-blue">
+        <div class="kpi-icon">💰</div>
         <div class="kpi-label">Faturamento do Mês</div>
         <div class="kpi-value">${fmtMoney(totalBrutoMes)}</div>
         ${varBruto!==null ? `<div class="kpi-sub" style="color:${varBruto>=0?'var(--positive)':'var(--negative)'}">${varBruto>=0?'+':''}${varBruto.toFixed(1)}% vs mês anterior</div>` : ''}
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card ${totalLucroMes>=0?'acc-green':'acc-red'}">
+        <div class="kpi-icon">📈</div>
         <div class="kpi-label">Lucro Líquido do Mês</div>
         <div class="kpi-value ${totalLucroMes>=0?'positive':'negative'}">${fmtMoney(totalLucroMes)}</div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card acc-gold">
+        <div class="kpi-icon">🧾</div>
         <div class="kpi-label">Despesas do Mês</div>
         <div class="kpi-value negative">${fmtMoney(kpisDespesa.mesAtualAberto)}</div>
         <div class="kpi-sub">${kpisDespesa.atrasado>0 ? fmtMoney(kpisDespesa.atrasado)+' atrasado' : 'nenhuma atrasada'}</div>
       </div>
-      <div class="kpi-card">
+      <div class="kpi-card acc-purple">
+        <div class="kpi-icon">🏛️</div>
         <div class="kpi-label">Licitações em Andamento</div>
         <div class="kpi-value">${licitacoesAndamento}</div>
       </div>
@@ -20046,11 +20133,13 @@ RENDERERS.dashboard = renderDashboard;
    ========================================================= */
 document.addEventListener('DOMContentLoaded', ()=>{
   renderDashboard();
+  atualizarBadgesMenu();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
 });
 // fallback caso DOMContentLoaded já tenha disparado (script no fim do body)
 renderDashboard();
+atualizarBadgesMenu();
 </script>
 </body>
 </html>
