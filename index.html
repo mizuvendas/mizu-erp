@@ -873,6 +873,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="auditoria" href="#">
       <span class="ic ic-relatorios">🕵️</span> Trilha de Auditoria
     </a>
+    <a class="nav-item" data-page="rentabilidade-canal" href="#">
+      <span class="ic ic-relatorios">📡</span> Rentabilidade por Canal
+    </a>
 
     <div class="sidebar-footer">
       <div class="status-conexao" id="status-conexao">
@@ -1074,6 +1077,11 @@ table.data-table{ width:100%; font-size:13px; }
     <!-- ============ TRILHA DE AUDITORIA ============ -->
     <section class="page" id="page-auditoria">
       <div id="auditoria-content"></div>
+    </section>
+
+    <!-- ============ RENTABILIDADE POR CANAL ============ -->
+    <section class="page" id="page-rentabilidade-canal">
+      <div id="rentabilidade-canal-content"></div>
     </section>
 
     <!-- ============ CAIXA ============ -->
@@ -12965,7 +12973,16 @@ function getMovimentosCaixa(){
     mov.push({ id:'manual-'+l.id, refId:l.id, data:l.data, tipo:l.tipo, origem:'manual', descricao:l.descricao, valor:l.valor });
   });
 
-  return mov.filter(m=>m.data).sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1)); // mais recente primeiro
+  let linhas = mov.filter(m=>m.data).sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1)); // mais recente primeiro
+
+  // O saldo inicial já representa tudo que aconteceu ATÉ a data de referência —
+  // então movimentações de antes dela não podem ser somadas de novo, senão o
+  // saldo calculado fica inflado (soma o histórico inteiro do sistema, desde
+  // antes do Caixa existir, em cima de um saldo que já as incluía).
+  const dataInicial = STATE.caixa && STATE.caixa.dataInicial;
+  if(dataInicial) linhas = linhas.filter(m=>m.data>=dataInicial);
+
+  return linhas;
 }
 
 function getSaldoCaixa(ateData){
@@ -13041,6 +13058,7 @@ function renderCaixa(){
           <tbody id="caixa-movimentos-body"></tbody>
         </table>
       </div>
+      <div id="caixa-movimentos-paginacao"></div>
     </div>
 
     <div class="card">
@@ -13058,15 +13076,21 @@ function renderCaixa(){
     </div>
   `;
 
-  document.getElementById('caixa-movimentos-body').innerHTML = movs.length ? movs.map(m=>`
-    <tr>
-      <td>${fmtDate(m.data)}</td>
-      <td>${escapeHtml(m.descricao)}</td>
-      <td>${ORIGEM_CAIXA_LABEL[m.origem]||m.origem}</td>
-      <td class="num" style="color:${m.tipo==='entrada'?'var(--positive)':'var(--negative)'};font-weight:600;">${m.tipo==='entrada'?'+':'−'} ${fmtMoney(m.valor)}</td>
-      <td>${m.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirLancamentoCaixaManual('${m.refId}')">🗑️</button>` : ''}</td>
-    </tr>
-  `).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma movimentação ainda.</td></tr>`;
+  const renderTabelaMovimentos = () => {
+    const paginaMovs = aplicarPaginacao('caixa-movimentos', movs);
+    document.getElementById('caixa-movimentos-body').innerHTML = paginaMovs.length ? paginaMovs.map(m=>`
+      <tr>
+        <td>${fmtDate(m.data)}</td>
+        <td>${escapeHtml(m.descricao)}</td>
+        <td>${ORIGEM_CAIXA_LABEL[m.origem]||m.origem}</td>
+        <td class="num" style="color:${m.tipo==='entrada'?'var(--positive)':'var(--negative)'};font-weight:600;">${m.tipo==='entrada'?'+':'−'} ${fmtMoney(m.valor)}</td>
+        <td>${m.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirLancamentoCaixaManual('${m.refId}')">🗑️</button>` : ''}</td>
+      </tr>
+    `).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma movimentação ainda.</td></tr>`;
+    document.getElementById('caixa-movimentos-paginacao').innerHTML = movs.length ? renderControlePaginacao('caixa-movimentos', movs.length) : '';
+    ativarControlePaginacao('caixa-movimentos', renderTabelaMovimentos);
+  };
+  renderTabelaMovimentos();
 
   const fechamentos = (STATE.caixa.fechamentos||[]).slice().sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1));
   document.getElementById('caixa-fechamentos-body').innerHTML = fechamentos.length ? fechamentos.map(f=>`
@@ -13683,6 +13707,119 @@ function renderAuditoria(){
 }
 
 RENDERERS['auditoria'] = renderAuditoria;
+
+/* =========================================================
+   MÓDULO: RENTABILIDADE POR CANAL DE VENDA
+   Compara Venda Direta x Repasse (Pagador Terceiro) usando os mesmos
+   valores líquidos já usados no resto do sistema (getLinhasVenda).
+   Licitações entram como um terceiro canal, mas só com o valor
+   estimado ganho — o sistema não guarda custo/produto detalhado por
+   licitação, então não dá pra calcular margem real desse canal.
+   ========================================================= */
+let rentCanalMes = todayISO().slice(0,7);
+
+function getRentabilidadePorCanal(mesRef){
+  const linhas = getLinhasVenda().filter(l=>l.mes===mesRef);
+  const canais = {
+    direta: { canal:'direta', label:'🛒 Venda Direta', bruto:0, custo:0, lucro:0, vendasSet:new Set() },
+    repasse: { canal:'repasse', label:'🔁 Repasse (Pagador Terceiro)', bruto:0, custo:0, lucro:0, vendasSet:new Set() }
+  };
+  linhas.forEach(l=>{
+    const venda = STATE.vendas.find(v=>v.id===l.vendaId);
+    const canal = (venda && venda.pagadorId) ? 'repasse' : 'direta';
+    canais[canal].bruto += l.bruto;
+    canais[canal].custo += l.custo;
+    canais[canal].lucro += l.lucro;
+    canais[canal].vendasSet.add(l.vendaId);
+  });
+
+  const licitacoesGanhasMes = (STATE.licitacoes||[]).filter(l=>
+    ['Ganhamos','Comprando Itens','Entregue'].includes(l.status) &&
+    ((l.dataResultado && l.dataResultado.slice(0,7)===mesRef) || (!l.dataResultado && l.dataAbertura && l.dataAbertura.slice(0,7)===mesRef))
+  );
+  const valorLicitacoes = licitacoesGanhasMes.reduce((s,l)=>s+(l.valorEstimado||0),0);
+
+  const linhasResultado = Object.values(canais).map(c=>({
+    canal: c.canal, label: c.label, bruto: c.bruto, custo: c.custo, lucro: c.lucro,
+    margemPct: c.bruto>0 ? (c.lucro/c.bruto*100) : 0,
+    qtdVendas: c.vendasSet.size, temMargem: true
+  }));
+  linhasResultado.push({
+    canal: 'licitacao', label: '🏛️ Licitações Ganhas', bruto: valorLicitacoes, custo: null, lucro: null,
+    margemPct: null, qtdVendas: licitacoesGanhasMes.length, temMargem: false
+  });
+
+  return linhasResultado;
+}
+
+function renderRentabilidadeCanal(){
+  const box = document.getElementById('rentabilidade-canal-content');
+  const mes = rentCanalMes;
+  const canais = getRentabilidadePorCanal(mes);
+  const totalBruto = canais.reduce((s,c)=>s+c.bruto,0);
+  const canalMaisFatura = canais.slice().sort((a,b)=>b.bruto-a.bruto)[0];
+  const canalMaisRentavel = canais.filter(c=>c.temMargem && c.bruto>0).sort((a,b)=>b.margemPct-a.margemPct)[0];
+
+  box.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>📡 Rentabilidade por Canal de Venda</h2>
+        <p class="subtitle">Compara Venda Direta, Repasse e Licitações Ganhas no mês escolhido</p>
+      </div>
+      <div class="header-actions">
+        <input type="month" id="rc-mes" value="${mes}">
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card acc-blue">
+        <div class="kpi-icon">💰</div>
+        <div class="kpi-label">Faturamento Total do Mês</div>
+        <div class="kpi-value">${fmtMoney(totalBruto)}</div>
+      </div>
+      <div class="kpi-card acc-gold">
+        <div class="kpi-icon">📡</div>
+        <div class="kpi-label">Canal que Mais Fatura</div>
+        <div class="kpi-value" style="font-size:20px;">${canalMaisFatura && canalMaisFatura.bruto>0 ? canalMaisFatura.label : '—'}</div>
+      </div>
+      <div class="kpi-card acc-green">
+        <div class="kpi-icon">📈</div>
+        <div class="kpi-label">Canal Mais Rentável (margem)</div>
+        <div class="kpi-value" style="font-size:20px;">${canalMaisRentavel ? canalMaisRentavel.label : '—'}</div>
+        <div class="kpi-sub">${canalMaisRentavel ? canalMaisRentavel.margemPct.toFixed(1)+'%' : ''}</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Por Canal <span class="hint">licitações não têm custo detalhado no sistema, por isso não entram na margem</span></h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Canal</th><th class="num">Vendas/Contratos</th><th class="num">Faturamento</th><th class="num">% do Total</th><th class="num">Custo</th><th class="num">Lucro</th><th class="num">Margem</th></tr></thead>
+          <tbody>
+            ${canais.map(c=>`
+              <tr>
+                <td>${c.label}</td>
+                <td class="num">${fmtNum(c.qtdVendas)}</td>
+                <td class="num">${fmtMoney(c.bruto)}</td>
+                <td class="num">${totalBruto>0 ? (c.bruto/totalBruto*100).toFixed(1)+'%' : '—'}</td>
+                <td class="num">${c.temMargem ? fmtMoney(c.custo) : '—'}</td>
+                <td class="num" style="color:${c.temMargem ? (c.lucro>=0?'var(--positive)':'var(--negative)') : 'inherit'};">${c.temMargem ? fmtMoney(c.lucro) : '—'}</td>
+                <td class="num" style="font-weight:700;color:${c.temMargem ? (c.margemPct>=0?'var(--positive)':'var(--negative)') : 'inherit'};">${c.temMargem ? c.margemPct.toFixed(1)+'%' : '—'}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+
+  document.getElementById('rc-mes').addEventListener('change', (e)=>{
+    rentCanalMes = e.target.value || todayISO().slice(0,7);
+    renderRentabilidadeCanal();
+  });
+}
+
+RENDERERS['rentabilidade-canal'] = renderRentabilidadeCanal;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
@@ -18779,13 +18916,14 @@ function renderFechamentoMes(){
         <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Despesas a pagar (${despesasPendentesMes.length})</p>
         <div class="table-wrap" style="margin-bottom:14px;">
           <table class="data-table">
+            <thead><tr><th>Descrição</th><th>Vencimento</th><th class="num">Valor</th><th style="text-align:center;">Ação</th></tr></thead>
             <tbody>
               ${despesasPendentesMes.map(l=>`
                 <tr>
                   <td>${escapeHtml(l.descricao)}</td>
                   <td>${fmtDate(l.vencimento)}</td>
                   <td class="num">${fmtMoney(l.valor)}</td>
-                  <td><button class="btn btn-sm btn-primary" onclick="marcarParcelaPaga('${l.despesaId}', ${l.parcelaIdx}); renderFechamentoMes();">✅ Marcar Paga</button></td>
+                  <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarParcelaPaga('${l.despesaId}', ${l.parcelaIdx}); renderFechamentoMes();">✅ Marcar Paga</button></td>
                 </tr>
               `).join('')}
             </tbody>
@@ -18796,13 +18934,14 @@ function renderFechamentoMes(){
         <p style="font-weight:600;font-size:13px;margin:0 0 6px;">Contas a receber (${contasPendentesMes.length})</p>
         <div class="table-wrap">
           <table class="data-table">
+            <thead><tr><th>Descrição</th><th>Vencimento</th><th class="num">Valor</th><th style="text-align:center;">Ação</th></tr></thead>
             <tbody>
               ${contasPendentesMes.map(l=>`
                 <tr>
                   <td>${escapeHtml(l.descricao)}</td>
                   <td>${fmtDate(l.vencimento)}</td>
                   <td class="num">${fmtMoney(l.valor)}</td>
-                  <td><button class="btn btn-sm btn-primary" onclick="marcarContaRecebida('${l.id}', '${l.origem}', ${l.vendaId?`'${l.vendaId}'`:'null'}, ${l.parcelaIdx!=null?l.parcelaIdx:'null'}); renderFechamentoMes();">✅ Marcar Recebida</button></td>
+                  <td style="text-align:center;"><button class="btn btn-sm btn-primary" onclick="marcarContaRecebida('${l.id}', '${l.origem}', ${l.vendaId?`'${l.vendaId}'`:'null'}, ${l.parcelaIdx!=null?l.parcelaIdx:'null'}); renderFechamentoMes();">✅ Marcar Recebida</button></td>
                 </tr>
               `).join('')}
             </tbody>
