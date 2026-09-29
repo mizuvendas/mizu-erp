@@ -21776,6 +21776,35 @@ function renderDashAlertas(){
     alertas.push({tipo:'neutral', texto:`💤 ${clientesInativos} cliente(s) inativo(s) (sem comprar há ${STATE.config.diasClienteInativo||60}+ dias).`, acao:{label:'Ver Clientes', pagina:'clientes'}});
   }
 
+  // a partir daqui: condições que já eram calculadas em outras telas (badge
+  // do menu lateral, Saúde de Margem, Caixa, Contas a Receber) mas ainda não
+  // apareciam juntas aqui no painel central — unificando o que fica pra
+  // trás de tela em tela.
+  const lembretesAtrasados = (STATE.lembretes||[]).filter(l=>!l.concluido && l.dataLembrete && l.dataLembrete<todayISO());
+  if(lembretesAtrasados.length>0){
+    alertas.push({tipo:'warning', texto:`⏰ ${lembretesAtrasados.length} lembrete(s) com data vencida e ainda não concluído(s).`, acao:{label:'Ver Lembretes', pagina:'lembretes'}});
+  }
+
+  const produtosMargemCritica = getSaudeMargemProdutos(30).filter(p=>p.status==='critica');
+  if(produtosMargemCritica.length>0){
+    alertas.push({tipo:'negative', texto:`🩺 ${produtosMargemCritica.length} produto(s) com margem crítica nos últimos 30 dias (abaixo de ${STATE.config.margemMinimaSaudavel||20}%).`, acao:{label:'Ver Saúde de Margem', pagina:'saude-margem'}});
+  }
+
+  const contasReceberAtrasadas = getLinhasReceber().filter(l=>l.statusCalc==='atrasado');
+  if(contasReceberAtrasadas.length>0){
+    const totalAtrasado = contasReceberAtrasadas.reduce((s,l)=>s+l.valor,0);
+    alertas.push({tipo:'negative', texto:`💰 ${fmtMoney(totalAtrasado)} em contas a receber atrasadas (${contasReceberAtrasadas.length}).`, acao:{label:'Ver Contas a Receber', pagina:'receber'}});
+  }
+
+  const saldoCaixaAtual = getSaldoCaixa().saldoAtual;
+  if(saldoCaixaAtual<0){
+    alertas.push({tipo:'negative', texto:`🏦 Saldo de Caixa negativo: ${fmtMoney(saldoCaixaAtual)}.`, acao:{label:'Ver Caixa', pagina:'caixa'}});
+  }
+
+  // mais urgente primeiro, pra não esconder um alerta grave embaixo de vários avisos leves
+  const ordemSeveridade = {negative:0, warning:1, neutral:2};
+  alertas.sort((a,b)=>ordemSeveridade[a.tipo]-ordemSeveridade[b.tipo]);
+
   if(alertas.length===0){
     alertasBox.innerHTML = `<p class="help-text">Nenhum alerta no momento. Tudo em dia! 🎉</p>`;
     return;
