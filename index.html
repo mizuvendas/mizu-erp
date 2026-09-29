@@ -1434,7 +1434,8 @@ function defaultState(){
     caixa: {
       saldoInicial: 0, // saldo definido pelo usuário no dia em que começou a usar o Caixa
       dataInicial: '', // data de referência do saldo inicial (fica vazia até o usuário configurar)
-      lancamentosManuais: [] // { id, data, tipo:'entrada'|'saida', descricao, valor, criadoEm } — movimentação solta que não vem de despesa/conta a receber/venda (ex: combustível, dinheiro recebido fora do fluxo)
+      lancamentosManuais: [], // { id, data, tipo:'entrada'|'saida', descricao, valor, criadoEm } — movimentação solta que não vem de despesa/conta a receber/venda (ex: combustível, dinheiro recebido fora do fluxo)
+      fechamentos: [] // { id, data, saldoSistema, saldoContado, diferenca, obs, criadoEm } — conferência periódica: quanto o sistema calcula x quanto foi contado fisicamente
     },
     lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
     config: {
@@ -12912,8 +12913,9 @@ function getMovimentosCaixa(){
   return mov.filter(m=>m.data).sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1)); // mais recente primeiro
 }
 
-function getSaldoCaixa(){
-  const movs = getMovimentosCaixa();
+function getSaldoCaixa(ateData){
+  let movs = getMovimentosCaixa();
+  if(ateData) movs = movs.filter(m=>m.data<=ateData);
   const totalEntradas = movs.filter(m=>m.tipo==='entrada').reduce((s,m)=>s+m.valor,0);
   const totalSaidas = movs.filter(m=>m.tipo==='saida').reduce((s,m)=>s+m.valor,0);
   const saldoInicial = (STATE.caixa && STATE.caixa.saldoInicial) || 0;
@@ -12985,6 +12987,20 @@ function renderCaixa(){
         </table>
       </div>
     </div>
+
+    <div class="card">
+      <h3>🔒 Fechamento de Caixa <span class="hint">confira periodicamente o que o sistema calcula contra o que tem de verdade na gaveta</span></h3>
+      <p class="help-text" style="margin-top:-4px;">Conte o dinheiro físico (ou o saldo real da conta) de tempos em tempos e registre aqui. O sistema compara com o que ele calculou até aquela data e mostra a diferença — assim qualquer furo aparece cedo.</p>
+      <div class="header-actions" style="margin-bottom:10px;">
+        <button class="btn btn-primary" id="caixa-btn-novo-fechamento">🔒 Fechar Caixa Agora</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th class="num">Saldo do Sistema</th><th class="num">Saldo Contado</th><th class="num">Diferença</th><th>Observação</th><th></th></tr></thead>
+          <tbody id="caixa-fechamentos-body"></tbody>
+        </table>
+      </div>
+    </div>
   `;
 
   document.getElementById('caixa-movimentos-body').innerHTML = movs.length ? movs.map(m=>`
@@ -12996,6 +13012,20 @@ function renderCaixa(){
       <td>${m.origem==='manual' ? `<button class="btn btn-sm btn-danger" onclick="excluirLancamentoCaixaManual('${m.refId}')">🗑️</button>` : ''}</td>
     </tr>
   `).join('') : `<tr><td colspan="5" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma movimentação ainda.</td></tr>`;
+
+  const fechamentos = (STATE.caixa.fechamentos||[]).slice().sort((a,b)=> a.data===b.data ? 0 : (a.data<b.data?1:-1));
+  document.getElementById('caixa-fechamentos-body').innerHTML = fechamentos.length ? fechamentos.map(f=>`
+    <tr>
+      <td>${fmtDate(f.data)}</td>
+      <td class="num">${fmtMoney(f.saldoSistema)}</td>
+      <td class="num">${fmtMoney(f.saldoContado)}</td>
+      <td class="num" style="font-weight:700;color:${Math.abs(f.diferenca)<0.01?'var(--positive)':'var(--negative)'};">${f.diferenca>0?'+':''}${fmtMoney(f.diferenca)}</td>
+      <td>${escapeHtml(f.obs||'—')}</td>
+      <td><button class="btn btn-sm btn-danger" onclick="excluirFechamentoCaixa('${f.id}')">🗑️</button></td>
+    </tr>
+  `).join('') : `<tr><td colspan="6" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum fechamento registrado ainda.</td></tr>`;
+
+  document.getElementById('caixa-btn-novo-fechamento').addEventListener('click', abrirModalFechamentoCaixa);
 
   document.getElementById('caixa-btn-salvar-saldo-inicial').addEventListener('click', ()=>{
     const valor = parseFloat(document.getElementById('caixa-saldo-inicial').value);
@@ -13076,6 +13106,76 @@ function excluirLancamentoCaixaManual(id){
     STATE.caixa.lancamentosManuais = (STATE.caixa.lancamentosManuais||[]).filter(l=>l.id!==id);
     saveState();
     showToast('Lançamento removido.', 'success');
+    renderCaixa();
+  });
+}
+
+function abrirModalFechamentoCaixa(){
+  const hoje = todayISO();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-fechamento-caixa';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🔒</div>
+        <div>
+          <h3>Fechar Caixa</h3>
+          <div class="sub">Confere o saldo calculado pelo sistema contra o que foi contado de verdade</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-grid">
+          <div class="field">
+            <label>Data do fechamento</label>
+            <input type="date" id="fch-data" value="${hoje}">
+          </div>
+          <div class="field">
+            <label>Saldo do sistema até essa data</label>
+            <input type="text" id="fch-saldo-sistema" value="${fmtMoney(getSaldoCaixa(hoje).saldoAtual)}" readonly style="background:#F3F5F7;">
+          </div>
+          <div class="field">
+            <label>Saldo contado (dinheiro/conta real)</label>
+            <input type="number" id="fch-saldo-contado" step="0.01">
+          </div>
+          <div class="field" style="grid-column:1/-1;">
+            <label>Observação (opcional)</label>
+            <input type="text" id="fch-obs" placeholder="Ex: contagem de fim de semana, sobra/falta identificada, etc.">
+          </div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="fch-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="fch-confirmar">Registrar Fechamento</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('fch-data').addEventListener('change', (e)=>{
+    document.getElementById('fch-saldo-sistema').value = fmtMoney(getSaldoCaixa(e.target.value || hoje).saldoAtual);
+  });
+  document.getElementById('fch-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('fch-confirmar').addEventListener('click', ()=>{
+    const data = document.getElementById('fch-data').value;
+    const saldoContado = parseFloat(document.getElementById('fch-saldo-contado').value);
+    const obs = document.getElementById('fch-obs').value.trim();
+    if(!data){ showToast('Informe a data do fechamento.', 'error'); return; }
+    if(isNaN(saldoContado)){ showToast('Informe o saldo contado.', 'error'); return; }
+    const saldoSistema = getSaldoCaixa(data).saldoAtual;
+    const diferenca = saldoContado - saldoSistema;
+    if(!STATE.caixa.fechamentos) STATE.caixa.fechamentos = [];
+    STATE.caixa.fechamentos.push({ id: uid('fch'), data, saldoSistema, saldoContado, diferenca, obs, criadoEm: new Date().toISOString() });
+    saveState();
+    showToast(Math.abs(diferenca)<0.01 ? 'Fechamento registrado — tudo bateu certinho!' : 'Fechamento registrado — há diferença entre o sistema e a contagem.', Math.abs(diferenca)<0.01 ? 'success' : 'error');
+    modal.remove();
+    renderCaixa();
+  });
+}
+
+function excluirFechamentoCaixa(id){
+  confirmAction('Excluir fechamento', 'Isso remove esse registro de conferência do Caixa. Deseja continuar?', ()=>{
+    STATE.caixa.fechamentos = (STATE.caixa.fechamentos||[]).filter(f=>f.id!==id);
+    saveState();
+    showToast('Fechamento removido.', 'success');
     renderCaixa();
   });
 }
