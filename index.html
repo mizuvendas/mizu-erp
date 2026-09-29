@@ -946,7 +946,7 @@ table.data-table{ width:100%; font-size:13px; }
       <div class="page-header">
         <div>
           <h2>Produtos</h2>
-          <p class="subtitle">Cadastro de itens: custo, preço, fornecedor e marca</p>
+          <p class="subtitle">Cadastro de itens: custo, preço, fornecedor e marca — a margem aqui é a "margem de tabela" do preço atual. Pra ver a margem realizada nas vendas, use a Análise de Vendas.</p>
         </div>
         <div class="header-actions">
           <button class="btn" id="btn-sincronizar-totvs">🔄 Sincronizar TOTVS</button>
@@ -1044,7 +1044,7 @@ table.data-table{ width:100%; font-size:13px; }
       <div class="page-header">
         <div>
           <h2>Análise de Vendas</h2>
-          <p class="subtitle">Filtre por cliente, fornecedor, marca, produto e período</p>
+          <p class="subtitle">Filtre por cliente, fornecedor, marca, produto e período — a margem aqui é a margem realizada nas vendas (não o preço de tabela do cadastro)</p>
         </div>
       </div>
       <div id="analise-content"></div>
@@ -3531,7 +3531,7 @@ function celulaPrecoProduto(p){
   return `
     <div class="help-text">Custo: ${celulaEditavelProduto(p.id,'custo',p.custo,'number')}</div>
     <div>Venda: ${celulaEditavelProduto(p.id,'precoVenda',p.precoVenda,'number')}</div>
-    <span class="badge ${margemClasse}">${margem.toFixed(1)}%</span>`;
+    <span class="badge ${margemClasse}" title="Margem de tabela (preço atual de venda x custo — não é a margem realizada nas vendas, veja Análise de Vendas pra essa)">${margem.toFixed(1)}%</span>`;
 }
 
 function renderLinhaProduto(p){
@@ -3557,6 +3557,7 @@ function renderLinhaProduto(p){
         <div class="cell-actions">
           ${p.criadoRapido ? `<button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>` : ''}
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
+          <button class="btn btn-sm" onclick="irParaAnaliseDoProduto('${p.id}')" title="Ver esse produto na Análise de Vendas (margem realizada nas vendas)">📈 Ver Vendas</button>
           <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
@@ -3584,12 +3585,34 @@ function renderLinhaProdutoCompraLocal(p){
       <td>
         <div class="cell-actions">
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
+          <button class="btn btn-sm" onclick="irParaAnaliseDoProduto('${p.id}')" title="Ver esse produto na Análise de Vendas (margem realizada nas vendas)">📈 Ver Vendas</button>
           <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
           <button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>
           <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
         </div>
       </td>
     </tr>`;
+}
+
+// Leva da tela de Produtos direto pra Análise de Vendas já filtrada por esse
+// produto — resolve a confusão de "onde eu vejo a margem REAL desse produto,
+// não só o preço de tabela?" (ver subtítulos das duas telas).
+function irParaAnaliseDoProduto(produtoId){
+  const produto = STATE.produtos.find(p=>p.id===produtoId);
+  if(!produto) return;
+  navigateTo('analise-vendas');
+  const sel = document.getElementById('af-produto');
+  if(!sel){
+    showToast('Esse produto ainda não teve nenhuma venda lançada.', 'error');
+    return;
+  }
+  const opcaoExiste = Array.from(sel.options).some(o=>o.value===produto.nome);
+  if(opcaoExiste){
+    sel.value = produto.nome;
+    aplicarFiltrosAnalise();
+  }else{
+    showToast('Esse produto ainda não teve nenhuma venda lançada.', 'error');
+  }
 }
 
 function moverProdutoParaListaNormal(id){
@@ -11968,7 +11991,7 @@ function renderAnalise(){
               <th data-sort="marca">Marca</th>
               <th data-sort="fornecedor">Fornecedor</th>
               <th class="num" data-sort="qtd">Qtd Vendida</th>
-              <th class="num" data-sort="custoUnit">Custo Unit.</th>
+              <th class="num" data-sort="custoUnit" title="Custo cadastrado hoje no produto — pode ser diferente do custo em vigor na época da venda">Custo Unit. (atual)</th>
               <th class="num" data-sort="bruto">Bruto</th>
               <th class="num" data-sort="lucro">Lucro</th>
               <th class="num" data-sort="margemPct">Margem</th>
