@@ -867,6 +867,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="sugestao-compra" href="#">
       <span class="ic ic-relatorios">🛒</span> Sugestão de Compra
     </a>
+    <a class="nav-item" data-page="saude-margem" href="#">
+      <span class="ic ic-relatorios">🩺</span> Saúde de Margem <span class="nav-badge" id="nav-badge-margem" style="display:none;"></span>
+    </a>
 
     <div class="sidebar-footer">
       <div class="status-conexao" id="status-conexao">
@@ -1058,6 +1061,11 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="sugestao-compra-content"></div>
+    </section>
+
+    <!-- ============ SAÚDE DE MARGEM ============ -->
+    <section class="page" id="page-saude-margem">
+      <div id="saude-margem-content"></div>
     </section>
 
     <!-- ============ CAIXA ============ -->
@@ -1452,6 +1460,7 @@ function defaultState(){
       lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
       diasProdutoParado: 30, // configurável na tela de Estoque — "produto parado" = sem vender há esses dias
       diasClienteInativo: 60, // configurável na tela de Clientes — "cliente inativo" = sem comprar há esses dias
+      margemMinimaSaudavel: 20, // % — configurável na tela de Saúde de Margem — abaixo disso um produto é sinalizado como margem baixa
       licitacoesArea: null, // { lat, lng, raioKm } — área de atendimento pra busca de oportunidades no PNCP (Licitações), configurável no botão ⚙️
       licitacoesModalidades: [1,4,5,6,7,8,9,12,13] // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
     }
@@ -1550,6 +1559,12 @@ function atualizarBadgesMenu(){
     const atrasados = (STATE.lembretes||[]).filter(l=>!l.concluido && l.dataLembrete && l.dataLembrete<hoje).length;
     if(atrasados>0){ badgeLemb.textContent = atrasados; badgeLemb.style.display = ''; }
     else{ badgeLemb.style.display = 'none'; }
+  }
+  const badgeMargem = document.getElementById('nav-badge-margem');
+  if(badgeMargem){
+    const critico = typeof getSaudeMargemProdutos==='function' ? getSaudeMargemProdutos(30).filter(p=>p.status==='critica').length : 0;
+    if(critico>0){ badgeMargem.textContent = critico; badgeMargem.style.display = ''; }
+    else{ badgeMargem.style.display = 'none'; }
   }
 }
 
@@ -13375,6 +13390,149 @@ function renderSugestaoCompra(){
 }
 
 RENDERERS['sugestao-compra'] = renderSugestaoCompra;
+
+/* =========================================================
+   MÓDULO: SAÚDE DE MARGEM
+   Painel de acompanhamento em tempo real: agrupa as vendas do
+   período por produto e sinaliza quem está vendendo com margem
+   negativa (prejuízo) ou abaixo do mínimo saudável configurado —
+   pra pegar erro de precificação ou desconto exagerado cedo, sem
+   precisar garimpar a Análise de Vendas produto por produto.
+   ========================================================= */
+let saudeMargemDias = 30;
+
+function getSaudeMargemProdutos(dias){
+  const desde = addDays(todayISO(), -dias);
+  const linhas = getLinhasVenda().filter(l=>l.data>=desde);
+  const porProduto = {};
+  linhas.forEach(l=>{
+    const chave = l.produtoId || l.produtoNome;
+    if(!porProduto[chave]){
+      porProduto[chave] = { produtoId:l.produtoId, produtoNome:l.produtoNome, marca:l.marca, fornecedor:l.fornecedor, qtd:0, bruto:0, lucro:0 };
+    }
+    porProduto[chave].qtd += l.qtd;
+    porProduto[chave].bruto += l.bruto;
+    porProduto[chave].lucro += l.lucro;
+  });
+  const limite = (STATE.config.margemMinimaSaudavel!=null ? STATE.config.margemMinimaSaudavel : 20);
+  return Object.values(porProduto).map(p=>{
+    const margemPct = p.bruto>0 ? (p.lucro/p.bruto*100) : 0;
+    let status;
+    if(margemPct<0) status = 'critica';
+    else if(margemPct<limite) status = 'baixa';
+    else status = 'saudavel';
+    return { ...p, margemPct, status };
+  }).sort((a,b)=>a.margemPct-b.margemPct);
+}
+
+const SAUDE_MARGEM_LABEL = {
+  critica: { texto: '🔴 Crítica (prejuízo)', cor: 'var(--negative)' },
+  baixa: { texto: '🟠 Baixa', cor: 'var(--warning)' },
+  saudavel: { texto: '🟢 Saudável', cor: 'var(--positive)' }
+};
+
+function renderSaudeMargem(){
+  const box = document.getElementById('saude-margem-content');
+  const limite = (STATE.config.margemMinimaSaudavel!=null ? STATE.config.margemMinimaSaudavel : 20);
+  const produtos = getSaudeMargemProdutos(saudeMargemDias);
+  const geral = produtos.reduce((acc,p)=>{ acc.bruto+=p.bruto; acc.lucro+=p.lucro; return acc; }, {bruto:0, lucro:0});
+  const margemGeral = geral.bruto>0 ? (geral.lucro/geral.bruto*100) : 0;
+  const criticos = produtos.filter(p=>p.status==='critica');
+  const baixos = produtos.filter(p=>p.status==='baixa');
+
+  box.innerHTML = `
+    <div class="page-header">
+      <div>
+        <h2>🩺 Saúde de Margem</h2>
+        <p class="subtitle">Acompanhamento em tempo real da margem por produto — pra pegar preço errado ou desconto exagerado cedo</p>
+      </div>
+      <div class="header-actions">
+        <select id="sm-periodo">
+          <option value="7" ${saudeMargemDias===7?'selected':''}>Últimos 7 dias</option>
+          <option value="30" ${saudeMargemDias===30?'selected':''}>Últimos 30 dias</option>
+          <option value="90" ${saudeMargemDias===90?'selected':''}>Últimos 90 dias</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card ${margemGeral>=limite?'acc-green':(margemGeral<0?'acc-red':'acc-gold')}">
+        <div class="kpi-icon">📊</div>
+        <div class="kpi-label">Margem Geral do Período</div>
+        <div class="kpi-value ${margemGeral>=0?'positive':'negative'}">${margemGeral.toFixed(1)}%</div>
+      </div>
+      <div class="kpi-card acc-red">
+        <div class="kpi-icon">🔴</div>
+        <div class="kpi-label">Produtos em Margem Crítica</div>
+        <div class="kpi-value negative">${criticos.length}</div>
+        <div class="kpi-sub">Vendendo abaixo do custo</div>
+      </div>
+      <div class="kpi-card acc-gold">
+        <div class="kpi-icon">🟠</div>
+        <div class="kpi-label">Produtos em Margem Baixa</div>
+        <div class="kpi-value" style="color:var(--warning);">${baixos.length}</div>
+        <div class="kpi-sub">Abaixo de ${limite}%</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Margem mínima saudável <span class="hint">produtos abaixo desse percentual entram no alerta "Baixa"</span></h3>
+      <div class="form-grid">
+        <div class="field">
+          <label>Margem mínima (%)</label>
+          <input type="number" id="sm-limite" step="0.1" value="${limite}">
+        </div>
+      </div>
+      <button class="btn btn-primary" id="sm-btn-salvar-limite">Salvar</button>
+    </div>
+
+    <div class="card">
+      <h3>Produtos por Margem <span class="hint">do pior pro melhor, no período selecionado</span></h3>
+      <div id="sm-tabela"></div>
+    </div>
+  `;
+
+  const tabelaBox = document.getElementById('sm-tabela');
+  if(produtos.length===0){
+    tabelaBox.innerHTML = `<p class="help-text" style="margin:0;">Nenhuma venda no período selecionado.</p>`;
+  }else{
+    tabelaBox.innerHTML = `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Produto</th><th>Marca</th><th class="num">Qtd Vendida</th><th class="num">Faturamento</th><th class="num">Lucro</th><th class="num">Margem</th><th>Status</th></tr></thead>
+          <tbody>
+            ${produtos.map(p=>`
+              <tr>
+                <td>${escapeHtml(p.produtoNome)}</td>
+                <td>${escapeHtml(p.marca||'—')}</td>
+                <td class="num">${fmtNum(p.qtd)}</td>
+                <td class="num">${fmtMoney(p.bruto)}</td>
+                <td class="num" style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'};">${fmtMoney(p.lucro)}</td>
+                <td class="num" style="font-weight:700;color:${SAUDE_MARGEM_LABEL[p.status].cor};">${p.margemPct.toFixed(1)}%</td>
+                <td style="color:${SAUDE_MARGEM_LABEL[p.status].cor};">${SAUDE_MARGEM_LABEL[p.status].texto}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  document.getElementById('sm-periodo').addEventListener('change', (e)=>{
+    saudeMargemDias = parseInt(e.target.value, 10) || 30;
+    renderSaudeMargem();
+  });
+  document.getElementById('sm-btn-salvar-limite').addEventListener('click', ()=>{
+    const novoLimite = parseFloat(document.getElementById('sm-limite').value);
+    if(isNaN(novoLimite)){ showToast('Informe um valor válido.', 'error'); return; }
+    STATE.config.margemMinimaSaudavel = novoLimite;
+    saveState();
+    showToast('Margem mínima saudável atualizada.', 'success');
+    renderSaudeMargem();
+  });
+}
+
+RENDERERS['saude-margem'] = renderSaudeMargem;
 
 /* =========================================================
    MÓDULO: DESPESAS (fixas, variáveis, parceladas)
