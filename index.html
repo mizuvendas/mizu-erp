@@ -11559,11 +11559,26 @@ function getLinhasVenda(incluirCanceladas){
     }else if(desconto.pct!=null){
       fatorDesconto = Math.max(0, 1 - (desconto.pct/100));
     }
+    // Venda com pagador terceiro (repasse): o valor que fica de fato com a
+    // Mizu é o bruto (já com o desconto da venda) MENOS o repasse — é esse
+    // valor líquido que deve contar no total geral de vendas de relatórios
+    // e Dashboard, não o bruto cheio (que inclui a parte que vai pro
+    // pagador). Mesma conta de getValoresFinanceirosVenda(), só que
+    // distribuída proporcionalmente por item pra manter as linhas coerentes.
+    let fatorRepasse = 1;
+    if(v.pagadorId){
+      const totalBrutoAposDescGeral = totalBrutoVenda*fatorDesconto;
+      const descontoRepasse = v.repasse && v.repasse.desconto ? v.repasse.desconto : {};
+      let valorRepasseVenda = 0;
+      if(descontoRepasse.valor!=null) valorRepasseVenda = Math.min(totalBrutoAposDescGeral, descontoRepasse.valor);
+      else if(descontoRepasse.pct!=null) valorRepasseVenda = totalBrutoAposDescGeral*(descontoRepasse.pct/100);
+      fatorRepasse = totalBrutoAposDescGeral>0 ? Math.max(0, 1 - (valorRepasseVenda/totalBrutoAposDescGeral)) : 1;
+    }
     (v.itens||[]).forEach(it=>{
       const produto = STATE.produtos.find(p=>p.id===it.produtoId);
       const c = calcularItemVenda(it, !!v.temComissao);
-      const brutoComDesconto = c.bruto*fatorDesconto;
-      const comissaoComDesconto = c.comissao*fatorDesconto; // comissão incide sobre o valor recebido de fato
+      const brutoComDesconto = c.bruto*fatorDesconto*fatorRepasse;
+      const comissaoComDesconto = c.comissao*fatorDesconto; // comissão incide sobre o valor recebido de fato (antes do repasse, igual já era)
       const lucroComDesconto = brutoComDesconto - c.custoTotal - c.imposto - comissaoComDesconto;
       linhas.push({
         vendaId: v.id,
