@@ -7242,6 +7242,11 @@ function renderOrcamentos(){
       </div>
     </div>
 
+    <div class="card" id="orc-card-separacao-entrega">
+      <h3>📦 Separação e Entrega <span class="hint">o que está sendo preparado e o que já saiu pra entrega</span></h3>
+      <div id="orc-relatorio-separacao"></div>
+    </div>
+
     <div class="card">
       <h3>Orçamentos Lançados</h3>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
@@ -8468,11 +8473,77 @@ const statusEntregaLabel = {
   entregue: '<span class="badge" style="background:#DCEFE3;color:#1F7A4D;">✅ Entregue</span>'
 };
 
+// Dentro do "guarda-chuva" em_rota (aprovado, aguardando entrega), o pedido
+// passa por duas fases informativas — em separação (ainda sendo preparado)
+// e em rota de entrega (já saiu) — controladas por o.faseEntrega, que não
+// mexe em nada do que a Logística já usa pra montar o roteiro (continua
+// filtrando só por statusEntrega==='em_rota').
+function rotuloStatusEntrega(o){
+  const statusEntrega = o.statusEntrega || 'nenhum';
+  if(statusEntrega==='em_rota'){
+    return (o.faseEntrega==='rota')
+      ? '<span class="badge" style="background:#E3F0F5;color:#0B5E76;">🚚 Em Rota de Entrega</span>'
+      : '<span class="badge" style="background:#EDE4FA;color:#6B3FA0;">📦 Em Separação</span>';
+  }
+  return statusEntregaLabel[statusEntrega];
+}
+
+function marcarFaseEntregaOrcamento(id, fase){
+  const orcamento = STATE.orcamentos.find(o=>o.id===id);
+  if(!orcamento || orcamento.statusEntrega!=='em_rota') return;
+  orcamento.faseEntrega = fase;
+  saveState();
+  renderListaOrcamentos();
+}
+
+function renderRelatorioSeparacaoEntrega(){
+  const box = document.getElementById('orc-relatorio-separacao');
+  if(!box) return;
+  const emRota = STATE.orcamentos.filter(o=>o.statusEntrega==='em_rota');
+  const emSeparacao = emRota.filter(o=>(o.faseEntrega||'separacao')==='separacao');
+  const emRotaDeEntrega = emRota.filter(o=>o.faseEntrega==='rota');
+
+  if(emRota.length===0){
+    box.innerHTML = `<p class="help-text" style="margin:0;">Nada em separação ou rota de entrega no momento.</p>`;
+    return;
+  }
+
+  const linha = (o) => {
+    const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+    const emSep = (o.faseEntrega||'separacao')==='separacao';
+    return `
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border);flex-wrap:wrap;">
+        <div>${o.numero!=null?'<strong>#'+o.numero+'</strong> — ':''}${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</div>
+        <div class="cell-actions">
+          <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver</button>
+          ${emSep
+            ? `<button class="btn btn-sm" onclick="marcarFaseEntregaOrcamento('${o.id}','rota')">🚚 Saiu p/ Entrega</button>`
+            : `<button class="btn btn-sm" onclick="marcarFaseEntregaOrcamento('${o.id}','separacao')">📦 Voltar p/ Separação</button>`}
+          <button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>
+        </div>
+      </div>`;
+  };
+
+  box.innerHTML = `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px;">
+      <div>
+        <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#6B3FA0;margin-bottom:6px;">📦 Em Separação (${emSeparacao.length})</div>
+        ${emSeparacao.length ? emSeparacao.map(linha).join('') : '<p class="help-text">Nenhum.</p>'}
+      </div>
+      <div>
+        <div style="font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:0.4px;color:#0B5E76;margin-bottom:6px;">🚚 Em Rota de Entrega (${emRotaDeEntrega.length})</div>
+        ${emRotaDeEntrega.length ? emRotaDeEntrega.map(linha).join('') : '<p class="help-text">Nenhum.</p>'}
+      </div>
+    </div>
+  `;
+}
+
 function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
   atualizarOrcamentosExpirados();
   renderOrcamentosEmAndamento();
+  renderRelatorioSeparacaoEntrega();
 
   const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
   const checkboxEsconder = document.getElementById('orc-lista-esconder-finalizados');
@@ -8542,7 +8613,7 @@ function renderListaOrcamentos(){
             ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
           </select>`)}
         </td>
-        <td>${statusEntregaLabel[statusEntrega]}</td>
+        <td>${rotuloStatusEntrega(o)}</td>
         <td>
           <div>
             ${!jaConvertido && o.status==='aprovado' ? `<button class="btn btn-sm btn-primary" onclick="converterOrcamentoEmVenda('${o.id}')">💰 Converter em Venda</button>` : ''}
@@ -8552,6 +8623,7 @@ function renderListaOrcamentos(){
                 <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
                 <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
+                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Marcar Entregue</button>` : ''}
                 ${statusEntrega==='entregue' ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer Entrega</button>` : ''}
                 ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
                 <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
@@ -9557,6 +9629,7 @@ function marcarEntregaConcluida(orcamentoId){
     saveState();
     showToast(vaiConverter ? 'Entrega confirmada e orçamento convertido em venda.' : 'Entrega confirmada.', 'success');
     renderLogistica();
+    if(document.getElementById('orc-lista-body')) renderListaOrcamentos();
   }, 'Confirmar');
 }
 
@@ -19457,7 +19530,7 @@ function renderDashboard(){
 
     <div class="chart-row">
       <div class="card">
-        <h3>Evolução Bruto × Lucro <span class="hint">últimos meses</span></h3>
+        <h3>Evolução de Vendas (Bruto × Lucro) <span class="hint">últimos 12 meses</span></h3>
         <div class="chart-box tall"><canvas id="dash-chart-evolucao"></canvas></div>
       </div>
       <div class="card">
@@ -19795,7 +19868,7 @@ function renderDashCharts(linhas){
   // evolução últimos 6 meses
   const porMes = {};
   linhas.forEach(l=>{ if(!l.mes) return; porMes[l.mes]=porMes[l.mes]||{bruto:0,lucro:0}; porMes[l.mes].bruto+=l.bruto; porMes[l.mes].lucro+=l.lucro; });
-  const mesesOrd = Object.keys(porMes).sort().slice(-6);
+  const mesesOrd = Object.keys(porMes).sort().slice(-12);
   dashCharts.evolucao = criarGraficoSeguro('dash-chart-evolucao', {
     type:'line',
     data:{ labels: mesesOrd.map(monthLabel), datasets:[
