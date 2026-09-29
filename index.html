@@ -3760,8 +3760,34 @@ function renderTabelaProdutosCompraLocal(produtosCompraLocal){
   ativarEdicaoInlineProdutos();
 }
 
+// Compara, pra um produto específico, o custo mais recente pago a cada
+// fornecedor diferente — usa o histórico de mudança de custo
+// (STATE.historicoPrecosCompra, ver registrarHistoricoPreco) somado ao
+// fornecedor/custo ATUAIS do produto (que podem ainda não ter entrado no
+// histórico, se nunca mudaram desde o cadastro). Só faz sentido mostrar
+// quando o produto já foi comprado de mais de um fornecedor diferente.
+function getComparadorFornecedoresProduto(produtoId){
+  const produto = STATE.produtos.find(p=>p.id===produtoId);
+  if(!produto) return [];
+  const porFornecedor = {};
+  (STATE.historicoPrecosCompra||[]).filter(h=>h.produtoId===produtoId).forEach(h=>{
+    const chave = h.fornecedorId || (h.fornecedorNome ? 'nome:'+h.fornecedorNome : 'sem-fornecedor');
+    if(!porFornecedor[chave] || h.data >= porFornecedor[chave].data){
+      porFornecedor[chave] = { fornecedorId: h.fornecedorId, fornecedorNome: h.fornecedorNome || 'Sem fornecedor definido', custo: h.custoNovo, data: h.data };
+    }
+  });
+  if(produto.custo!=null && !isNaN(produto.custo)){
+    const chaveAtual = produto.fornecedorId || (produto.fornecedor ? 'nome:'+produto.fornecedor : 'sem-fornecedor');
+    if(!porFornecedor[chaveAtual] || todayISO() >= porFornecedor[chaveAtual].data){
+      porFornecedor[chaveAtual] = { fornecedorId: produto.fornecedorId||null, fornecedorNome: produto.fornecedor || 'Sem fornecedor definido', custo: produto.custo, data: todayISO() };
+    }
+  }
+  return Object.values(porFornecedor).sort((a,b)=>a.custo-b.custo);
+}
+
 function abrirFormProduto(id, onSalvo){
   const produto = id ? STATE.produtos.find(p=>p.id===id) : null;
+  const comparadorFornecedores = produto ? getComparadorFornecedoresProduto(produto.id) : [];
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -3813,6 +3839,19 @@ function abrirFormProduto(id, onSalvo){
             <div class="field field-full">
               <div class="help-text" id="fp-lucro-display" style="font-size:13px;"></div>
             </div>
+            ${comparadorFornecedores.length>1 ? `
+              <div class="field field-full">
+                <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-soft,#f7f9fa);">
+                  <p style="font-weight:600;font-size:13px;margin:0 0 6px;">📊 Comparador de Fornecedores <span class="hint">últimos preços pagos, do mais barato pro mais caro</span></p>
+                  ${comparadorFornecedores.map((f,idx)=>`
+                    <div style="display:flex;justify-content:space-between;align-items:center;padding:3px 0;font-size:13px;${idx>0?'border-top:1px dashed var(--border);':''}">
+                      <span>${idx===0?'🏆 ':''}${escapeHtml(f.fornecedorNome)}</span>
+                      <span style="font-weight:700;color:${idx===0?'var(--positive)':'var(--ink)'};">${fmtMoney(f.custo)}</span>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
             <div class="field">
               <label>Unidade de Medida</label>
               <select id="fp-unidade">
