@@ -1732,6 +1732,27 @@ function mostrarNotificacaoGlobal(titulo, mensagem, tipo, aoClicar){
   box.appendChild(el);
 }
 
+// Lembrete de backup GLOBAL: como os dados ficam só neste navegador (não tem
+// servidor por trás), perder o navegador/computador sem nunca ter exportado
+// um backup significa perder tudo. O card no Dashboard (ver renderDashAlertas)
+// já avisa, mas só quem estiver naquela tela vê — esse aviso aparece por
+// cima de QUALQUER tela, uma vez por vez que o sistema é aberto, quando faz
+// 7+ dias desde o último backup exportado (ou nunca foi exportado nenhum).
+// Clicar nele já dispara o download do backup na hora.
+let _avisoBackupGlobalMostrado = false;
+function verificarBackupAoAbrirApp(){
+  if(_avisoBackupGlobalMostrado) return;
+  const DIAS_LIMITE_BACKUP_GLOBAL = 7;
+  const diasDesdeBackup = STATE.ultimoBackup ? Math.floor((new Date()-new Date(STATE.ultimoBackup))/(1000*60*60*24)) : null;
+  if(diasDesdeBackup===null || diasDesdeBackup>=DIAS_LIMITE_BACKUP_GLOBAL){
+    _avisoBackupGlobalMostrado = true;
+    const mensagem = diasDesdeBackup===null
+      ? 'Você ainda não exportou nenhum backup dos dados deste sistema. Clique aqui pra exportar agora.'
+      : `Já fazem ${diasDesdeBackup} dias desde o último backup exportado. Clique aqui pra exportar agora.`;
+    mostrarNotificacaoGlobal('💾 Backup dos dados', mensagem, 'info', exportarBackup);
+  }
+}
+
 /* =========================================================
    MODAL CONFIRM genérico
    ========================================================= */
@@ -21892,12 +21913,14 @@ RENDERERS.dashboard = renderDashboard;
 document.addEventListener('DOMContentLoaded', ()=>{
   renderDashboard();
   atualizarBadgesMenu();
+  verificarBackupAoAbrirApp();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
 });
 // fallback caso DOMContentLoaded já tenha disparado (script no fim do body)
 renderDashboard();
 atualizarBadgesMenu();
+verificarBackupAoAbrirApp();
 </script>
 </body>
 </html>
