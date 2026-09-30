@@ -23187,6 +23187,24 @@ function produtosParecidos(nomeBase, excluirIds, notaMinima){
     .slice(0, 40);
 }
 
+/* Quanto cada produto já vendeu, em toda a história — não só no período
+   filtrado. Serve pra janela de vínculo mostrar se aquele item parecido
+   alguma vez saiu de verdade: vincular um produto que nunca vendeu não
+   muda nada na análise, e um que vendeu muito muda bastante. */
+function resumoVendasPorProduto(){
+  const mapa = {};
+  getLinhasVenda().forEach(l=>{
+    if(!l.produtoId) return;
+    if(!mapa[l.produtoId]) mapa[l.produtoId] = { qtd:0, bruto:0, vendas:new Set(), ultima:'' };
+    const r = mapa[l.produtoId];
+    r.qtd += l.qtd;
+    r.bruto += l.bruto;
+    r.vendas.add(l.vendaId);
+    if(l.data && l.data > r.ultima) r.ultima = l.data;
+  });
+  return mapa;
+}
+
 /* Mantida porque outras partes podem usar: só as palavras, sem nota. */
 function palavrasChaveProduto(nome){
   return [...analisarNomeProduto(nome).palavras];
@@ -23204,7 +23222,7 @@ function abrirVincularProdutos(produtoId, grupoId){
   const nomeReferencia = grupo ? grupo.nome : produtoBase.nome;
   const candidatos = produtosParecidos(nomeReferencia, idsNoGrupo);
 
-  window.__vincularEstado = { produtoId, grupoId, idsNoGrupo: [...idsNoGrupo] };
+  window.__vincularEstado = { produtoId, grupoId, idsNoGrupo: [...idsNoGrupo], vendas: resumoVendasPorProduto() };
 
   document.getElementById('modal-vincular')?.remove();
   const modal = document.createElement('div');
@@ -23271,8 +23289,10 @@ function renderListasVinculo(candidatos){
   dentro.innerHTML = est.idsNoGrupo.map(id=>{
     const p = STATE.produtos.find(x=>x.id===id);
     if(!p) return '';
+    const vg = (est.vendas||{})[p.id];
     return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px;">
-      <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}</span>
+      <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}
+        <span class="hint">${vg?`· vendido ${fmtNum(Math.round(vg.qtd*100)/100)}`:'· nunca vendido'}</span></span>
       <button class="btn btn-sm" onclick="tirarDoVinculo('${p.id}')">Tirar</button>
     </div>`;
   }).join('') || '<div class="help-text">Nenhum produto no grupo ainda.</div>';
@@ -23285,6 +23305,11 @@ function renderListasVinculo(candidatos){
     const nota = (typeof c.nota === 'number') ? c.nota : null;
     const classeNota = nota==null ? '' : (nota>=70 ? 'badge-positive' : (nota>=50 ? 'badge-info' : 'badge-warning'));
     const selo = nota==null ? '' : `<span class="badge ${classeNota}" title="O quanto o nome combina com o produto escolhido">${nota}%</span>`;
+    // Já vendeu alguma vez? É o que decide se vale a pena vincular.
+    const v = (est.vendas||{})[p.id];
+    const vendeu = v
+      ? `<span class="badge badge-positive" title="Total já vendido deste produto, em ${v.vendas.size} venda${v.vendas.size===1?'':'s'}">vendido ${fmtNum(Math.round(v.qtd*100)/100)} · última ${fmtDate(v.ultima)}</span>`
+      : `<span class="badge badge-neutral" title="Este produto nunca apareceu em nenhuma venda">nunca vendido</span>`;
     const razoes = [
       ...(c.motivos||[]).map(m=>escapeHtml(m)),
       ...(c.alertas||[]).map(a=>`<span style="color:var(--negative);">⚠ ${escapeHtml(a)}</span>`)
@@ -23293,7 +23318,10 @@ function renderListasVinculo(candidatos){
       <input type="checkbox" style="width:auto;margin-top:3px;" onchange="porNoVinculo('${p.id}', this.checked)">
       <span style="flex:1;">
         ${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}
-        ${razoes?`<div class="hint">${razoes}</div>`:''}
+        <div style="margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${vendeu}
+          ${razoes?`<span class="hint">${razoes}</span>`:''}
+        </div>
       </span>
       ${selo}
     </label>`;
