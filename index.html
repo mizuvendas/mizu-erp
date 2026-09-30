@@ -1477,6 +1477,7 @@ function defaultState(){
       lancamentosManuais: [], // { id, data, tipo:'entrada'|'saida', descricao, valor, criadoEm } — movimentação solta que não vem de despesa/conta a receber/venda (ex: combustível, dinheiro recebido fora do fluxo)
       fechamentos: [] // { id, data, saldoSistema, saldoContado, diferenca, obs, criadoEm } — conferência periódica: quanto o sistema calcula x quanto foi contado fisicamente
     },
+    notasFiscais: [], // { id, orcamentoId, vendaId, clienteId, numero, serie, chave, protocolo, valor, status, dataEmissao, arquivoXml } — NF-e emitidas
     lembretes: [], // { id, texto, dataLembrete ('' = sem data), concluido, concluidoEm, criadoEm } — lembretes gerais, sem vínculo com nenhum outro módulo
     fechamentosMes: [], // { mes:'AAAA-MM', fechado, fechadoEm, obs, faturamento, lucro, despesasPagas, saldoCaixaFinal, atualizadoEm } — um registro por mês, painel interativo de fechamento (não trava nada, só documenta e ajuda a resolver pendências)
     auditoria: [], // { id, dataHora (ISO), tipo, descricao, valor|null } — trilha de auditoria financeira: registra ações que mexem com dinheiro (pagar, receber, cancelar, lançamentos de caixa, fechamentos). Mantém só os 1000 mais recentes — ver registrarAuditoria()
@@ -1490,7 +1491,12 @@ function defaultState(){
       margemMinimaSaudavel: 20, // % — configurável na tela de Saúde de Margem — abaixo disso um produto é sinalizado como margem baixa
       metaVendasMensal: null, // R$ — meta de faturamento bruto do mês, configurável no card "Evolução de Vendas" do Dashboard — null = sem meta definida ainda
       licitacoesArea: null, // { lat, lng, raioKm } — área de atendimento pra busca de oportunidades no PNCP (Licitações), configurável no botão ⚙️
-      licitacoesModalidades: [1,4,5,6,7,8,9,12,13] // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
+      licitacoesModalidades: [1,4,5,6,7,8,9,12,13],
+      // --- Nota Fiscal Eletrônica --- (o token NÃO fica aqui: vai em localStorage à parte)
+      nfeServidorUrl: '',      // endereço do servidor próprio de emissão
+      nfeSerie: 1,             // série da NF-e
+      nfeProximoNumero: 1,     // número da próxima nota — nunca pode repetir nem pular
+      nfeIbgeCache: {}         // { [cep]: códigoIBGE } — evita rebuscar o mesmo município // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
     }
   };
 }
@@ -7513,6 +7519,7 @@ function renderOrcamentos(){
           <input type="checkbox" id="orc-lista-esconder-finalizados" style="width:auto;" onchange="alternarEsconderFinalizadosOrcamentos(this.checked)">
           Esconder já entregues e virados em venda
         </label>
+        <button class="btn btn-sm" onclick="abrirConfigNfe()" style="margin-bottom:2px;" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -8869,6 +8876,7 @@ function renderListaOrcamentos(){
               <div class="acoes-ver-mais-lista">
                 <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
                 <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
+                ${nfeBotoesOrcamento(o)}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Marcar Entregue</button>` : ''}
                 ${statusEntrega==='entregue' ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer Entrega</button>` : ''}
@@ -21934,6 +21942,519 @@ function resolverDivergenciaDashboard(divergenciaId, produtoId){
 }
 
 RENDERERS.dashboard = renderDashboard;
+
+/* =========================================================
+   MÓDULO: NOTA FISCAL ELETRÔNICA (NF-e)
+
+   Fala com o servidor próprio de emissão (projeto mizu-nfe), que conversa
+   direto com a Receita Federal usando o certificado digital da empresa.
+
+   Três coisas importantes de entender:
+
+   1. O TOKEN fica só neste navegador (localStorage), NUNCA dentro deste
+      arquivo — senão qualquer pessoa com acesso ao repositório poderia
+      emitir nota no CNPJ da Mizu.
+   2. A NUMERAÇÃO das notas mora aqui, não no servidor: o servidor é
+      gratuito e perde o disco a cada reinício. Número de NF-e não pode
+      repetir nem pular.
+   3. O XML é a nota de verdade (o PDF é só a representação impressa) e
+      precisa ser guardado por 5 anos. Por isso ele é salvo numa pasta
+      escolhida uma vez, e não dentro do navegador.
+   ========================================================= */
+
+const NFE_TOKEN_KEY = 'mizu_nfe_token';
+
+function nfeCfg(){
+  return {
+    url: (STATE.config.nfeServidorUrl||'').replace(/\/+$/,''),
+    token: localStorage.getItem(NFE_TOKEN_KEY) || '',
+    serie: STATE.config.nfeSerie || 1,
+    proximoNumero: STATE.config.nfeProximoNumero || 1
+  };
+}
+
+function nfeConfigurado(){
+  const c = nfeCfg();
+  return !!(c.url && c.token);
+}
+
+function nfeNotaDoOrcamento(orcamentoId){
+  return (STATE.notasFiscais||[]).find(n=>n.orcamentoId===orcamentoId && n.status==='autorizada') || null;
+}
+
+/* ---------- tela de configuração ---------- */
+
+function abrirConfigNfe(){
+  const c = nfeCfg();
+  document.getElementById('modal-config-nfe')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-config-nfe';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🧾</div>
+        <div>
+          <h3>Configurar Nota Fiscal</h3>
+          <div class="sub">Estes dados ficam guardados só neste navegador</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-config-nfe').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Endereço do servidor de emissão</label>
+          <input type="text" id="cfg-nfe-url" value="${escapeAttr(c.url)}" placeholder="https://mizu-nfe.onrender.com">
+        </div>
+        <div class="field">
+          <label>Senha de acesso (token)</label>
+          <input type="password" id="cfg-nfe-token" value="${escapeAttr(c.token)}" placeholder="cole aqui o token do servidor">
+          <div class="help-text">Nunca compartilhe. Quem tem esse token consegue emitir nota no CNPJ da Mizu.</div>
+        </div>
+        <div class="form-grid">
+          <div class="field">
+            <label>Série da nota</label>
+            <input type="number" id="cfg-nfe-serie" min="1" value="${c.serie}">
+          </div>
+          <div class="field">
+            <label>Número da próxima nota</label>
+            <input type="number" id="cfg-nfe-numero" min="1" value="${c.proximoNumero}">
+            <div class="help-text">Avança sozinho a cada nota autorizada.</div>
+          </div>
+        </div>
+        <div class="help-text" style="margin-top:12px;padding:10px;border-radius:var(--radius-sm);background:var(--surface-2);">
+          ⚠️ <strong>Numeração:</strong> a Receita não aceita número repetido nem pulado.
+          Só mexa nesse campo se souber exatamente o que está fazendo — por exemplo,
+          ao migrar de outro sistema que já emitiu notas nesta mesma série.
+        </div>
+        <div class="modal-actions" style="margin-top:18px;">
+          <button class="btn" onclick="document.getElementById('modal-config-nfe').remove()">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarConfigNfe()">Salvar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function salvarConfigNfe(){
+  const url = document.getElementById('cfg-nfe-url').value.trim();
+  const token = document.getElementById('cfg-nfe-token').value.trim();
+  const serie = parseInt(document.getElementById('cfg-nfe-serie').value)||1;
+  const numero = parseInt(document.getElementById('cfg-nfe-numero').value)||1;
+
+  if(url && !/^https?:\/\//i.test(url)){
+    showToast('O endereço do servidor precisa começar com https://', 'error');
+    return;
+  }
+  STATE.config.nfeServidorUrl = url;
+  STATE.config.nfeSerie = serie;
+  STATE.config.nfeProximoNumero = numero;
+  if(token) localStorage.setItem(NFE_TOKEN_KEY, token);
+  else localStorage.removeItem(NFE_TOKEN_KEY);
+  saveState();
+  document.getElementById('modal-config-nfe').remove();
+  showToast('Configuração da nota fiscal salva.', 'success');
+  renderListaOrcamentos();
+}
+
+/* ---------- comunicação com o servidor ---------- */
+
+async function nfeChamar(rota, corpo){
+  const c = nfeCfg();
+  if(!c.url || !c.token){
+    abrirConfigNfe();
+    throw new Error('Configure o servidor de nota fiscal antes de emitir.');
+  }
+  const resp = await fetch(c.url + rota, {
+    method: 'POST',
+    headers: { 'Content-Type':'application/json', 'Authorization':'Bearer ' + c.token },
+    body: JSON.stringify(corpo)
+  });
+  const tipo = resp.headers.get('content-type') || '';
+  if(tipo.includes('application/pdf')) return { pdf: await resp.blob() };
+  const dados = await resp.json().catch(()=>({ erro:'Resposta inesperada do servidor.' }));
+  if(!resp.ok) throw new Error(dados.erro || ('Servidor respondeu ' + resp.status));
+  return dados;
+}
+
+/* ---------- conferência antes de emitir ---------- */
+
+function nfeConferir(orcamento){
+  const problemas = [];
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+
+  if(!cliente){
+    problemas.push({ texto:'O cliente deste orçamento não existe mais no cadastro.' });
+    return problemas;
+  }
+
+  const doc = (cliente.documento||'').replace(/\D/g,'');
+  if(doc.length!==11 && doc.length!==14){
+    problemas.push({
+      texto:`Cliente "${cliente.nome}": falta o CPF ou CNPJ. A NF-e não pode ser emitida sem ele.`,
+      acao:()=>abrirFormCliente(cliente.id)
+    });
+  }
+  if(!(cliente.cep||'').replace(/\D/g,'') || !cliente.uf || !(cliente.cidadeEstruturada||cliente.cidade) || !cliente.bairro){
+    problemas.push({
+      texto:`Cliente "${cliente.nome}": falta o endereço completo (CEP, UF, cidade e bairro). Está no bloco "Endereço estruturado" do cadastro.`,
+      acao:()=>abrirFormCliente(cliente.id)
+    });
+  }
+
+  (orcamento.itens||[]).forEach(it=>{
+    const produto = STATE.produtos.find(p=>p.id===it.produtoId);
+    const ncm = produto ? (produto.ncm||'').replace(/\D/g,'') : '';
+    if(ncm.length!==8){
+      problemas.push({
+        texto:`Produto "${it.nome}": falta o NCM (8 dígitos). É o código que diz à Receita o que está sendo vendido.`,
+        acao: produto ? ()=>abrirFormProduto(produto.id) : null
+      });
+    }
+  });
+
+  return problemas;
+}
+
+function nfeMostrarProblemas(problemas){
+  document.getElementById('modal-nfe-problemas')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-nfe-problemas';
+  window.__nfeAcoesProblema = problemas.map(p=>p.acao);
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho" style="background:var(--danger, #B02A37);">
+        <div class="ic-rapido">⚠️</div>
+        <div>
+          <h3>Falta informação para emitir a nota</h3>
+          <div class="sub">A Receita exige esses dados — sem eles a nota é rejeitada</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-nfe-problemas').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        ${problemas.map((p,i)=>`
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);">
+            <div style="flex:1;font-size:13.5px;">${escapeHtml(p.texto)}</div>
+            ${p.acao?`<button class="btn btn-sm" onclick="document.getElementById('modal-nfe-problemas').remove(); window.__nfeAcoesProblema[${i}]();">Corrigir</button>`:''}
+          </div>`).join('')}
+        <div class="modal-actions" style="margin-top:18px;">
+          <button class="btn btn-primary" onclick="document.getElementById('modal-nfe-problemas').remove()">Entendi</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+/* ---------- código IBGE do município do cliente ---------- */
+/* A nota exige o código IBGE da cidade do destinatário. O cadastro do
+   cliente guarda só o nome da cidade, então buscamos o código uma vez
+   (pelo CEP) e guardamos no próprio cliente. */
+
+async function nfeCodigoIbge(cliente){
+  if(cliente.codigoIbge) return cliente.codigoIbge;
+
+  const cep = (cliente.cep||'').replace(/\D/g,'');
+  STATE.config.nfeIbgeCache = STATE.config.nfeIbgeCache || {};
+  if(cep && STATE.config.nfeIbgeCache[cep]) return STATE.config.nfeIbgeCache[cep];
+
+  if(cep.length===8){
+    try{
+      const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const d = await r.json();
+      if(d && d.ibge){
+        STATE.config.nfeIbgeCache[cep] = d.ibge;
+        cliente.codigoIbge = d.ibge;
+        saveState();
+        return d.ibge;
+      }
+    }catch(e){ console.warn('Não consegui buscar o código IBGE pelo CEP.', e); }
+  }
+  return '';
+}
+
+/* ---------- montagem do que vai para o servidor ---------- */
+
+function nfeArredondar(v){ return Math.round(v*100)/100; }
+
+function nfeItensParaNota(venda){
+  const itens = (venda.itens||[]);
+  const originais = itens.map(it=>nfeArredondar(it.qtd*it.precoUnit));
+
+  // desconto individual de cada item (se houver)
+  const aposItem = itens.map((it,i)=>{
+    const d = it.desconto||{};
+    let v = originais[i];
+    if(d.valor!=null) v = Math.max(0, originais[i]-d.valor);
+    else if(d.pct!=null) v = originais[i]*(1-d.pct/100);
+    return nfeArredondar(v);
+  });
+
+  // desconto geral do orçamento, aplicado por cima
+  const somaAposItem = nfeArredondar(aposItem.reduce((a,b)=>a+b,0));
+  const dg = venda.desconto||{};
+  let fator = 1;
+  if(dg.valor!=null && somaAposItem>0) fator = Math.max(0, 1-(dg.valor/somaAposItem));
+  else if(dg.pct!=null) fator = Math.max(0, 1-(dg.pct/100));
+
+  const acrescimo = venda.acrescimo ? nfeArredondar(venda.acrescimo.valor||0) : 0;
+
+  return itens.map((it,i)=>{
+    const produto = STATE.produtos.find(p=>p.id===it.produtoId);
+    const final = nfeArredondar(aposItem[i]*fator);
+    return {
+      codigo: produto ? (produto.sku || produto.id) : String(i+1),
+      nome: (it.nome||'').substring(0,120),
+      ncm: produto ? (produto.ncm||'').replace(/\D/g,'') : '',
+      unidade: (it.unidade || 'UN').substring(0,6),
+      quantidade: it.qtd,
+      valorUnitario: it.precoUnit,
+      desconto: nfeArredondar(originais[i]-final),
+      // o acréscimo do orçamento inteiro entra no primeiro item
+      acrescimo: i===0 ? acrescimo : 0
+    };
+  });
+}
+
+async function nfeMontarPayload(orcamento, numeroNota){
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const doc = (cliente.documento||'').replace(/\D/g,'');
+  const codigoIbge = await nfeCodigoIbge(cliente);
+
+  return {
+    numeroNota,
+    cliente: {
+      nome: cliente.nome,
+      cpf: doc.length===11 ? doc : '',
+      cnpj: doc.length===14 ? doc : '',
+      ie: (cliente.inscricaoEstadual||'').replace(/\D/g,''),
+      endereco: {
+        logradouro: (cliente.endereco||'').substring(0,60) || 'NAO INFORMADO',
+        numero: cliente.numero || 'S/N',
+        bairro: cliente.bairro || '',
+        cep: (cliente.cep||'').replace(/\D/g,''),
+        municipio: cliente.cidadeEstruturada || cliente.cidade || '',
+        uf: cliente.uf || '',
+        codigoMunicipio: codigoIbge
+      }
+    },
+    produtos: nfeItensParaNota(orcamento),
+    pagamento: nfePagamentoDoOrcamento(orcamento)
+  };
+}
+
+function nfePagamentoDoOrcamento(orcamento){
+  // 01 = dinheiro, 15 = boleto, 99 = outros (crediário entra aqui, a prazo)
+  const cond = orcamento.condicaoPagamento || 'vista';
+  if(cond==='boleto')    return { forma:'15', prazo:1 };
+  if(cond==='crediario') return { forma:'99', prazo:1 };
+  return { forma:'01', prazo:0 };
+}
+
+/* ---------- pasta onde os XMLs são guardados ---------- */
+
+function nfeIdb(modo, valor){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open('mizu-nfe', 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore('handles'); };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      const tx = db.transaction('handles', modo==='get'?'readonly':'readwrite');
+      const store = tx.objectStore('handles');
+      const op = modo==='get' ? store.get('pasta') : store.put(valor, 'pasta');
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+async function nfePasta(perguntarSePreciso){
+  if(!window.showDirectoryPicker) return null; // navegador não suporta
+  let handle = null;
+  try{ handle = await nfeIdb('get'); }catch(e){ console.warn(e); }
+  if(handle){
+    let perm = await handle.queryPermission({mode:'readwrite'});
+    if(perm==='prompt') perm = await handle.requestPermission({mode:'readwrite'});
+    if(perm==='granted') return handle;
+  }
+  if(!perguntarSePreciso) return null;
+  handle = await window.showDirectoryPicker({ mode:'readwrite', id:'mizu-notas-fiscais' });
+  try{ await nfeIdb('put', handle); }catch(e){ console.warn(e); }
+  return handle;
+}
+
+async function nfeSalvarXml(chave, xml, dataISO){
+  const raiz = await nfePasta(true);
+  if(!raiz){
+    // sem suporte a pasta: cai para download comum, pra nunca perder o XML
+    nfeBaixarArquivo(new Blob([xml], {type:'application/xml'}), `NFe${chave}.xml`);
+    return '(baixado na pasta de downloads)';
+  }
+  const [ano, mes] = dataISO.split('-');
+  const pastaAno = await raiz.getDirectoryHandle(ano, {create:true});
+  const pastaMes = await pastaAno.getDirectoryHandle(mes, {create:true});
+  const arquivo = await pastaMes.getFileHandle(`NFe${chave}.xml`, {create:true});
+  const escritor = await arquivo.createWritable();
+  await escritor.write(xml);
+  await escritor.close();
+  return `${raiz.name}/${ano}/${mes}/NFe${chave}.xml`;
+}
+
+async function nfeLerXmlSalvo(nota){
+  const raiz = await nfePasta(true);
+  if(!raiz) return null;
+  const [ano, mes] = nota.dataEmissao.split('-');
+  try{
+    const pastaAno = await raiz.getDirectoryHandle(ano);
+    const pastaMes = await pastaAno.getDirectoryHandle(mes);
+    const arquivo = await pastaMes.getFileHandle(`NFe${nota.chave}.xml`);
+    return await (await arquivo.getFile()).text();
+  }catch(e){
+    return null;
+  }
+}
+
+function nfeBaixarArquivo(blob, nome){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 4000);
+}
+
+function nfeAbrirPdf(blob){
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+}
+
+/* ---------- ações dos botões ---------- */
+
+async function verEspelhoNfe(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+
+  const problemas = nfeConferir(orcamento);
+  if(problemas.length){ nfeMostrarProblemas(problemas); return; }
+
+  showToast('Gerando o espelho da nota... pode demorar até 1 minuto na primeira vez.', 'info');
+  try{
+    const payload = await nfeMontarPayload(orcamento, nfeCfg().proximoNumero);
+    const r = await nfeChamar('/espelho', payload);
+    if(r.pdf){ nfeAbrirPdf(r.pdf); showToast('Espelho gerado. Nenhuma nota foi emitida.', 'success'); }
+  }catch(e){
+    showToast('Não consegui gerar o espelho: ' + e.message, 'error');
+  }
+}
+
+async function emitirNotaFiscal(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+
+  const jaEmitida = nfeNotaDoOrcamento(orcamentoId);
+  if(jaEmitida){
+    showToast(`Este orçamento já tem a nota nº ${jaEmitida.numero} autorizada.`, 'error');
+    return;
+  }
+
+  const problemas = nfeConferir(orcamento);
+  if(problemas.length){ nfeMostrarProblemas(problemas); return; }
+
+  const cfg = nfeCfg();
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
+
+  if(!confirm(
+      `Emitir a nota fiscal nº ${cfg.proximoNumero} (série ${cfg.serie})?\n\n` +
+      `Cliente: ${cliente.nome}\n` +
+      `Itens: ${(orcamento.itens||[]).length}\n` +
+      `Valor: ${fmtMoney(total)}\n\n` +
+      `Depois de autorizada, a nota só pode ser cancelada dentro do prazo legal.`)){
+    return;
+  }
+
+  showToast('Enviando a nota para a Receita... pode demorar até 1 minuto.', 'info');
+  try{
+    const payload = await nfeMontarPayload(orcamento, cfg.proximoNumero);
+    const r = await nfeChamar('/emitir', payload);
+
+    if(!r.ok){
+      showToast(`A Receita rejeitou a nota (código ${r.codigoStatus}): ${r.mensagem}`, 'error');
+      console.warn('Rejeição da NF-e:', r);
+      return;
+    }
+
+    // A nota foi autorizada: a partir daqui NADA pode dar errado em silêncio.
+    const dataEmissao = todayISO();
+    let ondeSalvou = '';
+    try{
+      ondeSalvou = await nfeSalvarXml(r.chave, r.xml, dataEmissao);
+    }catch(e){
+      console.error(e);
+      nfeBaixarArquivo(new Blob([r.xml], {type:'application/xml'}), `NFe${r.chave}.xml`);
+      ondeSalvou = '(baixado na pasta de downloads)';
+      showToast('A nota foi autorizada, mas não consegui salvar na pasta escolhida — baixei o XML para os Downloads.', 'error');
+    }
+
+    STATE.notasFiscais = STATE.notasFiscais || [];
+    STATE.notasFiscais.push({
+      id: uid('nfe'),
+      orcamentoId,
+      vendaId: orcamento.vendaGeradaId || null,
+      clienteId: orcamento.clienteId,
+      numero: r.numeroNota,
+      serie: cfg.serie,
+      chave: r.chave,
+      protocolo: r.protocolo,
+      valor: total,
+      status: 'autorizada',
+      ambiente: (STATE.config.nfeServidorUrl||''),
+      dataEmissao,
+      arquivoXml: ondeSalvou,
+      criadoEm: new Date().toISOString()
+    });
+    STATE.config.nfeProximoNumero = r.numeroNota + 1;
+    saveState();
+    renderListaOrcamentos();
+
+    showToast(`Nota nº ${r.numeroNota} autorizada! XML salvo em ${ondeSalvou}`, 'success');
+
+    // já abre o PDF pra impressão
+    imprimirNotaFiscal(orcamentoId, r.xml);
+  }catch(e){
+    showToast('Não consegui emitir a nota: ' + e.message, 'error');
+    console.error(e);
+  }
+}
+
+async function imprimirNotaFiscal(orcamentoId, xmlJaEmMaos){
+  const nota = nfeNotaDoOrcamento(orcamentoId);
+  if(!nota && !xmlJaEmMaos) return;
+
+  try{
+    const xml = xmlJaEmMaos || await nfeLerXmlSalvo(nota);
+    if(!xml){
+      showToast('Não achei o XML dessa nota na pasta. Escolha a pasta onde os XMLs ficam guardados e tente de novo.', 'error');
+      return;
+    }
+    const r = await nfeChamar('/danfe', { xml });
+    if(r.pdf) nfeAbrirPdf(r.pdf);
+  }catch(e){
+    showToast('Não consegui gerar o PDF da nota: ' + e.message, 'error');
+  }
+}
+
+/* Botões que aparecem no "Ver mais" de cada orçamento. */
+function nfeBotoesOrcamento(orcamento){
+  if(!nfeConfigurado()) return '';
+  const nota = nfeNotaDoOrcamento(orcamento.id);
+  if(nota){
+    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Nota nº ${nota.numero} — protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ Imprimir Nota nº ${nota.numero}</button>`;
+  }
+  return `
+    <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}')" title="Mostra como a nota vai ficar, sem emitir nada">👁️ Ver Espelho</button>
+    <button class="btn btn-sm" onclick="emitirNotaFiscal('${orcamento.id}')">🧾 Emitir Nota Fiscal</button>`;
+}
 
 /* =========================================================
    INICIALIZAÇÃO
