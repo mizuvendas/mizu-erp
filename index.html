@@ -12710,6 +12710,7 @@ function renderResultadoVendasPorCliente(){
           <thead>
             <tr>
               <th data-sort="data">Data</th>
+              <th>Orçamento</th>
               <th data-sort="clienteId">Cliente</th>
               <th data-sort="condicaoPagamento">Pagamento</th>
               <th>Vencimento</th>
@@ -12748,6 +12749,7 @@ function renderResultadoVendasPorCliente(){
     return `
       <tr>
         <td>${fmtDate(v.data)}</td>
+        <td>${(()=>{ const n = nfeNumeroOrcamentoDaVenda(v.id); return n!=null ? '#'+escapeHtml(String(n)) : '—'; })()}</td>
         <td>${escapeHtml(cli?cli.nome:'(cliente removido)')}${v.pagadorId?' <span class="badge" style="background:#EDE4FA;color:#6B3FA0;font-size:10px;font-weight:bold;padding:2px 6px;border-radius:8px;white-space:nowrap;">🔁 REPASSE</span>':''}</td>
         <td>${condicaoLabel[v.condicaoPagamento]||'—'}</td>
         <td>${vencimento?fmtDate(vencimento):'—'}</td>
@@ -12763,11 +12765,12 @@ function renderResultadoVendasPorCliente(){
           <div class="cell-actions">
             <button class="btn btn-sm" onclick="abrirDetalheVendaCliente('${v.id}')">Detalhes</button>
             <button class="btn btn-sm" onclick="clonarVenda('${v.id}')" title="Clonar como orçamento, pra revisar antes de confirmar">📋 Clonar</button>
+            ${nfeBotaoVenda(v.id)}
             ${v.status!=='cancelada' ? `<button class="btn btn-sm btn-danger" onclick="cancelarVenda('${v.id}')">Cancelar</button>` : ''}
           </div>
         </td>
       </tr>`;
-  }).join('') : `<tr><td colspan="13" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma venda encontrada para os filtros selecionados.</td></tr>`;
+  }).join('') : `<tr><td colspan="14" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhuma venda encontrada para os filtros selecionados.</td></tr>`;
 
   const totOriginal = vendas.reduce((s,v)=>s+getValoresFinanceirosVenda(v).original,0);
   const totDesconto = vendas.reduce((s,v)=>s+getValoresFinanceirosVenda(v).desconto,0);
@@ -12778,7 +12781,7 @@ function renderResultadoVendasPorCliente(){
   const totLucroTabela = vendas.reduce((s,v)=>s+getValoresFinanceirosVenda(v).lucro,0);
   document.getElementById('vc-table-foot').innerHTML = `
     <tr>
-      <td colspan="4">Total (${total})</td>
+      <td colspan="5">Total (${total})</td>
       <td class="num">${fmtMoney(totOriginal)}</td>
       <td class="num">${fmtMoney(totDesconto)}</td>
       <td class="num">${fmtMoney(totValorFinalTabela)}</td>
@@ -21991,6 +21994,39 @@ function nfeNotaDoOrcamento(orcamentoId){
   return (STATE.notasFiscais||[]).find(n=>n.orcamentoId===orcamentoId && n.status==='autorizada') || null;
 }
 
+/* Uma venda nasce de um orçamento aprovado (orcamento.vendaGeradaId). É por
+   esse caminho que a tela de Vendas por Cliente acha a nota daquela venda. */
+function nfeOrcamentoDaVenda(vendaId){
+  return (STATE.orcamentos||[]).find(o=>o.vendaGeradaId===vendaId) || null;
+}
+
+function nfeNotaDaVenda(vendaId){
+  const direta = (STATE.notasFiscais||[]).find(n=>n.vendaId===vendaId && n.status==='autorizada');
+  if(direta) return direta;
+  const orc = nfeOrcamentoDaVenda(vendaId);
+  return orc ? nfeNotaDoOrcamento(orc.id) : null;
+}
+
+function nfeNumeroOrcamentoDaVenda(vendaId){
+  const orc = nfeOrcamentoDaVenda(vendaId);
+  return orc && orc.numero!=null ? orc.numero : null;
+}
+
+/* Nome dos arquivos baixados: "NF-e <cliente> Orc <nº>" — fácil de achar
+   depois na pasta e de conferir com o orçamento que deu origem. */
+function nfeNomeArquivo(nota){
+  const cli = STATE.clientes.find(c=>c.id===nota.clienteId);
+  const orc = (STATE.orcamentos||[]).find(o=>o.id===nota.orcamentoId);
+  const partes = ['NF-e ' + nota.numero];
+  if(cli) partes.push(cli.nome);
+  if(orc && orc.numero!=null) partes.push('Orc ' + orc.numero);
+  return partes.join(' - ')
+    .replace(/[\\/:*?"<>|]/g,'-')   // caracteres proibidos em nome de arquivo
+    .replace(/\s+/g,' ')
+    .trim()
+    .substring(0,120);
+}
+
 /* ---------- pasta onde os XMLs são guardados ---------- */
 
 function nfeIdb(modo, valor){
@@ -22193,7 +22229,7 @@ async function nfeChamar(rota, corpo){
 /* O navegador bloqueia janelas abertas por código depois de uma espera.
    Por isso o PDF é entregue como LINK: quando o usuário clica, é ele quem
    está abrindo, e nada é bloqueado. */
-function nfeMostrarArquivos({ titulo, subtitulo, sucesso, pdfBlob, xmlTexto, chave, linhas, avisoPasta }){
+function nfeMostrarArquivos({ titulo, subtitulo, sucesso, pdfBlob, xmlTexto, chave, linhas, avisoPasta, nomeArquivo }){
   document.getElementById('modal-nfe-arquivos')?.remove();
 
   const urls = [];
@@ -22202,7 +22238,7 @@ function nfeMostrarArquivos({ titulo, subtitulo, sucesso, pdfBlob, xmlTexto, cha
   const urlXml = xmlTexto ? URL.createObjectURL(new Blob([xmlTexto], {type:'application/xml'})) : null;
   if(urlXml) urls.push(urlXml);
 
-  const nomeBase = chave ? `NFe${chave}` : 'nota';
+  const nomeBase = nomeArquivo || (chave ? `NFe${chave}` : 'nota');
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -22564,6 +22600,7 @@ async function emitirNotaFiscal(orcamentoId){
       pdfBlob,
       xmlTexto: r.xml,
       chave: r.chave,
+      nomeArquivo: nfeNomeArquivo(nota),
       avisoPasta,
       linhas: [
         ['Cliente', cliente.nome],
@@ -22579,7 +22616,15 @@ async function emitirNotaFiscal(orcamentoId){
 }
 
 async function imprimirNotaFiscal(orcamentoId){
-  const nota = nfeNotaDoOrcamento(orcamentoId);
+  await nfeAbrirArquivosDaNota(nfeNotaDoOrcamento(orcamentoId));
+}
+
+/* Mesma coisa, chamada da tela de Vendas por Cliente. */
+async function baixarNotaFiscalDaVenda(vendaId){
+  await nfeAbrirArquivosDaNota(nfeNotaDaVenda(vendaId));
+}
+
+async function nfeAbrirArquivosDaNota(nota){
   if(!nota) return;
 
   // permissão da pasta logo no começo do clique
@@ -22595,6 +22640,7 @@ async function imprimirNotaFiscal(orcamentoId){
       subtitulo: 'Não encontrei o XML desta nota',
       sucesso: false,
       chave: nota.chave,
+      nomeArquivo: nfeNomeArquivo(nota),
       linhas: [
         ['Chave de acesso', nota.chave],
         ['Protocolo', nota.protocolo || '—'],
@@ -22615,6 +22661,7 @@ async function imprimirNotaFiscal(orcamentoId){
       pdfBlob: d.pdf || null,
       xmlTexto: xml,
       chave: nota.chave,
+      nomeArquivo: nfeNomeArquivo(nota),
       linhas: [
         ['Protocolo', nota.protocolo || '—'],
         ['Chave de acesso', nota.chave]
@@ -22636,6 +22683,14 @@ function nfeBotoesOrcamento(orcamento){
   return `
     <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}')" title="Mostra como a nota vai ficar, sem emitir nada">👁️ Ver Espelho</button>
     <button class="btn btn-sm" onclick="emitirNotaFiscal('${orcamento.id}')">🧾 Emitir Nota Fiscal</button>`;
+}
+
+/* Botão que aparece na tela de Vendas por Cliente, quando aquela venda já
+   tem nota emitida. */
+function nfeBotaoVenda(vendaId){
+  const nota = nfeNotaDaVenda(vendaId);
+  if(!nota) return '';
+  return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML da nota nº ${nota.numero}">🧾 Nota nº ${nota.numero}</button>`;
 }
 
 /* =========================================================
