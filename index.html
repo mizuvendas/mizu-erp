@@ -21949,7 +21949,7 @@ RENDERERS.dashboard = renderDashboard;
    Fala com o servidor próprio de emissão (projeto mizu-nfe), que conversa
    direto com a Receita Federal usando o certificado digital da empresa.
 
-   Três coisas importantes de entender:
+   Coisas importantes de entender:
 
    1. O TOKEN fica só neste navegador (localStorage), NUNCA dentro deste
       arquivo — senão qualquer pessoa com acesso ao repositório poderia
@@ -21958,11 +21958,20 @@ RENDERERS.dashboard = renderDashboard;
       gratuito e perde o disco a cada reinício. Número de NF-e não pode
       repetir nem pular.
    3. O XML é a nota de verdade (o PDF é só a representação impressa) e
-      precisa ser guardado por 5 anos. Por isso ele é salvo numa pasta
-      escolhida uma vez, e não dentro do navegador.
+      precisa ser guardado por 5 anos.
+   4. O navegador só deixa abrir aba nova ou pedir acesso a pasta NO
+      INSTANTE DO CLIQUE. Como a emissão demora (a Receita responde em
+      segundos), nada disso pode ser feito depois da resposta — por isso
+      o resultado aparece numa janela com LINKS de verdade, que o usuário
+      clica. Link clicado nunca é bloqueado; janela aberta por código
+      depois de uma espera, sim.
    ========================================================= */
 
 const NFE_TOKEN_KEY = 'mizu_nfe_token';
+
+// XMLs emitidos nesta sessão, para poder salvar/baixar depois sem
+// depender de já estarem na pasta. { [chave]: xml }
+const NFE_XML_EM_MEMORIA = {};
 
 function nfeCfg(){
   return {
@@ -21982,16 +21991,99 @@ function nfeNotaDoOrcamento(orcamentoId){
   return (STATE.notasFiscais||[]).find(n=>n.orcamentoId===orcamentoId && n.status==='autorizada') || null;
 }
 
+/* ---------- pasta onde os XMLs são guardados ---------- */
+
+function nfeIdb(modo, valor){
+  return new Promise((resolve,reject)=>{
+    const req = indexedDB.open('mizu-nfe', 1);
+    req.onupgradeneeded = ()=>{ req.result.createObjectStore('handles'); };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      const tx = db.transaction('handles', modo==='get'?'readonly':'readwrite');
+      const store = tx.objectStore('handles');
+      const op = modo==='get' ? store.get('pasta') : store.put(valor, 'pasta');
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+/* Pega a pasta já escolhida. Se `podePedirPermissao` for true, esta função
+   TEM que ser chamada logo no começo de um clique do usuário — senão o
+   navegador recusa. Nunca abre o seletor de pasta: isso é só em
+   nfeEscolherPasta(). */
+async function nfePastaSalva(podePedirPermissao){
+  if(!window.showDirectoryPicker) return null;
+  let handle = null;
+  try{ handle = await nfeIdb('get'); }catch(e){ console.warn(e); }
+  if(!handle) return null;
+  try{
+    let perm = await handle.queryPermission({mode:'readwrite'});
+    if(perm==='granted') return handle;
+    if(perm==='prompt' && podePedirPermissao){
+      perm = await handle.requestPermission({mode:'readwrite'});
+      if(perm==='granted') return handle;
+    }
+  }catch(e){ console.warn(e); }
+  return null;
+}
+
+/* Só pode ser chamada direto de um clique (botão da tela de configuração
+   ou da janela de resultado). */
+async function nfeEscolherPasta(){
+  if(!window.showDirectoryPicker){
+    showToast('Este navegador não permite salvar em pasta. Os arquivos vão para Downloads.', 'error');
+    return null;
+  }
+  try{
+    const handle = await window.showDirectoryPicker({ mode:'readwrite', id:'mizu-notas-fiscais' });
+    await nfeIdb('put', handle);
+    STATE.config.nfePastaNome = handle.name;
+    saveState();
+    showToast(`Pasta "${handle.name}" definida para guardar os XMLs.`, 'success');
+    return handle;
+  }catch(e){
+    if(e && e.name==='AbortError') return null; // usuário cancelou
+    showToast('Não consegui definir a pasta: ' + e.message, 'error');
+    return null;
+  }
+}
+
+async function nfeGravarXmlNaPasta(handle, chave, xml, dataISO){
+  const [ano, mes] = dataISO.split('-');
+  const pastaAno = await handle.getDirectoryHandle(ano, {create:true});
+  const pastaMes = await pastaAno.getDirectoryHandle(mes, {create:true});
+  const arquivo = await pastaMes.getFileHandle(`NFe${chave}.xml`, {create:true});
+  const escritor = await arquivo.createWritable();
+  await escritor.write(xml);
+  await escritor.close();
+  return `${handle.name}/${ano}/${mes}/NFe${chave}.xml`;
+}
+
+async function nfeLerXmlDaPasta(handle, nota){
+  const [ano, mes] = nota.dataEmissao.split('-');
+  try{
+    const pastaAno = await handle.getDirectoryHandle(ano);
+    const pastaMes = await pastaAno.getDirectoryHandle(mes);
+    const arquivo = await pastaMes.getFileHandle(`NFe${nota.chave}.xml`);
+    return await (await arquivo.getFile()).text();
+  }catch(e){
+    return null;
+  }
+}
+
 /* ---------- tela de configuração ---------- */
 
 function abrirConfigNfe(){
   const c = nfeCfg();
+  const pastaAtual = STATE.config.nfePastaNome || '';
   document.getElementById('modal-config-nfe')?.remove();
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-config-nfe';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">🧾</div>
         <div>
@@ -22003,7 +22095,7 @@ function abrirConfigNfe(){
       <div class="modal-rapido-corpo">
         <div class="field">
           <label>Endereço do servidor de emissão</label>
-          <input type="text" id="cfg-nfe-url" value="${escapeAttr(c.url)}" placeholder="https://mizu-nfe.onrender.com">
+          <input type="text" id="cfg-nfe-url" value="${escapeAttr(c.url)}" placeholder="cole aqui o endereço do servidor">
         </div>
         <div class="field">
           <label>Senha de acesso (token)</label>
@@ -22021,6 +22113,18 @@ function abrirConfigNfe(){
             <div class="help-text">Avança sozinho a cada nota autorizada.</div>
           </div>
         </div>
+
+        <div class="field">
+          <label>Pasta onde os XMLs são guardados</label>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <span id="cfg-nfe-pasta" style="flex:1;min-width:160px;font-size:13px;color:var(--ink);">
+              ${pastaAtual ? '📁 ' + escapeHtml(pastaAtual) : '<span class="help-text">nenhuma pasta definida ainda</span>'}
+            </span>
+            <button type="button" class="btn btn-sm" onclick="nfeEscolherPastaDaConfig()">Escolher pasta</button>
+          </div>
+          <div class="help-text">Os XMLs são organizados por ano e mês. Guarde-os por 5 anos — é o documento fiscal de verdade.</div>
+        </div>
+
         <div class="help-text" style="margin-top:12px;padding:10px;border-radius:var(--radius-sm);background:var(--surface-2);">
           ⚠️ <strong>Numeração:</strong> a Receita não aceita número repetido nem pulado.
           Só mexa nesse campo se souber exatamente o que está fazendo — por exemplo,
@@ -22033,6 +22137,14 @@ function abrirConfigNfe(){
       </div>
     </div>`;
   document.body.appendChild(modal);
+}
+
+async function nfeEscolherPastaDaConfig(){
+  const handle = await nfeEscolherPasta();
+  if(handle){
+    const el = document.getElementById('cfg-nfe-pasta');
+    if(el) el.innerHTML = '📁 ' + escapeHtml(handle.name);
+  }
 }
 
 function salvarConfigNfe(){
@@ -22074,6 +22186,87 @@ async function nfeChamar(rota, corpo){
   const dados = await resp.json().catch(()=>({ erro:'Resposta inesperada do servidor.' }));
   if(!resp.ok) throw new Error(dados.erro || ('Servidor respondeu ' + resp.status));
   return dados;
+}
+
+/* ---------- janela de resultado (com links de verdade) ---------- */
+
+/* O navegador bloqueia janelas abertas por código depois de uma espera.
+   Por isso o PDF é entregue como LINK: quando o usuário clica, é ele quem
+   está abrindo, e nada é bloqueado. */
+function nfeMostrarArquivos({ titulo, subtitulo, sucesso, pdfBlob, xmlTexto, chave, linhas, avisoPasta }){
+  document.getElementById('modal-nfe-arquivos')?.remove();
+
+  const urls = [];
+  const urlPdf = pdfBlob ? URL.createObjectURL(pdfBlob) : null;
+  if(urlPdf) urls.push(urlPdf);
+  const urlXml = xmlTexto ? URL.createObjectURL(new Blob([xmlTexto], {type:'application/xml'})) : null;
+  if(urlXml) urls.push(urlXml);
+
+  const nomeBase = chave ? `NFe${chave}` : 'nota';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-nfe-arquivos';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(600px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho" ${sucesso?'':'style="background:#B02A37;"'}>
+        <div class="ic-rapido">${sucesso?'✅':'⚠️'}</div>
+        <div>
+          <h3>${escapeHtml(titulo)}</h3>
+          <div class="sub">${escapeHtml(subtitulo||'')}</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="nfeFecharArquivos()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        ${(linhas||[]).map(l=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--border);font-size:13.5px;">
+            <span class="help-text" style="margin:0;">${escapeHtml(l[0])}</span>
+            <strong style="text-align:right;word-break:break-all;">${escapeHtml(String(l[1]))}</strong>
+          </div>`).join('')}
+
+        ${avisoPasta ? `<div class="help-text" style="margin-top:14px;padding:10px;border-radius:var(--radius-sm);background:var(--surface-2);">
+            ${escapeHtml(avisoPasta)}
+            <div style="margin-top:8px;"><button class="btn btn-sm" onclick="nfeSalvarXmlAgora('${escapeAttr(chave||'')}')">📁 Escolher pasta e salvar o XML</button></div>
+          </div>` : ''}
+
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px;">
+          ${urlPdf ? `<a class="btn btn-primary" href="${urlPdf}" target="_blank" rel="noopener">🖨️ Abrir PDF</a>` : ''}
+          ${urlPdf ? `<a class="btn" href="${urlPdf}" download="${nomeBase}.pdf">⬇️ Baixar PDF</a>` : ''}
+          ${urlXml ? `<a class="btn" href="${urlXml}" download="${nomeBase}.xml">⬇️ Baixar XML</a>` : ''}
+          <button class="btn" onclick="nfeFecharArquivos()" style="margin-left:auto;">Fechar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.dataset.urls = JSON.stringify(urls);
+}
+
+function nfeFecharArquivos(){
+  const modal = document.getElementById('modal-nfe-arquivos');
+  if(!modal) return;
+  let urls = [];
+  try{ urls = JSON.parse(modal.dataset.urls||'[]'); }catch(e){}
+  modal.remove();
+  // dá um tempo antes de liberar, pra não matar uma aba que acabou de abrir
+  setTimeout(()=>urls.forEach(u=>URL.revokeObjectURL(u)), 60000);
+}
+
+/* Botão "escolher pasta e salvar" da janela de resultado — clique fresco,
+   então pode abrir o seletor de pasta. */
+async function nfeSalvarXmlAgora(chave){
+  const xml = NFE_XML_EM_MEMORIA[chave];
+  const nota = (STATE.notasFiscais||[]).find(n=>n.chave===chave);
+  if(!xml || !nota){ showToast('Não tenho o XML dessa nota em mãos. Use "Baixar XML".', 'error'); return; }
+  const handle = await nfeEscolherPasta();
+  if(!handle) return;
+  try{
+    const onde = await nfeGravarXmlNaPasta(handle, chave, xml, nota.dataEmissao);
+    nota.arquivoXml = onde;
+    saveState();
+    showToast('XML salvo em ' + onde, 'success');
+    nfeFecharArquivos();
+  }catch(e){
+    showToast('Não consegui salvar na pasta: ' + e.message, 'error');
+  }
 }
 
 /* ---------- conferência antes de emitir ---------- */
@@ -22123,7 +22316,7 @@ function nfeMostrarProblemas(problemas){
   window.__nfeAcoesProblema = problemas.map(p=>p.acao);
   modal.innerHTML = `
     <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
-      <div class="modal-rapido-cabecalho" style="background:var(--danger, #B02A37);">
+      <div class="modal-rapido-cabecalho" style="background:#B02A37;">
         <div class="ic-rapido">⚠️</div>
         <div>
           <h3>Falta informação para emitir a nota</h3>
@@ -22146,9 +22339,6 @@ function nfeMostrarProblemas(problemas){
 }
 
 /* ---------- código IBGE do município do cliente ---------- */
-/* A nota exige o código IBGE da cidade do destinatário. O cadastro do
-   cliente guarda só o nome da cidade, então buscamos o código uma vez
-   (pelo CEP) e guardamos no próprio cliente. */
 
 async function nfeCodigoIbge(cliente){
   if(cliente.codigoIbge) return cliente.codigoIbge;
@@ -22180,7 +22370,6 @@ function nfeItensParaNota(venda){
   const itens = (venda.itens||[]);
   const originais = itens.map(it=>nfeArredondar(it.qtd*it.precoUnit));
 
-  // desconto individual de cada item (se houver)
   const aposItem = itens.map((it,i)=>{
     const d = it.desconto||{};
     let v = originais[i];
@@ -22189,7 +22378,6 @@ function nfeItensParaNota(venda){
     return nfeArredondar(v);
   });
 
-  // desconto geral do orçamento, aplicado por cima
   const somaAposItem = nfeArredondar(aposItem.reduce((a,b)=>a+b,0));
   const dg = venda.desconto||{};
   let fator = 1;
@@ -22209,7 +22397,6 @@ function nfeItensParaNota(venda){
       quantidade: it.qtd,
       valorUnitario: it.precoUnit,
       desconto: nfeArredondar(originais[i]-final),
-      // o acréscimo do orçamento inteiro entra no primeiro item
       acrescimo: i===0 ? acrescimo : 0
     };
   });
@@ -22243,111 +22430,46 @@ async function nfeMontarPayload(orcamento, numeroNota){
 }
 
 function nfePagamentoDoOrcamento(orcamento){
-  // 01 = dinheiro, 15 = boleto, 99 = outros (crediário entra aqui, a prazo)
   const cond = orcamento.condicaoPagamento || 'vista';
   if(cond==='boleto')    return { forma:'15', prazo:1 };
   if(cond==='crediario') return { forma:'99', prazo:1 };
   return { forma:'01', prazo:0 };
 }
 
-/* ---------- pasta onde os XMLs são guardados ---------- */
-
-function nfeIdb(modo, valor){
-  return new Promise((resolve,reject)=>{
-    const req = indexedDB.open('mizu-nfe', 1);
-    req.onupgradeneeded = ()=>{ req.result.createObjectStore('handles'); };
-    req.onerror = ()=>reject(req.error);
-    req.onsuccess = ()=>{
-      const db = req.result;
-      const tx = db.transaction('handles', modo==='get'?'readonly':'readwrite');
-      const store = tx.objectStore('handles');
-      const op = modo==='get' ? store.get('pasta') : store.put(valor, 'pasta');
-      op.onsuccess = ()=>resolve(op.result);
-      op.onerror = ()=>reject(op.error);
-    };
-  });
-}
-
-async function nfePasta(perguntarSePreciso){
-  if(!window.showDirectoryPicker) return null; // navegador não suporta
-  let handle = null;
-  try{ handle = await nfeIdb('get'); }catch(e){ console.warn(e); }
-  if(handle){
-    let perm = await handle.queryPermission({mode:'readwrite'});
-    if(perm==='prompt') perm = await handle.requestPermission({mode:'readwrite'});
-    if(perm==='granted') return handle;
-  }
-  if(!perguntarSePreciso) return null;
-  handle = await window.showDirectoryPicker({ mode:'readwrite', id:'mizu-notas-fiscais' });
-  try{ await nfeIdb('put', handle); }catch(e){ console.warn(e); }
-  return handle;
-}
-
-async function nfeSalvarXml(chave, xml, dataISO){
-  const raiz = await nfePasta(true);
-  if(!raiz){
-    // sem suporte a pasta: cai para download comum, pra nunca perder o XML
-    nfeBaixarArquivo(new Blob([xml], {type:'application/xml'}), `NFe${chave}.xml`);
-    return '(baixado na pasta de downloads)';
-  }
-  const [ano, mes] = dataISO.split('-');
-  const pastaAno = await raiz.getDirectoryHandle(ano, {create:true});
-  const pastaMes = await pastaAno.getDirectoryHandle(mes, {create:true});
-  const arquivo = await pastaMes.getFileHandle(`NFe${chave}.xml`, {create:true});
-  const escritor = await arquivo.createWritable();
-  await escritor.write(xml);
-  await escritor.close();
-  return `${raiz.name}/${ano}/${mes}/NFe${chave}.xml`;
-}
-
-async function nfeLerXmlSalvo(nota){
-  const raiz = await nfePasta(true);
-  if(!raiz) return null;
-  const [ano, mes] = nota.dataEmissao.split('-');
-  try{
-    const pastaAno = await raiz.getDirectoryHandle(ano);
-    const pastaMes = await pastaAno.getDirectoryHandle(mes);
-    const arquivo = await pastaMes.getFileHandle(`NFe${nota.chave}.xml`);
-    return await (await arquivo.getFile()).text();
-  }catch(e){
-    return null;
-  }
-}
-
-function nfeBaixarArquivo(blob, nome){
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = nome;
-  document.body.appendChild(a); a.click(); a.remove();
-  setTimeout(()=>URL.revokeObjectURL(url), 4000);
-}
-
-function nfeAbrirPdf(blob){
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank');
-  setTimeout(()=>URL.revokeObjectURL(url), 60000);
-}
-
 /* ---------- ações dos botões ---------- */
 
 async function verEspelhoNfe(orcamentoId){
+  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
 
   const problemas = nfeConferir(orcamento);
   if(problemas.length){ nfeMostrarProblemas(problemas); return; }
 
-  showToast('Gerando o espelho da nota... pode demorar até 1 minuto na primeira vez.', 'info');
+  showToast('Gerando o espelho... pode demorar até 1 minuto na primeira vez.', 'info');
   try{
     const payload = await nfeMontarPayload(orcamento, nfeCfg().proximoNumero);
     const r = await nfeChamar('/espelho', payload);
-    if(r.pdf){ nfeAbrirPdf(r.pdf); showToast('Espelho gerado. Nenhuma nota foi emitida.', 'success'); }
+    if(r.pdf){
+      nfeMostrarArquivos({
+        titulo: 'Espelho da nota',
+        subtitulo: 'Conferência apenas — nada foi enviado à Receita',
+        sucesso: true,
+        pdfBlob: r.pdf,
+        chave: 'espelho',
+        linhas: [
+          ['Número que seria usado', nfeCfg().proximoNumero],
+          ['Situação', 'Não emitida — só conferência']
+        ]
+      });
+    }
   }catch(e){
     showToast('Não consegui gerar o espelho: ' + e.message, 'error');
   }
 }
 
 async function emitirNotaFiscal(orcamentoId){
+  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
 
@@ -22373,6 +22495,11 @@ async function emitirNotaFiscal(orcamentoId){
     return;
   }
 
+  // Pega a pasta ANTES da espera: enquanto o clique ainda "vale" para o
+  // navegador. Se não houver pasta definida, seguimos e oferecemos depois.
+  let pasta = null;
+  try{ pasta = await nfePastaSalva(true); }catch(e){ console.warn(e); }
+
   showToast('Enviando a nota para a Receita... pode demorar até 1 minuto.', 'info');
   try{
     const payload = await nfeMontarPayload(orcamento, cfg.proximoNumero);
@@ -22384,20 +22511,12 @@ async function emitirNotaFiscal(orcamentoId){
       return;
     }
 
-    // A nota foi autorizada: a partir daqui NADA pode dar errado em silêncio.
+    // ---- autorizada: registrar ANTES de qualquer coisa que possa falhar ----
     const dataEmissao = todayISO();
-    let ondeSalvou = '';
-    try{
-      ondeSalvou = await nfeSalvarXml(r.chave, r.xml, dataEmissao);
-    }catch(e){
-      console.error(e);
-      nfeBaixarArquivo(new Blob([r.xml], {type:'application/xml'}), `NFe${r.chave}.xml`);
-      ondeSalvou = '(baixado na pasta de downloads)';
-      showToast('A nota foi autorizada, mas não consegui salvar na pasta escolhida — baixei o XML para os Downloads.', 'error');
-    }
+    NFE_XML_EM_MEMORIA[r.chave] = r.xml;
 
     STATE.notasFiscais = STATE.notasFiscais || [];
-    STATE.notasFiscais.push({
+    const nota = {
       id: uid('nfe'),
       orcamentoId,
       vendaId: orcamento.vendaGeradaId || null,
@@ -22408,48 +22527,111 @@ async function emitirNotaFiscal(orcamentoId){
       protocolo: r.protocolo,
       valor: total,
       status: 'autorizada',
-      ambiente: (STATE.config.nfeServidorUrl||''),
       dataEmissao,
-      arquivoXml: ondeSalvou,
+      arquivoXml: '',
       criadoEm: new Date().toISOString()
-    });
+    };
+    STATE.notasFiscais.push(nota);
     STATE.config.nfeProximoNumero = r.numeroNota + 1;
     saveState();
     renderListaOrcamentos();
 
-    showToast(`Nota nº ${r.numeroNota} autorizada! XML salvo em ${ondeSalvou}`, 'success');
+    // ---- guardar o XML ----
+    let avisoPasta = null;
+    if(pasta){
+      try{
+        nota.arquivoXml = await nfeGravarXmlNaPasta(pasta, r.chave, r.xml, dataEmissao);
+        saveState();
+      }catch(e){
+        console.error(e);
+        avisoPasta = 'Não consegui gravar o XML na pasta. Baixe o arquivo abaixo ou escolha a pasta agora.';
+      }
+    }else{
+      avisoPasta = 'Nenhuma pasta definida para guardar os XMLs. Baixe o arquivo abaixo ou escolha a pasta agora — este arquivo precisa ser guardado por 5 anos.';
+    }
 
-    // já abre o PDF pra impressão
-    imprimirNotaFiscal(orcamentoId, r.xml);
+    // ---- gerar o PDF ----
+    let pdfBlob = null;
+    try{
+      const d = await nfeChamar('/danfe', { xml: r.xml });
+      pdfBlob = d.pdf || null;
+    }catch(e){ console.warn('Falha ao gerar o PDF:', e); }
+
+    nfeMostrarArquivos({
+      titulo: `Nota nº ${r.numeroNota} autorizada`,
+      subtitulo: nota.arquivoXml ? 'XML salvo em ' + nota.arquivoXml : 'Guarde o XML — ele é o documento fiscal',
+      sucesso: true,
+      pdfBlob,
+      xmlTexto: r.xml,
+      chave: r.chave,
+      avisoPasta,
+      linhas: [
+        ['Cliente', cliente.nome],
+        ['Valor', fmtMoney(total)],
+        ['Protocolo', r.protocolo || '—'],
+        ['Chave de acesso', r.chave]
+      ]
+    });
   }catch(e){
     showToast('Não consegui emitir a nota: ' + e.message, 'error');
     console.error(e);
   }
 }
 
-async function imprimirNotaFiscal(orcamentoId, xmlJaEmMaos){
+async function imprimirNotaFiscal(orcamentoId){
   const nota = nfeNotaDoOrcamento(orcamentoId);
-  if(!nota && !xmlJaEmMaos) return;
+  if(!nota) return;
 
+  // permissão da pasta logo no começo do clique
+  let pasta = null;
+  try{ pasta = await nfePastaSalva(true); }catch(e){ console.warn(e); }
+
+  let xml = NFE_XML_EM_MEMORIA[nota.chave] || null;
+  if(!xml && pasta) xml = await nfeLerXmlDaPasta(pasta, nota);
+
+  if(!xml){
+    nfeMostrarArquivos({
+      titulo: `Nota nº ${nota.numero}`,
+      subtitulo: 'Não encontrei o XML desta nota',
+      sucesso: false,
+      chave: nota.chave,
+      linhas: [
+        ['Chave de acesso', nota.chave],
+        ['Protocolo', nota.protocolo || '—'],
+        ['Onde deveria estar', nota.arquivoXml || '(não foi salvo numa pasta)']
+      ]
+    });
+    return;
+  }
+
+  NFE_XML_EM_MEMORIA[nota.chave] = xml;
+  showToast('Gerando o PDF da nota...', 'info');
   try{
-    const xml = xmlJaEmMaos || await nfeLerXmlSalvo(nota);
-    if(!xml){
-      showToast('Não achei o XML dessa nota na pasta. Escolha a pasta onde os XMLs ficam guardados e tente de novo.', 'error');
-      return;
-    }
-    const r = await nfeChamar('/danfe', { xml });
-    if(r.pdf) nfeAbrirPdf(r.pdf);
+    const d = await nfeChamar('/danfe', { xml });
+    nfeMostrarArquivos({
+      titulo: `Nota nº ${nota.numero}`,
+      subtitulo: 'Autorizada em ' + fmtDate(nota.dataEmissao),
+      sucesso: true,
+      pdfBlob: d.pdf || null,
+      xmlTexto: xml,
+      chave: nota.chave,
+      linhas: [
+        ['Protocolo', nota.protocolo || '—'],
+        ['Chave de acesso', nota.chave]
+      ]
+    });
   }catch(e){
     showToast('Não consegui gerar o PDF da nota: ' + e.message, 'error');
   }
 }
 
-/* Botões que aparecem no "Ver mais" de cada orçamento. */
+/* Botões que aparecem no "Ver mais" de cada orçamento.
+   Aparecem SEMPRE: se faltar configuração, o próprio botão abre a tela de
+   configurar — melhor do que sumir e deixar o usuário sem saber por quê. */
 function nfeBotoesOrcamento(orcamento){
-  if(!nfeConfigurado()) return '';
   const nota = nfeNotaDoOrcamento(orcamento.id);
   if(nota){
-    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Nota nº ${nota.numero} — protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ Imprimir Nota nº ${nota.numero}</button>`;
+    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ Imprimir Nota nº ${nota.numero}</button>`;
   }
   return `
     <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}')" title="Mostra como a nota vai ficar, sem emitir nada">👁️ Ver Espelho</button>
