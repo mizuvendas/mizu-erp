@@ -1520,11 +1520,39 @@ function loadState(){
     state.caixa = Object.assign(defaultState().caixa, parsed.caixa||{});
     migrarFornecedoresELocaisCompra(state);
     migrarPagadoresParaClientes(state);
+    garantirClienteConsumidorFinal(state);
     return state;
   }catch(e){
     console.error('Erro ao carregar dados salvos, iniciando vazio.', e);
     return defaultState();
   }
+}
+
+// Venda de balcão: a NFC-e não exige identificar o comprador, mas o Mizu
+// sempre precisa de um cliente na venda (é por ele que passam estoque,
+// relatórios e contas). Este cliente genérico resolve os dois lados — é
+// criado uma única vez, e reconhecido depois pela marca consumidorFinal.
+function garantirClienteConsumidorFinal(state){
+  const jaExiste = state.clientes.some(c =>
+    c.consumidorFinal === true ||
+    (c.nome||'').trim().toLowerCase() === 'consumidor final'
+  );
+  if(jaExiste) return;
+
+  state.clientes.push({
+    id: uid('cli'),
+    nome: 'CONSUMIDOR FINAL',
+    documento: '',            // sem CPF/CNPJ de propósito: é a venda de balcão
+    tipoPessoa: 'PF',
+    tipo: 'Pessoa Física',
+    nacionalidade: 'Nacional',
+    contato: '', pessoaContato: '', cidade: '', endereco: '',
+    consumidorFinal: true,
+    obs: 'Cliente padrão para venda de balcão com NFC-e, criado automaticamente. '
+       + 'Na NFC-e o comprador não precisa se identificar; se ele pedir CPF na nota, '
+       + 'cadastre-o normalmente ou informe o CPF na hora de emitir.',
+    criadoEm: todayISO()
+  });
 }
 
 // Migração (Fase 3): produtos antigos guardavam 'fornecedor' e 'ondeComprado'
