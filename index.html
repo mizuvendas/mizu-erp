@@ -773,6 +773,12 @@ table.data-table{ width:100%; font-size:13px; }
 }
 .cell-editavel:hover{ background:var(--primary-soft); border-color:var(--border); }
 
+/* Célula de tabela editável em dois cliques. Ao contrário de .cell-editavel
+   (que é usada em <span>), esta NÃO pode alterar 'display': um <td> com
+   display:inline-block deixa de ser célula e as colunas grudam. */
+.td-editavel{ cursor:pointer; }
+.td-editavel:hover{ background:var(--primary-soft); }
+
 .section-divider{
   border:none; border-top:1px solid var(--border); margin:18px 0;
 }
@@ -12355,7 +12361,7 @@ function renderTabelaAnalisePorProduto(linhas){
   // Dois cliques em Produto, Marca, Fornecedor ou Custo edita ali mesmo.
   // Qtd, Bruto, Lucro e Margem são conta feita sobre as vendas — editar
   // aqueles seria mentir sobre o que aconteceu, então só avisam.
-  const celEdit = (p, coluna) => `ondblclick="editarCelulaAnalise(this,'${coluna}','${p.produtoId||''}','${p.grupoId||''}')" class="cell-editavel" title="Dois cliques para editar"`;
+  const celEdit = (p, coluna) => `ondblclick="editarCelulaAnalise(this,'${coluna}','${p.produtoId||''}','${p.grupoId||''}')" class="td-editavel" title="Dois cliques para editar"`;
   const celCalc = `ondblclick="editarCelulaAnalise(this,'calculado','','')"`;
 
   document.getElementById('an-table-produto-body').innerHTML = pagina.map(p=>`
@@ -12364,7 +12370,7 @@ function renderTabelaAnalisePorProduto(linhas){
       <td ${celEdit(p,'marca')}>${escapeHtml(p.marca||'—')}</td>
       <td ${celEdit(p,'fornecedor')}>${escapeHtml(p.fornecedor||'—')}</td>
       <td class="num" ${celCalc}>${fmtNum(p.qtd)}</td>
-      <td class="num cell-editavel" ondblclick="editarCelulaAnalise(this,'custoUnit','${p.produtoId||''}','${p.grupoId||''}')" title="Dois cliques para editar">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
+      <td class="num td-editavel" ondblclick="editarCelulaAnalise(this,'custoUnit','${p.produtoId||''}','${p.grupoId||''}')" title="Dois cliques para editar">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
       <td class="num" ${celCalc}>${fmtMoney(p.bruto)}</td>
       <td class="num" ${celCalc} style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(p.lucro)}</td>
       <td class="num" ${celCalc} style="color:${p.margemPct>=0?'var(--positive)':'var(--negative)'};font-weight:700;">${p.margemPct.toFixed(1)}%</td>
