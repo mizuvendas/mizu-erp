@@ -6846,9 +6846,12 @@ function checarPrecoForaDoPadrao(produtoId, precoDigitado){
 }
 
 function adicionarItemAoCarrinho(produtoId, produto, qtd, precoUnit, nomeEditado){
-  carrinhoAtual.push({
+  const novoItem = {
     produtoId, nome: nomeEditado || produto.nome, qtd, precoUnit, custoUnit: produto.custo
-  });
+  };
+  if(!nfeSomarNoCarrinho(carrinhoAtual, novoItem)){
+    carrinhoAtual.push(novoItem);
+  }
   renderCarrinho();
   document.getElementById('v-item-produto-busca').value='';
   document.getElementById('v-item-produto').value='';
@@ -7996,12 +7999,15 @@ function adicionarItemAoOrcamento(){
     }
   }
 
-  carrinhoOrcamentoAtual.push({
+  const novoItemOrc = {
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
     custoUnit: p.custo, precoUnit: preco, qtd: qtdReal, unidade: p.unidade||'UN',
     vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?fatorConversao:null, descricaoLinha,
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
-  });
+  };
+  if(!nfeSomarNoCarrinho(carrinhoOrcamentoAtual, novoItemOrc)){
+    carrinhoOrcamentoAtual.push(novoItemOrc);
+  }
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
 
@@ -8012,6 +8018,31 @@ function adicionarItemAoOrcamento(){
   document.getElementById('orc-item-origem-id').value = '';
   document.getElementById('orc-item-info').style.display = 'none';
   atualizarToggleVenderCaixa(null);
+}
+
+// Procura no carrinho uma linha do MESMO produto, com o MESMO preço unitário
+// e no mesmo formato (unidade solta x caixa, com o mesmo fator). Achando,
+// soma a quantidade ali em vez de criar uma linha repetida.
+//
+// Preço diferente NÃO soma: se o mesmo papel saiu a 10 e depois a 8, são
+// duas linhas de verdade — na nota fiscal e no relatório elas precisam
+// aparecer separadas.
+function nfeSomarNoCarrinho(carrinho, novo){
+  const igual = carrinho.find(it =>
+    it.produtoId === novo.produtoId &&
+    Math.abs((it.precoUnit||0) - (novo.precoUnit||0)) < 0.005 &&
+    !!it.vendidoEmCaixa === !!novo.vendidoEmCaixa &&
+    (it.unidadesPorCaixa||null) === (novo.unidadesPorCaixa||null)
+  );
+  if(!igual) return false;
+
+  igual.qtd = (igual.qtd||0) + (novo.qtd||0);
+  if(igual.vendidoEmCaixa){
+    igual.qtdCaixas = (igual.qtdCaixas||0) + (novo.qtdCaixas||0);
+    igual.descricaoLinha = `${fmtNum(igual.qtdCaixas)} CX (${fmtNum(igual.qtd)} ${igual.unidade||'UN'})`;
+  }
+  showToast(`${igual.nome}: quantidade somada à linha que já estava no carrinho (agora ${fmtNum(igual.qtd)}).`, 'success');
+  return true;
 }
 
 function removerItemOrcamento(idx){
@@ -22502,6 +22533,22 @@ async function nfeCodigoIbge(cliente){
 
 function nfeArredondar(v){ return Math.round(v*100)/100; }
 
+/* Confere os dois dígitos verificadores do CPF. Vale a pena checar aqui:
+   um CPF errado só seria descoberto depois de mandar pra Receita e voltar
+   rejeitado, com o cliente esperando no balcão. */
+function nfeCpfValido(cpf){
+  cpf = (cpf||'').replace(/\D/g,'');
+  if(cpf.length!==11 || /^(\d)\1{10}$/.test(cpf)) return false;
+  for(let t=9; t<11; t++){
+    let soma = 0;
+    for(let i=0; i<t; i++) soma += parseInt(cpf[i]) * ((t+1) - i);
+    let dv = (soma*10) % 11;
+    if(dv===10) dv = 0;
+    if(dv !== parseInt(cpf[t])) return false;
+  }
+  return true;
+}
+
 function nfeItensParaNota(venda){
   const itens = (venda.itens||[]);
   const originais = itens.map(it=>nfeArredondar(it.qtd*it.precoUnit));
@@ -22538,9 +22585,12 @@ function nfeItensParaNota(venda){
   });
 }
 
-async function nfeMontarPayload(orcamento, numeroNota, modelo){
+async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
-  const doc = (cliente.documento||'').replace(/\D/g,'');
+  // CPF digitado na hora (o cliente pediu "põe meu CPF na nota") tem
+  // prioridade sobre o documento do cadastro.
+  const avulso = (cpfNaNota||'').replace(/\D/g,'');
+  const doc = avulso || (cliente.documento||'').replace(/\D/g,'');
   const codigoIbge = modelo===NFE_MODELO.NFCE ? '' : await nfeCodigoIbge(cliente);
 
   return {
@@ -22663,7 +22713,7 @@ async function nfeEmitir(origem, modelo, opcoes){
 
   showToast(`Enviando a ${nomeModelo} para a Receita... pode demorar até 1 minuto.`, 'info');
   try{
-    const payload = await nfeMontarPayload(orcamento, num.proximo, modelo);
+    const payload = await nfeMontarPayload(orcamento, num.proximo, modelo, opcoes.cpfNaNota);
     const r = await nfeChamar('/emitir', payload);
 
     if(!r.ok){
@@ -22862,11 +22912,17 @@ function abrirOpcoesFecharVenda(orcamentoId){
             <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">A nota completa. Exige CPF/CNPJ e endereço do cliente.</span>
           </button>
 
-          <button class="btn" style="justify-content:flex-start;text-align:left;padding:12px 14px;" ${configurado?'':'disabled'}
-                  onclick="fecharVendaComNota('${orcamento.id}', 65)">
-            🧾 <strong style="margin-left:6px;">Emitir NFC-e</strong>
-            <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">O cupom do balcão. Não precisa identificar o cliente.</span>
-          </button>
+          <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;">
+            <button class="btn" style="justify-content:flex-start;text-align:left;padding:12px 14px;width:100%;" ${configurado?'':'disabled'}
+                    onclick="fecharVendaComNota('${orcamento.id}', 65)">
+              🧾 <strong style="margin-left:6px;">Emitir NFC-e</strong>
+              <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">O cupom do balcão. Não precisa identificar o cliente.</span>
+            </button>
+            <div class="field" style="margin:10px 0 0 0;">
+              <label style="font-size:12px;">CPF na nota <span class="hint">(opcional — só se o cliente pedir)</span></label>
+              <input type="text" id="fechar-venda-cpf" maxlength="14" placeholder="000.000.000-00" ${configurado?'':'disabled'}>
+            </div>
+          </div>
 
           <button class="btn" style="justify-content:flex-start;text-align:left;padding:12px 14px;"
                   onclick="fecharVendaSemNota('${orcamento.id}')">
@@ -22912,6 +22968,18 @@ function fecharVendaSemNota(orcamentoId){
 async function fecharVendaComNota(orcamentoId, modelo){
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
+
+  // CPF avulso: só existe na NFC-e, e só se o cliente pediu na hora.
+  let cpfNaNota = '';
+  const campoCpf = document.getElementById('fechar-venda-cpf');
+  if(modelo===NFE_MODELO.NFCE && campoCpf){
+    cpfNaNota = (campoCpf.value||'').replace(/\D/g,'');
+    if(cpfNaNota && !nfeCpfValido(cpfNaNota)){
+      showToast('Esse CPF não é válido — confira os números. Se o cliente não quiser CPF na nota, deixe o campo em branco.', 'error');
+      return;
+    }
+  }
+
   document.getElementById('modal-fechar-venda')?.remove();
 
   // A conversão acontece dentro de nfeEmitir, logo antes do envio — assim,
@@ -22921,6 +22989,7 @@ async function fecharVendaComNota(orcamentoId, modelo){
     { doc: orcamento, vinculo: { orcamentoId, vendaId: null }, rotulo: 'orçamento' },
     modelo,
     {
+      cpfNaNota,
       antesDeEnviar: ()=>{
         nfeFecharVendaNoSistema(orcamento);
         try{ renderListaOrcamentos(); }catch(e){}
