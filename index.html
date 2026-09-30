@@ -22687,10 +22687,15 @@ async function nfeEmitir(origem, modelo, opcoes){
 
     // ---- gerar o PDF ----
     let pdfBlob = null;
+    let erroPdf = null;
     try{
       const d = await nfeChamar('/danfe', { xml: r.xml });
       pdfBlob = d.pdf || null;
-    }catch(e){ console.warn('Falha ao gerar o PDF:', e); }
+      if(!pdfBlob) erroPdf = 'O servidor não devolveu o PDF.';
+    }catch(e){
+      erroPdf = e.message;
+      console.warn('Falha ao gerar o PDF:', e);
+    }
 
     nfeMostrarArquivos({
       titulo: `${nomeModelo} nº ${r.numeroNota} autorizada`,
@@ -22706,7 +22711,7 @@ async function nfeEmitir(origem, modelo, opcoes){
         ['Valor', fmtMoney(total)],
         ['Protocolo', r.protocolo || '—'],
         ['Chave de acesso', r.chave]
-      ]
+      ].concat(erroPdf ? [['PDF', 'não gerado: ' + erroPdf]] : [])
     });
     return nota;
   }catch(e){
@@ -22756,7 +22761,7 @@ async function nfeAbrirArquivosDaNota(nota){
   try{
     const d = await nfeChamar('/danfe', { xml });
     nfeMostrarArquivos({
-      titulo: `Nota nº ${nota.numero}`,
+      titulo: `${NFE_MODELO_NOME[nota.modelo] || 'Nota'} nº ${nota.numero}`,
       subtitulo: 'Autorizada em ' + fmtDate(nota.dataEmissao),
       sucesso: true,
       pdfBlob: d.pdf || null,
@@ -22888,7 +22893,6 @@ async function fecharVendaComNota(orcamentoId, modelo){
     { doc: orcamento, vinculo: { orcamentoId, vendaId: null }, rotulo: 'orçamento' },
     modelo,
     {
-      semConfirmacao: true,
       antesDeEnviar: ()=>{
         nfeFecharVendaNoSistema(orcamento);
         try{ renderListaOrcamentos(); }catch(e){}
