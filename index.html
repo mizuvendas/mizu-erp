@@ -22007,6 +22007,30 @@ function nfeNotaDaVenda(vendaId){
   return orc ? nfeNotaDoOrcamento(orc.id) : null;
 }
 
+/* Uma venda e um orcamento têm a mesma forma por dentro (clienteId, itens,
+   desconto, acréscimo, condição de pagamento), então a emissão funciona
+   igual nos dois. Estas funções só dizem "de onde veio". */
+function nfeDocumentoDaVenda(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return null;
+  const orc = nfeOrcamentoDaVenda(vendaId);
+  return {
+    doc: venda,
+    vinculo: { orcamentoId: orc ? orc.id : null, vendaId },
+    rotulo: orc && orc.numero!=null ? `venda do orçamento #${orc.numero}` : 'venda'
+  };
+}
+
+function nfeDocumentoDoOrcamento(orcamentoId){
+  const orc = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orc) return null;
+  return {
+    doc: orc,
+    vinculo: { orcamentoId, vendaId: orc.vendaGeradaId || null },
+    rotulo: orc.numero!=null ? `orçamento #${orc.numero}` : 'orçamento'
+  };
+}
+
 function nfeNumeroOrcamentoDaVenda(vendaId){
   const orc = nfeOrcamentoDaVenda(vendaId);
   return orc && orc.numero!=null ? orc.numero : null;
@@ -22020,6 +22044,7 @@ function nfeNomeArquivo(nota){
   const partes = ['NF-e ' + nota.numero];
   if(cli) partes.push(cli.nome);
   if(orc && orc.numero!=null) partes.push('Orc ' + orc.numero);
+  else if(nota.dataEmissao) partes.push(nota.dataEmissao.split('-').reverse().join('-'));
   return partes.join(' - ')
     .replace(/[\\/:*?"<>|]/g,'-')   // caracteres proibidos em nome de arquivo
     .replace(/\s+/g,' ')
@@ -22475,9 +22500,17 @@ function nfePagamentoDoOrcamento(orcamento){
 /* ---------- ações dos botões ---------- */
 
 async function verEspelhoNfe(orcamentoId){
+  await nfeVerEspelho(nfeDocumentoDoOrcamento(orcamentoId));
+}
+
+async function verEspelhoNfeDaVenda(vendaId){
+  await nfeVerEspelho(nfeDocumentoDaVenda(vendaId));
+}
+
+async function nfeVerEspelho(origem){
   if(!nfeConfigurado()){ abrirConfigNfe(); return; }
-  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
-  if(!orcamento) return;
+  if(!origem) return;
+  const orcamento = origem.doc;
 
   const problemas = nfeConferir(orcamento);
   if(problemas.length){ nfeMostrarProblemas(problemas); return; }
@@ -22505,13 +22538,25 @@ async function verEspelhoNfe(orcamentoId){
 }
 
 async function emitirNotaFiscal(orcamentoId){
-  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
-  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
-  if(!orcamento) return;
+  await nfeEmitir(nfeDocumentoDoOrcamento(orcamentoId));
+}
 
-  const jaEmitida = nfeNotaDoOrcamento(orcamentoId);
+async function emitirNotaFiscalDaVenda(vendaId){
+  await nfeEmitir(nfeDocumentoDaVenda(vendaId));
+}
+
+async function nfeEmitir(origem){
+  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
+  if(!origem) return;
+  const orcamento = origem.doc;
+  const orcamentoId = origem.vinculo.orcamentoId;
+
+  const jaEmitida = (STATE.notasFiscais||[]).find(n=>n.status==='autorizada' && (
+    (origem.vinculo.orcamentoId && n.orcamentoId===origem.vinculo.orcamentoId) ||
+    (origem.vinculo.vendaId && n.vendaId===origem.vinculo.vendaId)
+  ));
   if(jaEmitida){
-    showToast(`Este orçamento já tem a nota nº ${jaEmitida.numero} autorizada.`, 'error');
+    showToast(`Este ${origem.rotulo} já tem a nota nº ${jaEmitida.numero} autorizada.`, 'error');
     return;
   }
 
@@ -22554,8 +22599,8 @@ async function emitirNotaFiscal(orcamentoId){
     STATE.notasFiscais = STATE.notasFiscais || [];
     const nota = {
       id: uid('nfe'),
-      orcamentoId,
-      vendaId: orcamento.vendaGeradaId || null,
+      orcamentoId: origem.vinculo.orcamentoId,
+      vendaId: origem.vinculo.vendaId,
       clienteId: orcamento.clienteId,
       numero: r.numeroNota,
       serie: cfg.serie,
@@ -22570,7 +22615,8 @@ async function emitirNotaFiscal(orcamentoId){
     STATE.notasFiscais.push(nota);
     STATE.config.nfeProximoNumero = r.numeroNota + 1;
     saveState();
-    renderListaOrcamentos();
+    try{ renderListaOrcamentos(); }catch(e){}
+    try{ renderResultadoVendasPorCliente(); }catch(e){}
 
     // ---- guardar o XML ----
     let avisoPasta = null;
@@ -22685,12 +22731,16 @@ function nfeBotoesOrcamento(orcamento){
     <button class="btn btn-sm" onclick="emitirNotaFiscal('${orcamento.id}')">🧾 Emitir Nota Fiscal</button>`;
 }
 
-/* Botão que aparece na tela de Vendas por Cliente, quando aquela venda já
-   tem nota emitida. */
+/* Botões da tela de Vendas por Cliente: se a venda já tem nota, baixa;
+   se não tem, emite dali mesmo — sem precisar voltar no orçamento. */
 function nfeBotaoVenda(vendaId){
   const nota = nfeNotaDaVenda(vendaId);
-  if(!nota) return '';
-  return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML da nota nº ${nota.numero}">🧾 Nota nº ${nota.numero}</button>`;
+  if(nota){
+    return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML da nota nº ${nota.numero}">🧾 Nota nº ${nota.numero}</button>`;
+  }
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda || venda.status==='cancelada') return '';
+  return `<button class="btn btn-sm" onclick="emitirNotaFiscalDaVenda('${vendaId}')" title="Emitir a NF-e desta venda">🧾 Emitir Nota</button>`;
 }
 
 /* =========================================================
