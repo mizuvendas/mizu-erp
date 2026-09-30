@@ -1464,6 +1464,7 @@ function defaultState(){
     licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
+    gruposProdutos: [], // { id, nome, produtoIds:[], criadoEm } — produtos que são "o mesmo produto" na prática (ver abrirVincularProdutos). AGRUPAMENTO só para análise: não mexe no cadastro nem no histórico de vendas, e pode ser desfeito.
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
     mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
     contasReceberManuais: [], // { id, descricao, clienteId, valor, vencimento, recebido, dataRecebimento, obs, criadoEm }
@@ -12306,10 +12307,26 @@ let analiseProdutoSort = {key:'bruto', dir:'desc'};
 function renderTabelaAnalisePorProduto(linhas){
   const porProduto = {};
   linhas.forEach(l=>{
-    const chave = l.produtoId || l.produtoNome;
+    // Produtos vinculados (ver abrirVincularProdutos) entram numa linha só:
+    // "água sanitária econômica" + "água sanitária 5L" = um item, somado.
+    const grupo = (typeof grupoDoProduto==='function') ? grupoDoProduto(l.produtoId) : null;
+    const chave = grupo ? grupo.id : (l.produtoId || l.produtoNome);
     if(!porProduto[chave]){
-      const produtoAtual = l.produtoId ? STATE.produtos.find(p=>p.id===l.produtoId) : null;
-      porProduto[chave] = { produtoId: l.produtoId, produtoNome: l.produtoNome, marca: l.marca, fornecedor: l.fornecedor, custoUnit: produtoAtual ? produtoAtual.custo : null, qtd:0, bruto:0, lucro:0 };
+      if(grupo){
+        const membros = produtosDoGrupo(grupo);
+        // Custo de referência do grupo: o MENOR entre os produtos — é o
+        // parâmetro de compra que ela usa.
+        const custos = membros.map(p=>p.custo).filter(c=>typeof c==='number' && c>0);
+        porProduto[chave] = {
+          grupoId: grupo.id, produtoId: null, produtoNome: grupo.nome,
+          marca: valorComumDoGrupo(grupo,'marca'), fornecedor: valorComumDoGrupo(grupo,'fornecedor'),
+          custoUnit: custos.length ? Math.min(...custos) : null,
+          qtdProdutos: membros.length, qtd:0, bruto:0, lucro:0
+        };
+      }else{
+        const produtoAtual = l.produtoId ? STATE.produtos.find(p=>p.id===l.produtoId) : null;
+        porProduto[chave] = { grupoId: null, produtoId: l.produtoId, produtoNome: l.produtoNome, marca: l.marca, fornecedor: l.fornecedor, custoUnit: produtoAtual ? produtoAtual.custo : null, qtdProdutos: 1, qtd:0, bruto:0, lucro:0 };
+      }
     }
     porProduto[chave].qtd += l.qtd;
     porProduto[chave].bruto += l.bruto;
@@ -12335,17 +12352,26 @@ function renderTabelaAnalisePorProduto(linhas){
   const total = linhasProduto.length;
   const pagina = aplicarPaginacao('analise-produto', linhasProduto);
 
+  // Dois cliques em Produto, Marca, Fornecedor ou Custo edita ali mesmo.
+  // Qtd, Bruto, Lucro e Margem são conta feita sobre as vendas — editar
+  // aqueles seria mentir sobre o que aconteceu, então só avisam.
+  const celEdit = (p, coluna) => `ondblclick="editarCelulaAnalise(this,'${coluna}','${p.produtoId||''}','${p.grupoId||''}')" class="cell-editavel" title="Dois cliques para editar"`;
+  const celCalc = `ondblclick="editarCelulaAnalise(this,'calculado','','')"`;
+
   document.getElementById('an-table-produto-body').innerHTML = pagina.map(p=>`
     <tr>
-      <td>${escapeHtml(p.produtoNome)}</td>
-      <td>${escapeHtml(p.marca||'—')}</td>
-      <td>${escapeHtml(p.fornecedor||'—')}</td>
-      <td class="num">${fmtNum(p.qtd)}</td>
-      <td class="num">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
-      <td class="num">${fmtMoney(p.bruto)}</td>
-      <td class="num" style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(p.lucro)}</td>
-      <td class="num" style="color:${p.margemPct>=0?'var(--positive)':'var(--negative)'};font-weight:700;">${p.margemPct.toFixed(1)}%</td>
-      <td>${p.produtoId ? `<button class="btn btn-sm" onclick="abrirFormProduto('${p.produtoId}', ()=>aplicarFiltrosAnalise())" title="Editar produto">✏️</button>` : ''}</td>
+      <td ${celEdit(p,'produtoNome')}>${escapeHtml(p.produtoNome)}${p.grupoId?` <span class="badge badge-neutral" title="${p.qtdProdutos} produtos somados neste item">🔗 ${p.qtdProdutos}</span>`:''}</td>
+      <td ${celEdit(p,'marca')}>${escapeHtml(p.marca||'—')}</td>
+      <td ${celEdit(p,'fornecedor')}>${escapeHtml(p.fornecedor||'—')}</td>
+      <td class="num" ${celCalc}>${fmtNum(p.qtd)}</td>
+      <td class="num cell-editavel" ondblclick="editarCelulaAnalise(this,'custoUnit','${p.produtoId||''}','${p.grupoId||''}')" title="Dois cliques para editar">${p.custoUnit!=null?fmtMoney(p.custoUnit):'—'}</td>
+      <td class="num" ${celCalc}>${fmtMoney(p.bruto)}</td>
+      <td class="num" ${celCalc} style="color:${p.lucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(p.lucro)}</td>
+      <td class="num" ${celCalc} style="color:${p.margemPct>=0?'var(--positive)':'var(--negative)'};font-weight:700;">${p.margemPct.toFixed(1)}%</td>
+      <td style="white-space:nowrap;">
+        ${(p.produtoId||p.grupoId) ? `<button class="btn btn-sm" onclick="abrirVincularProdutos('${p.produtoId||''}','${p.grupoId||''}')" title="${p.grupoId?'Ver ou desfazer o vínculo':'Vincular a produtos parecidos'}">🔗</button>` : ''}
+        ${p.produtoId ? `<button class="btn btn-sm" onclick="abrirFormProduto('${p.produtoId}', ()=>aplicarFiltrosAnalise())" title="Editar produto">✏️</button>` : ''}
+      </td>
     </tr>
   `).join('') || `<tr><td colspan="9" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum resultado para os filtros selecionados.</td></tr>`;
 
@@ -13572,93 +13598,9 @@ function excluirLembrete(id){
 
 RENDERERS['lembretes'] = renderLembretes;
 
-/* =========================================================
-   MÓDULO: SUGESTÃO DE COMPRA
-   De propósito bem simples pra começar (pedido explícito do usuário):
-   sugestão = quantidade vendida no período MENOS estoque atual, nunca
-   negativa. Sem multiplicador de segurança, sem previsão — só um ponto de
-   partida pra não ficar sem produto, que pode ficar mais elaborado depois.
-   ========================================================= */
-let sugestaoCompraMes = todayISO().slice(0,7);
-let sugestaoCompraEsconderZerados = true;
-
-function getSugestaoCompra(mesRef){
-  const linhas = getLinhasVenda().filter(l=>l.mes===mesRef);
-  const porProduto = {};
-  linhas.forEach(l=>{
-    if(!porProduto[l.produtoId]) porProduto[l.produtoId] = { produtoId:l.produtoId, produtoNome:l.produtoNome, qtdVendida:0 };
-    porProduto[l.produtoId].qtdVendida += l.qtd;
-  });
-  return Object.values(porProduto).map(p=>{
-    const produto = STATE.produtos.find(pr=>pr.id===p.produtoId);
-    const estoqueAtual = produto ? (produto.estoqueAtual||0) : 0;
-    const sugestao = Math.max(0, p.qtdVendida - estoqueAtual);
-    return { ...p, estoqueAtual, sugestao, unidade: produto ? (produto.unidade||'UN') : 'UN' };
-  }).sort((a,b)=> b.sugestao-a.sugestao || b.qtdVendida-a.qtdVendida);
-}
-
-function renderSugestaoCompra(){
-  const box = document.getElementById('sugestao-compra-content');
-  box.innerHTML = `
-    <div class="card">
-      <h3>Filtro</h3>
-      <div class="form-grid">
-        <div class="field">
-          <label>Mês de referência</label>
-          <input type="month" id="sc-mes" value="${sugestaoCompraMes}">
-        </div>
-      </div>
-      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:8px;">
-        <input type="checkbox" id="sc-esconder-zerados" style="width:auto;" ${sugestaoCompraEsconderZerados?'checked':''}>
-        Esconder produtos sem sugestão de compra (estoque já cobre o que foi vendido)
-      </label>
-    </div>
-
-    <div class="card">
-      <h3>Sugestão de Compra <span class="hint">quantidade vendida no mês menos o que já tem em estoque</span></h3>
-      <div id="sc-tabela"></div>
-    </div>
-  `;
-
-  const renderTabela = () => {
-    let linhas = getSugestaoCompra(sugestaoCompraMes);
-    if(sugestaoCompraEsconderZerados) linhas = linhas.filter(l=>l.sugestao>0);
-    const tabelaBox = document.getElementById('sc-tabela');
-    if(linhas.length===0){
-      tabelaBox.innerHTML = `<p class="help-text" style="margin:0;">Nenhum produto vendido em ${monthLabel(sugestaoCompraMes)}${sugestaoCompraEsconderZerados?' precisando de compra':''}.</p>`;
-      return;
-    }
-    tabelaBox.innerHTML = `
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Produto</th><th class="num">Vendido no Período</th><th class="num">Estoque Atual</th><th class="num">Sugestão de Compra</th></tr></thead>
-          <tbody>
-            ${linhas.map(l=>`
-              <tr>
-                <td>${escapeHtml(l.produtoNome)}</td>
-                <td class="num">${fmtNum(l.qtdVendida)} ${escapeHtml(l.unidade)}</td>
-                <td class="num">${fmtNum(l.estoqueAtual)} ${escapeHtml(l.unidade)}</td>
-                <td class="num" style="font-weight:700;color:${l.sugestao>0?'var(--negative)':'var(--positive)'};">${l.sugestao>0?fmtNum(l.sugestao)+' '+escapeHtml(l.unidade):'—'}</td>
-              </tr>
-            `).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
-  };
-  renderTabela();
-
-  document.getElementById('sc-mes').addEventListener('change', (e)=>{
-    sugestaoCompraMes = e.target.value || todayISO().slice(0,7);
-    renderTabela();
-  });
-  document.getElementById('sc-esconder-zerados').addEventListener('change', (e)=>{
-    sugestaoCompraEsconderZerados = e.target.checked;
-    renderTabela();
-  });
-}
-
-RENDERERS['sugestao-compra'] = renderSugestaoCompra;
+/* A Sugestão de Compra antiga (um mês só, vendido menos estoque) foi
+   substituída pela versão por período com percentual — ver renderSugestaoCompra
+   no módulo de grupos e análise, mais abaixo. */
 
 /* =========================================================
    MÓDULO: SAÚDE DE MARGEM
@@ -23060,6 +23002,537 @@ function nfeBotaoVenda(vendaId){
   const nome = NFE_MODELO_NOME[nota.modelo] || 'Nota';
   return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML">🧾 ${nome} nº ${nota.numero}</button>`;
 }
+
+/* =========================================================
+   MÓDULO: GRUPOS DE PRODUTOS, EDIÇÃO NA TABELA E SUGESTÃO DE COMPRA
+
+   Três coisas que andam juntas:
+
+   1. VÍNCULO — "água sanitária econômica" e "água sanitária 5L" são o mesmo
+      produto na cabeça de quem compra, mas cadastros diferentes no sistema.
+      Vincular junta eles numa linha só nas análises, somando o que vendeu.
+      É AGRUPAMENTO, não fusão: os produtos continuam existindo separados,
+      o histórico de vendas não é tocado, e dá pra desfazer a qualquer hora.
+
+   2. EDIÇÃO NA TABELA — dois cliques numa célula edita ali mesmo. Numa
+      linha de grupo, mudar marca/fornecedor/custo vale para TODOS os
+      produtos do grupo de uma vez.
+
+   3. SUGESTÃO DE COMPRA — escolhe um período, soma o que vendeu, e sugere
+      comprar um percentual disso. Sai em Excel já com as fórmulas prontas
+      pra preencher quantidade e preço de compra.
+   ========================================================= */
+
+/* ---------- grupos ---------- */
+
+function grupoDoProduto(produtoId){
+  if(!produtoId) return null;
+  return (STATE.gruposProdutos||[]).find(g=>(g.produtoIds||[]).includes(produtoId)) || null;
+}
+
+function produtosDoGrupo(grupo){
+  return (grupo.produtoIds||[]).map(id=>STATE.produtos.find(p=>p.id===id)).filter(Boolean);
+}
+
+/* Junta valores diferentes numa célula só: se todos os produtos do grupo
+   têm o mesmo fornecedor, mostra ele; se são vários, avisa. */
+function valorComumDoGrupo(grupo, campo){
+  const valores = [...new Set(produtosDoGrupo(grupo).map(p=>(p[campo]||'').trim()).filter(Boolean))];
+  if(valores.length===0) return '';
+  if(valores.length===1) return valores[0];
+  return '(vários)';
+}
+
+/* Palavras que não ajudam a achar produtos parecidos. */
+const PALAVRAS_IGNORADAS = new Set(['de','da','do','com','sem','para','pra','e','em','un','kg','ml','lt','l','cx','pct','und','unidade','litro','litros']);
+
+function palavrasChaveProduto(nome){
+  return normalizarBusca(nome||'')
+    .split(/[^a-z0-9]+/)
+    .filter(p=>p.length>=3 && !PALAVRAS_IGNORADAS.has(p) && !/^\d+$/.test(p));
+}
+
+/* Ordena os produtos por quantas palavras eles têm em comum com o nome
+   procurado — quem compartilha mais palavras aparece primeiro. */
+function produtosParecidos(nomeBase, excluirIds){
+  const base = new Set(palavrasChaveProduto(nomeBase));
+  if(base.size===0) return [];
+  return STATE.produtos
+    .filter(p=>!excluirIds.includes(p.id))
+    .map(p=>{
+      const palavras = palavrasChaveProduto(p.nome);
+      const comuns = palavras.filter(w=>base.has(w)).length;
+      return { produto:p, comuns };
+    })
+    .filter(x=>x.comuns>0)
+    .sort((a,b)=> b.comuns-a.comuns || a.produto.nome.localeCompare(b.produto.nome))
+    .map(x=>x.produto);
+}
+
+/* ---------- janela de vínculo ---------- */
+
+function abrirVincularProdutos(produtoId, grupoId){
+  const grupo = grupoId ? (STATE.gruposProdutos||[]).find(g=>g.id===grupoId) : null;
+  const produtoBase = produtoId ? STATE.produtos.find(p=>p.id===produtoId) : null;
+  if(!grupo && !produtoBase){ showToast('Produto não encontrado no cadastro.', 'error'); return; }
+
+  const jaNoGrupo = grupo ? produtosDoGrupo(grupo) : (produtoBase ? [produtoBase] : []);
+  const idsNoGrupo = jaNoGrupo.map(p=>p.id);
+  const nomeReferencia = grupo ? grupo.nome : produtoBase.nome;
+  const candidatos = produtosParecidos(nomeReferencia, idsNoGrupo);
+
+  window.__vincularEstado = { produtoId, grupoId, idsNoGrupo: [...idsNoGrupo] };
+
+  document.getElementById('modal-vincular')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-vincular';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🔗</div>
+        <div>
+          <h3>Vincular produtos</h3>
+          <div class="sub">Eles continuam separados no cadastro — só aparecem somados nas análises</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-vincular').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Nome do grupo <span class="hint">é este nome que vai aparecer na análise</span></label>
+          <input type="text" id="vinc-nome" value="${escapeAttr(nomeReferencia)}">
+        </div>
+
+        <div style="margin-top:14px;">
+          <strong style="font-size:13px;">No grupo</strong>
+          <div id="vinc-dentro" style="margin-top:6px;"></div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <strong style="font-size:13px;">Produtos parecidos</strong>
+          <div class="help-text" style="margin:2px 0 6px 0;">Marque os que são o mesmo produto na prática.</div>
+          <input type="text" id="vinc-busca" placeholder="Buscar outro produto pelo nome..." style="margin-bottom:8px;">
+          <div id="vinc-fora" style="max-height:260px;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);padding:6px;"></div>
+        </div>
+
+        <div class="modal-actions" style="margin-top:18px;">
+          ${grupo ? `<button class="btn btn-danger" onclick="desfazerGrupoProdutos('${grupo.id}')">Desfazer vínculo</button>` : ''}
+          <button class="btn" onclick="document.getElementById('modal-vincular').remove()">Cancelar</button>
+          <button class="btn btn-primary" onclick="salvarVinculoProdutos()">Salvar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  renderListasVinculo(candidatos);
+  document.getElementById('vinc-busca').addEventListener('input', (e)=>{
+    const termo = normalizarBusca(e.target.value);
+    const lista = termo
+      ? STATE.produtos.filter(p=>!window.__vincularEstado.idsNoGrupo.includes(p.id) && normalizarBusca(p.nome).includes(termo)).slice(0,60)
+      : produtosParecidos(document.getElementById('vinc-nome').value, window.__vincularEstado.idsNoGrupo);
+    renderListasVinculo(lista);
+  });
+}
+
+function renderListasVinculo(candidatos){
+  const est = window.__vincularEstado;
+  const dentro = document.getElementById('vinc-dentro');
+  const fora = document.getElementById('vinc-fora');
+  if(!dentro || !fora) return;
+
+  dentro.innerHTML = est.idsNoGrupo.map(id=>{
+    const p = STATE.produtos.find(x=>x.id===id);
+    if(!p) return '';
+    return `<div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px;">
+      <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}</span>
+      <button class="btn btn-sm" onclick="tirarDoVinculo('${p.id}')">Tirar</button>
+    </div>`;
+  }).join('') || '<div class="help-text">Nenhum produto no grupo ainda.</div>';
+
+  fora.innerHTML = candidatos.length ? candidatos.map(p=>`
+    <label style="display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" style="width:auto;" onchange="porNoVinculo('${p.id}', this.checked)">
+      <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}</span>
+    </label>`).join('')
+    : '<div class="help-text">Nenhum produto parecido encontrado. Use a busca acima.</div>';
+}
+
+function porNoVinculo(produtoId, marcado){
+  const est = window.__vincularEstado;
+  if(marcado){
+    if(!est.idsNoGrupo.includes(produtoId)) est.idsNoGrupo.push(produtoId);
+  }else{
+    est.idsNoGrupo = est.idsNoGrupo.filter(id=>id!==produtoId);
+  }
+  renderListasVinculo(produtosParecidos(document.getElementById('vinc-nome').value, est.idsNoGrupo));
+}
+
+function tirarDoVinculo(produtoId){
+  const est = window.__vincularEstado;
+  est.idsNoGrupo = est.idsNoGrupo.filter(id=>id!==produtoId);
+  renderListasVinculo(produtosParecidos(document.getElementById('vinc-nome').value, est.idsNoGrupo));
+}
+
+function salvarVinculoProdutos(){
+  const est = window.__vincularEstado;
+  const nome = (document.getElementById('vinc-nome').value||'').trim();
+  if(!nome){ showToast('Dê um nome ao grupo.', 'error'); return; }
+  if(est.idsNoGrupo.length < 2){
+    showToast('Um grupo precisa de pelo menos dois produtos. Marque os parecidos na lista de baixo.', 'error');
+    return;
+  }
+
+  STATE.gruposProdutos = STATE.gruposProdutos || [];
+
+  // Um produto só pode estar num grupo: tira ele de qualquer outro antes.
+  STATE.gruposProdutos.forEach(g=>{
+    if(g.id === est.grupoId) return;
+    g.produtoIds = (g.produtoIds||[]).filter(id=>!est.idsNoGrupo.includes(id));
+  });
+  STATE.gruposProdutos = STATE.gruposProdutos.filter(g=>g.id===est.grupoId || (g.produtoIds||[]).length>=2);
+
+  const existente = est.grupoId ? STATE.gruposProdutos.find(g=>g.id===est.grupoId) : null;
+  if(existente){
+    existente.nome = nome;
+    existente.produtoIds = est.idsNoGrupo;
+  }else{
+    STATE.gruposProdutos.push({ id: uid('grp'), nome, produtoIds: est.idsNoGrupo, criadoEm: todayISO() });
+  }
+
+  saveState();
+  document.getElementById('modal-vincular').remove();
+  showToast(`Grupo "${nome}" com ${est.idsNoGrupo.length} produtos.`, 'success');
+  atualizarTelasDeAnalise();
+}
+
+function desfazerGrupoProdutos(grupoId){
+  confirmAction('Desfazer vínculo', 'Os produtos voltam a aparecer separados nas análises. Nenhum cadastro ou venda é alterado.', ()=>{
+    STATE.gruposProdutos = (STATE.gruposProdutos||[]).filter(g=>g.id!==grupoId);
+    saveState();
+    document.getElementById('modal-vincular')?.remove();
+    showToast('Vínculo desfeito.', 'success');
+    atualizarTelasDeAnalise();
+  }, 'Desfazer');
+}
+
+function atualizarTelasDeAnalise(){
+  try{ aplicarFiltrosAnalise(); }catch(e){}
+  try{ if(document.getElementById('sugestao-compra-content')) renderSugestaoCompra(); }catch(e){}
+}
+
+/* ---------- edição na tabela (dois cliques) ---------- */
+
+/* Campos que existem no cadastro do produto e por isso podem ser editados.
+   Qtd vendida, bruto, lucro e margem são CONTA, não cadastro — mudar ali
+   seria mentir sobre o que aconteceu. */
+const CAMPOS_EDITAVEIS_PRODUTO = {
+  produtoNome: { campo:'nome',       rotulo:'Nome',       tipo:'texto'   },
+  marca:       { campo:'marca',      rotulo:'Marca',      tipo:'texto'   },
+  fornecedor:  { campo:'fornecedor', rotulo:'Fornecedor', tipo:'texto'   },
+  custoUnit:   { campo:'custo',      rotulo:'Custo',      tipo:'numero'  }
+};
+
+function editarCelulaAnalise(celula, coluna, produtoId, grupoId){
+  const def = CAMPOS_EDITAVEIS_PRODUTO[coluna];
+  if(!def){
+    showToast('Essa coluna é calculada a partir das vendas — não dá pra editar aqui.', 'error');
+    return;
+  }
+  if(celula.querySelector('input')) return; // já está editando
+
+  const grupo = grupoId ? (STATE.gruposProdutos||[]).find(g=>g.id===grupoId) : null;
+  const alvos = grupo ? produtosDoGrupo(grupo) : [STATE.produtos.find(p=>p.id===produtoId)].filter(Boolean);
+  if(!grupo && alvos.length===0){
+    showToast('Este item não está no cadastro de produtos (veio de uma venda antiga), então não dá pra editar.', 'error');
+    return;
+  }
+
+  // Grupo + coluna Nome = renomeia o grupo, não os produtos.
+  const renomeandoGrupo = !!grupo && coluna==='produtoNome';
+  const valorAtual = renomeandoGrupo ? grupo.nome
+    : (grupo ? valorComumDoGrupo(grupo, def.campo) : (alvos[0][def.campo] ?? ''));
+
+  const original = celula.innerHTML;
+  const input = document.createElement('input');
+  input.type = def.tipo==='numero' ? 'number' : 'text';
+  if(def.tipo==='numero'){ input.step = '0.01'; input.min = '0'; }
+  input.value = (valorAtual==='(vários)') ? '' : valorAtual;
+  input.placeholder = (valorAtual==='(vários)') ? 'vários valores — o que digitar vale pra todos' : '';
+  input.style.cssText = 'width:100%;padding:3px 6px;font-size:13px;';
+
+  celula.innerHTML = '';
+  celula.appendChild(input);
+  input.focus();
+  input.select();
+
+  let encerrado = false;
+  const cancelar = ()=>{ if(encerrado) return; encerrado = true; celula.innerHTML = original; };
+
+  const salvar = ()=>{
+    if(encerrado) return;
+    encerrado = true;
+    const bruto = input.value.trim();
+
+    if(renomeandoGrupo){
+      if(!bruto){ celula.innerHTML = original; return; }
+      grupo.nome = bruto;
+    }else if(def.tipo==='numero'){
+      if(bruto===''){ celula.innerHTML = original; return; }
+      const num = parseFloat(bruto.replace(',','.'));
+      if(isNaN(num) || num < 0){ showToast('Valor inválido.', 'error'); celula.innerHTML = original; return; }
+      alvos.forEach(p=>{
+        const anterior = p[def.campo];
+        p[def.campo] = num;
+        // Mudança de custo entra no histórico de preços, igual à edição
+        // feita na tela de Produtos — senão a curva de custo fica com furo.
+        if(def.campo==='custo' && typeof registrarHistoricoPreco==='function'){
+          registrarHistoricoPreco(p, anterior);
+        }
+      });
+    }else{
+      if(bruto==='' && grupo){ celula.innerHTML = original; return; } // em grupo, vazio não apaga de todos
+      alvos.forEach(p=>{ p[def.campo] = bruto; });
+    }
+
+    saveState();
+    const quantos = renomeandoGrupo ? 1 : alvos.length;
+    showToast(`${def.rotulo} atualizado${quantos>1?` em ${quantos} produtos`:''}.`, 'success');
+    atualizarTelasDeAnalise();
+  };
+
+  input.addEventListener('blur', salvar);
+  input.addEventListener('keydown', (e)=>{
+    if(e.key==='Enter'){ e.preventDefault(); salvar(); }
+    if(e.key==='Escape'){ e.preventDefault(); cancelar(); }
+  });
+}
+
+/* ---------- Sugestão de Compra por período ---------- */
+
+let scPeriodoInicio = todayISO().slice(0,7);
+let scPeriodoFim = scPeriodoInicio;
+let scPercentual = 100;
+let scEsconderZerados = false;
+
+function scMesesNoPeriodo(inicio, fim){
+  if(!inicio || !fim) return 1;
+  const [ai, mi] = inicio.split('-').map(Number);
+  const [af, mf] = fim.split('-').map(Number);
+  return Math.max(1, (af-ai)*12 + (mf-mi) + 1);
+}
+
+/* Agrupa as vendas do período por produto (ou por grupo, quando vinculado)
+   e calcula a sugestão como um percentual do que foi vendido. */
+function getSugestaoCompraPeriodo(inicio, fim, percentual){
+  const linhas = getLinhasVenda().filter(l=>l.mes >= inicio && l.mes <= fim);
+  const meses = scMesesNoPeriodo(inicio, fim);
+  const porChave = {};
+
+  linhas.forEach(l=>{
+    const grupo = grupoDoProduto(l.produtoId);
+    const chave = grupo ? grupo.id : (l.produtoId || l.produtoNome);
+    if(!porChave[chave]){
+      porChave[chave] = {
+        chave,
+        grupoId: grupo ? grupo.id : null,
+        produtoId: grupo ? null : l.produtoId,
+        nome: grupo ? grupo.nome : l.produtoNome,
+        qtdVendida: 0,
+        estoqueAtual: 0,
+        produtos: []
+      };
+    }
+    porChave[chave].qtdVendida += l.qtd;
+  });
+
+  return Object.values(porChave).map(item=>{
+    const produtos = item.grupoId
+      ? produtosDoGrupo((STATE.gruposProdutos||[]).find(g=>g.id===item.grupoId) || {})
+      : [STATE.produtos.find(p=>p.id===item.produtoId)].filter(Boolean);
+
+    const estoqueAtual = produtos.reduce((s,p)=>s+(p.estoqueAtual||0), 0);
+    // No grupo, o custo de referência é o MENOR entre os produtos — é o que
+    // ela usa como parâmetro de compra.
+    const custos = produtos.map(p=>p.custo).filter(c=>typeof c==='number' && c>0);
+    const precos = produtos.map(p=>p.precoVenda).filter(c=>typeof c==='number' && c>0);
+
+    return {
+      ...item,
+      produtos,
+      codigo: produtos.length===1 ? (produtos[0].sku||'') : '',
+      marca: produtos.length===1 ? (produtos[0].marca||'') : (item.grupoId ? valorComumDoGrupo({produtoIds:produtos.map(p=>p.id)}, 'marca') : ''),
+      fornecedor: produtos.length===1 ? (produtos[0].fornecedor||'') : (item.grupoId ? valorComumDoGrupo({produtoIds:produtos.map(p=>p.id)}, 'fornecedor') : ''),
+      custo: custos.length ? Math.min(...custos) : null,
+      precoVenda: precos.length ? Math.min(...precos) : null,
+      unidade: produtos.length ? (produtos[0].unidade||'UN') : 'UN',
+      unidadesPorCaixa: produtos.length ? (produtos[0].unidadesPorCaixa||'') : '',
+      estoqueAtual,
+      mediaMensal: item.qtdVendida / meses,
+      sugestao: Math.round(item.qtdVendida * (percentual/100) * 100) / 100
+    };
+  }).sort((a,b)=> b.sugestao-a.sugestao || b.qtdVendida-a.qtdVendida);
+}
+
+function renderSugestaoCompra(){
+  const box = document.getElementById('sugestao-compra-content');
+  if(!box) return;
+  if(scPeriodoFim < scPeriodoInicio) scPeriodoFim = scPeriodoInicio;
+
+  box.innerHTML = `
+    <div class="card">
+      <h3>Período e critério</h3>
+      <div class="form-grid">
+        <div class="field">
+          <label>De (mês)</label>
+          <input type="month" id="sc-inicio" value="${scPeriodoInicio}">
+        </div>
+        <div class="field">
+          <label>Até (mês)</label>
+          <input type="month" id="sc-fim" value="${scPeriodoFim}">
+        </div>
+        <div class="field">
+          <label>Comprar quanto do que vendeu?</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" id="sc-percentual" min="1" max="500" step="5" value="${scPercentual}" style="max-width:110px;">
+            <span style="font-size:14px;">%</span>
+          </div>
+          <div class="help-text">Vendeu 100 e você põe 70% → sugestão de comprar 70.</div>
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ink);cursor:pointer;margin-top:8px;">
+        <input type="checkbox" id="sc-esconder-zerados" style="width:auto;" ${scEsconderZerados?'checked':''}>
+        Esconder produtos cujo estoque atual já cobre a sugestão
+      </label>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">Sugestão de Compra <span class="hint" id="sc-resumo-periodo"></span></h3>
+        <button class="btn btn-sm" id="sc-btn-excel">⬇ Exportar Excel</button>
+      </div>
+      <div id="sc-tabela" style="margin-top:10px;"></div>
+    </div>
+  `;
+
+  const renderTabela = ()=>{
+    const meses = scMesesNoPeriodo(scPeriodoInicio, scPeriodoFim);
+    let linhas = getSugestaoCompraPeriodo(scPeriodoInicio, scPeriodoFim, scPercentual);
+    if(scEsconderZerados) linhas = linhas.filter(l=>l.sugestao > l.estoqueAtual);
+
+    const resumo = document.getElementById('sc-resumo-periodo');
+    if(resumo) resumo.textContent = `${meses} ${meses===1?'mês':'meses'} · comprando ${scPercentual}% do que foi vendido`;
+
+    const tabela = document.getElementById('sc-tabela');
+    if(linhas.length===0){
+      tabela.innerHTML = `<p class="help-text" style="margin:0;">Nenhuma venda no período selecionado.</p>`;
+      return;
+    }
+
+    tabela.innerHTML = `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Produto</th><th>Marca</th><th>Fornecedor</th>
+            <th class="num">Vendido no período</th>
+            <th class="num">Média mensal</th>
+            <th class="num">Estoque atual</th>
+            <th class="num">Sugestão de compra</th>
+          </tr></thead>
+          <tbody>
+            ${linhas.map(l=>`
+              <tr>
+                <td>${escapeHtml(l.nome)}${l.grupoId?' <span class="badge badge-neutral" title="Produtos vinculados">🔗 grupo</span>':''}</td>
+                <td>${escapeHtml(l.marca||'—')}</td>
+                <td>${escapeHtml(l.fornecedor||'—')}</td>
+                <td class="num">${fmtNum(l.qtdVendida)} ${escapeHtml(l.unidade)}</td>
+                <td class="num">${fmtNum(Math.round(l.mediaMensal*100)/100)}</td>
+                <td class="num">${fmtNum(l.estoqueAtual)}</td>
+                <td class="num" style="font-weight:700;">${fmtNum(l.sugestao)} ${escapeHtml(l.unidade)}</td>
+              </tr>`).join('')}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="3">Total (${linhas.length} ${linhas.length===1?'item':'itens'})</td>
+            <td class="num">${fmtNum(linhas.reduce((s,l)=>s+l.qtdVendida,0))}</td>
+            <td></td>
+            <td class="num">${fmtNum(linhas.reduce((s,l)=>s+l.estoqueAtual,0))}</td>
+            <td class="num" style="font-weight:700;">${fmtNum(linhas.reduce((s,l)=>s+l.sugestao,0))}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    `;
+  };
+
+  renderTabela();
+
+  document.getElementById('sc-inicio').addEventListener('change', e=>{ scPeriodoInicio = e.target.value || scPeriodoInicio; if(scPeriodoFim<scPeriodoInicio) scPeriodoFim = scPeriodoInicio; renderSugestaoCompra(); });
+  document.getElementById('sc-fim').addEventListener('change', e=>{ scPeriodoFim = e.target.value || scPeriodoFim; renderSugestaoCompra(); });
+  document.getElementById('sc-percentual').addEventListener('change', e=>{ scPercentual = Math.max(1, parseFloat(e.target.value)||100); renderTabela(); });
+  document.getElementById('sc-esconder-zerados').addEventListener('change', e=>{ scEsconderZerados = e.target.checked; renderTabela(); });
+  document.getElementById('sc-btn-excel').addEventListener('click', exportarSugestaoCompraExcel);
+}
+
+/* ---------- Excel da sugestão de compra ----------
+   A planilha sai com as fórmulas prontas: você preenche se vai comprar em
+   caixa ou unidade, a quantidade e o preço, e ela soma sozinha. */
+function exportarSugestaoCompraExcel(){
+  if(!XLSX_DISPONIVEL){
+    showToast('A biblioteca de planilhas não carregou (precisa de internet). Tente de novo com conexão.', 'error');
+    return;
+  }
+  const linhas = getSugestaoCompraPeriodo(scPeriodoInicio, scPeriodoFim, scPercentual);
+  if(linhas.length===0){ showToast('Nenhuma venda no período pra exportar.', 'error'); return; }
+
+  const cabecalho = [
+    'Código','Produto','Marca','Fornecedor','Custo atual (R$)','Preço de venda (R$)',
+    'Vendido no período','Média mensal','Estoque atual','Sugestão de compra',
+    'Comprar em (CX/UN)','Unidades por caixa','Quantidade a comprar','Preço de compra (R$)',
+    'Quantidade em unidades','Total a pagar (R$)'
+  ];
+
+  const aoa = [cabecalho];
+  linhas.forEach(l=>{
+    aoa.push([
+      l.codigo || '', l.nome, l.marca||'', l.fornecedor||'',
+      l.custo ?? '', l.precoVenda ?? '',
+      l.qtdVendida, Math.round(l.mediaMensal*100)/100, l.estoqueAtual, l.sugestao,
+      // Sem "unidades por caixa" cadastrado, entra 1: assim, se ela escolher
+      // CX, a conta não vira zero calado — mostra o número errado, que ela vê
+      // e corrige na hora.
+      'UN', l.unidadesPorCaixa || 1, '', '',
+      null, null // preenchidos por fórmula logo abaixo
+    ]);
+  });
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+
+  // Fórmulas: linha 2 em diante (linha 1 é o cabeçalho).
+  // K=Comprar em, L=Unid/caixa, M=Qtd, N=Preço, O=Qtd em unidades, P=Total
+  linhas.forEach((_, i)=>{
+    const ln = i + 2;
+    ws['O'+ln] = { t:'n', f:`IF(EXACT(UPPER(K${ln}),"CX"),M${ln}*IF(L${ln}="",1,L${ln}),M${ln})` };
+    ws['P'+ln] = { t:'n', f:`IF(N${ln}="",0,M${ln}*N${ln})` };
+  });
+
+  const ultima = linhas.length + 2;
+  ws['B'+ultima] = { t:'s', v:'TOTAL' };
+  ws['O'+ultima] = { t:'n', f:`SUM(O2:O${linhas.length+1})` };
+  ws['P'+ultima] = { t:'n', f:`SUM(P2:P${linhas.length+1})` };
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:ultima-1, c:cabecalho.length-1} });
+
+  ws['!cols'] = [
+    {wch:12},{wch:42},{wch:16},{wch:20},{wch:14},{wch:16},
+    {wch:16},{wch:13},{wch:13},{wch:17},
+    {wch:16},{wch:16},{wch:19},{wch:18},
+    {wch:20},{wch:18}
+  ];
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Sugestão de Compra');
+  XLSX.writeFile(wb, `sugestao_compra_${scPeriodoInicio}_a_${scPeriodoFim}.xlsx`);
+  showToast('Planilha gerada. As colunas de quantidade e preço já somam sozinhas.', 'success');
+}
+
+RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 /* =========================================================
    INICIALIZAÇÃO
