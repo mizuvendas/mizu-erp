@@ -1496,7 +1496,9 @@ function defaultState(){
       nfeServidorUrl: '',      // endereço do servidor próprio de emissão
       nfeSerie: 1,             // série da NF-e
       nfeProximoNumero: 1,     // número da próxima nota — nunca pode repetir nem pular
-      nfeIbgeCache: {}         // { [cep]: códigoIBGE } — evita rebuscar o mesmo município // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
+      nfeIbgeCache: {},        // { [cep]: códigoIBGE } — evita rebuscar o mesmo município
+      nfceSerie: 1,            // a NFC-e tem série e numeração próprias,
+      nfceProximoNumero: 1     // separadas das da NF-e // códigos de modalidade PNCP marcados por padrão na busca de oportunidades — ver PNCP_MODALIDADES pro nome de cada código
     }
   };
 }
@@ -8724,7 +8726,10 @@ function atualizarOrcamentosExpirados(){
 const statusEntregaLabel = {
   nenhum: '',
   em_rota: '<span class="badge" style="background:#EDE4FA;color:#6B3FA0;">📦 Em Separação</span>',
-  entregue: '<span class="badge" style="background:#DCEFE3;color:#1F7A4D;">✅ Entregue</span>'
+  entregue: '<span class="badge" style="background:#DCEFE3;color:#1F7A4D;">✅ Entregue</span>',
+  // O cliente veio buscar na loja: encerra o ciclo igual "entregue", mas fica
+  // guardado à parte pra dar pra saber, depois, quanto se entrega e quanto se retira.
+  retirado: '<span class="badge" style="background:#FDF0D5;color:#8A6A12;">🏪 Retirado na loja</span>'
 };
 
 // Dentro do "guarda-chuva" em_rota (aprovado, aguardando entrega), o pedido
@@ -8774,6 +8779,7 @@ function renderRelatorioSeparacaoEntrega(){
             ? `<button class="btn btn-sm" onclick="marcarFaseEntregaOrcamento('${o.id}','rota')">🚚 Saiu p/ Entrega</button>`
             : `<button class="btn btn-sm" onclick="marcarFaseEntregaOrcamento('${o.id}','separacao')">📦 Voltar p/ Separação</button>`}
           <button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>
+          <button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado</button>
         </div>
       </div>`;
   };
@@ -8822,7 +8828,7 @@ function renderListaOrcamentos(){
     // "finalizado" = já foi entregue E já virou venda — o par que não
     // precisa mais de nenhuma ação. Só sai da vista por padrão, continua
     // tudo salvo e reaparece desmarcando a caixinha ou filtrando por status.
-    lista = lista.filter(o=>!(o.statusEntrega==='entregue' && (o.status==='convertido' || !!o.vendaGeradaId)));
+    lista = lista.filter(o=>!(['entregue','retirado'].includes(o.statusEntrega) && (o.status==='convertido' || !!o.vendaGeradaId)));
   }
   // Mais recente primeiro por padrão (data, com a hora de criação como
   // desempate dentro do mesmo dia) — clicar no cabeçalho "Data" inverte.
@@ -8879,7 +8885,8 @@ function renderListaOrcamentos(){
                 ${nfeBotoesOrcamento(o)}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Marcar Entregue</button>` : ''}
-                ${statusEntrega==='entregue' ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer Entrega</button>` : ''}
+                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na Loja</button>` : ''}
+                ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer</button>` : ''}
                 ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
                 <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
                 ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
@@ -9051,33 +9058,10 @@ function executarConversaoOrcamentoEmVenda(orcamento){
 // converte. A baixa de estoque só acontece no momento da conversão de
 // verdade, em executarConversaoOrcamentoEmVenda().
 function converterOrcamentoEmVenda(id){
-  const orcamento = STATE.orcamentos.find(o=>o.id===id);
-  if(!orcamento) return;
-  if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
-    showToast('Este orçamento já foi convertido em venda.', 'error');
-    return;
-  }
-  if(!orcamento.itens || orcamento.itens.length===0){
-    showToast('Este orçamento não tem nenhum item lançado — abra em "Editar", adicione ao menos um item na seção 2 e salve antes de converter em venda.', 'error');
-    return;
-  }
-
-  confirmAction(
-    'Converter em Venda',
-    'Isso vai gerar uma venda de verdade a partir deste orçamento (com os valores atuais), dar baixa no estoque e somar ele nas contas/dashboard. O orçamento continua na lista de Orçamentos Lançados, agora com o selo "Virou Venda". Deseja continuar?',
-    ()=>{
-      executarConversaoOrcamentoEmVenda(orcamento);
-      // só avança o status de entrega se ele ainda nem tinha começado —
-      // se já estava "em_rota" ou "entregue" (fluxo independente), preserva.
-      if(!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum'){
-        orcamento.statusEntrega = 'em_rota';
-      }
-      saveState();
-      showToast('Orçamento convertido em venda com sucesso.', 'success');
-      renderListaOrcamentos();
-    },
-    'Converter em Venda'
-  );
+  // Não fecha mais direto: abre a janela que pergunta COMO fechar a venda —
+  // com NF-e, com NFC-e ou sem nota. Os três caminhos convertem em venda e
+  // baixam o estoque; muda só o documento fiscal. Ver abrirOpcoesFecharVenda().
+  abrirOpcoesFecharVenda(id);
 }
 
 // Gera o PDF do orçamento pra enviar ao cliente — com logo, dados da
@@ -9888,6 +9872,32 @@ function marcarEntregaConcluida(orcamentoId){
   }, 'Confirmar');
 }
 
+// O cliente veio buscar na loja em vez de receber em casa. Encerra o ciclo
+// igual "entregue" — só fica registrado separado, pra depois dar pra saber
+// quanto do movimento é entrega e quanto é retirada no balcão.
+function marcarRetiradaOrcamento(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  const vaiConverter = orcamento.status!=='convertido' && !orcamento.vendaGeradaId;
+  if(vaiConverter && (!orcamento.itens || orcamento.itens.length===0)){
+    showToast('Este orçamento não tem nenhum item lançado, então não dá pra fechar a venda ao marcar como retirado.', 'error');
+    return;
+  }
+  const texto = vaiConverter
+    ? 'Confirma que o cliente retirou este pedido na loja? Como este orçamento ainda não tinha virado venda, confirmar aqui também fecha a venda (com baixa no estoque).'
+    : 'Confirma que o cliente retirou este pedido na loja?';
+  confirmAction('Marcar como retirado', texto, ()=>{
+    orcamento.statusEntrega = 'retirado';
+    if(vaiConverter){
+      executarConversaoOrcamentoEmVenda(orcamento);
+    }
+    saveState();
+    showToast(vaiConverter ? 'Retirada confirmada e venda fechada.' : 'Retirada confirmada.', 'success');
+    try{ renderLogistica(); }catch(e){}
+    if(document.getElementById('orc-lista-body')) renderListaOrcamentos();
+  }, 'Confirmar');
+}
+
 // Desfaz uma entrega marcada por engano — e junto, sempre que der pra fazer
 // com segurança, desfaz TAMBÉM a venda gerada a partir dela (devolve o
 // estoque baixado, remove o lançamento, e volta o orçamento pro status
@@ -9899,7 +9909,7 @@ function marcarEntregaConcluida(orcamentoId){
 function desfazerEntregaOrcamento(orcamentoId){
   const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
   if(!orcamento) return;
-  if(orcamento.statusEntrega!=='entregue'){ showToast('Este pedido não está marcado como entregue.', 'error'); return; }
+  if(orcamento.statusEntrega!=='entregue' && orcamento.statusEntrega!=='retirado'){ showToast('Este pedido não está marcado como entregue nem como retirado.', 'error'); return; }
 
   const venda = orcamento.vendaGeradaId ? STATE.vendas.find(v=>v.id===orcamento.vendaGeradaId) : null;
   const vendaTemAtividade = !!venda && (
@@ -21976,12 +21986,34 @@ const NFE_TOKEN_KEY = 'mizu_nfe_token';
 // depender de já estarem na pasta. { [chave]: xml }
 const NFE_XML_EM_MEMORIA = {};
 
+/* Os dois modelos de nota que a Mizu emite. */
+const NFE_MODELO = { NFE: 55, NFCE: 65 };
+const NFE_MODELO_NOME = { 55: 'NF-e', 65: 'NFC-e' };
+
 function nfeCfg(){
   return {
     url: (STATE.config.nfeServidorUrl||'').replace(/\/+$/,''),
     token: localStorage.getItem(NFE_TOKEN_KEY) || '',
     serie: STATE.config.nfeSerie || 1,
     proximoNumero: STATE.config.nfeProximoNumero || 1
+  };
+}
+
+/* NF-e e NFC-e têm numeração e série SEPARADAS — são dois talões
+   diferentes aos olhos da Receita. Misturar uma com a outra é rejeição
+   na certa. */
+function nfeNumeracao(modelo){
+  if(modelo===NFE_MODELO.NFCE){
+    return {
+      serie: STATE.config.nfceSerie || 1,
+      proximo: STATE.config.nfceProximoNumero || 1,
+      campoProximo: 'nfceProximoNumero'
+    };
+  }
+  return {
+    serie: STATE.config.nfeSerie || 1,
+    proximo: STATE.config.nfeProximoNumero || 1,
+    campoProximo: 'nfeProximoNumero'
   };
 }
 
@@ -22041,7 +22073,7 @@ function nfeNumeroOrcamentoDaVenda(vendaId){
 function nfeNomeArquivo(nota){
   const cli = STATE.clientes.find(c=>c.id===nota.clienteId);
   const orc = (STATE.orcamentos||[]).find(o=>o.id===nota.orcamentoId);
-  const partes = ['NF-e ' + nota.numero];
+  const partes = [(NFE_MODELO_NOME[nota.modelo] || 'NF-e') + ' ' + nota.numero];
   if(cli) partes.push(cli.nome);
   if(orc && orc.numero!=null) partes.push('Orc ' + orc.numero);
   else if(nota.dataEmissao) partes.push(nota.dataEmissao.split('-').reverse().join('-'));
@@ -22165,15 +22197,23 @@ function abrirConfigNfe(){
         </div>
         <div class="form-grid">
           <div class="field">
-            <label>Série da nota</label>
+            <label>NF-e — série</label>
             <input type="number" id="cfg-nfe-serie" min="1" value="${c.serie}">
           </div>
           <div class="field">
-            <label>Número da próxima nota</label>
+            <label>NF-e — próximo número</label>
             <input type="number" id="cfg-nfe-numero" min="1" value="${c.proximoNumero}">
-            <div class="help-text">Avança sozinho a cada nota autorizada.</div>
+          </div>
+          <div class="field">
+            <label>NFC-e — série</label>
+            <input type="number" id="cfg-nfce-serie" min="1" value="${STATE.config.nfceSerie || 1}">
+          </div>
+          <div class="field">
+            <label>NFC-e — próximo número</label>
+            <input type="number" id="cfg-nfce-numero" min="1" value="${STATE.config.nfceProximoNumero || 1}">
           </div>
         </div>
+        <div class="help-text">NF-e e NFC-e têm numeração separada — são dois talões diferentes aos olhos da Receita. Os dois avançam sozinhos a cada nota autorizada.</div>
 
         <div class="field">
           <label>Pasta onde os XMLs são guardados</label>
@@ -22221,6 +22261,8 @@ function salvarConfigNfe(){
   STATE.config.nfeServidorUrl = url;
   STATE.config.nfeSerie = serie;
   STATE.config.nfeProximoNumero = numero;
+  STATE.config.nfceSerie = parseInt(document.getElementById('cfg-nfce-serie').value)||1;
+  STATE.config.nfceProximoNumero = parseInt(document.getElementById('cfg-nfce-numero').value)||1;
   if(token) localStorage.setItem(NFE_TOKEN_KEY, token);
   else localStorage.removeItem(NFE_TOKEN_KEY);
   saveState();
@@ -22332,27 +22374,32 @@ async function nfeSalvarXmlAgora(chave){
 
 /* ---------- conferência antes de emitir ---------- */
 
-function nfeConferir(orcamento){
+function nfeConferir(orcamento, modelo){
   const problemas = [];
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const ehNfce = modelo===NFE_MODELO.NFCE;
 
   if(!cliente){
     problemas.push({ texto:'O cliente deste orçamento não existe mais no cadastro.' });
     return problemas;
   }
 
-  const doc = (cliente.documento||'').replace(/\D/g,'');
-  if(doc.length!==11 && doc.length!==14){
-    problemas.push({
-      texto:`Cliente "${cliente.nome}": falta o CPF ou CNPJ. A NF-e não pode ser emitida sem ele.`,
-      acao:()=>abrirFormCliente(cliente.id)
-    });
-  }
-  if(!(cliente.cep||'').replace(/\D/g,'') || !cliente.uf || !(cliente.cidadeEstruturada||cliente.cidade) || !cliente.bairro){
-    problemas.push({
-      texto:`Cliente "${cliente.nome}": falta o endereço completo (CEP, UF, cidade e bairro). Está no bloco "Endereço estruturado" do cadastro.`,
-      acao:()=>abrirFormCliente(cliente.id)
-    });
+  // Na NFC-e o cliente é opcional — é a venda de balcão. Só a NF-e exige
+  // identificar quem recebe e o endereço dele.
+  if(!ehNfce){
+    const doc = (cliente.documento||'').replace(/\D/g,'');
+    if(doc.length!==11 && doc.length!==14){
+      problemas.push({
+        texto:`Cliente "${cliente.nome}": falta o CPF ou CNPJ. A NF-e não pode ser emitida sem ele.`,
+        acao:()=>abrirFormCliente(cliente.id)
+      });
+    }
+    if(!(cliente.cep||'').replace(/\D/g,'') || !cliente.uf || !(cliente.cidadeEstruturada||cliente.cidade) || !cliente.bairro){
+      problemas.push({
+        texto:`Cliente "${cliente.nome}": falta o endereço completo (CEP, UF, cidade e bairro). Está no bloco "Endereço estruturado" do cadastro.`,
+        acao:()=>abrirFormCliente(cliente.id)
+      });
+    }
   }
 
   (orcamento.itens||[]).forEach(it=>{
@@ -22463,12 +22510,13 @@ function nfeItensParaNota(venda){
   });
 }
 
-async function nfeMontarPayload(orcamento, numeroNota){
+async function nfeMontarPayload(orcamento, numeroNota, modelo){
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const doc = (cliente.documento||'').replace(/\D/g,'');
-  const codigoIbge = await nfeCodigoIbge(cliente);
+  const codigoIbge = modelo===NFE_MODELO.NFCE ? '' : await nfeCodigoIbge(cliente);
 
   return {
+    modelo: modelo || NFE_MODELO.NFE,
     numeroNota,
     cliente: {
       nome: cliente.nome,
@@ -22499,35 +22547,34 @@ function nfePagamentoDoOrcamento(orcamento){
 
 /* ---------- ações dos botões ---------- */
 
-async function verEspelhoNfe(orcamentoId){
-  await nfeVerEspelho(nfeDocumentoDoOrcamento(orcamentoId));
+async function verEspelhoNfe(orcamentoId, modelo){
+  await nfeVerEspelho(nfeDocumentoDoOrcamento(orcamentoId), modelo || NFE_MODELO.NFE);
 }
 
-async function verEspelhoNfeDaVenda(vendaId){
-  await nfeVerEspelho(nfeDocumentoDaVenda(vendaId));
-}
-
-async function nfeVerEspelho(origem){
+async function nfeVerEspelho(origem, modelo){
   if(!nfeConfigurado()){ abrirConfigNfe(); return; }
   if(!origem) return;
   const orcamento = origem.doc;
+  modelo = modelo || NFE_MODELO.NFE;
 
-  const problemas = nfeConferir(orcamento);
+  const problemas = nfeConferir(orcamento, modelo);
   if(problemas.length){ nfeMostrarProblemas(problemas); return; }
 
+  const num = nfeNumeracao(modelo);
   showToast('Gerando o espelho... pode demorar até 1 minuto na primeira vez.', 'info');
   try{
-    const payload = await nfeMontarPayload(orcamento, nfeCfg().proximoNumero);
+    const payload = await nfeMontarPayload(orcamento, num.proximo, modelo);
     const r = await nfeChamar('/espelho', payload);
     if(r.pdf){
       nfeMostrarArquivos({
-        titulo: 'Espelho da nota',
+        titulo: 'Espelho da ' + NFE_MODELO_NOME[modelo],
         subtitulo: 'Conferência apenas — nada foi enviado à Receita',
         sucesso: true,
         pdfBlob: r.pdf,
         chave: 'espelho',
+        nomeArquivo: 'Espelho ' + NFE_MODELO_NOME[modelo],
         linhas: [
-          ['Número que seria usado', nfeCfg().proximoNumero],
+          ['Número que seria usado', num.proximo],
           ['Situação', 'Não emitida — só conferência']
         ]
       });
@@ -22537,19 +22584,17 @@ async function nfeVerEspelho(origem){
   }
 }
 
-async function emitirNotaFiscal(orcamentoId){
-  await nfeEmitir(nfeDocumentoDoOrcamento(orcamentoId));
+async function emitirNotaFiscal(orcamentoId, modelo){
+  await nfeEmitir(nfeDocumentoDoOrcamento(orcamentoId), modelo || NFE_MODELO.NFE);
 }
 
-async function emitirNotaFiscalDaVenda(vendaId){
-  await nfeEmitir(nfeDocumentoDaVenda(vendaId));
-}
-
-async function nfeEmitir(origem){
-  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
-  if(!origem) return;
+async function nfeEmitir(origem, modelo, opcoes){
+  opcoes = opcoes || {};
+  if(!nfeConfigurado()){ abrirConfigNfe(); return null; }
+  if(!origem) return null;
   const orcamento = origem.doc;
-  const orcamentoId = origem.vinculo.orcamentoId;
+  modelo = modelo || NFE_MODELO.NFE;
+  const nomeModelo = NFE_MODELO_NOME[modelo];
 
   const jaEmitida = (STATE.notasFiscais||[]).find(n=>n.status==='autorizada' && (
     (origem.vinculo.orcamentoId && n.orcamentoId===origem.vinculo.orcamentoId) ||
@@ -22557,23 +22602,23 @@ async function nfeEmitir(origem){
   ));
   if(jaEmitida){
     showToast(`Este ${origem.rotulo} já tem a nota nº ${jaEmitida.numero} autorizada.`, 'error');
-    return;
+    return null;
   }
 
-  const problemas = nfeConferir(orcamento);
-  if(problemas.length){ nfeMostrarProblemas(problemas); return; }
+  const problemas = nfeConferir(orcamento, modelo);
+  if(problemas.length){ nfeMostrarProblemas(problemas); return null; }
 
-  const cfg = nfeCfg();
+  const num = nfeNumeracao(modelo);
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
 
-  if(!confirm(
-      `Emitir a nota fiscal nº ${cfg.proximoNumero} (série ${cfg.serie})?\n\n` +
-      `Cliente: ${cliente.nome}\n` +
+  if(!opcoes.semConfirmacao && !confirm(
+      `Emitir ${nomeModelo} nº ${num.proximo} (série ${num.serie})?\n\n` +
+      `Cliente: ${cliente ? cliente.nome : '—'}\n` +
       `Itens: ${(orcamento.itens||[]).length}\n` +
       `Valor: ${fmtMoney(total)}\n\n` +
       `Depois de autorizada, a nota só pode ser cancelada dentro do prazo legal.`)){
-    return;
+    return null;
   }
 
   // Pega a pasta ANTES da espera: enquanto o clique ainda "vale" para o
@@ -22581,15 +22626,22 @@ async function nfeEmitir(origem){
   let pasta = null;
   try{ pasta = await nfePastaSalva(true); }catch(e){ console.warn(e); }
 
-  showToast('Enviando a nota para a Receita... pode demorar até 1 minuto.', 'info');
+  // A venda é fechada ANTES de mandar pra Receita: assim, se a nota for
+  // rejeitada, a venda já está lançada e o estoque baixado, e ela pode ser
+  // reemitida depois sem refazer nada.
+  if(typeof opcoes.antesDeEnviar === 'function'){
+    try{ opcoes.antesDeEnviar(); }catch(e){ console.error(e); }
+  }
+
+  showToast(`Enviando a ${nomeModelo} para a Receita... pode demorar até 1 minuto.`, 'info');
   try{
-    const payload = await nfeMontarPayload(orcamento, cfg.proximoNumero);
+    const payload = await nfeMontarPayload(orcamento, num.proximo, modelo);
     const r = await nfeChamar('/emitir', payload);
 
     if(!r.ok){
       showToast(`A Receita rejeitou a nota (código ${r.codigoStatus}): ${r.mensagem}`, 'error');
-      console.warn('Rejeição da NF-e:', r);
-      return;
+      console.warn('Rejeição da nota:', r);
+      return null;
     }
 
     // ---- autorizada: registrar ANTES de qualquer coisa que possa falhar ----
@@ -22600,10 +22652,11 @@ async function nfeEmitir(origem){
     const nota = {
       id: uid('nfe'),
       orcamentoId: origem.vinculo.orcamentoId,
-      vendaId: origem.vinculo.vendaId,
+      vendaId: origem.vinculo.vendaId || (orcamento.vendaGeradaId || null),
       clienteId: orcamento.clienteId,
+      modelo,
       numero: r.numeroNota,
-      serie: cfg.serie,
+      serie: num.serie,
       chave: r.chave,
       protocolo: r.protocolo,
       valor: total,
@@ -22613,7 +22666,7 @@ async function nfeEmitir(origem){
       criadoEm: new Date().toISOString()
     };
     STATE.notasFiscais.push(nota);
-    STATE.config.nfeProximoNumero = r.numeroNota + 1;
+    STATE.config[num.campoProximo] = r.numeroNota + 1;
     saveState();
     try{ renderListaOrcamentos(); }catch(e){}
     try{ renderResultadoVendasPorCliente(); }catch(e){}
@@ -22640,7 +22693,7 @@ async function nfeEmitir(origem){
     }catch(e){ console.warn('Falha ao gerar o PDF:', e); }
 
     nfeMostrarArquivos({
-      titulo: `Nota nº ${r.numeroNota} autorizada`,
+      titulo: `${nomeModelo} nº ${r.numeroNota} autorizada`,
       subtitulo: nota.arquivoXml ? 'XML salvo em ' + nota.arquivoXml : 'Guarde o XML — ele é o documento fiscal',
       sucesso: true,
       pdfBlob,
@@ -22649,15 +22702,17 @@ async function nfeEmitir(origem){
       nomeArquivo: nfeNomeArquivo(nota),
       avisoPasta,
       linhas: [
-        ['Cliente', cliente.nome],
+        ['Cliente', cliente ? cliente.nome : '—'],
         ['Valor', fmtMoney(total)],
         ['Protocolo', r.protocolo || '—'],
         ['Chave de acesso', r.chave]
       ]
     });
+    return nota;
   }catch(e){
     showToast('Não consegui emitir a nota: ' + e.message, 'error');
     console.error(e);
+    return null;
   }
 }
 
@@ -22718,29 +22773,191 @@ async function nfeAbrirArquivosDaNota(nota){
   }
 }
 
-/* Botões que aparecem no "Ver mais" de cada orçamento.
-   Aparecem SEMPRE: se faltar configuração, o próprio botão abre a tela de
-   configurar — melhor do que sumir e deixar o usuário sem saber por quê. */
+/* =========================================================
+   FECHAMENTO DA VENDA — a janela que escolhe COMO fechar
+   ========================================================= */
+
+/* Clicar em "Converter em Venda" não fecha mais direto: abre esta janela,
+   onde se escolhe se a venda sai com NF-e, com NFC-e ou sem nota. Os três
+   caminhos fecham a venda e baixam o estoque; muda só o documento. */
+function abrirOpcoesFecharVenda(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+
+  if(orcamento.status==='convertido' || orcamento.vendaGeradaId){
+    showToast('Este orçamento já foi convertido em venda.', 'error');
+    return;
+  }
+  if(!orcamento.itens || orcamento.itens.length===0){
+    showToast('Este orçamento não tem nenhum item lançado — abra em "Editar", adicione ao menos um item e salve antes de fechar a venda.', 'error');
+    return;
+  }
+
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
+  const configurado = nfeConfigurado();
+
+  document.getElementById('modal-fechar-venda')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-fechar-venda';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💰</div>
+        <div>
+          <h3>Fechar a venda${orcamento.numero!=null ? ' — Orçamento #'+escapeHtml(String(orcamento.numero)) : ''}</h3>
+          <div class="sub">${escapeHtml(cliente?cliente.nome:'(cliente removido)')} · ${fmtMoney(total)} · ${(orcamento.itens||[]).length} item(ns)</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-fechar-venda').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">
+          Qualquer opção abaixo fecha a venda de verdade, baixa o estoque e lança nas contas.
+          A diferença é só o documento fiscal.
+        </p>
+
+        ${!configurado ? `<div class="help-text" style="padding:10px;border-radius:var(--radius-sm);background:var(--surface-2);margin-bottom:12px;">
+          ⚠️ O servidor de nota fiscal ainda não está configurado, então só dá pra fechar sem nota.
+          <div style="margin-top:8px;"><button class="btn btn-sm" onclick="document.getElementById('modal-fechar-venda').remove(); abrirConfigNfe();">Configurar agora</button></div>
+        </div>` : ''}
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button class="btn btn-primary" style="justify-content:flex-start;text-align:left;padding:12px 14px;" ${configurado?'':'disabled'}
+                  onclick="fecharVendaComNota('${orcamento.id}', 55)">
+            🧾 <strong style="margin-left:6px;">Emitir NF-e</strong>
+            <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">A nota completa. Exige CPF/CNPJ e endereço do cliente.</span>
+          </button>
+
+          <button class="btn" style="justify-content:flex-start;text-align:left;padding:12px 14px;" ${configurado?'':'disabled'}
+                  onclick="fecharVendaComNota('${orcamento.id}', 65)">
+            🧾 <strong style="margin-left:6px;">Emitir NFC-e</strong>
+            <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">O cupom do balcão. Não precisa identificar o cliente.</span>
+          </button>
+
+          <button class="btn" style="justify-content:flex-start;text-align:left;padding:12px 14px;"
+                  onclick="fecharVendaSemNota('${orcamento.id}')">
+            💰 <strong style="margin-left:6px;">Venda sem nota</strong>
+            <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">Fecha a venda e baixa o estoque, sem emitir documento fiscal.</span>
+          </button>
+        </div>
+
+        ${configurado ? `<div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}', 55)">👁️ Ver espelho da NF-e</button>
+          <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}', 65)">👁️ Ver espelho da NFC-e</button>
+        </div>
+        <div class="help-text" style="margin-top:6px;">O espelho só mostra como a nota ficaria. Não emite, não gasta numeração e não fecha a venda.</div>` : ''}
+
+        <div class="modal-actions" style="margin-top:18px;">
+          <button class="btn" onclick="document.getElementById('modal-fechar-venda').remove()">Cancelar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+/* Parte comum aos três caminhos: vira venda de verdade, baixa estoque e
+   entra na fila de separação/entrega. */
+function nfeFecharVendaNoSistema(orcamento){
+  executarConversaoOrcamentoEmVenda(orcamento);
+  if(!orcamento.statusEntrega || orcamento.statusEntrega==='nenhum'){
+    orcamento.statusEntrega = 'em_rota';
+  }
+  saveState();
+}
+
+function fecharVendaSemNota(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  document.getElementById('modal-fechar-venda')?.remove();
+  nfeFecharVendaNoSistema(orcamento);
+  showToast('Venda fechada sem nota fiscal. Estoque baixado.', 'success');
+  try{ renderListaOrcamentos(); }catch(e){}
+  try{ renderResultadoVendasPorCliente(); }catch(e){}
+}
+
+async function fecharVendaComNota(orcamentoId, modelo){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  document.getElementById('modal-fechar-venda')?.remove();
+
+  // A conversão acontece dentro de nfeEmitir, logo antes do envio — assim,
+  // se a Receita rejeitar, a venda já está lançada e a nota pode ser
+  // reemitida depois pelo botão do orçamento.
+  await nfeEmitir(
+    { doc: orcamento, vinculo: { orcamentoId, vendaId: null }, rotulo: 'orçamento' },
+    modelo,
+    {
+      semConfirmacao: true,
+      antesDeEnviar: ()=>{
+        nfeFecharVendaNoSistema(orcamento);
+        try{ renderListaOrcamentos(); }catch(e){}
+      }
+    }
+  );
+}
+
+/* Botões de nota no "Ver mais" do orçamento.
+
+   Aqui fica só o essencial, porque o caminho normal de emitir é a janela
+   que abre em "Converter em Venda". Estes dois cobrem o depois:
+   - já tem nota  -> reimprimir
+   - já virou venda mas a nota falhou -> emitir de novo */
 function nfeBotoesOrcamento(orcamento){
   const nota = nfeNotaDoOrcamento(orcamento.id);
   if(nota){
-    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ Imprimir Nota nº ${nota.numero}</button>`;
+    const nome = NFE_MODELO_NOME[nota.modelo] || 'Nota';
+    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ ${nome} nº ${nota.numero}</button>`;
   }
-  return `
-    <button class="btn btn-sm" onclick="verEspelhoNfe('${orcamento.id}')" title="Mostra como a nota vai ficar, sem emitir nada">👁️ Ver Espelho</button>
-    <button class="btn btn-sm" onclick="emitirNotaFiscal('${orcamento.id}')">🧾 Emitir Nota Fiscal</button>`;
+  const jaVirouVenda = orcamento.status==='convertido' || !!orcamento.vendaGeradaId;
+  if(jaVirouVenda && nfeConfigurado()){
+    return `<button class="btn btn-sm" onclick="abrirOpcoesEmitirDepois('${orcamento.id}')" title="Esta venda foi fechada sem nota — dá pra emitir agora">🧾 Emitir Nota</button>`;
+  }
+  return '';
 }
 
-/* Botões da tela de Vendas por Cliente: se a venda já tem nota, baixa;
-   se não tem, emite dali mesmo — sem precisar voltar no orçamento. */
+/* Venda já fechada e sem nota: escolhe o modelo e emite, sem converter de
+   novo (a venda já existe). */
+function abrirOpcoesEmitirDepois(orcamentoId){
+  const orcamento = STATE.orcamentos.find(o=>o.id===orcamentoId);
+  if(!orcamento) return;
+  document.getElementById('modal-fechar-venda')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-fechar-venda';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🧾</div>
+        <div>
+          <h3>Emitir nota desta venda</h3>
+          <div class="sub">A venda já está fechada — isto só emite o documento fiscal</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-fechar-venda').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <button class="btn btn-primary" style="justify-content:flex-start;padding:12px 14px;"
+                  onclick="document.getElementById('modal-fechar-venda').remove(); emitirNotaFiscal('${orcamento.id}', 55)">🧾 Emitir NF-e</button>
+          <button class="btn" style="justify-content:flex-start;padding:12px 14px;"
+                  onclick="document.getElementById('modal-fechar-venda').remove(); emitirNotaFiscal('${orcamento.id}', 65)">🧾 Emitir NFC-e</button>
+        </div>
+        <div class="modal-actions" style="margin-top:18px;">
+          <button class="btn" onclick="document.getElementById('modal-fechar-venda').remove()">Cancelar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+/* Tela de Vendas por Cliente: só BAIXA a nota. Emitir é sempre pelo
+   orçamento — dois lugares emitindo a mesma coisa é receita de nota
+   duplicada. */
 function nfeBotaoVenda(vendaId){
   const nota = nfeNotaDaVenda(vendaId);
-  if(nota){
-    return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML da nota nº ${nota.numero}">🧾 Nota nº ${nota.numero}</button>`;
-  }
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
-  if(!venda || venda.status==='cancelada') return '';
-  return `<button class="btn btn-sm" onclick="emitirNotaFiscalDaVenda('${vendaId}')" title="Emitir a NF-e desta venda">🧾 Emitir Nota</button>`;
+  if(!nota) return '';
+  const nome = NFE_MODELO_NOME[nota.modelo] || 'Nota';
+  return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML">🧾 ${nome} nº ${nota.numero}</button>`;
 }
 
 /* =========================================================
