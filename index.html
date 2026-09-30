@@ -776,6 +776,12 @@ table.data-table{ width:100%; font-size:13px; }
 /* Célula de tabela editável em dois cliques. Ao contrário de .cell-editavel
    (que é usada em <span>), esta NÃO pode alterar 'display': um <td> com
    display:inline-block deixa de ser célula e as colunas grudam. */
+/* Tabela da Sugestão de Compra: o cabeçalho acompanha a rolagem (senão,
+   descendo a lista, ninguém sabe mais qual coluna é qual) e a coluna da
+   sugestão fica destacada, que é o número que importa ali. */
+.tabela-sugestao thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
+.tabela-sugestao .col-sugestao{ font-weight:700; background:var(--primary-soft); }
+
 .td-editavel{ cursor:pointer; }
 .td-editavel:hover{ background:var(--primary-soft); }
 
@@ -23049,30 +23055,141 @@ function valorComumDoGrupo(grupo, campo){
   return '(vários)';
 }
 
-/* Palavras que não ajudam a achar produtos parecidos. */
-const PALAVRAS_IGNORADAS = new Set(['de','da','do','com','sem','para','pra','e','em','un','kg','ml','lt','l','cx','pct','und','unidade','litro','litros']);
+/* Palavras que não ajudam a distinguir um produto de outro. */
+const PALAVRAS_IGNORADAS = new Set([
+  'de','da','do','das','dos','com','sem','para','pra','e','em','no','na','por',
+  'un','und','unid','unidade','unidades','cx','caixa','pct','pacote','fardo','fd',
+  'pc','pcs','peca','pecas','produto','item','marca','tipo','ref'
+]);
 
-function palavrasChaveProduto(nome){
-  return normalizarBusca(nome||'')
+/* Como cada unidade de medida vira um número comparável. "5L" e "5000ML"
+   são a mesma coisa; "8X300M" e "12X30" não são. */
+const UNIDADES_MEDIDA = {
+  ml:['volume',1], mls:['volume',1], l:['volume',1000], lt:['volume',1000], lts:['volume',1000],
+  litro:['volume',1000], litros:['volume',1000],
+  g:['peso',1], gr:['peso',1], grs:['peso',1], grama:['peso',1], gramas:['peso',1],
+  kg:['peso',1000], kgs:['peso',1000], quilo:['peso',1000], quilos:['peso',1000],
+  cm:['comprimento',1], mm:['comprimento',0.1],
+  m:['comprimento',100], mt:['comprimento',100], mts:['comprimento',100],
+  metro:['comprimento',100], metros:['comprimento',100],
+  fl:['folhas',1], fls:['folhas',1], folha:['folhas',1], folhas:['folhas',1]
+};
+
+/* Lê um nome de produto e separa o que ele realmente diz:
+     nucleo   — as primeiras palavras, que dizem O QUE é (papel higienico)
+     palavras — todas as palavras que descrevem (premium, neutro, economica)
+     medidas  — quantidade + unidade já convertida ("volume:5000")
+     packs    — padrões tipo 8X300, 12X30, C100 (quantos vêm por embalagem)
+   É isso que permite entender que "PAPEL HIGIENICO 8X300M" combina com outro
+   papel higiênico 8x300 e não com um 12x30. */
+function analisarNomeProduto(nome){
+  const txt = normalizarBusca(nome || '').replace(/[#]/g, ' ');
+
+  const packs = new Set();
+  // 8x300, 12 X 30, 4x5l
+  const rePack = /(\d+)\s*[x*]\s*(\d+)/g;
+  let m;
+  while((m = rePack.exec(txt)) !== null){ packs.add(`${m[1]}x${m[2]}`); }
+  // c100, c/100 (caixa com 100)
+  const reCaixa = /\bc\/?\s?(\d{2,4})\b/g;
+  while((m = reCaixa.exec(txt)) !== null){ packs.add(`c${m[1]}`); }
+
+  const medidas = new Set();
+  const reMedida = /(\d+(?:[.,]\d+)?)\s*([a-z]{1,7})\b/g;
+  while((m = reMedida.exec(txt)) !== null){
+    const def = UNIDADES_MEDIDA[m[2]];
+    if(!def) continue;
+    const valor = parseFloat(m[1].replace(',', '.')) * def[1];
+    if(!isNaN(valor) && valor > 0) medidas.add(`${def[0]}:${Math.round(valor * 100) / 100}`);
+  }
+
+  const palavras = txt
     .split(/[^a-z0-9]+/)
-    .filter(p=>p.length>=3 && !PALAVRAS_IGNORADAS.has(p) && !/^\d+$/.test(p));
+    .filter(p => p.length >= 3 && !PALAVRAS_IGNORADAS.has(p) && !/^\d/.test(p));
+
+  return { palavras: new Set(palavras), nucleo: palavras.slice(0, 2), medidas, packs };
 }
 
-/* Ordena os produtos por quantas palavras eles têm em comum com o nome
-   procurado — quem compartilha mais palavras aparece primeiro. */
-function produtosParecidos(nomeBase, excluirIds){
-  const base = new Set(palavrasChaveProduto(nomeBase));
-  if(base.size===0) return [];
+function interseccao(a, b){ return [...a].filter(x => b.has(x)); }
+
+/* Dá uma nota de 0 a 100 para o quanto dois produtos parecem ser o mesmo.
+   O peso está nas palavras que dizem O QUE o produto é e na medida —
+   é o que diferencia "papel higiênico 8x300" de "papel higiênico 12x30".
+   Devolve também o motivo, pra tela poder mostrar por que apareceu ali. */
+function compararProdutos(base, outro){
+  if(base.palavras.size === 0) return null;
+
+  const comuns = interseccao(base.palavras, outro.palavras);
+  if(comuns.length === 0) return null;
+
+  // Quanto do produto procurado foi reconhecido no outro (0 a 1).
+  const cobertura = comuns.length / base.palavras.size;
+  // E quanto do outro é "sobra" — nome muito maior costuma ser outra coisa.
+  const precisao = comuns.length / Math.max(1, outro.palavras.size);
+
+  let nota = (cobertura * 55) + (precisao * 20);
+  const motivos = [];
+  const alertas = [];
+
+  // As duas primeiras palavras dizem o que é a coisa. Bater nelas vale muito.
+  const nucleoIgual = base.nucleo.length > 0 && base.nucleo.every(p => outro.palavras.has(p));
+  if(nucleoIgual){ nota += 15; }
+  else if(base.nucleo.length && !outro.palavras.has(base.nucleo[0])){ nota -= 20; }
+
+  // Medida: igual aproxima muito, diferente afasta muito.
+  if(base.medidas.size && outro.medidas.size){
+    const iguais = interseccao(base.medidas, outro.medidas);
+    if(iguais.length){
+      nota += 18;
+      motivos.push('mesma medida');
+    }else{
+      nota -= 28;
+      alertas.push('medida diferente');
+    }
+  }
+
+  // Embalagem (8x300, 12x30, c100): mesma lógica, peso um pouco menor.
+  if(base.packs.size && outro.packs.size){
+    const iguais = interseccao(base.packs, outro.packs);
+    if(iguais.length){
+      nota += 14;
+      motivos.push(`mesma embalagem (${iguais[0]})`);
+    }else{
+      nota -= 22;
+      alertas.push(`embalagem diferente (${[...outro.packs][0]})`);
+    }
+  }else if(base.packs.size !== outro.packs.size){
+    nota -= 6; // um tem embalagem declarada e o outro não
+  }
+
+  nota = Math.max(0, Math.min(100, Math.round(nota)));
+  if(nucleoIgual && motivos.length === 0 && alertas.length === 0) motivos.push('mesmo tipo de produto');
+
+  return { nota, motivos, alertas };
+}
+
+/* Lista os produtos que podem ser o mesmo que o procurado, do mais provável
+   para o menos. Só entra quem passa de uma nota mínima: é melhor mostrar
+   cinco certos do que cinquenta duvidosos. */
+function produtosParecidos(nomeBase, excluirIds, notaMinima){
+  const base = analisarNomeProduto(nomeBase);
+  if(base.palavras.size === 0) return [];
+  const corte = (typeof notaMinima === 'number') ? notaMinima : 35;
+
   return STATE.produtos
-    .filter(p=>!excluirIds.includes(p.id))
-    .map(p=>{
-      const palavras = palavrasChaveProduto(p.nome);
-      const comuns = palavras.filter(w=>base.has(w)).length;
-      return { produto:p, comuns };
+    .filter(p => !excluirIds.includes(p.id))
+    .map(p => {
+      const r = compararProdutos(base, analisarNomeProduto(p.nome));
+      return r ? { produto: p, ...r } : null;
     })
-    .filter(x=>x.comuns>0)
-    .sort((a,b)=> b.comuns-a.comuns || a.produto.nome.localeCompare(b.produto.nome))
-    .map(x=>x.produto);
+    .filter(x => x && x.nota >= corte)
+    .sort((a, b) => b.nota - a.nota || a.produto.nome.localeCompare(b.produto.nome))
+    .slice(0, 40);
+}
+
+/* Mantida porque outras partes podem usar: só as palavras, sem nota. */
+function palavrasChaveProduto(nome){
+  return [...analisarNomeProduto(nome).palavras];
 }
 
 /* ---------- janela de vínculo ---------- */
@@ -23133,8 +23250,13 @@ function abrirVincularProdutos(produtoId, grupoId){
   renderListasVinculo(candidatos);
   document.getElementById('vinc-busca').addEventListener('input', (e)=>{
     const termo = normalizarBusca(e.target.value);
+    // Buscando pelo nome, mostra o que casar com o texto (sem nota — ela está
+    // procurando de propósito). Campo vazio volta à lista por semelhança.
     const lista = termo
-      ? STATE.produtos.filter(p=>!window.__vincularEstado.idsNoGrupo.includes(p.id) && normalizarBusca(p.nome).includes(termo)).slice(0,60)
+      ? STATE.produtos
+          .filter(p=>!window.__vincularEstado.idsNoGrupo.includes(p.id) && normalizarBusca(p.nome).includes(termo))
+          .slice(0,60)
+          .map(p=>({ produto:p }))
       : produtosParecidos(document.getElementById('vinc-nome').value, window.__vincularEstado.idsNoGrupo);
     renderListasVinculo(lista);
   });
@@ -23155,12 +23277,28 @@ function renderListasVinculo(candidatos){
     </div>`;
   }).join('') || '<div class="help-text">Nenhum produto no grupo ainda.</div>';
 
-  fora.innerHTML = candidatos.length ? candidatos.map(p=>`
-    <label style="display:flex;align-items:center;gap:8px;padding:5px 2px;font-size:13px;cursor:pointer;">
-      <input type="checkbox" style="width:auto;" onchange="porNoVinculo('${p.id}', this.checked)">
-      <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}</span>
-    </label>`).join('')
-    : '<div class="help-text">Nenhum produto parecido encontrado. Use a busca acima.</div>';
+  // Cada candidato vem com uma nota de semelhança e o motivo. Mostrar isso
+  // é o que permite decidir rápido: "mesma medida" ou "embalagem diferente"
+  // diz muito mais que só o nome.
+  fora.innerHTML = candidatos.length ? candidatos.map(c=>{
+    const p = c.produto || c;
+    const nota = (typeof c.nota === 'number') ? c.nota : null;
+    const classeNota = nota==null ? '' : (nota>=70 ? 'badge-positive' : (nota>=50 ? 'badge-info' : 'badge-warning'));
+    const selo = nota==null ? '' : `<span class="badge ${classeNota}" title="O quanto o nome combina com o produto escolhido">${nota}%</span>`;
+    const razoes = [
+      ...(c.motivos||[]).map(m=>escapeHtml(m)),
+      ...(c.alertas||[]).map(a=>`<span style="color:var(--negative);">⚠ ${escapeHtml(a)}</span>`)
+    ].join(' · ');
+    return `<label style="display:flex;align-items:flex-start;gap:8px;padding:6px 2px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--border);">
+      <input type="checkbox" style="width:auto;margin-top:3px;" onchange="porNoVinculo('${p.id}', this.checked)">
+      <span style="flex:1;">
+        ${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}
+        ${razoes?`<div class="hint">${razoes}</div>`:''}
+      </span>
+      ${selo}
+    </label>`;
+  }).join('')
+    : '<div class="help-text">Nenhum produto suficientemente parecido. Use a busca acima para procurar pelo nome.</div>';
 }
 
 function porNoVinculo(produtoId, marcado){
@@ -23434,15 +23572,19 @@ function renderSugestaoCompra(){
       return;
     }
 
+    // A SUGESTÃO vem logo depois do que foi vendido, e não no fim da linha:
+    // no fim ela saía da tela em monitor menor e era fácil confundir o
+    // estoque (que pode ser negativo) com a sugestão de compra.
+    // A média mensal virou uma linha menor embaixo da quantidade vendida,
+    // pra tabela caber sem rolagem lateral.
     tabela.innerHTML = `
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table tabela-sugestao">
           <thead><tr>
             <th>Produto</th><th>Marca</th><th>Fornecedor</th>
             <th class="num">Vendido no período</th>
-            <th class="num">Média mensal</th>
+            <th class="num">Comprar (sugestão)</th>
             <th class="num">Estoque atual</th>
-            <th class="num">Sugestão de compra</th>
           </tr></thead>
           <tbody>
             ${linhas.map(l=>`
@@ -23450,18 +23592,18 @@ function renderSugestaoCompra(){
                 <td>${escapeHtml(l.nome)}${l.grupoId?' <span class="badge badge-neutral" title="Produtos vinculados">🔗 grupo</span>':''}</td>
                 <td>${escapeHtml(l.marca||'—')}</td>
                 <td>${escapeHtml(l.fornecedor||'—')}</td>
-                <td class="num">${fmtNum(l.qtdVendida)} ${escapeHtml(l.unidade)}</td>
-                <td class="num">${fmtNum(Math.round(l.mediaMensal*100)/100)}</td>
-                <td class="num">${fmtNum(l.estoqueAtual)}</td>
-                <td class="num" style="font-weight:700;">${fmtNum(l.sugestao)} ${escapeHtml(l.unidade)}</td>
+                <td class="num">${fmtNum(l.qtdVendida)} ${escapeHtml(l.unidade)}<div class="hint">${fmtNum(Math.round(l.mediaMensal*100)/100)} por mês</div></td>
+                <td class="num col-sugestao">${fmtNum(l.sugestao)} ${escapeHtml(l.unidade)}</td>
+                <td class="num">${l.estoqueAtual < 0
+                    ? `<span style="color:var(--negative);" title="Estoque negativo: saiu mais do que foi registrado como entrada. Não entra na conta da sugestão.">${fmtNum(l.estoqueAtual)} ⚠</span>`
+                    : fmtNum(l.estoqueAtual)}</td>
               </tr>`).join('')}
           </tbody>
           <tfoot><tr>
             <td colspan="3">Total (${linhas.length} ${linhas.length===1?'item':'itens'})</td>
             <td class="num">${fmtNum(linhas.reduce((s,l)=>s+l.qtdVendida,0))}</td>
-            <td></td>
+            <td class="num col-sugestao">${fmtNum(linhas.reduce((s,l)=>s+l.sugestao,0))}</td>
             <td class="num">${fmtNum(linhas.reduce((s,l)=>s+l.estoqueAtual,0))}</td>
-            <td class="num" style="font-weight:700;">${fmtNum(linhas.reduce((s,l)=>s+l.sugestao,0))}</td>
           </tr></tfoot>
         </table>
       </div>
