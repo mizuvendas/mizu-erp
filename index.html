@@ -23656,9 +23656,10 @@ function renderSugestaoCompra(){
    convertida para a forma como você vai comprar, só faltando o preço que o
    fornecedor passar. O resto a planilha calcula sozinha.
 
-   A sugestão é sempre em UNIDADES. Quando você escolhe comprar em caixa, a
-   quantidade se converte sozinha pelo fator de conversão (unidades por
-   caixa): sugestão de 50 unidades com caixa de 10 vira 5 caixas, não 50.
+   A sugestão é sempre em UNIDADES. Quando você escolhe comprar numa
+   embalagem fechada (caixa, pacote ou fardo), a quantidade se converte
+   sozinha pelo fator de conversão (unidades por embalagem): sugestão de 50
+   unidades com caixa de 10 vira 5 caixas, não 50.
 
    A biblioteca usada no resto do sistema (SheetJS na versão livre) não grava
    cor, negrito nem lista suspensa — ela escreve só os números. Por isso aqui
@@ -23765,7 +23766,7 @@ async function montarPlanilhaPedidoCompra(linhas){
     { t:'Preço de venda',      w:14, bloco:1, num:'R$ #,##0.00' },
     { t:'Comprar (sugestão)',  w:17, bloco:2, num:'#,##0.##' },
     { t:'Comprar em',          w:12, bloco:3 },
-    { t:'Un. por caixa',       w:13, bloco:3, num:'#,##0' },
+    { t:'Un. por embalagem',   w:16, bloco:3, num:'#,##0' },
     { t:'Quantidade',          w:13, bloco:3, num:'#,##0.##' },
     { t:'Preço de compra',     w:15, bloco:3, num:'R$ #,##0.00' },
     { t:'Onde comprar',        w:22, bloco:3 },
@@ -23791,7 +23792,7 @@ async function montarPlanilhaPedidoCompra(linhas){
 
   const cSug = L(C['Comprar (sugestão)']);
   const cEm  = L(C['Comprar em']);
-  const cCx  = L(C['Un. por caixa']);
+  const cCx  = L(C['Un. por embalagem']);
   const cQtd = L(C['Quantidade']);
   const cPre = L(C['Preço de compra']);
   const cTot = L(C['Total de unidades']);
@@ -23858,18 +23859,19 @@ async function montarPlanilhaPedidoCompra(linhas){
     linha.getCell(C['Preço de venda']).value = (l.precoVenda != null) ? l.precoVenda : '';
     linha.getCell(C['Comprar (sugestão)']).value = l.sugestao;
     linha.getCell(C['Comprar em']).value    = 'UN';
-    linha.getCell(C['Un. por caixa']).value = porCaixa;
+    linha.getCell(C['Un. por embalagem']).value = porCaixa;
     linha.getCell(C['Preço de compra']).value = null;
     linha.getCell(C['Onde comprar']).value  = l.fornecedor || '';
 
-    // A quantidade é CALCULADA a partir da sugestão: trocando UN por CX, ela
-    // se converte sozinha pelo fator de conversão. Sugestão de 50 unidades
-    // com caixa de 10 vira 5 caixas. Arredonda pra cima: não dá pra comprar
-    // meia caixa. Se ela quiser outra quantidade, digita por cima.
+    // A quantidade é CALCULADA a partir da sugestão: escolhendo qualquer
+    // embalagem fechada (CX, PCT, FD), ela se converte sozinha pelo fator.
+    // Sugestão de 50 unidades com caixa de 10 vira 5 caixas. Arredonda pra
+    // cima: não dá pra comprar meia caixa. Querendo outra quantidade, ela
+    // digita por cima. UN é o único que não converte.
     linha.getCell(C['Quantidade']).value = { formula:
-      `IF(EXACT(UPPER(${cEm}${r}),"CX"),ROUNDUP(${cSug}${r}/IF(OR(${cCx}${r}="",${cCx}${r}=0),1,${cCx}${r}),0),ROUNDUP(${cSug}${r},0))` };
+      `IF(EXACT(UPPER(${cEm}${r}),"UN"),ROUNDUP(${cSug}${r},0),ROUNDUP(${cSug}${r}/IF(OR(${cCx}${r}="",${cCx}${r}=0),1,${cCx}${r}),0))` };
     linha.getCell(C['Total de unidades']).value = { formula:
-      `IF(${cQtd}${r}="","",IF(EXACT(UPPER(${cEm}${r}),"CX"),${cQtd}${r}*IF(OR(${cCx}${r}="",${cCx}${r}=0),1,${cCx}${r}),${cQtd}${r}))` };
+      `IF(${cQtd}${r}="","",IF(EXACT(UPPER(${cEm}${r}),"UN"),${cQtd}${r},${cQtd}${r}*IF(OR(${cCx}${r}="",${cCx}${r}=0),1,${cCx}${r})))` };
     linha.getCell(C['Valor total']).value = { formula:
       `IF(OR(${cQtd}${r}="",${cPre}${r}=""),"",${cQtd}${r}*${cPre}${r})` };
     linha.getCell(C['Custo por unidade']).value = { formula:
@@ -23921,10 +23923,10 @@ async function montarPlanilhaPedidoCompra(linhas){
   }
   for(let r=PRIMEIRA; r<=ULTIMA; r++){
     ws.getCell(r, C['Comprar em']).dataValidation = {
-      type:'list', allowBlank:false, formulae:['"UN,CX"'],
+      type:'list', allowBlank:false, formulae:['"UN,CX,PCT,FD"'],
       showErrorMessage:true,
-      errorTitle:'Escolha UN ou CX',
-      error:'UN = unidade solta. CX = caixa fechada (a quantidade se converte sozinha).'
+      errorTitle:'Escolha a forma de comprar',
+      error:'UN = unidade solta · CX = caixa · PCT = pacote · FD = fardo.\nNas três últimas a quantidade se converte sozinha pelo fator.'
     };
     if(wsListas){
       ws.getCell(r, C['Onde comprar']).dataValidation = {
@@ -23959,12 +23961,15 @@ async function montarPlanilhaPedidoCompra(linhas){
     ['A sugestão é sempre em UNIDADES. A coluna Quantidade já vem calculada a partir dela.', ''],
     ['Na maioria das linhas você só precisa digitar o preço que o fornecedor passou.', ''],
     ['', ''],
-    ['COMPRAR EM CAIXA', 'secao'],
-    ['Troque "Comprar em" de UN para CX e a Quantidade se converte sozinha.', ''],
+    ['COMPRAR EM EMBALAGEM FECHADA', 'secao'],
+    ['Em "Comprar em" você escolhe:', ''],
+    ['UN = unidade solta · CX = caixa · PCT = pacote · FD = fardo.', ''],
+    ['Em qualquer uma que não seja UN, a Quantidade se converte sozinha.', ''],
     ['Exemplo: sugestão de 50 unidades, caixa com 10 → a planilha mostra 5 caixas.', ''],
-    ['Quem faz essa conversão é a coluna "Un. por caixa". Se estiver errada, corrija ali', ''],
+    ['Quem faz essa conversão é a coluna "Un. por embalagem": quantas unidades vêm', ''],
+    ['dentro de uma caixa, de um pacote ou de um fardo. Se estiver errada, corrija ali', ''],
     ['e a quantidade se ajusta na hora. Sobrando fração, arredonda pra cima: não dá', ''],
-    ['pra comprar meia caixa.', ''],
+    ['pra comprar meio fardo.', ''],
     ['Se quiser uma quantidade diferente da sugerida, é só digitar por cima.', ''],
     ['', ''],
     ['AS CORES', 'secao'],
@@ -23973,15 +23978,15 @@ async function montarPlanilhaPedidoCompra(linhas){
     ['Cinza — calculado sozinho. Não precisa digitar nada; se digitar, perde a conta.', ''],
     ['', ''],
     ['OS CAMPOS QUE VOCÊ PREENCHE', 'secao'],
-    ['Comprar em — UN (unidade solta) ou CX (caixa fechada), na listinha da célula.', ''],
-    ['Un. por caixa — o fator de conversão: quantas unidades vêm na caixa.', ''],
+    ['Comprar em — UN, CX, PCT ou FD, na listinha da célula.', ''],
+    ['Un. por embalagem — o fator de conversão: quantas unidades vêm na embalagem.', ''],
     ['Quantidade — já vem calculada; digite por cima só se quiser outra quantidade.', ''],
-    ['Preço de compra — o preço de UMA unidade, ou de UMA caixa se escolheu CX.', ''],
+    ['Preço de compra — o preço de UMA unidade, ou de UMA embalagem fechada.', ''],
     ['Onde comprar — o fornecedor ou a loja onde você vai comprar aquele item.', ''],
     ['A listinha traz os que já estão cadastrados, mas você pode digitar outro.', ''],
     ['', ''],
     ['O QUE A PLANILHA CALCULA', 'secao'],
-    ['Total de unidades — quantas unidades entram no estoque (caixas × unidades por caixa).', ''],
+    ['Total de unidades — quantas unidades entram no estoque (embalagens × fator).', ''],
     ['Valor total — quantidade × preço de compra.', ''],
     ['Custo por unidade — valor total dividido pelas unidades. É o custo real de cada peça.', ''],
     ['Quando esse custo fica ACIMA do custo atual do produto, a célula fica vermelha:', ''],
@@ -24016,7 +24021,7 @@ function exportarSugestaoCompraExcelSimples(linhas){
   }
   // A B C          D       E       F     G      H        I     J      K    L      M           N       O      P
   const cab = ['Produto','Marca','Fornecedor','Vendido no período','Estoque atual','Custo atual','Preço de venda',
-               'Comprar (sugestão)','Comprar em (UN/CX)','Un. por caixa','Quantidade','Preço de compra','Onde comprar',
+               'Comprar (sugestão)','Comprar em (UN/CX/PCT/FD)','Un. por embalagem','Quantidade','Preço de compra','Onde comprar',
                'Total de unidades','Valor total','Custo por unidade'];
   const aoa = [cab];
   linhas.forEach(l=>{
@@ -24027,8 +24032,8 @@ function exportarSugestaoCompraExcelSimples(linhas){
   const ws = XLSX.utils.aoa_to_sheet(aoa);
   linhas.forEach((_, i)=>{
     const n = i + 2;
-    ws['K'+n] = { t:'n', f:`IF(EXACT(UPPER(I${n}),"CX"),ROUNDUP(H${n}/IF(OR(J${n}="",J${n}=0),1,J${n}),0),ROUNDUP(H${n},0))` };
-    ws['N'+n] = { t:'n', f:`IF(K${n}="","",IF(EXACT(UPPER(I${n}),"CX"),K${n}*IF(OR(J${n}="",J${n}=0),1,J${n}),K${n}))` };
+    ws['K'+n] = { t:'n', f:`IF(EXACT(UPPER(I${n}),"UN"),ROUNDUP(H${n},0),ROUNDUP(H${n}/IF(OR(J${n}="",J${n}=0),1,J${n}),0))` };
+    ws['N'+n] = { t:'n', f:`IF(K${n}="","",IF(EXACT(UPPER(I${n}),"UN"),K${n},K${n}*IF(OR(J${n}="",J${n}=0),1,J${n})))` };
     ws['O'+n] = { t:'n', f:`IF(OR(K${n}="",L${n}=""),"",K${n}*L${n})` };
     ws['P'+n] = { t:'n', f:`IF(OR(O${n}="",N${n}="",N${n}=0),"",O${n}/N${n})` };
   });
@@ -24062,6 +24067,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-01-e',
+    data: '2026-10-01',
+    titulo: 'Planilha: unidade, caixa, pacote e fardo',
+    itens: [
+      'Em "Comprar em" agora dá pra escolher UN (unidade), CX (caixa), PCT (pacote) ou FD (fardo).',
+      'Em qualquer embalagem fechada a quantidade se converte sozinha pelo fator — a coluna virou "Un. por embalagem".'
+    ]
+  },
   {
     id: '2026-10-01-d',
     data: '2026-10-01',
