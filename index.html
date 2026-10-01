@@ -15902,12 +15902,17 @@ function renderQuinzenasRepasse(){
         <td>${rotuloQuinzena(q.vencimento)}</td>
         <td>${fmtDate(q.vencimento)}</td>
         <td class="num">${fmtMoney(q.totalComDesconto)}</td>
-        <td class="num" style="color:${q.totalAbatido>0?'var(--positive)':'var(--ink-faint)'}">${q.totalAbatido>0?fmtMoney(q.totalAbatido):'—'}</td>
+        <td class="num" style="color:${q.totalAbatido>q.totalComDesconto+0.005?'var(--warning)':(q.totalAbatido>0?'var(--positive)':'var(--ink-faint)')};${q.totalAbatido>q.totalComDesconto+0.005?'font-weight:700;':''}"
+            ${q.totalAbatido>q.totalComDesconto+0.005?`title="Pago a mais que o total desta quinzena (${fmtMoney(q.totalAbatido-q.totalComDesconto)} de diferença). Quase sempre é um pagamento lançado duas vezes — abra 💳 Pagamentos e confira."`:''}>
+          ${q.totalAbatido>0?fmtMoney(q.totalAbatido):'—'}${q.totalAbatido>q.totalComDesconto+0.005?' ⚠':''}
+        </td>
         <td class="num" style="${q.saldoPendente>0.005?'color:var(--negative);font-weight:700;':'color:var(--positive);'}">${fmtMoney(Math.max(0,q.saldoPendente))}</td>
         <td><span style="color:${st.color};font-weight:600;">${st.label}</span></td>
         <td>
           <div class="cell-actions">
-            ${q.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="abrirFormPagamentoQuinzena('${q.pagadorId}','${q.vencimento}')">+ Registrar Pagamento</button>` : ''}
+            ${q.saldoPendente>0.005
+              ? `<button class="btn btn-sm btn-primary" onclick="abrirFormPagamentoQuinzena('${q.pagadorId}','${q.vencimento}')">+ Registrar Pagamento</button>`
+              : `<button class="btn btn-sm" title="Ver, corrigir ou excluir os pagamentos lançados nesta quinzena" onclick="abrirFormPagamentoQuinzena('${q.pagadorId}','${q.vencimento}')">💳 Pagamentos</button>`}
             <button class="btn btn-sm" title="Gera o relatório em PDF só desta quinzena, já com os pagamentos dela" onclick='abrirEscolhaModoRelatorioRepasses(${JSON.stringify({pagadorId:q.pagadorId, vencimento:q.vencimento})})'>📄 Gerar Relatório</button>
             <button class="btn btn-sm" title="Gera o relatório em texto pra mandar no WhatsApp, só desta quinzena" onclick='abrirEscolhaModoRelatorioWhatsappQuinzena(${JSON.stringify({pagadorId:q.pagadorId, vencimento:q.vencimento})})'>📲 WhatsApp</button>
           </div>
@@ -24137,6 +24142,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-01-j',
+    data: '2026-10-01',
+    titulo: 'Repasses: dá pra corrigir uma quinzena já quitada',
+    itens: [
+      'Depois que a quinzena ficava quitada, o botão de pagamentos sumia e não havia como desfazer um lançamento errado. Agora toda quinzena tem o botão 💳 Pagamentos.',
+      'Lá dentro aparece a lista do que já foi lançado naquela quinzena, com Editar e Excluir em cada pagamento.',
+      'E quando o valor pago passa do total da quinzena, a coluna "Já pago" fica laranja com um ⚠ — quase sempre é um pagamento lançado duas vezes.'
+    ]
+  },
   {
     id: '2026-10-01-i',
     data: '2026-10-01',
