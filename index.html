@@ -901,7 +901,7 @@ table.data-table{ width:100%; font-size:13px; }
       <button id="btn-import">⬆ Importar backup (.json)</button>
       <input type="file" id="file-import" accept=".json" style="display:none;">
       <span id="last-saved">—</span>
-      <div style="font-size:11px;color:rgba(255,255,255,0.4);text-align:center;margin-top:6px;">Teste automação completa ✅</div>
+      <button id="btn-novidades" onclick="abrirNovidades(null, 'Tudo que já mudou no sistema')" style="background:transparent;border-color:rgba(255,255,255,0.18);color:rgba(255,255,255,0.65);">✨ Novidades</button>
     </div>
   </aside>
 
@@ -1476,6 +1476,7 @@ function defaultState(){
     licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
+    novidadeVista: '', // id da última novidade lida (ver NOVIDADES) — só pra não repetir o aviso de atualização
     gruposProdutos: [], // { id, nome, produtoIds:[], criadoEm } — produtos que são "o mesmo produto" na prática (ver abrirVincularProdutos). AGRUPAMENTO só para análise: não mexe no cadastro nem no histórico de vendas, e pode ser desfeito.
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
     mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
@@ -23986,12 +23987,170 @@ function exportarSugestaoCompraExcelSimples(linhas){
 RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 /* =========================================================
+   MÓDULO: NOVIDADES DO SISTEMA
+
+   Toda vez que o sistema é atualizado, uma entrada nova entra no topo da
+   lista NOVIDADES abaixo. Ao abrir a página, se existir alguma entrada
+   mais recente do que a última que você leu, aparece uma janela contando
+   o que mudou — e só some quando você confirmar.
+
+   O que o sistema guarda é só o id da última novidade lida
+   (STATE.novidadeVista). Nada é enviado pra lugar nenhum.
+
+   PRA QUEM FOR MEXER AQUI: o id precisa ser único e a lista precisa estar
+   em ordem, do mais novo pro mais antigo. É a posição na lista que decide
+   o que ainda não foi lido.
+   ========================================================= */
+
+const NOVIDADES = [
+  {
+    id: '2026-10-01-c',
+    data: '2026-10-01',
+    titulo: 'Aviso de novidades',
+    itens: [
+      'Esta janela: sempre que o sistema for atualizado, ela aparece contando o que mudou.',
+      'Dá pra reabrir quando quiser, no botão "Novidades" no rodapé do menu da esquerda.'
+    ]
+  },
+  {
+    id: '2026-10-01-b',
+    data: '2026-10-01',
+    titulo: 'A planilha de compra virou um pedido pronto',
+    itens: [
+      'O Excel da Sugestão de Compra agora sai com as colunas agrupadas por cor: verde é a sugestão, amarelo é o que você preenche, cinza é o que a planilha calcula sozinha.',
+      'A quantidade já vem preenchida com a sugestão — na maioria das linhas falta só digitar o preço do fornecedor.',
+      'Na coluna "Comprar em" você escolhe UN ou CX numa listinha, sem digitar.',
+      'Quando o custo da compra fica acima do custo atual do produto, a célula fica vermelha avisando.',
+      'O cabeçalho fica fixo e com filtro, pra montar o pedido de um fornecedor por vez.',
+      'Tem uma aba "Como usar" explicando cada campo.'
+    ]
+  },
+  {
+    id: '2026-10-01-a',
+    data: '2026-10-01',
+    titulo: 'Vincular produtos ficou mais esperto',
+    itens: [
+      'Ao vincular, o sistema lê a medida e a embalagem do nome: entende que 5L e 5000ML são a mesma coisa, e que 8X300 e 12X30 não são.',
+      'Cada sugestão mostra a nota de semelhança e o motivo ("mesma medida", "⚠ embalagem diferente").',
+      'Cada sugestão também mostra se aquele produto já foi vendido alguma vez, quanto e quando.',
+      'Na Sugestão de Compra, a coluna da sugestão saiu do fim da linha e o cabeçalho ficou fixo — estava fácil confundir com o estoque.',
+      'Estoque negativo aparece em vermelho, avisando que não entra na conta.'
+    ]
+  },
+  {
+    id: '2026-09-30-b',
+    data: '2026-09-30',
+    titulo: 'Análise de Vendas: vincular, editar e comprar',
+    itens: [
+      'Em Total por Produto, o botão 🔗 junta cadastros diferentes do mesmo produto numa linha só, somando as vendas. Os cadastros continuam separados e dá pra desfazer.',
+      'Dois cliques em Produto, Marca, Fornecedor ou Custo editam ali mesmo, sem abrir o cadastro.',
+      'A Sugestão de Compra passou a ser por período (de mês a mês) e por percentual: vendeu 100 e você escolhe 70% → sugere comprar 70.'
+    ]
+  },
+  {
+    id: '2026-09-30-a',
+    data: '2026-09-30',
+    titulo: 'Nota fiscal própria',
+    itens: [
+      'O sistema passou a emitir NF-e (modelo 55) e NFC-e (cupom do balcão, modelo 65) por conta própria, sem mensalidade.',
+      'Ao converter um orçamento em venda, você escolhe: NF-e, NFC-e ou venda sem nota. Os três baixam o estoque.',
+      'O XML e o PDF ficam disponíveis pra baixar, e o XML pode ser salvo sozinho numa pasta do computador.',
+      'Foi criado o cliente CONSUMIDOR FINAL, com CPF opcional na hora da venda.',
+      'No orçamento, adicionar o mesmo produto de novo soma na linha que já existia em vez de duplicar.'
+    ]
+  }
+];
+
+let _novidadesJaVerificadas = false;
+
+function versaoAtualNovidades(){
+  return NOVIDADES.length ? NOVIDADES[0].id : '';
+}
+
+/* O que ainda não foi lido. Primeira vez (ou id desconhecido, porque alguém
+   restaurou um backup antigo): mostra as novidades do dia mais recente, e
+   não a história inteira — o botão "Ver tudo" abre o resto. */
+function novidadesNaoVistas(){
+  const vista = STATE.novidadeVista || '';
+  const soODiaMaisRecente = () => {
+    const dia = NOVIDADES.length ? NOVIDADES[0].data : '';
+    return NOVIDADES.filter(n => n.data === dia);
+  };
+  if(!vista) return soODiaMaisRecente();
+  const i = NOVIDADES.findIndex(n => n.id === vista);
+  if(i === -1) return soODiaMaisRecente();
+  return NOVIDADES.slice(0, i);
+}
+
+function marcarNovidadesVistas(){
+  STATE.novidadeVista = versaoAtualNovidades();
+  saveState();
+}
+
+function fecharNovidades(marcarComoLidas){
+  if(marcarComoLidas) marcarNovidadesVistas();
+  document.getElementById('modal-novidades')?.remove();
+}
+
+function abrirNovidades(lista, subtitulo){
+  const itens = lista || NOVIDADES;
+  if(itens.length === 0) return;
+  const naoLidas = !!lista;
+
+  document.getElementById('modal-novidades')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-novidades';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:88vh;display:flex;flex-direction:column;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✨</div>
+        <div>
+          <h3>${naoLidas ? 'O sistema foi atualizado' : 'Novidades do sistema'}</h3>
+          <div class="sub">${escapeHtml(subtitulo || 'Histórico de tudo que mudou')}</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="fecharNovidades(${naoLidas})">✕</button>
+      </div>
+      <div class="modal-rapido-corpo" style="overflow-y:auto;">
+        ${itens.map(n => `
+          <div style="margin-bottom:18px;">
+            <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+              <strong style="font-size:14px;color:var(--primary);">${escapeHtml(n.titulo)}</strong>
+              <span class="hint">${fmtDate(n.data)}</span>
+            </div>
+            <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--ink);">
+              ${n.itens.map(t => `<li style="margin-bottom:4px;">${escapeHtml(t)}</li>`).join('')}
+            </ul>
+          </div>`).join('')}
+      </div>
+      <div class="modal-actions" style="padding:12px 18px 16px 18px;">
+        ${naoLidas && itens.length < NOVIDADES.length
+          ? `<button class="btn" onclick="abrirNovidades(null, 'Tudo que já mudou no sistema')">Ver tudo</button>` : ''}
+        <button class="btn btn-primary" onclick="fecharNovidades(${naoLidas})">${naoLidas ? 'Entendi' : 'Fechar'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function verificarNovidadesAoAbrirApp(){
+  if(_novidadesJaVerificadas) return;
+  _novidadesJaVerificadas = true;
+  const pendentes = novidadesNaoVistas();
+  if(pendentes.length === 0) return;
+  const quantas = pendentes.length;
+  abrirNovidades(pendentes, quantas === 1
+    ? 'Uma novidade desde a última vez que você abriu'
+    : `${quantas} novidades desde a última vez que você abriu`);
+}
+
+/* =========================================================
    INICIALIZAÇÃO
    ========================================================= */
 document.addEventListener('DOMContentLoaded', ()=>{
   renderDashboard();
   atualizarBadgesMenu();
   verificarBackupAoAbrirApp();
+  verificarNovidadesAoAbrirApp();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
 });
@@ -23999,6 +24158,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 renderDashboard();
 atualizarBadgesMenu();
 verificarBackupAoAbrirApp();
+verificarNovidadesAoAbrirApp();
 </script>
 </body>
 </html>
