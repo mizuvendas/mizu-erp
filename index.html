@@ -23645,67 +23645,342 @@ function renderSugestaoCompra(){
   document.getElementById('sc-percentual').addEventListener('change', e=>{ scPercentual = Math.max(1, parseFloat(e.target.value)||100); renderTabela(); });
   document.getElementById('sc-esconder-zerados').addEventListener('change', e=>{ scEsconderZerados = e.target.checked; renderTabela(); });
   document.getElementById('sc-btn-excel').addEventListener('click', exportarSugestaoCompraExcel);
+  // Começa a baixar a biblioteca da planilha agora, enquanto ela olha a
+  // tabela — assim o clique em "Exportar" não fica esperando.
+  carregarExcelJs();
 }
 
-/* ---------- Excel da sugestão de compra ----------
-   A planilha sai com as fórmulas prontas: você preenche se vai comprar em
-   caixa ou unidade, a quantidade e o preço, e ela soma sozinha. */
-function exportarSugestaoCompraExcel(){
-  if(!XLSX_DISPONIVEL){
-    showToast('A biblioteca de planilhas não carregou (precisa de internet). Tente de novo com conexão.', 'error');
-    return;
-  }
+/* ---------- planilha de pedido de compra ----------
+   A planilha que sai daqui é o pedido de compra: ela já vem com a sugestão
+   preenchida na coluna de quantidade, só faltando o preço que o fornecedor
+   passar. O resto a planilha calcula sozinha.
+
+   A biblioteca usada no resto do sistema (SheetJS na versão livre) não grava
+   cor, negrito nem lista suspensa — ela escreve só os números. Por isso aqui
+   é usada a ExcelJS, carregada só na hora de exportar. Se ela não carregar
+   (sem internet), cai na versão simples, sem formatação, para a exportação
+   nunca ficar indisponível. */
+
+const EXCELJS_URL = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+let excelJsPromessa = null;
+
+function carregarExcelJs(){
+  if(typeof ExcelJS !== 'undefined') return Promise.resolve(true);
+  if(excelJsPromessa) return excelJsPromessa;
+  excelJsPromessa = new Promise(resolve=>{
+    const s = document.createElement('script');
+    s.src = EXCELJS_URL;
+    s.onload = ()=>resolve(typeof ExcelJS !== 'undefined');
+    s.onerror = ()=>{ excelJsPromessa = null; resolve(false); };
+    document.head.appendChild(s);
+  });
+  return excelJsPromessa;
+}
+
+/* Paleta: as mesmas cores do sistema, para a planilha parecer parte dele. */
+const COR = {
+  escuro:   '1B4B5A',
+  cinza:    '5B6472',
+  verde:    '2E7D5B',
+  ambar:    'C98A2C',
+  ambarFraco:'FBF1E2',
+  cinzaFraco:'F2F3F5',
+  verdeFraco:'E7F4EE',
+  borda:    'D8DCE2',
+  vermelho: 'C4483D',
+  vermelhoFraco:'FBEAE8'
+};
+
+function baixarArquivo(buffer, nome){
+  const blob = new Blob([buffer], { type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = nome;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 30000);
+}
+
+async function exportarSugestaoCompraExcel(){
   const linhas = getSugestaoCompraPeriodo(scPeriodoInicio, scPeriodoFim, scPercentual);
   if(linhas.length===0){ showToast('Nenhuma venda no período pra exportar.', 'error'); return; }
 
-  const cabecalho = [
-    'Código','Produto','Marca','Fornecedor','Custo atual (R$)','Preço de venda (R$)',
-    'Vendido no período','Média mensal','Estoque atual','Sugestão de compra',
-    'Comprar em (CX/UN)','Unidades por caixa','Quantidade a comprar','Preço de compra (R$)',
-    'Quantidade em unidades','Total a pagar (R$)'
-  ];
+  const botao = document.getElementById('sc-btn-excel');
+  const rotulo = botao ? botao.textContent : '';
+  if(botao){ botao.disabled = true; botao.textContent = 'Gerando planilha...'; }
 
-  const aoa = [cabecalho];
-  linhas.forEach(l=>{
-    aoa.push([
-      l.codigo || '', l.nome, l.marca||'', l.fornecedor||'',
-      l.custo ?? '', l.precoVenda ?? '',
-      l.qtdVendida, Math.round(l.mediaMensal*100)/100, l.estoqueAtual, l.sugestao,
-      // Sem "unidades por caixa" cadastrado, entra 1: assim, se ela escolher
-      // CX, a conta não vira zero calado — mostra o número errado, que ela vê
-      // e corrige na hora.
-      'UN', l.unidadesPorCaixa || 1, '', '',
-      null, null // preenchidos por fórmula logo abaixo
-    ]);
+  try{
+    const temExcelJs = await carregarExcelJs();
+    if(!temExcelJs){
+      showToast('Sem internet para a planilha formatada — gerando a versão simples.', 'error');
+      exportarSugestaoCompraExcelSimples(linhas);
+      return;
+    }
+    await montarPlanilhaPedidoCompra(linhas);
+    showToast('Planilha gerada. Preencha o preço de compra que o resto se calcula sozinho.', 'success');
+  }catch(e){
+    // Se a planilha bonita falhar por qualquer motivo, ela ainda recebe o
+    // arquivo: um pedido de compra sem cor é muito melhor que nenhum.
+    console.error(e);
+    showToast('A planilha formatada falhou (' + e.message + '). Gerando a versão simples.', 'error');
+    try{ exportarSugestaoCompraExcelSimples(linhas); }catch(e2){ console.error(e2); }
+  }finally{
+    if(botao){ botao.disabled = false; botao.textContent = rotulo; }
+  }
+}
+
+async function montarPlanilhaPedidoCompra(linhas){
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Mizu Materiais de Limpeza';
+  wb.created = new Date();
+
+  const ws = wb.addWorksheet('Pedido de Compra', {
+    views: [{ state:'frozen', xSplit:1, ySplit:5 }],
+    pageSetup: { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 }
   });
 
-  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  const COLS = [
+    { k:'produto',   t:'Produto',                  w:44, bloco:0 },
+    { k:'marca',     t:'Marca',                    w:16, bloco:0 },
+    { k:'fornec',    t:'Fornecedor',               w:20, bloco:0 },
+    { k:'vendido',   t:'Vendido no período',       w:18, bloco:1, num:'#,##0.##' },
+    { k:'estoque',   t:'Estoque atual',            w:14, bloco:1, num:'#,##0.##' },
+    { k:'custo',     t:'Custo atual',              w:14, bloco:1, num:'R$ #,##0.00' },
+    { k:'venda',     t:'Preço de venda',           w:15, bloco:1, num:'R$ #,##0.00' },
+    { k:'sugestao',  t:'Comprar (sugestão)',       w:18, bloco:2, num:'#,##0.##' },
+    { k:'em',        t:'Comprar em',               w:13, bloco:3 },
+    { k:'porCaixa',  t:'Un. por caixa',            w:14, bloco:3, num:'#,##0' },
+    { k:'qtd',       t:'Quantidade',               w:13, bloco:3, num:'#,##0.##' },
+    { k:'preco',     t:'Preço de compra',          w:16, bloco:3, num:'R$ #,##0.00' },
+    { k:'totalUn',   t:'Total de unidades',        w:17, bloco:4, num:'#,##0.##' },
+    { k:'valor',     t:'Valor total',              w:15, bloco:4, num:'R$ #,##0.00' },
+    { k:'custoUn',   t:'Custo por unidade',        w:17, bloco:4, num:'R$ #,##0.00' }
+  ];
 
-  // Fórmulas: linha 2 em diante (linha 1 é o cabeçalho).
-  // K=Comprar em, L=Unid/caixa, M=Qtd, N=Preço, O=Qtd em unidades, P=Total
+  const BLOCOS = [
+    { titulo:'O PRODUTO',          cor:COR.escuro, fundo:null },
+    { titulo:'COMO ESTÁ HOJE',     cor:COR.cinza,  fundo:null },
+    { titulo:'SUGESTÃO',           cor:COR.verde,  fundo:COR.verdeFraco },
+    { titulo:'VOCÊ PREENCHE',      cor:COR.ambar,  fundo:COR.ambarFraco },
+    { titulo:'A PLANILHA CALCULA', cor:COR.cinza,  fundo:COR.cinzaFraco }
+  ];
+
+  const ultimaCol = COLS.length;            // 15 = O
+  const L = n => ws.getColumn(n).letter;    // número da coluna -> letra
+  ws.columns = COLS.map(c=>({ width:c.w }));
+
+  // ---- título ----
+  ws.mergeCells(1, 1, 1, ultimaCol);
+  const t1 = ws.getCell(1,1);
+  t1.value = 'PEDIDO DE COMPRA';
+  t1.font = { bold:true, size:16, color:{argb:'FF'+COR.escuro} };
+  t1.alignment = { vertical:'middle' };
+  ws.getRow(1).height = 26;
+
+  ws.mergeCells(2, 1, 2, ultimaCol);
+  const meses = scMesesNoPeriodo(scPeriodoInicio, scPeriodoFim);
+  const t2 = ws.getCell(2,1);
+  t2.value = `Vendas de ${monthLabel(scPeriodoInicio)} a ${monthLabel(scPeriodoFim)} (${meses} ${meses===1?'mês':'meses'})`
+    + ` · sugestão = ${scPercentual}% do que foi vendido · gerado em ${fmtDate(todayISO())}`;
+  t2.font = { size:10, color:{argb:'FF'+COR.cinza} };
+  ws.getRow(3).height = 6;
+
+  // ---- faixa dos blocos (linha 4) ----
+  let col = 1;
+  BLOCOS.forEach((b, i)=>{
+    const qtas = COLS.filter(c=>c.bloco===i).length;
+    if(qtas===0) return;
+    ws.mergeCells(4, col, 4, col+qtas-1);
+    const cel = ws.getCell(4, col);
+    cel.value = b.titulo;
+    cel.font = { bold:true, size:9, color:{argb:'FFFFFFFF'} };
+    cel.alignment = { horizontal:'center', vertical:'middle' };
+    cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+b.cor} };
+    col += qtas;
+  });
+  ws.getRow(4).height = 18;
+
+  // ---- cabeçalho das colunas (linha 5) ----
+  const cab = ws.getRow(5);
+  COLS.forEach((c, i)=>{
+    const cel = cab.getCell(i+1);
+    cel.value = c.t;
+    cel.font = { bold:true, size:10, color:{argb:'FF'+COR.escuro} };
+    cel.alignment = { vertical:'middle', horizontal: i<3 ? 'left' : 'center', wrapText:true };
+    cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+(BLOCOS[c.bloco].fundo || 'FFFFFF')} };
+    cel.border = { bottom:{ style:'medium', color:{argb:'FF'+COR.escuro} } };
+  });
+  cab.height = 30;
+
+  // ---- dados ----
+  const PRIMEIRA = 6;
+  linhas.forEach((l, i)=>{
+    const r = PRIMEIRA + i;
+    const linha = ws.getRow(r);
+    const porCaixa = l.unidadesPorCaixa || 1;
+
+    linha.getCell(1).value  = l.nome + (l.grupoId ? '  (vários cadastros vinculados)' : '');
+    linha.getCell(2).value  = l.marca || '';
+    linha.getCell(3).value  = l.fornecedor || '';
+    linha.getCell(4).value  = l.qtdVendida;
+    linha.getCell(5).value  = l.estoqueAtual;
+    linha.getCell(6).value  = (l.custo != null) ? l.custo : '';
+    linha.getCell(7).value  = (l.precoVenda != null) ? l.precoVenda : '';
+    linha.getCell(8).value  = l.sugestao;
+    // Já sai preenchido com a sugestão, em unidade: na maioria das linhas
+    // ela só precisa digitar o preço que o fornecedor passou.
+    linha.getCell(9).value  = 'UN';
+    linha.getCell(10).value = porCaixa;
+    linha.getCell(11).value = Math.ceil(l.sugestao);
+    linha.getCell(12).value = null;
+
+    const q = `${L(11)}${r}`, pc = `${L(10)}${r}`, em = `${L(9)}${r}`, pr = `${L(12)}${r}`;
+    const tu = `${L(13)}${r}`, vt = `${L(14)}${r}`;
+    linha.getCell(13).value = { formula:`IF(${q}="","",IF(EXACT(UPPER(${em}),"CX"),${q}*IF(${pc}="",1,${pc}),${q}))` };
+    linha.getCell(14).value = { formula:`IF(OR(${q}="",${pr}=""),"",${q}*${pr})` };
+    linha.getCell(15).value = { formula:`IF(OR(${vt}="",${tu}="",${tu}=0),"",${vt}/${tu})` };
+
+    COLS.forEach((c, j)=>{
+      const cel = linha.getCell(j+1);
+      if(c.num) cel.numFmt = c.num;
+      cel.font = { size:10 };
+      cel.alignment = { vertical:'middle', horizontal: j<3 ? 'left' : 'right' };
+      const fundo = BLOCOS[c.bloco].fundo;
+      if(fundo) cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+fundo} };
+      cel.border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+    });
+    linha.getCell(8).font = { size:10, bold:true, color:{argb:'FF'+COR.verde} };
+    linha.getCell(9).alignment = { vertical:'middle', horizontal:'center' };
+    if(l.estoqueAtual < 0) linha.getCell(5).font = { size:10, color:{argb:'FF'+COR.vermelho} };
+    linha.height = 17;
+  });
+
+  const ULTIMA = PRIMEIRA + linhas.length - 1;
+
+  // ---- total ----
+  const rTot = ULTIMA + 1;
+  const tot = ws.getRow(rTot);
+  ws.mergeCells(rTot, 1, rTot, 3);
+  tot.getCell(1).value = `TOTAL — ${linhas.length} ${linhas.length===1?'item':'itens'}`;
+  tot.getCell(4).value  = { formula:`SUM(${L(4)}${PRIMEIRA}:${L(4)}${ULTIMA})` };
+  tot.getCell(8).value  = { formula:`SUM(${L(8)}${PRIMEIRA}:${L(8)}${ULTIMA})` };
+  tot.getCell(13).value = { formula:`SUM(${L(13)}${PRIMEIRA}:${L(13)}${ULTIMA})` };
+  tot.getCell(14).value = { formula:`SUM(${L(14)}${PRIMEIRA}:${L(14)}${ULTIMA})` };
+  for(let c=1; c<=ultimaCol; c++){
+    const cel = tot.getCell(c);
+    cel.font = { bold:true, size:11, color:{argb:'FFFFFFFF'} };
+    cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+    cel.alignment = { vertical:'middle', horizontal: c===1 ? 'left' : 'right' };
+    if(COLS[c-1] && COLS[c-1].num) cel.numFmt = COLS[c-1].num;
+  }
+  tot.height = 22;
+
+  // ---- lista suspensa CX / UN ----
+  for(let r=PRIMEIRA; r<=ULTIMA; r++){
+    ws.getCell(r, 9).dataValidation = {
+      type:'list', allowBlank:false, formulae:['"UN,CX"'],
+      showErrorMessage:true,
+      errorTitle:'Escolha UN ou CX',
+      error:'Digite UN (unidade solta) ou CX (caixa fechada).'
+    };
+  }
+
+  // ---- avisa quando o preço de compra ficar acima do custo atual ----
+  ws.addConditionalFormatting({
+    ref: `${L(15)}${PRIMEIRA}:${L(15)}${ULTIMA}`,
+    rules: [{
+      type:'expression',
+      formulae:[`AND($${L(15)}${PRIMEIRA}<>"",$${L(6)}${PRIMEIRA}<>"",$${L(15)}${PRIMEIRA}>$${L(6)}${PRIMEIRA})`],
+      style:{
+        font:{ bold:true, color:{argb:'FF'+COR.vermelho} },
+        fill:{ type:'pattern', pattern:'solid', bgColor:{argb:'FF'+COR.vermelhoFraco} }
+      }
+    }]
+  });
+
+  ws.autoFilter = { from:{row:5, column:1}, to:{row:ULTIMA, column:ultimaCol} };
+
+  // ---- aba de instruções ----
+  const ajuda = wb.addWorksheet('Como usar');
+  ajuda.columns = [{ width:4 }, { width:104 }];
+  const texto = [
+    ['', 'COMO USAR ESTA PLANILHA', 'titulo'],
+    ['', '', ''],
+    ['', 'A planilha já vem com a sugestão de compra preenchida na coluna Quantidade.', ''],
+    ['', 'Na maioria das linhas você só precisa digitar o preço que o fornecedor passou.', ''],
+    ['', '', ''],
+    ['', 'AS CORES', 'secao'],
+    ['', 'Verde — a sugestão de compra, calculada sobre o que você vendeu no período.', ''],
+    ['', 'Amarelo — os campos que você preenche.', ''],
+    ['', 'Cinza — calculado sozinho. Não precisa digitar nada; se digitar, perde a conta.', ''],
+    ['', '', ''],
+    ['', 'OS CAMPOS QUE VOCÊ PREENCHE', 'secao'],
+    ['', 'Comprar em — escolha UN (unidade solta) ou CX (caixa fechada) na listinha da célula.', ''],
+    ['', 'Un. por caixa — quantas unidades vêm na caixa. Só importa se você escolheu CX.', ''],
+    ['', 'Quantidade — quantas unidades (ou quantas caixas, se escolheu CX) você vai comprar.', ''],
+    ['', 'Preço de compra — o preço de UMA unidade, ou de UMA caixa se escolheu CX.', ''],
+    ['', '', ''],
+    ['', 'O QUE A PLANILHA CALCULA', 'secao'],
+    ['', 'Total de unidades — quantas unidades entram no estoque (caixas × unidades por caixa).', ''],
+    ['', 'Valor total — quantidade × preço de compra.', ''],
+    ['', 'Custo por unidade — valor total dividido pelas unidades. É o custo real de cada peça.', ''],
+    ['', 'Quando esse custo fica ACIMA do custo atual do produto, a célula fica vermelha:', ''],
+    ['', 'é o aviso de que a compra está mais cara do que a anterior.', ''],
+    ['', '', ''],
+    ['', 'DETALHES', 'secao'],
+    ['', 'Estoque negativo (em vermelho) = saiu mais do que foi registrado como entrada.', ''],
+    ['', 'Ele não entra na conta da sugestão.', ''],
+    ['', 'Produtos marcados como "vários cadastros vinculados" somam as vendas de mais de', ''],
+    ['', 'um cadastro que são o mesmo produto na prática.', ''],
+    ['', 'A seta no cabeçalho filtra e ordena — dá pra montar o pedido de um fornecedor por vez.', '']
+  ];
+  texto.forEach((linha, i)=>{
+    const r = ajuda.getRow(i+2);
+    r.getCell(2).value = linha[1];
+    if(linha[2]==='titulo') r.getCell(2).font = { bold:true, size:15, color:{argb:'FF'+COR.escuro} };
+    else if(linha[2]==='secao') r.getCell(2).font = { bold:true, size:11, color:{argb:'FF'+COR.ambar} };
+    else r.getCell(2).font = { size:10, color:{argb:'FF2B2F36'} };
+    r.height = linha[2]==='titulo' ? 24 : 16;
+  });
+
+  const buffer = await wb.xlsx.writeBuffer();
+  baixarArquivo(buffer, `pedido_de_compra_${scPeriodoInicio}_a_${scPeriodoFim}.xlsx`);
+}
+
+/* Versão sem formatação, usada só quando a ExcelJS não carrega (sem
+   internet). Mesmos números, sem cor e sem lista suspensa. */
+function exportarSugestaoCompraExcelSimples(linhas){
+  if(!XLSX_DISPONIVEL){
+    showToast('Nenhuma biblioteca de planilha disponível — precisa de internet.', 'error');
+    return;
+  }
+  const cab = ['Produto','Marca','Fornecedor','Vendido no período','Estoque atual','Custo atual','Preço de venda',
+               'Comprar (sugestão)','Comprar em (UN/CX)','Un. por caixa','Quantidade','Preço de compra',
+               'Total de unidades','Valor total','Custo por unidade'];
+  const aoa = [cab];
+  linhas.forEach(l=>{
+    aoa.push([ l.nome, l.marca||'', l.fornecedor||'', l.qtdVendida, l.estoqueAtual,
+               l.custo ?? '', l.precoVenda ?? '', l.sugestao,
+               'UN', l.unidadesPorCaixa || 1, Math.ceil(l.sugestao), '', null, null, null ]);
+  });
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
   linhas.forEach((_, i)=>{
     const ln = i + 2;
-    ws['O'+ln] = { t:'n', f:`IF(EXACT(UPPER(K${ln}),"CX"),M${ln}*IF(L${ln}="",1,L${ln}),M${ln})` };
-    ws['P'+ln] = { t:'n', f:`IF(N${ln}="",0,M${ln}*N${ln})` };
+    ws['M'+ln] = { t:'n', f:`IF(K${ln}="","",IF(EXACT(UPPER(I${ln}),"CX"),K${ln}*IF(J${ln}="",1,J${ln}),K${ln}))` };
+    ws['N'+ln] = { t:'n', f:`IF(OR(K${ln}="",L${ln}=""),"",K${ln}*L${ln})` };
+    ws['O'+ln] = { t:'n', f:`IF(OR(N${ln}="",M${ln}="",M${ln}=0),"",N${ln}/M${ln})` };
   });
-
-  const ultima = linhas.length + 2;
-  ws['B'+ultima] = { t:'s', v:'TOTAL' };
-  ws['O'+ultima] = { t:'n', f:`SUM(O2:O${linhas.length+1})` };
-  ws['P'+ultima] = { t:'n', f:`SUM(P2:P${linhas.length+1})` };
-  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:ultima-1, c:cabecalho.length-1} });
-
-  ws['!cols'] = [
-    {wch:12},{wch:42},{wch:16},{wch:20},{wch:14},{wch:16},
-    {wch:16},{wch:13},{wch:13},{wch:17},
-    {wch:16},{wch:16},{wch:19},{wch:18},
-    {wch:20},{wch:18}
-  ];
-
+  const fim = linhas.length + 2;
+  ws['A'+fim] = { t:'s', v:'TOTAL' };
+  ws['M'+fim] = { t:'n', f:`SUM(M2:M${linhas.length+1})` };
+  ws['N'+fim] = { t:'n', f:`SUM(N2:N${linhas.length+1})` };
+  ws['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r:fim-1, c:cab.length-1} });
+  ws['!cols'] = cab.map((_,i)=>({ wch: i===0 ? 42 : 16 }));
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Sugestão de Compra');
-  XLSX.writeFile(wb, `sugestao_compra_${scPeriodoInicio}_a_${scPeriodoFim}.xlsx`);
-  showToast('Planilha gerada. As colunas de quantidade e preço já somam sozinhas.', 'success');
+  XLSX.utils.book_append_sheet(wb, ws, 'Pedido de Compra');
+  XLSX.writeFile(wb, `pedido_de_compra_${scPeriodoInicio}_a_${scPeriodoFim}.xlsx`);
 }
 
 RENDERERS['sugestao-compra'] = renderSugestaoCompra;
