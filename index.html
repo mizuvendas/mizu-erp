@@ -51,7 +51,7 @@ table{border-collapse:collapse;}
 /* ===== LAYOUT ===== */
 .app{
   display:grid;
-  grid-template-columns:230px 1fr;
+  grid-template-columns:230px minmax(0, 1fr);
   min-height:100vh;
 }
 
@@ -181,8 +181,13 @@ table{border-collapse:collapse;}
 /* ===== MAIN ===== */
 .main{
   padding:24px 28px 60px 28px;
-  max-width:1500px;
+  /* Sem teto de largura: em monitor grande sobrava espaço vazio à direita
+     enquanto as tabelas pediam rolagem lateral. min-width:0 é o que permite
+     a coluna do grid encolher — sem isso, uma tabela larga estica a página
+     inteira em vez de rolar dentro do próprio quadro. */
+  max-width:none;
   width:100%;
+  min-width:0;
 }
 .page{ display:none; }
 .page.active{ display:block; animation:fadeIn .15s ease; }
@@ -476,7 +481,7 @@ table{border-collapse:collapse;}
 }
 
 /* ===== TABLES ===== */
-.table-wrap{ overflow-x:auto; }
+.table-wrap{ overflow-x:auto; max-width:100%; }
 table.data-table{ width:100%; font-size:13px; }
 .data-table thead th{
   text-align:left;
@@ -810,6 +815,11 @@ table.data-table{ width:100%; font-size:13px; }
 .tabela-plano thead .col-fixa{ z-index:3; }
 .tabela-plano tfoot td{ background:var(--bg-card); font-weight:700; }
 .tabela-plano td, .tabela-plano th{ white-space:nowrap; }
+/* O nome do produto é a única coluna que PRECISA quebrar: cortá-lo obriga a
+   rolar pra saber de que item é a linha. */
+.tabela-plano .col-fixa, .tabela-historico .col-fixa{ white-space:normal; }
+.tabela-plano .col-fixa{ min-width:260px; max-width:360px; }
+.tabela-historico .col-fixa{ max-width:340px; }
 .tabela-plano .hint-cel{ color:var(--ink-faint); font-size:12px; }
 .tabela-plano input, .tabela-plano select{ font-size:13px; padding:3px 5px; }
 ".tabela-plano .linha-opcoes td{ white-space:normal; }
@@ -827,7 +837,7 @@ table.data-table{ width:100%; font-size:13px; }
 .tabela-historico .col-fixa{ position:sticky; left:0; z-index:1; background:var(--bg-card); min-width:230px; }
 .tabela-historico thead .col-fixa{ z-index:3; }
 .tabela-historico tfoot .col-fixa, .tabela-historico tfoot td{ background:var(--bg-card); font-weight:700; }
-.tabela-historico td, .tabela-historico th{ white-space:nowrap; }
+.tabela-historico td:not(.col-fixa), .tabela-historico th:not(.col-fixa){ white-space:nowrap; }
 
 .tabela-sugestao thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
 .tabela-sugestao .col-sugestao{ font-weight:700; background:var(--primary-soft); }
@@ -24198,6 +24208,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-01-l',
+    data: '2026-10-01',
+    titulo: 'As telas agora ocupam a largura toda',
+    itens: [
+      'O conteúdo tinha um teto de 1.500 pixels de largura: em monitor grande sobrava espaço vazio à direita enquanto as tabelas pediam rolagem lateral. Esse teto saiu — vale para todas as telas.',
+      'O nome do produto nas tabelas do plano de compra e do mês a mês quebra em duas linhas em vez de ser cortado.',
+      'Tabela que ainda for mais larga que a tela rola dentro do próprio quadro, sem esticar a página.'
+    ]
+  },
   {
     id: '2026-10-01-k',
     data: '2026-10-01',
