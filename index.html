@@ -782,6 +782,27 @@ table.data-table{ width:100%; font-size:13px; }
 /* Histórico mensal: a tabela cresce pra direita conforme os meses, então a
    coluna do produto fica presa na esquerda e o cabeçalho no topo — sem isso
    você rola e perde de vista de quem é a linha e de que mês é a coluna. */
+/* Tour guiado. O "furo" é só um retângulo com uma sombra gigante em volta:
+   é ela que escurece o resto da tela, sem precisar recortar nada. */
+#tour-camada{ position:fixed; inset:0; z-index:9000; pointer-events:none; }
+#tour-furo{
+  position:fixed; border-radius:8px; pointer-events:none;
+  box-shadow:0 0 0 9999px rgba(10,20,25,0.62), 0 0 0 3px var(--primary);
+  transition:top .22s ease, left .22s ease, width .22s ease, height .22s ease;
+}
+#tour-balao{
+  position:fixed; z-index:9001; pointer-events:auto;
+  background:var(--bg-card); border-radius:var(--radius);
+  box-shadow:0 10px 36px rgba(10,20,25,0.32); padding:16px 18px 12px 18px;
+  max-width:calc(100vw - 32px);
+}
+#tour-balao-rodape{
+  display:flex; justify-content:space-between; align-items:center; gap:10px;
+  margin-top:14px; padding-top:10px; border-top:1px solid var(--border);
+}
+#tour-contador{ font-size:12px; color:var(--ink-faint); }
+#btn-tour-tela{ margin-left:8px; }
+
 /* Tabela do plano de compra: mesma ideia da do histórico — a coluna do
    produto fica presa na esquerda, porque a tabela cresce muito pra direita. */
 .tabela-plano thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
@@ -12120,7 +12141,10 @@ function renderAnalise(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3 style="margin:0;">Total por Produto <span class="hint">quantidade e valor total vendido de cada produto no período — clique em "Margem" pra ver a curva de rentabilidade, não só o volume</span></h3>
-        <button class="btn btn-sm" id="btn-exportar-analise-produto">⬇ Exportar Excel</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="iniciarTour('vincular-produtos')" title="Eu vou explicando cada parte">▶ Como funciona</button>
+          <button class="btn btn-sm" id="btn-exportar-analise-produto">⬇ Exportar Excel</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table class="data-table" id="tbl-analise-produto">
@@ -23618,6 +23642,7 @@ function renderAbaSugestao(){
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3 style="margin:0;">Sugestão de Compra <span class="hint" id="sc-resumo-periodo"></span></h3>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="iniciarTour('plano-compra')" title="Eu abro a tela e vou explicando cada parte">▶ Como funciona</button>
           <button class="btn btn-sm" id="sc-btn-excel">⬇ Exportar Excel</button>
           <button class="btn btn-sm btn-primary" id="sc-btn-plano" title="Leva esta sugestão para uma tela onde você monta a compra de verdade">➕ Criar plano de compra</button>
         </div>
@@ -24108,8 +24133,22 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-01-h',
+    data: '2026-10-01',
+    tour: 'plano-compra',
+    titulo: 'Agora eu explico na prática',
+    itens: [
+      'Nas novidades que têm tour aparece um botão "▶ Ver na prática": eu abro a tela certa e vou destacando parte por parte, contando o que é e pra que serve.',
+      'As telas que têm tour também ganharam um botão "▶ Como funciona", pra rever quando quiser.',
+      'Já estão prontos três: o plano de compra, o vincular produtos e as vendas mês a mês.',
+      'No plano de compra: trocar a embalagem ou o fator agora reconverte a quantidade na hora — 332 unidades com caixa de 12 viram 28 caixas.',
+      'E o preço virou um campo na própria linha: não precisa mais abrir o painel de fornecedores só pra dizer que a caixa custa R$ 20.'
+    ]
+  },
+  {
     id: '2026-10-01-g',
     data: '2026-10-01',
+    tour: 'plano-compra',
     titulo: 'Plano de compra: monte a compra dentro do sistema',
     itens: [
       'A tela Sugestão de Compra agora tem três abas: a sugestão, as vendas mês a mês (que saíram da Análise de Vendas) e os planos de compra.',
@@ -24124,6 +24163,7 @@ const NOVIDADES = [
   {
     id: '2026-10-01-f',
     data: '2026-10-01',
+    tour: 'vendas-mes-a-mes',
     titulo: 'Histórico mensal por produto',
     itens: [
       'Nova tabela em Análise de Vendas: uma linha por produto e uma coluna por mês, mostrando quanto vendeu em cada um.',
@@ -24178,6 +24218,7 @@ const NOVIDADES = [
   {
     id: '2026-10-01-a',
     data: '2026-10-01',
+    tour: 'vincular-produtos',
     titulo: 'Vincular produtos ficou mais esperto',
     itens: [
       'Ao vincular, o sistema lê a medida e a embalagem do nome: entende que 5L e 5000ML são a mesma coisa, e que 8X300 e 12X30 não são.',
@@ -24267,6 +24308,7 @@ function abrirNovidades(lista, subtitulo){
             <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
               <strong style="font-size:14px;color:var(--primary);">${escapeHtml(n.titulo)}</strong>
               <span class="hint">${fmtDate(n.data)}</span>
+              ${tourDaNovidade(n) ? `<button class="btn btn-sm btn-primary" onclick="iniciarTour('${n.tour}')" title="Eu abro a tela e vou explicando cada parte">▶ Ver na prática</button>` : ''}
             </div>
             <ul style="margin:6px 0 0 0;padding-left:18px;font-size:13px;line-height:1.55;color:var(--ink);">
               ${n.itens.map(t => `<li style="margin-bottom:4px;">${escapeHtml(t)}</li>`).join('')}
@@ -24935,7 +24977,7 @@ function pcBarraAbas(){
     return `<button class="btn btn-sm ${ativo ? 'btn-primary' : ''}" onclick="pcIrPara('${id}')">${rotulo}</button>`;
   };
   const qtd = pcPlanos().length;
-  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+  return `<div id="pc-abas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
     ${aba('sugestao','1. Sugestão')}
     ${aba('meses','2. Vendas mês a mês')}
     ${aba('planos',`3. Planos de compra${qtd?` (${qtd})`:''}`)}
@@ -25040,7 +25082,7 @@ function renderPlanoEditor(){
             ? `<button class="btn btn-sm" onclick="pcReabrirPlano()">Reabrir para editar</button>`
             : `<button class="btn btn-sm" onclick="pcAbrirAdicionarProduto()">➕ Adicionar produto</button>`}
           <button class="btn btn-sm" onclick="exportarPlanoCompraExcel()">⬇ Excel</button>
-          <button class="btn btn-sm ${travado?'':'btn-primary'}" onclick="${travado?'pcVerRelatorio()':'pcFinalizarPlano()'}">
+          <button class="btn btn-sm ${travado?'':'btn-primary'}" id="pc-btn-finalizar" onclick="${travado?'pcVerRelatorio()':'pcFinalizarPlano()'}">
             ${travado ? '📋 Ver relatório' : 'Finalizar e gerar relatório'}
           </button>
         </div>
@@ -25101,7 +25143,7 @@ function renderPlanoEditor(){
         <td class="num">${fmtNum(item.qtdVendida)}</td>
         <td class="num" style="font-weight:700;color:var(--positive);">${fmtNum(item.sugestao)}</td>
         <td>
-          <select ${travado?'disabled':''} onchange="pcSetCampo('${item.id}','comprarEm',this.value);renderSugestaoCompra();" style="min-width:70px;">
+          <select ${travado?'disabled':''} onchange="pcSetCampo('${item.id}','comprarEm',this.value);renderSugestaoCompra();" style="min-width:70px;" title="Trocar aqui reconverte a quantidade pelo fator ao lado">
             ${PC_EMBALAGENS.map(e=>`<option value="${e}" ${item.comprarEm===e?'selected':''}>${e}</option>`).join('')}
           </select>
         </td>
@@ -25109,20 +25151,14 @@ function renderPlanoEditor(){
           <input type="number" min="1" step="1" value="${item.unidadesPorEmbalagem||1}" ${travado||item.comprarEm==='UN'?'disabled':''}
                  onchange="pcSetCampo('${item.id}','unidadesPorEmbalagem',this.value)" style="width:70px;text-align:right;">
         </td>
-        <td class="num">
-          <input type="number" min="0" step="1" value="${c.qtd}" ${travado?'disabled':''}
-                 onchange="pcSetCampo('${item.id}','quantidade',this.value)" style="width:76px;text-align:right;${c.automatica?'':'font-weight:700;'}">
-          ${c.automatica ? '' : `<div class="hint" style="cursor:pointer;" onclick="pcVoltarQuantidadeAutomatica('${item.id}')" title="Voltar ao valor sugerido">↺ sugerido: ${Math.ceil((item.sugestao||0)/pcFator(item))}</div>`}
-        </td>
+        <td class="num" id="pc-qtdcel-${item.id}">${pcHtmlQuantidade(item, travado)}</td>
         <td class="num" id="pc-un-${item.id}">${fmtNum(c.totalUnidades)}</td>
-        <td>
-          <button class="btn btn-sm" onclick="pcAlternarOpcoes('${item.id}')" style="width:100%;text-align:left;">
-            ${c.fornecedor ? escapeHtml(c.fornecedor) : '<span style="color:var(--ink-faint);">escolher</span>'}
-            ${ops.length>1?`<span class="badge badge-info">${ops.length}</span>`:''}
-            ${expandido?'▴':'▾'}
-          </button>
+        <td id="pc-forncel-${item.id}">${pcHtmlFornecedorBotao(item, expandido)}</td>
+        <td class="num">
+          <input type="number" min="0" step="0.01" id="pc-precoinput-${item.id}" value="${c.preco || ''}" ${travado?'disabled':''}
+                 placeholder="0,00" title="Preço de uma ${PC_EMBALAGEM_NOME[item.comprarEm]}"
+                 onchange="pcSetPrecoDireto('${item.id}', this.value)" style="width:92px;text-align:right;">
         </td>
-        <td class="num" id="pc-preco-${item.id}">${c.preco>0?fmtMoney(c.preco):'<span style="color:var(--ink-faint);">—</span>'}</td>
         <td class="num" id="pc-total-${item.id}" style="font-weight:700;">${fmtMoney(c.total)}</td>
         <td>${travado?'':`<button class="btn btn-sm btn-danger" onclick="pcRemoverItem('${item.id}')" title="Tirar do plano">🗑</button>`}</td>
       </tr>`;
@@ -25212,7 +25248,7 @@ function renderPlanoEditor(){
               <td class="num">${fmtNum(itens.reduce((s,i)=>s+pcQuantidade(i),0))}</td>
               <td class="num">${fmtNum(itens.reduce((s,i)=>s+pcContasItem(i).totalUnidades,0))}</td>
               <td></td><td></td>
-              <td class="num" style="font-weight:700;">${fmtMoney(totalGeral)}</td>
+              <td class="num" id="pc-total-geral" style="font-weight:700;">${fmtMoney(totalGeral)}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -25234,17 +25270,78 @@ function pcVerRelatorio(){
   renderSugestaoCompra();
 }
 
-/* Atualiza só os números da linha, sem redesenhar a tela — senão o campo que
-   ela está preenchendo perde o foco a cada tecla. */
+/* A quantidade e o botão do fornecedor são desenhados por estas duas funções
+   porque precisam ser refeitos sozinhos quando algo muda na linha — trocar a
+   embalagem ou o fator de conversão muda a quantidade, e redesenhar a tabela
+   inteira a cada mudança tiraria o foco do campo seguinte. */
+function pcHtmlQuantidade(item, travado){
+  const c = pcContasItem(item);
+  const sugerido = Math.ceil((item.sugestao||0) / pcFator(item));
+  return `<input type="number" min="0" step="1" value="${c.qtd}" ${travado?'disabled':''}
+           onchange="pcSetCampo('${item.id}','quantidade',this.value)"
+           style="width:76px;text-align:right;${c.automatica?'':'font-weight:700;'}">
+    ${c.automatica
+      ? `<div class="hint">${item.comprarEm==='UN' ? 'unidades' : PC_EMBALAGEM_NOME[item.comprarEm]+'s'}</div>`
+      : `<div class="hint" style="cursor:pointer;" onclick="pcVoltarQuantidadeAutomatica('${item.id}')" title="Voltar ao valor sugerido">↺ sugerido: ${sugerido}</div>`}`;
+}
+
+function pcHtmlFornecedorBotao(item, expandido){
+  const c = pcContasItem(item);
+  const ops = item.opcoes || [];
+  return `<button class="btn btn-sm" onclick="pcAlternarOpcoes('${item.id}')" style="width:100%;text-align:left;">
+      ${c.fornecedor ? escapeHtml(c.fornecedor) : '<span style="color:var(--ink-faint);">escolher</span>'}
+      ${ops.length>1?`<span class="badge badge-info">${ops.length}</span>`:''}
+      ${expandido?'▴':'▾'}
+    </button>`;
+}
+
+/* Preço digitado direto na linha. Grava no fornecedor que estiver marcado;
+   não havendo nenhum, cria um sem nome — o nome ela põe depois, se quiser.
+   Abrir o painel de fornecedores só pra dizer "a caixa custa 20" era
+   trabalho demais pro caso mais comum. */
+function pcSetPrecoDireto(itemId, valor){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  const preco = Math.max(0, parseFloat(String(valor).replace(',','.')) || 0);
+  item.opcoes = item.opcoes || [];
+  let op = pcOpcaoEscolhida(item);
+  if(!op){
+    op = { id: uid('pco'), fornecedor:'', preco:0, obs:'', escolhida:true };
+    item.opcoes.push(op);
+  }
+  op.preco = preco;
+  saveState();
+  pcRedesenharLinha(itemId);
+}
+
+/* Refaz só o que mudou nesta linha, e o total geral. Campos em edição não
+   são tocados: sobrescrever o que ela está digitando seria pior que o
+   número desatualizado. */
 function pcRedesenharLinha(itemId){
   const plano = pcPlanoAtual();
   const item = plano && pcItem(plano, itemId);
   if(!item) return;
+  const travado = plano.status === 'finalizado';
   const c = pcContasItem(item);
+  const ativo = document.activeElement;
+
+  const cel = document.getElementById('pc-qtdcel-'+itemId);
+  if(cel && !cel.contains(ativo)) cel.innerHTML = pcHtmlQuantidade(item, travado);
+
+  const forn = document.getElementById('pc-forncel-'+itemId);
+  if(forn) forn.innerHTML = pcHtmlFornecedorBotao(item, pcItemExpandido === itemId);
+
+  const inpPreco = document.getElementById('pc-precoinput-'+itemId);
+  if(inpPreco && inpPreco !== ativo) inpPreco.value = c.preco || '';
+
   const põe = (id, html) => { const el = document.getElementById(id); if(el) el.innerHTML = html; };
   põe('pc-un-'+itemId, fmtNum(c.totalUnidades));
-  põe('pc-preco-'+itemId, c.preco>0?fmtMoney(c.preco):'<span style="color:var(--ink-faint);">—</span>');
   põe('pc-total-'+itemId, fmtMoney(c.total));
+
+  const geral = document.getElementById('pc-total-geral');
+  if(geral) geral.textContent = fmtMoney(pcTotalPlano(plano, pcItensFiltrados(plano)));
 }
 
 /* ---------- relatório ---------- */
@@ -25535,7 +25632,10 @@ function pcHtmlVendasMeses(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3 style="margin:0;">Vendas mês a mês <span class="hint">quanto cada produto vendeu em cada mês — mostra se está subindo, caindo ou se é sazonal</span></h3>
-        <button class="btn btn-sm" id="btn-exportar-historico-mensal">⬇ Exportar Excel</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="iniciarTour('vendas-mes-a-mes')" title="Eu vou explicando cada parte">▶ Como funciona</button>
+          <button class="btn btn-sm" id="btn-exportar-historico-mensal">⬇ Exportar Excel</button>
+        </div>
       </div>
       <div class="form-grid" style="margin-top:10px;">
         <div class="field"><label>De (mês)</label><input type="month" id="hm-inicio"></div>
@@ -25571,6 +25671,284 @@ function pcLigarVendasMeses(){
   });
 }
 
+
+/* =========================================================
+   MÓDULO: TOUR GUIADO
+
+   Explica uma função na prática: escurece a tela, destaca o elemento de que
+   está falando e conta o que é aquilo e pra que serve. A pessoa só avança.
+
+   Um tour é uma lista de passos. Cada passo tem:
+     alvo    — seletor CSS do que destacar. Sem alvo, o balão fica no centro.
+     titulo  — o nome daquilo
+     texto   — o que é e pra que serve, em português de gente
+     antes   — função opcional que prepara a tela (troca de página, abre aba)
+     exige   — função opcional que diz se dá pra mostrar este passo agora;
+               devolvendo false, o passo é pulado com um aviso em vez de
+               apontar pro vazio (ex: explicar o painel de fornecedores sem
+               nenhum plano criado)
+
+   Regra que vale pra sempre: se o elemento não existir, o passo some sozinho.
+   Tour que aponta pro lugar errado ensina errado — é pior que não ter tour.
+   ========================================================= */
+
+let _tourAtual = null;
+let _tourPasso = 0;
+
+const TOURS = {
+
+  'plano-compra': {
+    titulo: 'Plano de compra',
+    passos: [
+      { antes: ()=>{ navigateTo('sugestao-compra'); pcIrPara('sugestao'); },
+        alvo: '#pc-abas',
+        titulo: 'Esta tela tem três partes',
+        texto: 'A aba <strong>Sugestão</strong> diz quanto comprar. A <strong>Vendas mês a mês</strong> mostra o histórico de cada produto. E a <strong>Planos de compra</strong> é onde você monta a compra de verdade. Elas se completam: a sugestão é o palpite do sistema, o histórico é a prova, e o plano é a decisão.' },
+
+      { alvo: '#sc-inicio',
+        titulo: 'O período que serve de base',
+        texto: 'Tudo parte daqui. O sistema soma o que você vendeu entre estes dois meses. Período curto responde "o que está saindo agora"; período longo pega o ritmo médio e ignora um mês fora da curva.' },
+
+      { alvo: '#sc-percentual',
+        titulo: 'Quanto do que vendeu você quer comprar',
+        texto: 'Se vendeu 100 e você põe 70%, ele sugere comprar 70. É o seu controle de folga: acima de 100% você está crescendo o estoque, abaixo está enxugando. Não existe número certo — existe o que você quer fazer com o caixa.' },
+
+      { alvo: '#sc-btn-plano',
+        titulo: 'Daqui nasce o plano',
+        texto: 'Este botão congela a sugestão num plano salvo. A partir daí, mexer no período não mexe mais nele: o plano é uma foto daquele momento, com os preços e as decisões que você tomar.' },
+
+      { antes: ()=>{ pcIrPara('planos'); },
+        alvo: '#sugestao-compra-content .data-table',
+        exige: ()=> pcPlanos().length > 0,
+        semAlvo: 'Aqui ficam seus planos salvos. Você ainda não tem nenhum — crie um pela aba Sugestão e volte neste tour para ver o resto.',
+        titulo: 'Seus planos ficam guardados',
+        texto: 'Cada plano guarda tudo que você preencheu. Fechar a página não perde nada. A coluna <strong>Valor estimado</strong> já soma o que a compra vai custar com os preços que você colocou.' },
+
+      { antes: ()=>{ if(pcPlanos().length) pcAbrirPlano(pcPlanos()[0].id, 'editor'); },
+        alvo: '.tabela-plano thead',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'A tabela do plano',
+        texto: 'Cada linha é um produto. Da esquerda pra direita ela conta uma história: o que vendeu, quanto comprar, de que jeito, por quanto e de quem.' },
+
+      { alvo: '.tabela-plano .hint-cel',
+        exige: ()=> pcPlanos().length > 0 && pcMostrarMeses,
+        titulo: 'As colunas de mês',
+        texto: 'É o quanto aquele produto vendeu em cada mês do período. Servem pra você conferir a sugestão com os próprios olhos: três meses parecidos é ritmo; um mês alto e dois baixos pode ter sido uma venda grande que não se repete. Se atrapalhar, desligue em "Mostrar vendas mês a mês".' },
+
+      { alvo: '.tabela-plano tbody tr:first-child td:nth-last-child(8)',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'Comprar em: unidade, caixa, pacote ou fardo',
+        texto: 'A sugestão vem sempre em <strong>unidades</strong>. Quando você escolhe caixa, pacote ou fardo, a quantidade se converte sozinha pela coluna de ao lado. Sugestão de 332 unidades com caixa de 12 vira 28 caixas — e arredonda pra cima, porque não existe meia caixa.' },
+
+      { alvo: '.tabela-plano tbody tr:first-child td:nth-last-child(5)',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'A quantidade é sua, não do sistema',
+        texto: 'Ela já vem calculada, mas é só um ponto de partida. Digitando por cima, o número passa a ser seu e aparece um <strong>↺ sugerido</strong> embaixo, caso queira voltar atrás.' },
+
+      { alvo: '.tabela-plano tbody tr:first-child td:nth-last-child(3)',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'O preço vai aqui',
+        texto: 'Digite o preço de <strong>uma</strong> caixa (ou de uma unidade, se escolheu UN). O total da linha e o total da compra se refazem na hora. Se você ainda não tinha dito de quem é, ele cria o fornecedor sozinho e você põe o nome depois.' },
+
+      { alvo: '.tabela-plano tbody tr:first-child td:nth-last-child(4)',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'Mais de um fornecedor pro mesmo item',
+        texto: 'Clicando aqui abre o painel de comparação. Você põe quantos lugares quiser, cada um com seu preço, e o sistema calcula o <strong>custo por unidade</strong> de cada um — é esse número que compara de verdade, porque caixa de 12 a R$20 e caixa de 10 a R$18 não se comparam pelo preço da caixa. Fica vermelho quando sai mais caro que o seu custo atual. O botãozinho redondo marca qual vale.' },
+
+      { alvo: '#pc-total-geral',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'Quanto a compra vai custar',
+        texto: 'Soma o que está na tela. Filtrando por um fornecedor, este total passa a ser o daquele fornecedor — é assim que você vê quanto vai gastar com cada um antes de fechar.' },
+
+      { alvo: '#pc-btn-finalizar',
+        exige: ()=> pcPlanos().length > 0,
+        titulo: 'Finalizar e gerar o relatório',
+        texto: 'Quando terminar, o plano vira um relatório agrupado <strong>por fornecedor</strong>, onde você registra se ele fatura no boleto ou no cartão, o prazo, e o que combinou. É o que você leva pra fazer o pedido. Finalizado, o plano trava — pra mexer de novo é preciso reabrir, de propósito.' }
+    ]
+  },
+
+  'vincular-produtos': {
+    titulo: 'Vincular produtos',
+    passos: [
+      { antes: ()=>{ navigateTo('analise-vendas'); },
+        alvo: '#tbl-analise-produto',
+        titulo: 'O problema que isso resolve',
+        texto: 'O mesmo produto às vezes está cadastrado duas ou três vezes com nomes diferentes. Na análise ele aparece dividido, e parece que vende menos do que vende.' },
+
+      { alvo: '#tbl-analise-produto tbody tr:first-child td:last-child',
+        titulo: 'O botão 🔗',
+        texto: 'Clicando nele, o sistema procura os cadastros parecidos. Ele lê medida e embalagem do nome: entende que 5L e 5000ML são a mesma coisa, e que 8X300 e 12X30 <em>não</em> são. Cada sugestão vem com uma nota e o motivo, e diz se aquele cadastro já vendeu alguma vez — vincular um que nunca vendeu não muda nada.' },
+
+      { alvo: '#tbl-analise-produto tbody tr:first-child td:first-child',
+        titulo: 'Depois de vincular',
+        texto: 'Os cadastros continuam separados — nada é apagado, nenhuma venda antiga é mexida. Só a análise passa a mostrar os dois somados numa linha só, com um selo 🔗 dizendo quantos são. E dá pra desfazer quando quiser.' },
+
+      { alvo: '#tbl-analise-produto tbody tr:first-child td:nth-child(2)',
+        titulo: 'Enquanto está aqui: dois cliques editam',
+        texto: 'Produto, Marca, Fornecedor e Custo se editam com dois cliques na própria célula. Numa linha vinculada, mudar marca, fornecedor ou custo vale pra todos os cadastros do grupo de uma vez. Qtd, Bruto, Lucro e Margem não se editam: são conta feita sobre as vendas, e mudar ali seria mentir sobre o que aconteceu.' }
+    ]
+  },
+
+  'vendas-mes-a-mes': {
+    titulo: 'Vendas mês a mês',
+    passos: [
+      { antes: ()=>{ navigateTo('sugestao-compra'); pcIrPara('meses'); },
+        alvo: '#an-historico-mensal',
+        titulo: 'Uma linha por produto, uma coluna por mês',
+        texto: 'O total de um período esconde o movimento. Aqui você vê se um produto está subindo, caindo ou se some em certos meses — e é isso que decide se a sugestão de compra faz sentido.' },
+
+      { alvo: '.tabela-historico tbody tr:first-child td:nth-child(2)',
+        titulo: 'O total vem antes dos meses',
+        texto: 'De propósito: é o número que você mais olha. Os meses ficam depois, pra conferir de onde veio aquele total.' },
+
+      { alvo: '.tabela-historico tbody tr:first-child',
+        titulo: 'A barrinha azul no fundo',
+        texto: 'Cada célula tem um fundo proporcional ao maior número da tabela. É pra enxergar o desenho sem ler número por número: onde a barra é mais larga foi mês forte. Produto sazonal aparece na hora, em degrau.' },
+
+      { alvo: '#hm-metrica',
+        titulo: 'Quantidade ou dinheiro',
+        texto: 'A mesma tabela em unidades ou em reais. Vale olhar as duas: um produto pode vender muita unidade e pouco valor, ou o contrário — e a decisão de compra é diferente em cada caso.' }
+    ]
+  }
+};
+
+/* ---------- motor ---------- */
+
+function iniciarTour(nome){
+  const tour = TOURS[nome];
+  if(!tour){ showToast('Esse tour ainda não existe.', 'error'); return; }
+  document.getElementById('modal-novidades')?.remove();
+  _tourAtual = { nome, ...tour };
+  _tourPasso = 0;
+  _tourMontarCamada();
+  _tourMostrarPasso();
+}
+
+function _tourMontarCamada(){
+  document.getElementById('tour-camada')?.remove();
+  const camada = document.createElement('div');
+  camada.id = 'tour-camada';
+  camada.innerHTML = `
+    <div id="tour-furo"></div>
+    <div id="tour-balao">
+      <div id="tour-balao-corpo"></div>
+      <div id="tour-balao-rodape">
+        <span id="tour-contador"></span>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-sm" id="tour-sair">Fechar</button>
+          <button class="btn btn-sm" id="tour-voltar">← Voltar</button>
+          <button class="btn btn-sm btn-primary" id="tour-proximo">Próximo →</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(camada);
+  document.getElementById('tour-sair').addEventListener('click', encerrarTour);
+  document.getElementById('tour-voltar').addEventListener('click', ()=>_tourAndar(-1));
+  document.getElementById('tour-proximo').addEventListener('click', ()=>_tourAndar(1));
+  document.addEventListener('keydown', _tourTecla);
+  window.addEventListener('resize', _tourPosicionar);
+}
+
+function _tourTecla(e){
+  if(!_tourAtual) return;
+  if(e.key === 'Escape'){ e.preventDefault(); encerrarTour(); }
+  if(e.key === 'ArrowRight' || e.key === 'Enter'){ e.preventDefault(); _tourAndar(1); }
+  if(e.key === 'ArrowLeft'){ e.preventDefault(); _tourAndar(-1); }
+}
+
+function encerrarTour(){
+  _tourAtual = null;
+  document.getElementById('tour-camada')?.remove();
+  document.removeEventListener('keydown', _tourTecla);
+  window.removeEventListener('resize', _tourPosicionar);
+}
+
+function _tourAndar(direcao){
+  if(!_tourAtual) return;
+  const destino = _tourPasso + direcao;
+  if(destino < 0) return;
+  if(destino >= _tourAtual.passos.length){ encerrarTour(); showToast('Fim. Dá pra rever quando quiser no botão ✨ Novidades.', 'success'); return; }
+  _tourPasso = destino;
+  _tourMostrarPasso();
+}
+
+function _tourMostrarPasso(){
+  const passo = _tourAtual.passos[_tourPasso];
+  if(passo.antes){ try{ passo.antes(); }catch(e){ console.error(e); } }
+
+  // A tela pode ter acabado de ser redesenhada — espera o navegador pintar
+  // antes de medir onde o elemento está.
+  setTimeout(()=>{
+    if(!_tourAtual) return;
+    const impedido = passo.exige && !passo.exige();
+    const alvo = (!impedido && passo.alvo) ? document.querySelector(passo.alvo) : null;
+
+    const corpo = document.getElementById('tour-balao-corpo');
+    if(!corpo) return;
+    const texto = impedido && passo.semAlvo ? passo.semAlvo : passo.texto;
+    corpo.innerHTML = `
+      <div style="font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px;">${escapeHtml(_tourAtual.titulo)}</div>
+      <h4 style="margin:0 0 6px 0;font-size:15px;color:var(--primary);">${escapeHtml(passo.titulo)}</h4>
+      <div style="font-size:13px;line-height:1.55;color:var(--ink);">${texto}</div>`;
+
+    document.getElementById('tour-contador').textContent = `${_tourPasso+1} de ${_tourAtual.passos.length}`;
+    document.getElementById('tour-voltar').style.visibility = _tourPasso === 0 ? 'hidden' : 'visible';
+    document.getElementById('tour-proximo').textContent =
+      _tourPasso === _tourAtual.passos.length - 1 ? 'Terminar' : 'Próximo →';
+
+    _tourAlvoAtual = alvo;
+    if(alvo) alvo.scrollIntoView({ block:'center', behavior:'smooth' });
+    setTimeout(_tourPosicionar, alvo ? 280 : 0);
+  }, 80);
+}
+
+let _tourAlvoAtual = null;
+
+function _tourPosicionar(){
+  if(!_tourAtual) return;
+  const furo = document.getElementById('tour-furo');
+  const balao = document.getElementById('tour-balao');
+  if(!furo || !balao) return;
+
+  const alvo = _tourAlvoAtual && document.body.contains(_tourAlvoAtual) ? _tourAlvoAtual : null;
+
+  if(!alvo){
+    // Sem elemento pra destacar: escurece tudo e põe o balão no meio.
+    furo.style.cssText = 'display:block;position:fixed;top:50%;left:50%;width:0;height:0;';
+    balao.style.top = '50%';
+    balao.style.left = '50%';
+    balao.style.transform = 'translate(-50%, -50%)';
+    return;
+  }
+
+  const r = alvo.getBoundingClientRect();
+  const folga = 6;
+  furo.style.cssText = `display:block;position:fixed;top:${r.top-folga}px;left:${r.left-folga}px;`
+    + `width:${r.width+folga*2}px;height:${r.height+folga*2}px;`;
+
+  balao.style.transform = 'none';
+  const largura = Math.min(380, window.innerWidth - 32);
+  balao.style.width = largura + 'px';
+  const altura = balao.offsetHeight || 200;
+
+  // Encaixa embaixo do elemento; não cabendo, em cima; não cabendo, no meio.
+  let top = r.bottom + 14;
+  if(top + altura > window.innerHeight - 10){
+    top = r.top - altura - 14;
+    if(top < 10) top = Math.max(10, (window.innerHeight - altura) / 2);
+  }
+  let left = r.left + (r.width / 2) - (largura / 2);
+  left = Math.max(16, Math.min(left, window.innerWidth - largura - 16));
+
+  balao.style.top = top + 'px';
+  balao.style.left = left + 'px';
+}
+
+/* Botão "Ver na prática" dentro da janela de Novidades, quando aquela
+   novidade tem um tour. */
+function tourDaNovidade(novidade){
+  return novidade && novidade.tour && TOURS[novidade.tour] ? novidade.tour : '';
+}
 
 /* =========================================================
    INICIALIZAÇÃO
