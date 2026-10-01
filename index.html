@@ -782,6 +782,21 @@ table.data-table{ width:100%; font-size:13px; }
 /* Histórico mensal: a tabela cresce pra direita conforme os meses, então a
    coluna do produto fica presa na esquerda e o cabeçalho no topo — sem isso
    você rola e perde de vista de quem é a linha e de que mês é a coluna. */
+/* Tabela do plano de compra: mesma ideia da do histórico — a coluna do
+   produto fica presa na esquerda, porque a tabela cresce muito pra direita. */
+.tabela-plano thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
+.tabela-plano .col-fixa{ position:sticky; left:0; z-index:1; background:var(--bg-card); min-width:240px; }
+.tabela-plano thead .col-fixa{ z-index:3; }
+.tabela-plano tfoot td{ background:var(--bg-card); font-weight:700; }
+.tabela-plano td, .tabela-plano th{ white-space:nowrap; }
+.tabela-plano .hint-cel{ color:var(--ink-faint); font-size:12px; }
+.tabela-plano input, .tabela-plano select{ font-size:13px; padding:3px 5px; }
+.tabela-plano .linha-opcoes td{ white-space:normal; }
+@media print{
+  .sidebar, .topbar{ display:none !important; }
+  .card{ break-inside:avoid; }
+}
+
 .tabela-historico thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
 .tabela-historico .col-fixa{ position:sticky; left:0; z-index:1; background:var(--bg-card); min-width:230px; }
 .tabela-historico thead .col-fixa{ z-index:3; }
@@ -1485,6 +1500,7 @@ function defaultState(){
     licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
+    planosCompra: [], // { id, nome, periodoInicio, periodoFim, percentual, status, itens:[{...,opcoes:[{fornecedor,preco}]}], fornecedores:{}, observacoes } — ver MÓDULO: PLANO DE COMPRA
     novidadeVista: '', // id da última novidade lida (ver NOVIDADES) — só pra não repetir o aviso de atualização
     gruposProdutos: [], // { id, nome, produtoIds:[], criadoEm } — produtos que são "o mesmo produto" na prática (ver abrirVincularProdutos). AGRUPAMENTO só para análise: não mexe no cadastro nem no histórico de vendas, e pode ser desfeito.
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
@@ -12128,31 +12144,6 @@ function renderAnalise(){
       <div id="an-produto-paginacao"></div>
     </div>
 
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
-        <h3 style="margin:0;">Histórico Mensal por Produto <span class="hint">quanto cada produto vendeu em cada mês — mostra se está subindo, caindo ou se é sazonal</span></h3>
-        <button class="btn btn-sm" id="btn-exportar-historico-mensal">⬇ Exportar Excel</button>
-      </div>
-      <div class="form-grid" style="margin-top:10px;">
-        <div class="field">
-          <label>De (mês)</label>
-          <input type="month" id="hm-inicio">
-        </div>
-        <div class="field">
-          <label>Até (mês)</label>
-          <input type="month" id="hm-fim">
-        </div>
-        <div class="field">
-          <label>Mostrar</label>
-          <select id="hm-metrica">
-            <option value="qtd">Quantidade vendida</option>
-            <option value="bruto">Valor vendido (R$)</option>
-          </select>
-        </div>
-      </div>
-      <div id="an-historico-mensal" style="margin-top:10px;"></div>
-      <div id="an-historico-paginacao"></div>
-    </div>
 
     <div class="card">
       <h3>Detalhamento de Vendas <span class="hint" id="an-count-hint"></span></h3>
@@ -12192,21 +12183,6 @@ function renderAnalise(){
   });
 
   document.getElementById('btn-exportar-analise-produto').addEventListener('click', exportarAnalisePorProdutoExcel);
-
-  document.getElementById('btn-exportar-historico-mensal').addEventListener('click', exportarHistoricoMensalExcel);
-  document.getElementById('hm-inicio').addEventListener('change', (e)=>{
-    hmInicio = e.target.value || hmInicio;
-    if(hmFim < hmInicio) hmFim = hmInicio;
-    renderHistoricoMensalProduto();
-  });
-  document.getElementById('hm-fim').addEventListener('change', (e)=>{
-    hmFim = e.target.value || hmFim;
-    renderHistoricoMensalProduto();
-  });
-  document.getElementById('hm-metrica').addEventListener('change', (e)=>{
-    hmMetrica = e.target.value;
-    renderHistoricoMensalProduto();
-  });
 
   document.getElementById('tbl-analise').addEventListener('sortrequest', (e)=>{
     analiseSort = e.detail;
@@ -12281,7 +12257,6 @@ function aplicarFiltrosAnalise(){
   window.__linhasAnaliseAtuais = linhas;
   renderTabelaAnalisePorCliente(linhas);
   renderTabelaAnalisePorProduto(linhas);
-  renderHistoricoMensalProduto(); // tem filtro de período próprio, não usa 'linhas'
   renderTabelaAnalise(linhas);
 }
 
@@ -23600,9 +23575,19 @@ function getSugestaoCompraPeriodo(inicio, fim, percentual){
 function renderSugestaoCompra(){
   const box = document.getElementById('sugestao-compra-content');
   if(!box) return;
+  if(pcVisao === 'planos'){    box.innerHTML = pcBarraAbas() + renderPlanosLista();    return; }
+  if(pcVisao === 'editor'){    box.innerHTML = pcBarraAbas() + renderPlanoEditor();    return; }
+  if(pcVisao === 'relatorio'){ box.innerHTML = pcBarraAbas() + renderPlanoRelatorio(); return; }
+  if(pcVisao === 'meses'){     box.innerHTML = pcBarraAbas() + pcHtmlVendasMeses(); pcLigarVendasMeses(); return; }
+  renderAbaSugestao();
+}
+
+function renderAbaSugestao(){
+  const box = document.getElementById('sugestao-compra-content');
+  if(!box) return;
   if(scPeriodoFim < scPeriodoInicio) scPeriodoFim = scPeriodoInicio;
 
-  box.innerHTML = `
+  box.innerHTML = pcBarraAbas() + `
     <div class="card">
       <h3>Período e critério</h3>
       <div class="form-grid">
@@ -23632,7 +23617,10 @@ function renderSugestaoCompra(){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
         <h3 style="margin:0;">Sugestão de Compra <span class="hint" id="sc-resumo-periodo"></span></h3>
-        <button class="btn btn-sm" id="sc-btn-excel">⬇ Exportar Excel</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" id="sc-btn-excel">⬇ Exportar Excel</button>
+          <button class="btn btn-sm btn-primary" id="sc-btn-plano" title="Leva esta sugestão para uma tela onde você monta a compra de verdade">➕ Criar plano de compra</button>
+        </div>
       </div>
       <div id="sc-tabela" style="margin-top:10px;"></div>
     </div>
@@ -23692,11 +23680,12 @@ function renderSugestaoCompra(){
 
   renderTabela();
 
-  document.getElementById('sc-inicio').addEventListener('change', e=>{ scPeriodoInicio = e.target.value || scPeriodoInicio; if(scPeriodoFim<scPeriodoInicio) scPeriodoFim = scPeriodoInicio; renderSugestaoCompra(); });
-  document.getElementById('sc-fim').addEventListener('change', e=>{ scPeriodoFim = e.target.value || scPeriodoFim; renderSugestaoCompra(); });
+  document.getElementById('sc-inicio').addEventListener('change', e=>{ scPeriodoInicio = e.target.value || scPeriodoInicio; if(scPeriodoFim<scPeriodoInicio) scPeriodoFim = scPeriodoInicio; renderAbaSugestao(); });
+  document.getElementById('sc-fim').addEventListener('change', e=>{ scPeriodoFim = e.target.value || scPeriodoFim; renderAbaSugestao(); });
   document.getElementById('sc-percentual').addEventListener('change', e=>{ scPercentual = Math.max(1, parseFloat(e.target.value)||100); renderTabela(); });
   document.getElementById('sc-esconder-zerados').addEventListener('change', e=>{ scEsconderZerados = e.target.checked; renderTabela(); });
   document.getElementById('sc-btn-excel').addEventListener('click', exportarSugestaoCompraExcel);
+  document.getElementById('sc-btn-plano').addEventListener('click', criarPlanoDeCompra);
   // Começa a baixar a biblioteca da planilha agora, enquanto ela olha a
   // tabela — assim o clique em "Exportar" não fica esperando.
   carregarExcelJs();
@@ -24119,6 +24108,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-01-g',
+    data: '2026-10-01',
+    titulo: 'Plano de compra: monte a compra dentro do sistema',
+    itens: [
+      'A tela Sugestão de Compra agora tem três abas: a sugestão, as vendas mês a mês (que saíram da Análise de Vendas) e os planos de compra.',
+      'Da sugestão você cria um plano: uma tela onde escolhe embalagem e fator de conversão, quantidade, preço, e edita o nome dos itens.',
+      'Cada item aceita MAIS DE UM fornecedor com preços diferentes — você compara o custo por unidade e marca qual vai usar.',
+      'Dá pra adicionar produtos que não apareceram na sugestão, ou um item avulso que nem está no cadastro.',
+      'As vendas mês a mês aparecem na própria tabela do plano, pra decidir sem sair da tela.',
+      'Ao finalizar, sai um relatório agrupado por fornecedor, onde você registra forma de pagamento, prazo e observações.',
+      'O plano fica salvo: fechar a página não perde nada, e dá pra reabrir depois. Exporta pra Excel com três abas.'
+    ]
+  },
+  {
     id: '2026-10-01-f',
     data: '2026-10-01',
     titulo: 'Histórico mensal por produto',
@@ -24486,6 +24489,1088 @@ function exportarHistoricoMensalExcel(){
   XLSX.writeFile(wb, `historico_mensal_${hmInicio}_a_${hmFim}.xlsx`);
   showToast('Planilha gerada.', 'success');
 }
+
+/* =========================================================
+   MÓDULO: PLANO DE COMPRA
+
+   A Sugestão de Compra deixou de ser só uma lista pra olhar: virou um lugar
+   onde a compra é montada de verdade, dentro do sistema.
+
+   A tela tem três partes:
+
+     1. SUGESTÃO       — período, percentual e o que o sistema sugere comprar.
+                         Daqui sai um plano.
+     2. VENDAS MÊS A MÊS — quanto cada produto vendeu em cada mês (saiu da
+                         Análise de Vendas e veio pra cá, que é onde serve).
+     3. PLANOS DE COMPRA — o plano em si: quantidade, embalagem, fator de
+                         conversão, preço, mais de um fornecedor por item,
+                         produto adicionado à mão, nome editável. No fim,
+                         um relatório por fornecedor com forma de pagamento
+                         e observações.
+
+   O plano fica salvo em STATE.planosCompra: fechar a página não perde nada,
+   e dá pra voltar nele depois. Um plano FINALIZADO vira registro — pra mexer
+   nele de novo é preciso reabrir, de propósito.
+   ========================================================= */
+
+let pcVisao = 'sugestao';        // 'sugestao' | 'meses' | 'planos' | 'editor' | 'relatorio'
+let pcPlanoId = null;
+let pcFiltroFornecedor = '';
+let pcBusca = '';
+let pcMostrarMeses = true;
+let pcItemExpandido = null;      // item com as opções de fornecedor abertas
+
+const PC_EMBALAGENS = ['UN','CX','PCT','FD'];
+const PC_EMBALAGEM_NOME = { UN:'unidade', CX:'caixa', PCT:'pacote', FD:'fardo' };
+const PC_PAGAMENTOS = ['Boleto','Cartão de crédito','Pix','Dinheiro','Depósito','A combinar'];
+
+/* ---------- acesso ao plano ---------- */
+
+function pcPlanos(){
+  if(!Array.isArray(STATE.planosCompra)) STATE.planosCompra = [];
+  return STATE.planosCompra;
+}
+
+function pcPlanoAtual(){
+  return pcPlanos().find(p => p.id === pcPlanoId) || null;
+}
+
+function pcItem(plano, itemId){
+  return (plano.itens||[]).find(i => i.id === itemId) || null;
+}
+
+/* ---------- contas ---------- */
+
+/* Opção de fornecedor escolhida para o item. Sem nenhuma escolhida, usa a
+   primeira que tenha preço — é o comportamento menos surpreendente. */
+function pcOpcaoEscolhida(item){
+  const ops = item.opcoes || [];
+  return ops.find(o => o.escolhida) || ops.find(o => o.preco > 0) || ops[0] || null;
+}
+
+function pcFator(item){
+  const f = Number(item.unidadesPorEmbalagem);
+  return (item.comprarEm === 'UN' || !f || f < 1) ? 1 : f;
+}
+
+/* Quantidade de embalagens a comprar. Enquanto ela não digitar nada, é
+   calculada da sugestão (em unidades) dividida pelo fator, arredondando pra
+   cima — não existe meia caixa. Digitando, o número dela manda. */
+function pcQuantidade(item){
+  if(item.quantidade !== null && item.quantidade !== undefined && item.quantidade !== '') {
+    return Number(item.quantidade) || 0;
+  }
+  const sug = Number(item.sugestao) || 0;
+  return Math.ceil(sug / pcFator(item));
+}
+
+function pcContasItem(item){
+  const qtd = pcQuantidade(item);
+  const fator = pcFator(item);
+  const op = pcOpcaoEscolhida(item);
+  const preco = op ? (Number(op.preco) || 0) : 0;
+  const totalUnidades = qtd * fator;
+  const total = qtd * preco;
+  return {
+    qtd, fator, totalUnidades, preco, total,
+    fornecedor: op ? (op.fornecedor || '') : '',
+    custoUnitario: totalUnidades > 0 ? total / totalUnidades : 0,
+    automatica: item.quantidade === null || item.quantidade === undefined || item.quantidade === ''
+  };
+}
+
+function pcTotalPlano(plano, itens){
+  return (itens || plano.itens || []).reduce((s,i) => s + pcContasItem(i).total, 0);
+}
+
+/* ---------- vendas mês a mês de um item do plano ---------- */
+
+/* Um item do plano pode ser um produto, um grupo de produtos vinculados, ou
+   algo adicionado à mão (sem venda nenhuma). */
+function pcVendasPorMes(plano){
+  const meses = mesesEntre(plano.periodoInicio, plano.periodoFim);
+  const dentro = new Set(meses);
+  const porChave = {};
+  getLinhasVenda().forEach(l=>{
+    if(!dentro.has(l.mes)) return;
+    const grupo = (typeof grupoDoProduto==='function') ? grupoDoProduto(l.produtoId) : null;
+    const chave = grupo ? grupo.id : (l.produtoId || l.produtoNome);
+    if(!porChave[chave]) porChave[chave] = {};
+    porChave[chave][l.mes] = (porChave[chave][l.mes] || 0) + l.qtd;
+  });
+  return { meses, porChave };
+}
+
+function pcChaveDoItem(item){
+  return item.grupoId || item.produtoId || item.nome;
+}
+
+/* ---------- criar e manter o plano ---------- */
+
+function criarPlanoDeCompra(){
+  const linhas = getSugestaoCompraPeriodo(scPeriodoInicio, scPeriodoFim, scPercentual);
+  if(linhas.length === 0){ showToast('Nenhuma venda no período — não há o que planejar.', 'error'); return; }
+
+  const plano = {
+    id: uid('plc'),
+    nome: `Compra de ${monthLabel(scPeriodoInicio)} a ${monthLabel(scPeriodoFim)}`,
+    criadoEm: todayISO(),
+    finalizadoEm: '',
+    status: 'aberto',
+    periodoInicio: scPeriodoInicio,
+    periodoFim: scPeriodoFim,
+    percentual: scPercentual,
+    observacoes: '',
+    fornecedores: {}, // { [nome]: { pagamento, prazo, obs } }
+    itens: linhas.map(l => ({
+      id: uid('pci'),
+      produtoId: l.produtoId || null,
+      grupoId: l.grupoId || null,
+      nome: l.nome,
+      marca: l.marca || '',
+      unidade: l.unidade || 'UN',
+      qtdVendida: l.qtdVendida,
+      estoqueAtual: l.estoqueAtual,
+      custoAtual: l.custo,
+      precoVenda: l.precoVenda,
+      sugestao: l.sugestao,
+      comprarEm: 'UN',
+      unidadesPorEmbalagem: l.unidadesPorCaixa || 1,
+      quantidade: null, // null = calculada da sugestão
+      manual: false,
+      opcoes: l.fornecedor
+        ? [{ id: uid('pco'), fornecedor: l.fornecedor, preco: l.custo || 0, obs: '', escolhida: true }]
+        : []
+    }))
+  };
+
+  pcPlanos().unshift(plano);
+  saveState();
+  pcPlanoId = plano.id;
+  pcVisao = 'editor';
+  showToast(`Plano criado com ${plano.itens.length} itens. Agora é só preencher.`, 'success');
+  renderSugestaoCompra();
+}
+
+function pcSetCampoPlano(campo, valor){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  plano[campo] = valor;
+  saveState();
+}
+
+function pcSetCampo(itemId, campo, valor){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+
+  if(campo === 'quantidade'){
+    item.quantidade = (valor === '' || valor === null) ? null : Math.max(0, Number(valor) || 0);
+  }else if(campo === 'unidadesPorEmbalagem'){
+    item.unidadesPorEmbalagem = Math.max(1, parseInt(valor, 10) || 1);
+  }else if(campo === 'nome'){
+    const novo = (valor || '').trim();
+    if(!novo){ showToast('O nome não pode ficar vazio.', 'error'); renderSugestaoCompra(); return; }
+    item.nome = novo;
+  }else{
+    item[campo] = valor;
+  }
+  saveState();
+  pcRedesenharLinha(itemId);
+}
+
+function pcVoltarQuantidadeAutomatica(itemId){
+  pcSetCampo(itemId, 'quantidade', '');
+  renderSugestaoCompra();
+}
+
+function pcRemoverItem(itemId){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  confirmAction('Tirar do plano', `"${item ? item.nome : 'Item'}" sai deste plano. O cadastro do produto não é afetado.`, ()=>{
+    plano.itens = plano.itens.filter(i => i.id !== itemId);
+    saveState();
+    renderSugestaoCompra();
+  }, 'Tirar');
+}
+
+/* ---------- opções de fornecedor ---------- */
+
+function pcAdicionarOpcao(itemId){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  item.opcoes = item.opcoes || [];
+  item.opcoes.push({ id: uid('pco'), fornecedor:'', preco:0, obs:'', escolhida: item.opcoes.length === 0 });
+  saveState();
+  pcItemExpandido = itemId;
+  renderSugestaoCompra();
+}
+
+function pcSetOpcao(itemId, opcaoId, campo, valor){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  const op = item && (item.opcoes||[]).find(o => o.id === opcaoId);
+  if(!op) return;
+  op[campo] = campo === 'preco' ? Math.max(0, parseFloat(String(valor).replace(',','.')) || 0) : valor;
+  saveState();
+  pcRedesenharLinha(itemId);
+}
+
+function pcEscolherOpcao(itemId, opcaoId){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  (item.opcoes||[]).forEach(o => { o.escolhida = (o.id === opcaoId); });
+  saveState();
+  renderSugestaoCompra();
+}
+
+function pcRemoverOpcao(itemId, opcaoId){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  const eraEscolhida = (item.opcoes||[]).find(o => o.id === opcaoId)?.escolhida;
+  item.opcoes = (item.opcoes||[]).filter(o => o.id !== opcaoId);
+  if(eraEscolhida && item.opcoes.length) item.opcoes[0].escolhida = true;
+  saveState();
+  renderSugestaoCompra();
+}
+
+/* ---------- adicionar produto que não veio da sugestão ---------- */
+
+function pcAbrirAdicionarProduto(){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+
+  document.getElementById('modal-pc-add')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-pc-add';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:86vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">➕</div>
+        <div>
+          <h3>Adicionar produto ao plano</h3>
+          <div class="sub">Um item que não apareceu na sugestão, mas que você quer comprar</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-pc-add').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Buscar no cadastro de produtos</label>
+          <input type="text" id="pc-add-busca" placeholder="Digite parte do nome...">
+        </div>
+        <div id="pc-add-lista" style="margin-top:8px;max-height:300px;overflow-y:auto;"></div>
+        <hr class="section-divider">
+        <div class="field">
+          <label>Ou crie um item só para este plano <span class="hint">não entra no cadastro de produtos</span></label>
+          <input type="text" id="pc-add-livre" placeholder="Ex: Fita adesiva 48mm">
+        </div>
+        <div class="modal-actions" style="margin-top:14px;">
+          <button class="btn" onclick="document.getElementById('modal-pc-add').remove()">Cancelar</button>
+          <button class="btn btn-primary" onclick="pcAdicionarItemLivre()">Adicionar item avulso</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const render = (termo)=>{
+    const lista = document.getElementById('pc-add-lista');
+    const jaNoPlano = new Set((plano.itens||[]).map(i=>i.produtoId).filter(Boolean));
+    const achados = (STATE.produtos||[])
+      .filter(p => !jaNoPlano.has(p.id) && (!termo || normalizarBusca(p.nome).includes(termo)))
+      .slice(0, 40);
+    lista.innerHTML = achados.length ? achados.map(p=>`
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:13px;">
+        <span>${escapeHtml(p.nome)}${p.marca?` <span class="hint">· ${escapeHtml(p.marca)}</span>`:''}</span>
+        <button class="btn btn-sm btn-primary" onclick="pcAdicionarProduto('${p.id}')">Adicionar</button>
+      </div>`).join('')
+      : '<div class="help-text">Nenhum produto encontrado.</div>';
+  };
+  render('');
+  document.getElementById('pc-add-busca').addEventListener('input', e => render(normalizarBusca(e.target.value)));
+}
+
+function pcNovoItem(dados){
+  return Object.assign({
+    id: uid('pci'),
+    produtoId: null, grupoId: null, nome:'', marca:'', unidade:'UN',
+    qtdVendida: 0, estoqueAtual: 0, custoAtual: null, precoVenda: null,
+    sugestao: 0, comprarEm:'UN', unidadesPorEmbalagem: 1,
+    quantidade: null, manual: true, opcoes: []
+  }, dados);
+}
+
+function pcAdicionarProduto(produtoId){
+  const plano = pcPlanoAtual();
+  const p = (STATE.produtos||[]).find(x => x.id === produtoId);
+  if(!plano || !p) return;
+
+  // Mesmo entrando à mão, o histórico dele conta: puxa o que vendeu no
+  // período do plano, pra ela ter o mesmo parâmetro dos outros itens.
+  const { porChave } = pcVendasPorMes(plano);
+  const grupo = (typeof grupoDoProduto==='function') ? grupoDoProduto(p.id) : null;
+  const chave = grupo ? grupo.id : p.id;
+  const vendido = Object.values(porChave[chave] || {}).reduce((s,v)=>s+v, 0);
+
+  plano.itens.push(pcNovoItem({
+    produtoId: grupo ? null : p.id,
+    grupoId: grupo ? grupo.id : null,
+    nome: grupo ? grupo.nome : p.nome,
+    marca: p.marca || '',
+    unidade: p.unidade || 'UN',
+    qtdVendida: vendido,
+    estoqueAtual: p.estoqueAtual || 0,
+    custoAtual: p.custo ?? null,
+    precoVenda: p.precoVenda ?? null,
+    sugestao: Math.round(vendido * (plano.percentual/100) * 100) / 100,
+    unidadesPorEmbalagem: p.unidadesPorCaixa || 1,
+    manual: true,
+    opcoes: p.fornecedor ? [{ id: uid('pco'), fornecedor:p.fornecedor, preco:p.custo || 0, obs:'', escolhida:true }] : []
+  }));
+  saveState();
+  document.getElementById('modal-pc-add')?.remove();
+  showToast(`"${p.nome}" entrou no plano.`, 'success');
+  renderSugestaoCompra();
+}
+
+function pcAdicionarItemLivre(){
+  const plano = pcPlanoAtual();
+  const nome = (document.getElementById('pc-add-livre')?.value || '').trim();
+  if(!plano) return;
+  if(!nome){ showToast('Dê um nome ao item.', 'error'); return; }
+  plano.itens.push(pcNovoItem({ nome }));
+  saveState();
+  document.getElementById('modal-pc-add')?.remove();
+  showToast(`"${nome}" entrou no plano.`, 'success');
+  renderSugestaoCompra();
+}
+
+/* ---------- finalizar e reabrir ---------- */
+
+function pcFinalizarPlano(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const semPreco = (plano.itens||[]).filter(i => pcContasItem(i).preco <= 0 && pcQuantidade(i) > 0);
+  const aviso = semPreco.length
+    ? `${semPreco.length} ${semPreco.length===1?'item está':'itens estão'} sem preço e ${semPreco.length===1?'vai':'vão'} entrar no relatório com valor zero. `
+    : '';
+  confirmAction('Finalizar plano', aviso + 'O plano vira um registro e deixa de ser editável. Dá pra reabrir depois se precisar.', ()=>{
+    plano.status = 'finalizado';
+    plano.finalizadoEm = todayISO();
+    saveState();
+    pcVisao = 'relatorio';
+    renderSugestaoCompra();
+    showToast('Plano finalizado.', 'success');
+  }, 'Finalizar');
+}
+
+function pcReabrirPlano(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  plano.status = 'aberto';
+  plano.finalizadoEm = '';
+  saveState();
+  pcVisao = 'editor';
+  renderSugestaoCompra();
+}
+
+function pcExcluirPlano(planoId){
+  const plano = pcPlanos().find(p => p.id === planoId);
+  if(!plano) return;
+  confirmAction('Excluir plano', `"${plano.nome}" será apagado. Isso não pode ser desfeito.`, ()=>{
+    STATE.planosCompra = pcPlanos().filter(p => p.id !== planoId);
+    if(pcPlanoId === planoId){ pcPlanoId = null; pcVisao = 'planos'; }
+    saveState();
+    renderSugestaoCompra();
+  });
+}
+
+/* ---------- fornecedores do plano ---------- */
+
+function pcFornecedoresDoPlano(plano){
+  const mapa = {};
+  (plano.itens||[]).forEach(item=>{
+    const c = pcContasItem(item);
+    const nome = c.fornecedor || '(sem fornecedor definido)';
+    if(!mapa[nome]) mapa[nome] = { nome, itens:[], total:0 };
+    mapa[nome].itens.push(item);
+    mapa[nome].total += c.total;
+  });
+  return Object.values(mapa).sort((a,b)=> b.total - a.total);
+}
+
+function pcSetFornecedorInfo(nome, campo, valor){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  plano.fornecedores = plano.fornecedores || {};
+  plano.fornecedores[nome] = plano.fornecedores[nome] || { pagamento:'', prazo:'', obs:'' };
+  plano.fornecedores[nome][campo] = valor;
+  saveState();
+}
+
+/* Todo nome de fornecedor que ela pode escolher: os cadastrados mais os que
+   já apareceram neste plano. */
+function pcListaFornecedores(plano){
+  const nomes = [
+    ...(STATE.fornecedores||[]).map(f=>f.nome),
+    ...(STATE.locaisCompra||[]).map(l=>l.nome),
+    ...(plano ? (plano.itens||[]).flatMap(i => (i.opcoes||[]).map(o=>o.fornecedor)) : [])
+  ].map(n => (n||'').trim()).filter(Boolean);
+  return [...new Set(nomes)].sort((a,b)=>a.localeCompare(b));
+}
+/* ---------- telas do plano de compra ---------- */
+
+function pcBarraAbas(){
+  const aba = (id, rotulo) => {
+    const ativo = (pcVisao === id) || (id === 'planos' && (pcVisao === 'editor' || pcVisao === 'relatorio'));
+    return `<button class="btn btn-sm ${ativo ? 'btn-primary' : ''}" onclick="pcIrPara('${id}')">${rotulo}</button>`;
+  };
+  const qtd = pcPlanos().length;
+  return `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">
+    ${aba('sugestao','1. Sugestão')}
+    ${aba('meses','2. Vendas mês a mês')}
+    ${aba('planos',`3. Planos de compra${qtd?` (${qtd})`:''}`)}
+  </div>`;
+}
+
+function pcIrPara(visao){
+  pcVisao = visao;
+  if(visao === 'planos') pcPlanoId = null;
+  renderSugestaoCompra();
+}
+
+function pcAbrirPlano(planoId, visao){
+  pcPlanoId = planoId;
+  const plano = pcPlanoAtual();
+  pcVisao = visao || (plano && plano.status === 'finalizado' ? 'relatorio' : 'editor');
+  pcItemExpandido = null;
+  renderSugestaoCompra();
+}
+
+/* ---------- lista de planos ---------- */
+
+function renderPlanosLista(){
+  const planos = pcPlanos();
+  if(planos.length === 0){
+    return `<div class="card">
+      <h3>Planos de compra</h3>
+      <p class="help-text" style="margin:6px 0 0 0;">Nenhum plano ainda. Vá na aba <strong>Sugestão</strong>, escolha o período e o percentual, e clique em "Criar plano de compra".</p>
+    </div>`;
+  }
+  return `<div class="card">
+    <h3>Planos de compra <span class="hint">cada plano guarda o que você preencheu — dá pra voltar nele depois</span></h3>
+    <div class="table-wrap" style="margin-top:8px;">
+      <table class="data-table">
+        <thead><tr>
+          <th>Plano</th><th>Período analisado</th><th>Criado em</th>
+          <th class="num">Itens</th><th class="num">Valor estimado</th><th>Situação</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${planos.map(p=>`
+            <tr>
+              <td><a href="#" onclick="event.preventDefault();pcAbrirPlano('${p.id}')"><strong>${escapeHtml(p.nome)}</strong></a></td>
+              <td>${monthLabel(p.periodoInicio)} a ${monthLabel(p.periodoFim)} <span class="hint">· ${p.percentual}%</span></td>
+              <td>${fmtDate(p.criadoEm)}</td>
+              <td class="num">${(p.itens||[]).length}</td>
+              <td class="num">${fmtMoney(pcTotalPlano(p))}</td>
+              <td>${p.status==='finalizado'
+                    ? `<span class="badge badge-positive">Finalizado ${fmtDate(p.finalizadoEm)}</span>`
+                    : `<span class="badge badge-warning">Em aberto</span>`}</td>
+              <td style="white-space:nowrap;">
+                <button class="btn btn-sm" onclick="pcAbrirPlano('${p.id}','editor')" title="Abrir">✏️</button>
+                <button class="btn btn-sm" onclick="pcAbrirPlano('${p.id}','relatorio')" title="Relatório">📋</button>
+                <button class="btn btn-sm btn-danger" onclick="pcExcluirPlano('${p.id}')" title="Excluir">🗑</button>
+              </td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
+/* ---------- editor do plano ---------- */
+
+function pcItensFiltrados(plano){
+  const termo = normalizarBusca(pcBusca);
+  return (plano.itens||[]).filter(item=>{
+    if(pcFiltroFornecedor){
+      const temFornecedor = (item.opcoes||[]).some(o => o.fornecedor === pcFiltroFornecedor);
+      if(!temFornecedor) return false;
+    }
+    if(termo && !normalizarBusca(item.nome).includes(termo)) return false;
+    return true;
+  });
+}
+
+function renderPlanoEditor(){
+  const plano = pcPlanoAtual();
+  if(!plano) return renderPlanosLista();
+
+  const travado = plano.status === 'finalizado';
+  const { meses, porChave } = pcVendasPorMes(plano);
+  const itens = pcItensFiltrados(plano);
+  const fornecedores = pcListaFornecedores(plano);
+  const totalGeral = pcTotalPlano(plano, itens);
+  const mostrarMeses = pcMostrarMeses && meses.length > 0;
+
+  const cabecalho = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div style="flex:1;min-width:260px;">
+          <input type="text" value="${escapeAttr(plano.nome)}" ${travado?'disabled':''}
+                 onchange="pcSetCampoPlano('nome', this.value)"
+                 style="font-size:17px;font-weight:700;border:none;border-bottom:1px dashed var(--border);padding:2px 0;background:transparent;">
+          <div class="hint" style="margin-top:4px;">
+            Vendas de ${monthLabel(plano.periodoInicio)} a ${monthLabel(plano.periodoFim)} · sugestão de ${plano.percentual}% ·
+            ${travado ? `finalizado em ${fmtDate(plano.finalizadoEm)}` : 'em aberto'}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="pcIrPara('planos')">← Todos os planos</button>
+          ${travado
+            ? `<button class="btn btn-sm" onclick="pcReabrirPlano()">Reabrir para editar</button>`
+            : `<button class="btn btn-sm" onclick="pcAbrirAdicionarProduto()">➕ Adicionar produto</button>`}
+          <button class="btn btn-sm" onclick="exportarPlanoCompraExcel()">⬇ Excel</button>
+          <button class="btn btn-sm ${travado?'':'btn-primary'}" onclick="${travado?'pcVerRelatorio()':'pcFinalizarPlano()'}">
+            ${travado ? '📋 Ver relatório' : 'Finalizar e gerar relatório'}
+          </button>
+        </div>
+      </div>
+
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="field">
+          <label>Filtrar por fornecedor</label>
+          <select onchange="pcFiltroFornecedor=this.value;renderSugestaoCompra();">
+            <option value="">Todos</option>
+            ${fornecedores.map(f=>`<option value="${escapeAttr(f)}" ${pcFiltroFornecedor===f?'selected':''}>${escapeHtml(f)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field">
+          <label>Buscar item</label>
+          <input type="text" value="${escapeAttr(pcBusca)}" placeholder="parte do nome..."
+                 onchange="pcBusca=this.value;renderSugestaoCompra();">
+        </div>
+        <div class="field">
+          <label>&nbsp;</label>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" style="width:auto;" ${pcMostrarMeses?'checked':''}
+                   onchange="pcMostrarMeses=this.checked;renderSugestaoCompra();">
+            Mostrar vendas mês a mês
+          </label>
+        </div>
+      </div>
+    </div>`;
+
+  if(itens.length === 0){
+    return cabecalho + `<div class="card"><p class="help-text" style="margin:0;">Nenhum item com esse filtro.</p></div>`;
+  }
+
+  const linhas = itens.map(item=>{
+    const c = pcContasItem(item);
+    const vendasItem = porChave[pcChaveDoItem(item)] || {};
+    const ops = item.opcoes || [];
+    const expandido = pcItemExpandido === item.id;
+
+    const celulasMes = mostrarMeses
+      ? meses.map(m=>`<td class="num hint-cel">${vendasItem[m] ? fmtNum(vendasItem[m]) : '<span style="color:var(--ink-faint);">—</span>'}</td>`).join('')
+      : '';
+
+    const linhaPrincipal = `
+      <tr>
+        <td class="col-fixa">
+          <input type="text" value="${escapeAttr(item.nome)}" ${travado?'disabled':''}
+                 onchange="pcSetCampo('${item.id}','nome',this.value)"
+                 style="width:100%;border:none;border-bottom:1px dashed var(--border);background:transparent;font-size:13px;padding:2px 0;">
+          <div class="hint">
+            ${item.marca ? escapeHtml(item.marca)+' · ' : ''}
+            ${item.grupoId ? '🔗 vinculado · ' : ''}
+            ${item.manual ? 'adicionado à mão · ' : ''}
+            estoque ${fmtNum(item.estoqueAtual)}
+          </div>
+        </td>
+        ${celulasMes}
+        <td class="num">${fmtNum(item.qtdVendida)}</td>
+        <td class="num" style="font-weight:700;color:var(--positive);">${fmtNum(item.sugestao)}</td>
+        <td>
+          <select ${travado?'disabled':''} onchange="pcSetCampo('${item.id}','comprarEm',this.value);renderSugestaoCompra();" style="min-width:70px;">
+            ${PC_EMBALAGENS.map(e=>`<option value="${e}" ${item.comprarEm===e?'selected':''}>${e}</option>`).join('')}
+          </select>
+        </td>
+        <td class="num">
+          <input type="number" min="1" step="1" value="${item.unidadesPorEmbalagem||1}" ${travado||item.comprarEm==='UN'?'disabled':''}
+                 onchange="pcSetCampo('${item.id}','unidadesPorEmbalagem',this.value)" style="width:70px;text-align:right;">
+        </td>
+        <td class="num">
+          <input type="number" min="0" step="1" value="${c.qtd}" ${travado?'disabled':''}
+                 onchange="pcSetCampo('${item.id}','quantidade',this.value)" style="width:76px;text-align:right;${c.automatica?'':'font-weight:700;'}">
+          ${c.automatica ? '' : `<div class="hint" style="cursor:pointer;" onclick="pcVoltarQuantidadeAutomatica('${item.id}')" title="Voltar ao valor sugerido">↺ sugerido: ${Math.ceil((item.sugestao||0)/pcFator(item))}</div>`}
+        </td>
+        <td class="num" id="pc-un-${item.id}">${fmtNum(c.totalUnidades)}</td>
+        <td>
+          <button class="btn btn-sm" onclick="pcAlternarOpcoes('${item.id}')" style="width:100%;text-align:left;">
+            ${c.fornecedor ? escapeHtml(c.fornecedor) : '<span style="color:var(--ink-faint);">escolher</span>'}
+            ${ops.length>1?`<span class="badge badge-info">${ops.length}</span>`:''}
+            ${expandido?'▴':'▾'}
+          </button>
+        </td>
+        <td class="num" id="pc-preco-${item.id}">${c.preco>0?fmtMoney(c.preco):'<span style="color:var(--ink-faint);">—</span>'}</td>
+        <td class="num" id="pc-total-${item.id}" style="font-weight:700;">${fmtMoney(c.total)}</td>
+        <td>${travado?'':`<button class="btn btn-sm btn-danger" onclick="pcRemoverItem('${item.id}')" title="Tirar do plano">🗑</button>`}</td>
+      </tr>`;
+
+    if(!expandido) return linhaPrincipal;
+
+    const colspan = 9 + (mostrarMeses ? meses.length : 0);
+    const painelOpcoes = `
+      <tr class="linha-opcoes">
+        <td class="col-fixa"></td>
+        <td colspan="${colspan}" style="background:var(--bg-app);padding:10px 12px;">
+          <div style="font-size:12px;font-weight:700;color:var(--ink-soft);margin-bottom:6px;">
+            ONDE COMPRAR — mais de um lugar para o mesmo item, e você escolhe qual vale
+          </div>
+          <table style="width:100%;font-size:13px;border-collapse:collapse;">
+            <thead><tr style="color:var(--ink-faint);font-size:11px;">
+              <th style="text-align:left;padding:3px 6px;width:34px;">usar</th>
+              <th style="text-align:left;padding:3px 6px;">fornecedor / local</th>
+              <th style="text-align:right;padding:3px 6px;width:140px;">preço por ${PC_EMBALAGEM_NOME[item.comprarEm]}</th>
+              <th style="text-align:right;padding:3px 6px;width:120px;">custo por unidade</th>
+              <th style="text-align:left;padding:3px 6px;">observação</th>
+              <th style="width:34px;"></th>
+            </tr></thead>
+            <tbody>
+              ${ops.map(o=>{
+                const custoUn = (Number(o.preco)||0) / pcFator(item);
+                const maisCaro = item.custoAtual != null && custoUn > item.custoAtual;
+                return `<tr>
+                  <td style="padding:3px 6px;"><input type="radio" name="op-${item.id}" ${o.escolhida?'checked':''} ${travado?'disabled':''}
+                        onchange="pcEscolherOpcao('${item.id}','${o.id}')" style="width:auto;"></td>
+                  <td style="padding:3px 6px;">
+                    <input type="text" list="pc-fornecedores" value="${escapeAttr(o.fornecedor||'')}" ${travado?'disabled':''}
+                           onchange="pcSetOpcao('${item.id}','${o.id}','fornecedor',this.value)" style="width:100%;">
+                  </td>
+                  <td style="padding:3px 6px;">
+                    <input type="number" min="0" step="0.01" value="${o.preco||''}" ${travado?'disabled':''}
+                           onchange="pcSetOpcao('${item.id}','${o.id}','preco',this.value);renderSugestaoCompra();" style="width:100%;text-align:right;">
+                  </td>
+                  <td style="padding:3px 6px;text-align:right;${maisCaro?'color:var(--negative);font-weight:700;':''}"
+                      title="${maisCaro?'Mais caro que o custo atual ('+fmtMoney(item.custoAtual)+')':''}">
+                    ${o.preco>0?fmtMoney(custoUn):'—'}${maisCaro?' ⚠':''}
+                  </td>
+                  <td style="padding:3px 6px;">
+                    <input type="text" value="${escapeAttr(o.obs||'')}" ${travado?'disabled':''} placeholder="prazo, condição..."
+                           onchange="pcSetOpcao('${item.id}','${o.id}','obs',this.value)" style="width:100%;">
+                  </td>
+                  <td style="padding:3px 6px;">${travado?'':`<button class="btn btn-sm btn-danger" onclick="pcRemoverOpcao('${item.id}','${o.id}')">✕</button>`}</td>
+                </tr>`;
+              }).join('') || '<tr><td colspan="6" style="padding:6px;color:var(--ink-faint);">Nenhum lugar informado ainda.</td></tr>'}
+            </tbody>
+          </table>
+          ${travado?'':`<button class="btn btn-sm" style="margin-top:8px;" onclick="pcAdicionarOpcao('${item.id}')">➕ Outro fornecedor para este item</button>`}
+        </td>
+      </tr>`;
+
+    return linhaPrincipal + painelOpcoes;
+  }).join('');
+
+  const tabela = `
+    <div class="card">
+      <div class="table-wrap">
+        <table class="data-table tabela-plano">
+          <thead>
+            <tr>
+              <th class="col-fixa">Produto</th>
+              ${mostrarMeses ? meses.map(m=>`<th class="num hint-cel">${monthLabel(m)}</th>`).join('') : ''}
+              <th class="num">Vendido</th>
+              <th class="num">Sugestão</th>
+              <th>Comprar em</th>
+              <th class="num">Un/emb</th>
+              <th class="num">Qtd</th>
+              <th class="num">Unidades</th>
+              <th>Onde comprar</th>
+              <th class="num">Preço</th>
+              <th class="num">Total</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+          <tfoot>
+            <tr>
+              <td class="col-fixa">Total — ${itens.length} ${itens.length===1?'item':'itens'}</td>
+              ${mostrarMeses ? meses.map(m=>`<td class="num hint-cel">${fmtNum(itens.reduce((s,i)=>s+((porChave[pcChaveDoItem(i)]||{})[m]||0),0))}</td>`).join('') : ''}
+              <td class="num">${fmtNum(itens.reduce((s,i)=>s+i.qtdVendida,0))}</td>
+              <td class="num">${fmtNum(itens.reduce((s,i)=>s+i.sugestao,0))}</td>
+              <td></td><td></td>
+              <td class="num">${fmtNum(itens.reduce((s,i)=>s+pcQuantidade(i),0))}</td>
+              <td class="num">${fmtNum(itens.reduce((s,i)=>s+pcContasItem(i).totalUnidades,0))}</td>
+              <td></td><td></td>
+              <td class="num" style="font-weight:700;">${fmtMoney(totalGeral)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <datalist id="pc-fornecedores">${fornecedores.map(f=>`<option value="${escapeAttr(f)}">`).join('')}</datalist>
+    </div>`;
+
+  return cabecalho + tabela;
+}
+
+function pcAlternarOpcoes(itemId){
+  pcItemExpandido = (pcItemExpandido === itemId) ? null : itemId;
+  renderSugestaoCompra();
+}
+
+function pcVerRelatorio(){
+  pcVisao = 'relatorio';
+  renderSugestaoCompra();
+}
+
+/* Atualiza só os números da linha, sem redesenhar a tela — senão o campo que
+   ela está preenchendo perde o foco a cada tecla. */
+function pcRedesenharLinha(itemId){
+  const plano = pcPlanoAtual();
+  const item = plano && pcItem(plano, itemId);
+  if(!item) return;
+  const c = pcContasItem(item);
+  const põe = (id, html) => { const el = document.getElementById(id); if(el) el.innerHTML = html; };
+  põe('pc-un-'+itemId, fmtNum(c.totalUnidades));
+  põe('pc-preco-'+itemId, c.preco>0?fmtMoney(c.preco):'<span style="color:var(--ink-faint);">—</span>');
+  põe('pc-total-'+itemId, fmtMoney(c.total));
+}
+
+/* ---------- relatório ---------- */
+
+function renderPlanoRelatorio(){
+  const plano = pcPlanoAtual();
+  if(!plano) return renderPlanosLista();
+
+  const grupos = pcFornecedoresDoPlano(plano);
+  const total = grupos.reduce((s,g)=>s+g.total, 0);
+
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(plano.nome)}</h3>
+          <div class="hint" style="margin-top:4px;">
+            ${plano.status==='finalizado' ? `Finalizado em ${fmtDate(plano.finalizadoEm)}` : 'Ainda em aberto'} ·
+            ${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} · ${(plano.itens||[]).length} itens
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="pcIrPara('planos')">← Todos os planos</button>
+          <button class="btn btn-sm" onclick="pcAbrirPlano('${plano.id}','editor')">✏️ ${plano.status==='finalizado'?'Ver itens':'Editar itens'}</button>
+          <button class="btn btn-sm" onclick="exportarPlanoCompraExcel()">⬇ Excel</button>
+          <button class="btn btn-sm" onclick="window.print()">🖨 Imprimir</button>
+        </div>
+      </div>
+      <div class="kpi-grid" style="margin-top:14px;">
+        <div class="kpi-card"><div class="kpi-label">Valor total da compra</div><div class="kpi-value">${fmtMoney(total)}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Itens</div><div class="kpi-value">${(plano.itens||[]).length}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Fornecedores</div><div class="kpi-value">${grupos.length}</div></div>
+      </div>
+    </div>
+
+    ${grupos.map(g=>{
+      const info = (plano.fornecedores||{})[g.nome] || { pagamento:'', prazo:'', obs:'' };
+      return `
+      <div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+          <h3 style="margin:0;">${escapeHtml(g.nome)}</h3>
+          <strong style="font-size:17px;">${fmtMoney(g.total)}</strong>
+        </div>
+
+        <div class="form-grid" style="margin-top:10px;">
+          <div class="field">
+            <label>Como paga</label>
+            <select onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','pagamento',this.value)">
+              <option value="">—</option>
+              ${PC_PAGAMENTOS.map(p=>`<option value="${p}" ${info.pagamento===p?'selected':''}>${p}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field">
+            <label>Prazo / parcelamento</label>
+            <input type="text" value="${escapeAttr(info.prazo||'')}" placeholder="Ex: 28 dias, 2x sem juros"
+                   onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','prazo',this.value)">
+          </div>
+        </div>
+        <div class="field" style="margin-top:8px;">
+          <label>Observações deste fornecedor</label>
+          <textarea rows="2" placeholder="Pedido mínimo, frete, contato, o que combinou..."
+                    onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','obs',this.value)">${escapeHtml(info.obs||'')}</textarea>
+        </div>
+
+        <div class="table-wrap" style="margin-top:10px;">
+          <table class="data-table">
+            <thead><tr>
+              <th>Produto</th><th>Comprar em</th><th class="num">Qtd</th>
+              <th class="num">Unidades</th><th class="num">Preço</th><th class="num">Total</th><th>Observação</th>
+            </tr></thead>
+            <tbody>
+              ${g.itens.map(i=>{
+                const c = pcContasItem(i);
+                const op = pcOpcaoEscolhida(i);
+                return `<tr>
+                  <td>${escapeHtml(i.nome)}${i.marca?`<div class="hint">${escapeHtml(i.marca)}</div>`:''}</td>
+                  <td>${PC_EMBALAGEM_NOME[i.comprarEm]}${i.comprarEm!=='UN'?` de ${fmtNum(c.fator)}`:''}</td>
+                  <td class="num">${fmtNum(c.qtd)}</td>
+                  <td class="num">${fmtNum(c.totalUnidades)}</td>
+                  <td class="num">${c.preco>0?fmtMoney(c.preco):'—'}</td>
+                  <td class="num" style="font-weight:700;">${fmtMoney(c.total)}</td>
+                  <td class="hint">${escapeHtml(op && op.obs ? op.obs : '')}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+            <tfoot><tr>
+              <td colspan="5">Total deste fornecedor</td>
+              <td class="num" style="font-weight:700;">${fmtMoney(g.total)}</td>
+              <td></td>
+            </tr></tfoot>
+          </table>
+        </div>
+      </div>`;
+    }).join('')}
+
+    <div class="card">
+      <h3>Observações gerais</h3>
+      <textarea rows="4" placeholder="O que vale para a compra inteira: prazo de entrega combinado, quem vai receber, o que ficou pendente..."
+                onchange="pcSetCampoPlano('observacoes', this.value)">${escapeHtml(plano.observacoes||'')}</textarea>
+      ${plano.status!=='finalizado'
+        ? `<button class="btn btn-primary" style="margin-top:12px;" onclick="pcFinalizarPlano()">Finalizar plano</button>`
+        : `<button class="btn" style="margin-top:12px;" onclick="pcReabrirPlano()">Reabrir para editar</button>`}
+    </div>
+  `;
+}
+/* ---------- Excel do plano de compra ----------
+   Três abas: o pedido inteiro (que ela pode filtrar por fornecedor na própria
+   planilha), um resumo por fornecedor com a forma de pagamento, e as vendas
+   mês a mês que serviram de base. */
+async function exportarPlanoCompraExcel(){
+  const plano = pcPlanoAtual();
+  if(!plano || (plano.itens||[]).length === 0){ showToast('Plano vazio.', 'error'); return; }
+
+  try{
+    const temExcelJs = await carregarExcelJs();
+    if(!temExcelJs){ showToast('Sem internet para a planilha formatada.', 'error'); return; }
+    await montarPlanilhaDoPlano(plano);
+    showToast('Planilha do plano gerada.', 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui gerar a planilha: ' + e.message, 'error');
+  }
+}
+
+async function montarPlanilhaDoPlano(plano){
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Mizu Materiais de Limpeza';
+  wb.created = new Date();
+
+  const { meses, porChave } = pcVendasPorMes(plano);
+  const grupos = pcFornecedoresDoPlano(plano);
+  const totalGeral = grupos.reduce((s,g)=>s+g.total, 0);
+
+  const titulo = (ws, cols, texto, sub) => {
+    ws.mergeCells(1, 1, 1, cols);
+    const t = ws.getCell(1,1);
+    t.value = texto;
+    t.font = { bold:true, size:15, color:{argb:'FF'+COR.escuro} };
+    ws.getRow(1).height = 24;
+    ws.mergeCells(2, 1, 2, cols);
+    const s = ws.getCell(2,1);
+    s.value = sub;
+    s.font = { size:10, color:{argb:'FF'+COR.cinza} };
+    ws.getRow(3).height = 6;
+  };
+  const cabecalho = (ws, linha, titulos, fundo) => {
+    const r = ws.getRow(linha);
+    titulos.forEach((t, i)=>{
+      const c = r.getCell(i+1);
+      c.value = t;
+      c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+      c.alignment = { vertical:'middle', horizontal: i===0 ? 'left' : 'center', wrapText:true };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+(fundo||COR.escuro)} };
+    });
+    r.height = 26;
+  };
+
+  // ---------------- aba 1: pedido ----------------
+  const ws = wb.addWorksheet('Pedido', { views:[{ state:'frozen', xSplit:1, ySplit:5 }] });
+  const cols = ['Produto','Marca','Fornecedor','Forma de pagamento','Comprar em','Un. por embalagem',
+                'Quantidade','Total de unidades','Preço por embalagem','Total','Custo por unidade',
+                'Custo atual','Vendido no período','Sugestão','Observação'];
+  ws.columns = [{width:42},{width:16},{width:22},{width:18},{width:12},{width:16},
+                {width:12},{width:16},{width:18},{width:15},{width:16},
+                {width:13},{width:16},{width:12},{width:28}];
+  titulo(ws, cols.length, plano.nome,
+    `Vendas de ${monthLabel(plano.periodoInicio)} a ${monthLabel(plano.periodoFim)} · sugestão de ${plano.percentual}% · `
+    + `${plano.status==='finalizado' ? 'finalizado em '+fmtDate(plano.finalizadoEm) : 'em aberto'} · gerado em ${fmtDate(todayISO())}`);
+  cabecalho(ws, 5, cols);
+
+  let r = 6;
+  (plano.itens||[]).forEach(item=>{
+    const c = pcContasItem(item);
+    const op = pcOpcaoEscolhida(item);
+    const info = (plano.fornecedores||{})[c.fornecedor || '(sem fornecedor definido)'] || {};
+    const linha = ws.getRow(r);
+    [ item.nome, item.marca||'', c.fornecedor||'', info.pagamento||'',
+      item.comprarEm, c.fator, c.qtd, c.totalUnidades, c.preco, c.total, c.custoUnitario,
+      item.custoAtual ?? '', item.qtdVendida, item.sugestao, (op && op.obs) || ''
+    ].forEach((v, i)=> { linha.getCell(i+1).value = v; });
+
+    [9,10,11,12].forEach(i=>{ linha.getCell(i).numFmt = 'R$ #,##0.00'; });
+    [6,7,8,13,14].forEach(i=>{ linha.getCell(i).numFmt = '#,##0.##'; });
+    for(let i=1; i<=cols.length; i++){
+      const cel = linha.getCell(i);
+      cel.font = { size:10 };
+      cel.alignment = { vertical:'middle', horizontal: i<=4 || i===15 ? 'left' : 'right' };
+      cel.border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+    }
+    linha.getCell(10).font = { size:10, bold:true };
+    // custo por unidade acima do custo atual: compra mais cara que a anterior
+    if(item.custoAtual != null && c.custoUnitario > item.custoAtual && c.custoUnitario > 0){
+      linha.getCell(11).font = { size:10, bold:true, color:{argb:'FF'+COR.vermelho} };
+      linha.getCell(11).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.vermelhoFraco} };
+    }
+    r++;
+  });
+
+  const rTot = r;
+  const tot = ws.getRow(rTot);
+  ws.mergeCells(rTot, 1, rTot, 6);
+  tot.getCell(1).value = `TOTAL — ${(plano.itens||[]).length} itens`;
+  tot.getCell(7).value  = { formula:`SUM(G6:G${rTot-1})` };
+  tot.getCell(8).value  = { formula:`SUM(H6:H${rTot-1})` };
+  tot.getCell(10).value = { formula:`SUM(J6:J${rTot-1})` };
+  for(let i=1; i<=cols.length; i++){
+    const cel = tot.getCell(i);
+    cel.font = { bold:true, size:11, color:{argb:'FFFFFFFF'} };
+    cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+    cel.alignment = { vertical:'middle', horizontal: i===1 ? 'left' : 'right' };
+  }
+  tot.getCell(10).numFmt = 'R$ #,##0.00';
+  ws.autoFilter = { from:{row:5, column:1}, to:{row:rTot-1, column:cols.length} };
+
+  // ---------------- aba 2: por fornecedor ----------------
+  const wsF = wb.addWorksheet('Por fornecedor');
+  const colsF = ['Fornecedor','Itens','Valor total','Como paga','Prazo / parcelamento','Observações'];
+  wsF.columns = [{width:30},{width:10},{width:16},{width:20},{width:26},{width:52}];
+  titulo(wsF, colsF.length, 'Resumo por fornecedor', `${plano.nome} · total ${fmtMoney(totalGeral)}`);
+  cabecalho(wsF, 5, colsF, COR.verde);
+  let rf = 6;
+  grupos.forEach(g=>{
+    const info = (plano.fornecedores||{})[g.nome] || {};
+    const l = wsF.getRow(rf);
+    [g.nome, g.itens.length, g.total, info.pagamento||'', info.prazo||'', info.obs||''].forEach((v,i)=>{ l.getCell(i+1).value = v; });
+    l.getCell(3).numFmt = 'R$ #,##0.00';
+    for(let i=1;i<=colsF.length;i++){
+      l.getCell(i).font = { size:10 };
+      l.getCell(i).alignment = { vertical:'top', horizontal: i===2||i===3 ? 'right' : 'left', wrapText: i===6 };
+      l.getCell(i).border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+    }
+    rf++;
+  });
+  const lf = wsF.getRow(rf);
+  lf.getCell(1).value = 'TOTAL';
+  lf.getCell(3).value = { formula:`SUM(C6:C${rf-1})` };
+  lf.getCell(3).numFmt = 'R$ #,##0.00';
+  for(let i=1;i<=colsF.length;i++){
+    lf.getCell(i).font = { bold:true, size:11, color:{argb:'FFFFFFFF'} };
+    lf.getCell(i).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+  }
+  if(plano.observacoes){
+    const obs = wsF.getRow(rf + 2);
+    obs.getCell(1).value = 'Observações gerais:';
+    obs.getCell(1).font = { bold:true, size:10, color:{argb:'FF'+COR.ambar} };
+    const txt = wsF.getRow(rf + 3);
+    wsF.mergeCells(rf + 3, 1, rf + 3, colsF.length);
+    txt.getCell(1).value = plano.observacoes;
+    txt.getCell(1).alignment = { wrapText:true, vertical:'top' };
+    txt.height = 60;
+  }
+
+  // ---------------- aba 3: vendas mês a mês ----------------
+  if(meses.length){
+    const wsM = wb.addWorksheet('Vendas mês a mês', { views:[{ state:'frozen', xSplit:1, ySplit:5 }] });
+    const colsM = ['Produto', ...meses.map(m=>monthLabel(m)), 'Total'];
+    wsM.columns = [{width:42}, ...meses.map(()=>({width:11})), {width:13}];
+    titulo(wsM, colsM.length, 'Vendas mês a mês',
+      `Base da sugestão · ${monthLabel(plano.periodoInicio)} a ${monthLabel(plano.periodoFim)}`);
+    cabecalho(wsM, 5, colsM, COR.cinza);
+    let rm = 6;
+    (plano.itens||[]).forEach(item=>{
+      const v = porChave[pcChaveDoItem(item)] || {};
+      const l = wsM.getRow(rm);
+      l.getCell(1).value = item.nome;
+      meses.forEach((m, i)=>{ l.getCell(i+2).value = v[m] || 0; });
+      l.getCell(colsM.length).value = { formula:`SUM(B${rm}:${wsM.getColumn(colsM.length-1).letter}${rm})` };
+      for(let i=1;i<=colsM.length;i++){
+        l.getCell(i).font = { size:10 };
+        l.getCell(i).alignment = { horizontal: i===1 ? 'left' : 'right' };
+        if(i>1) l.getCell(i).numFmt = '#,##0.##';
+      }
+      l.getCell(colsM.length).font = { size:10, bold:true };
+      rm++;
+    });
+  }
+
+  const buffer = await wb.xlsx.writeBuffer();
+  const limpo = (plano.nome||'plano').replace(/[^\wÀ-ú ]+/g,'').replace(/\s+/g,'_').slice(0,50);
+  baixarArquivo(buffer, `${limpo || 'plano_de_compra'}.xlsx`);
+}
+
+/* A tabela de vendas mês a mês morava na Análise de Vendas. Veio pra cá
+   porque é aqui que ela serve: é olhando o mês a mês que se decide o que
+   comprar. */
+function pcHtmlVendasMeses(){
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">Vendas mês a mês <span class="hint">quanto cada produto vendeu em cada mês — mostra se está subindo, caindo ou se é sazonal</span></h3>
+        <button class="btn btn-sm" id="btn-exportar-historico-mensal">⬇ Exportar Excel</button>
+      </div>
+      <div class="form-grid" style="margin-top:10px;">
+        <div class="field"><label>De (mês)</label><input type="month" id="hm-inicio"></div>
+        <div class="field"><label>Até (mês)</label><input type="month" id="hm-fim"></div>
+        <div class="field">
+          <label>Mostrar</label>
+          <select id="hm-metrica">
+            <option value="qtd" ${hmMetrica==='qtd'?'selected':''}>Quantidade vendida</option>
+            <option value="bruto" ${hmMetrica==='bruto'?'selected':''}>Valor vendido (R$)</option>
+          </select>
+        </div>
+      </div>
+      <div id="an-historico-mensal" style="margin-top:10px;"></div>
+      <div id="an-historico-paginacao"></div>
+    </div>`;
+}
+
+function pcLigarVendasMeses(){
+  renderHistoricoMensalProduto();
+  document.getElementById('btn-exportar-historico-mensal').addEventListener('click', exportarHistoricoMensalExcel);
+  document.getElementById('hm-inicio').addEventListener('change', (e)=>{
+    hmInicio = e.target.value || hmInicio;
+    if(hmFim < hmInicio) hmFim = hmInicio;
+    renderHistoricoMensalProduto();
+  });
+  document.getElementById('hm-fim').addEventListener('change', (e)=>{
+    hmFim = e.target.value || hmFim;
+    renderHistoricoMensalProduto();
+  });
+  document.getElementById('hm-metrica').addEventListener('change', (e)=>{
+    hmMetrica = e.target.value;
+    renderHistoricoMensalProduto();
+  });
+}
+
 
 /* =========================================================
    INICIALIZAÇÃO
