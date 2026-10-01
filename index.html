@@ -779,6 +779,15 @@ table.data-table{ width:100%; font-size:13px; }
 /* Tabela da Sugestão de Compra: o cabeçalho acompanha a rolagem (senão,
    descendo a lista, ninguém sabe mais qual coluna é qual) e a coluna da
    sugestão fica destacada, que é o número que importa ali. */
+/* Histórico mensal: a tabela cresce pra direita conforme os meses, então a
+   coluna do produto fica presa na esquerda e o cabeçalho no topo — sem isso
+   você rola e perde de vista de quem é a linha e de que mês é a coluna. */
+.tabela-historico thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
+.tabela-historico .col-fixa{ position:sticky; left:0; z-index:1; background:var(--bg-card); min-width:230px; }
+.tabela-historico thead .col-fixa{ z-index:3; }
+.tabela-historico tfoot .col-fixa, .tabela-historico tfoot td{ background:var(--bg-card); font-weight:700; }
+.tabela-historico td, .tabela-historico th{ white-space:nowrap; }
+
 .tabela-sugestao thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); }
 .tabela-sugestao .col-sugestao{ font-weight:700; background:var(--primary-soft); }
 
@@ -12120,6 +12129,32 @@ function renderAnalise(){
     </div>
 
     <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">Histórico Mensal por Produto <span class="hint">quanto cada produto vendeu em cada mês — mostra se está subindo, caindo ou se é sazonal</span></h3>
+        <button class="btn btn-sm" id="btn-exportar-historico-mensal">⬇ Exportar Excel</button>
+      </div>
+      <div class="form-grid" style="margin-top:10px;">
+        <div class="field">
+          <label>De (mês)</label>
+          <input type="month" id="hm-inicio">
+        </div>
+        <div class="field">
+          <label>Até (mês)</label>
+          <input type="month" id="hm-fim">
+        </div>
+        <div class="field">
+          <label>Mostrar</label>
+          <select id="hm-metrica">
+            <option value="qtd">Quantidade vendida</option>
+            <option value="bruto">Valor vendido (R$)</option>
+          </select>
+        </div>
+      </div>
+      <div id="an-historico-mensal" style="margin-top:10px;"></div>
+      <div id="an-historico-paginacao"></div>
+    </div>
+
+    <div class="card">
       <h3>Detalhamento de Vendas <span class="hint" id="an-count-hint"></span></h3>
       <div class="table-wrap">
         <table class="data-table" id="tbl-analise">
@@ -12157,6 +12192,21 @@ function renderAnalise(){
   });
 
   document.getElementById('btn-exportar-analise-produto').addEventListener('click', exportarAnalisePorProdutoExcel);
+
+  document.getElementById('btn-exportar-historico-mensal').addEventListener('click', exportarHistoricoMensalExcel);
+  document.getElementById('hm-inicio').addEventListener('change', (e)=>{
+    hmInicio = e.target.value || hmInicio;
+    if(hmFim < hmInicio) hmFim = hmInicio;
+    renderHistoricoMensalProduto();
+  });
+  document.getElementById('hm-fim').addEventListener('change', (e)=>{
+    hmFim = e.target.value || hmFim;
+    renderHistoricoMensalProduto();
+  });
+  document.getElementById('hm-metrica').addEventListener('change', (e)=>{
+    hmMetrica = e.target.value;
+    renderHistoricoMensalProduto();
+  });
 
   document.getElementById('tbl-analise').addEventListener('sortrequest', (e)=>{
     analiseSort = e.detail;
@@ -12231,6 +12281,7 @@ function aplicarFiltrosAnalise(){
   window.__linhasAnaliseAtuais = linhas;
   renderTabelaAnalisePorCliente(linhas);
   renderTabelaAnalisePorProduto(linhas);
+  renderHistoricoMensalProduto(); // tem filtro de período próprio, não usa 'linhas'
   renderTabelaAnalise(linhas);
 }
 
@@ -24068,6 +24119,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-01-f',
+    data: '2026-10-01',
+    titulo: 'Histórico mensal por produto',
+    itens: [
+      'Nova tabela em Análise de Vendas: uma linha por produto e uma coluna por mês, mostrando quanto vendeu em cada um.',
+      'Você escolhe o período (do mês 6 ao mês 10, por exemplo) e vê mês a mês, com o total ao lado do nome.',
+      'Dá pra ver em quantidade ou em valor (R$), e produtos vinculados aparecem somados numa linha só.',
+      'Uma barrinha de fundo marca os meses mais fortes de cada produto, pra enxergar sazonalidade sem ler número por número.',
+      'Exporta pra Excel também.'
+    ]
+  },
+  {
     id: '2026-10-01-e',
     data: '2026-10-01',
     titulo: 'Planilha: unidade, caixa, pacote e fardo',
@@ -24225,6 +24288,203 @@ function verificarNovidadesAoAbrirApp(){
   abrirNovidades(pendentes, quantas === 1
     ? 'Uma novidade desde a última vez que você abriu'
     : `${quantas} novidades desde a última vez que você abriu`);
+}
+
+/* =========================================================
+   MÓDULO: HISTÓRICO MENSAL POR PRODUTO
+
+   Uma linha por produto, uma coluna por mês: dá pra ver num relance se um
+   item está subindo, caindo ou é sazonal — coisa que o total do período
+   esconde. Produtos vinculados (ver abrirVincularProdutos) entram somados
+   numa linha só, igual ao resto da análise.
+
+   O filtro de período é dele, independente dos filtros do topo da tela:
+   aqui a graça é justamente comparar vários meses de uma vez.
+   ========================================================= */
+
+let hmInicio = '';
+let hmFim = '';
+let hmMetrica = 'qtd'; // 'qtd' = unidades vendidas | 'bruto' = valor vendido
+
+/* Últimos N meses terminando no mês atual, no formato AAAA-MM. */
+function mesRelativo(meses){
+  const d = new Date();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + meses);
+  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0');
+}
+
+function mesesEntre(inicio, fim){
+  if(!inicio || !fim || fim < inicio) return [];
+  const lista = [];
+  let [a, m] = inicio.split('-').map(Number);
+  const [af, mf] = fim.split('-').map(Number);
+  // teto de segurança: ninguém compara 10 anos numa tabela só
+  while((a < af || (a === af && m <= mf)) && lista.length < 36){
+    lista.push(a + '-' + String(m).padStart(2,'0'));
+    m++;
+    if(m > 12){ m = 1; a++; }
+  }
+  return lista;
+}
+
+/* Monta a matriz produto × mês. */
+function getHistoricoMensal(inicio, fim){
+  const meses = mesesEntre(inicio, fim);
+  if(meses.length === 0) return { meses:[], linhas:[] };
+
+  const dentro = new Set(meses);
+  const porChave = {};
+
+  getLinhasVenda().forEach(l=>{
+    if(!dentro.has(l.mes)) return;
+    const grupo = (typeof grupoDoProduto==='function') ? grupoDoProduto(l.produtoId) : null;
+    const chave = grupo ? grupo.id : (l.produtoId || l.produtoNome);
+    if(!porChave[chave]){
+      const membros = grupo ? produtosDoGrupo(grupo) : [];
+      porChave[chave] = {
+        chave,
+        grupoId: grupo ? grupo.id : null,
+        produtoId: grupo ? null : l.produtoId,
+        nome: grupo ? grupo.nome : l.produtoNome,
+        qtdProdutos: grupo ? membros.length : 1,
+        marca: grupo ? valorComumDoGrupo(grupo,'marca') : (l.marca || ''),
+        porMes: {},
+        total: 0,
+        mesesComVenda: 0
+      };
+    }
+    const item = porChave[chave];
+    const valor = (hmMetrica === 'bruto') ? l.bruto : l.qtd;
+    item.porMes[l.mes] = (item.porMes[l.mes] || 0) + valor;
+    item.total += valor;
+  });
+
+  const linhas = Object.values(porChave);
+  linhas.forEach(it=>{ it.mesesComVenda = meses.filter(m => (it.porMes[m]||0) > 0).length; });
+  linhas.sort((a,b)=> b.total - a.total || a.nome.localeCompare(b.nome));
+  return { meses, linhas };
+}
+
+function hmFormatar(v){
+  if(!v) return '';
+  return hmMetrica === 'bruto' ? fmtMoney(v) : fmtNum(Math.round(v*100)/100);
+}
+
+function renderHistoricoMensalProduto(){
+  const box = document.getElementById('an-historico-mensal');
+  if(!box) return;
+
+  if(!hmInicio) hmInicio = mesRelativo(-5);
+  if(!hmFim) hmFim = mesRelativo(0);
+  if(hmFim < hmInicio) hmFim = hmInicio;
+
+  const campoInicio = document.getElementById('hm-inicio');
+  const campoFim = document.getElementById('hm-fim');
+  if(campoInicio) campoInicio.value = hmInicio;
+  if(campoFim) campoFim.value = hmFim;
+
+  const { meses, linhas } = getHistoricoMensal(hmInicio, hmFim);
+
+  if(meses.length === 0 || linhas.length === 0){
+    box.innerHTML = `<p class="help-text" style="margin:0;">Nenhuma venda entre ${monthLabel(hmInicio)} e ${monthLabel(hmFim)}.</p>`;
+    const pag = document.getElementById('an-historico-paginacao');
+    if(pag) pag.innerHTML = '';
+    return;
+  }
+
+  const total = linhas.length;
+  const pagina = aplicarPaginacao('analise-historico', linhas);
+
+  // Totais de cada mês, com TODAS as linhas (não só as da página).
+  const totalMes = {};
+  meses.forEach(m=>{ totalMes[m] = linhas.reduce((s,l)=>s+(l.porMes[m]||0), 0); });
+  const totalGeral = linhas.reduce((s,l)=>s+l.total, 0);
+
+  // O maior valor da tabela vira referência da barrinha de fundo: assim dá
+  // pra enxergar o pico de cada produto sem ler número por número.
+  const maior = Math.max(...linhas.flatMap(l=>meses.map(m=>l.porMes[m]||0)), 1);
+  const fundo = v => {
+    if(!v) return '';
+    const pct = Math.round((v/maior)*100);
+    return `background:linear-gradient(to right, var(--primary-soft) ${pct}%, transparent ${pct}%);`;
+  };
+
+  box.innerHTML = `
+    <div class="table-wrap">
+      <table class="data-table tabela-historico">
+        <thead>
+          <tr>
+            <th class="col-fixa">Produto</th>
+            <th class="num">Total</th>
+            ${meses.map(m=>`<th class="num">${monthLabel(m)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${pagina.map(l=>`
+            <tr>
+              <td class="col-fixa">${escapeHtml(l.nome)}${l.grupoId?` <span class="badge badge-neutral" title="${l.qtdProdutos} cadastros somados">🔗 ${l.qtdProdutos}</span>`:''}
+                ${l.marca?`<div class="hint">${escapeHtml(l.marca)}</div>`:''}</td>
+              <td class="num" style="font-weight:700;">${hmFormatar(l.total)}</td>
+              ${meses.map(m=>`<td class="num" style="${fundo(l.porMes[m]||0)}">${hmFormatar(l.porMes[m]||0) || '<span style="color:var(--ink-faint);">—</span>'}</td>`).join('')}
+            </tr>`).join('')}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td class="col-fixa">Total (${total} ${total===1?'item':'itens'})</td>
+            <td class="num" style="font-weight:700;">${hmFormatar(totalGeral)}</td>
+            ${meses.map(m=>`<td class="num">${hmFormatar(totalMes[m]) || '—'}</td>`).join('')}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  `;
+
+  const pag = document.getElementById('an-historico-paginacao');
+  if(pag){
+    pag.innerHTML = renderControlePaginacao('analise-historico', total);
+    ativarControlePaginacao('analise-historico', renderHistoricoMensalProduto);
+  }
+}
+
+function exportarHistoricoMensalExcel(){
+  if(!XLSX_DISPONIVEL){
+    showToast('A exportação para Excel precisa de internet.', 'error');
+    return;
+  }
+  const { meses, linhas } = getHistoricoMensal(hmInicio, hmFim);
+  if(linhas.length === 0){ showToast('Nenhuma venda no período pra exportar.', 'error'); return; }
+
+  const rotulo = hmMetrica === 'bruto' ? 'valor vendido (R$)' : 'quantidade vendida';
+  const aoa = [
+    [`Histórico mensal por produto — ${rotulo}`],
+    [`De ${monthLabel(hmInicio)} a ${monthLabel(hmFim)} · gerado em ${fmtDate(todayISO())}`],
+    [],
+    ['Produto', 'Marca', 'Total', ...meses.map(m=>monthLabel(m)), 'Meses com venda']
+  ];
+  linhas.forEach(l=>{
+    aoa.push([
+      l.nome + (l.grupoId ? '  (vários cadastros vinculados)' : ''),
+      l.marca || '',
+      l.total,
+      ...meses.map(m=> l.porMes[m] || 0),
+      l.mesesComVenda
+    ]);
+  });
+  aoa.push([
+    'TOTAL', '',
+    linhas.reduce((s,l)=>s+l.total,0),
+    ...meses.map(m=> linhas.reduce((s,l)=>s+(l.porMes[m]||0), 0)),
+    ''
+  ]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:44},{wch:16},{wch:13}, ...meses.map(()=>({wch:11})), {wch:15}];
+  ws['!freeze'] = { xSplit:1, ySplit:4 };
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Histórico mensal');
+  XLSX.writeFile(wb, `historico_mensal_${hmInicio}_a_${hmFim}.xlsx`);
+  showToast('Planilha gerada.', 'success');
 }
 
 /* =========================================================
