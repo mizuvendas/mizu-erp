@@ -826,6 +826,7 @@ table.data-table{ width:100%; font-size:13px; }
 .pc-alca{ cursor:grab; color:var(--ink-faint); font-size:15px; line-height:1.1; user-select:none; padding:0 2px; }
 .pc-alca:active{ cursor:grabbing; }
 .tabela-plano tr.arrastando{ opacity:.35; }
+.tabela-plano tr.selecionada td, .tabela-plano tr.selecionada .col-fixa{ background:var(--primary-soft); }
 .tabela-plano tr.solta-acima td{ box-shadow:inset 0 3px 0 var(--primary); }
 .tabela-plano tr.solta-abaixo td{ box-shadow:inset 0 -3px 0 var(--primary); }
 @media print{
@@ -24209,6 +24210,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-01-m',
+    data: '2026-10-01',
+    tour: 'plano-compra',
+    titulo: 'Plano de compra: selecionar vários itens',
+    itens: [
+      'Cada linha ganhou uma caixinha de seleção, e o cabeçalho tem a de marcar todos de uma vez.',
+      'Com itens selecionados aparece uma barra no topo da tabela: excluir todos de uma vez, subir, descer ou limpar a seleção.',
+      'Arrastando um item que está selecionado, a seleção inteira vai junto — mesmo que os itens estejam separados na lista, eles chegam juntos no destino na mesma ordem.',
+      'Com filtro ligado, "selecionar todos" marca só o que está à vista — nunca o que está escondido.'
+    ]
+  },
+  {
     id: '2026-10-01-l',
     data: '2026-10-01',
     titulo: 'As telas agora ocupam a largura toda',
@@ -24878,6 +24891,98 @@ function pcClonarItem(itemId){
   renderSugestaoCompra();
 }
 
+/* ---------- selecionar vários itens ---------- */
+
+let pcSelecionados = new Set();
+
+function pcAlternarSelecao(itemId, marcado){
+  if(marcado) pcSelecionados.add(itemId); else pcSelecionados.delete(itemId);
+  // Só a linha e a barra mudam. Redesenhar a tabela inteira a cada clique
+  // numa caixinha faria a página pular de lugar com 138 itens na tela.
+  const cb = document.getElementById('pc-sel-' + itemId);
+  const tr = cb && cb.closest('tr');
+  if(tr) tr.classList.toggle('selecionada', marcado);
+  pcAtualizarBarraSelecao();
+}
+
+function pcSelecionarTodos(marcado){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  // Com filtro ligado, "todos" são os que estão à vista — selecionar o que
+  // não está na tela seria uma armadilha na hora de excluir.
+  pcItensFiltrados(plano).forEach(i=>{
+    if(marcado) pcSelecionados.add(i.id); else pcSelecionados.delete(i.id);
+  });
+  renderSugestaoCompra();
+}
+
+function pcLimparSelecao(){
+  pcSelecionados.clear();
+  renderSugestaoCompra();
+}
+
+function pcHtmlBarraSelecao(){
+  const n = pcSelecionados.size;
+  if(n === 0) return '';
+  return `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;margin-bottom:10px;background:var(--primary-soft);border-radius:var(--radius-sm);">
+    <strong style="font-size:13px;">${n} ${n===1?'item selecionado':'itens selecionados'}</strong>
+    <button class="btn btn-sm" onclick="pcMoverSelecao(-1)" title="Sobe a seleção uma posição">↑ Subir</button>
+    <button class="btn btn-sm" onclick="pcMoverSelecao(1)" title="Desce a seleção uma posição">↓ Descer</button>
+    <span class="hint">ou arraste um dos selecionados — eles vão juntos</span>
+    <span style="flex:1;"></span>
+    <button class="btn btn-sm" onclick="pcLimparSelecao()">Limpar seleção</button>
+    <button class="btn btn-sm btn-danger" onclick="pcExcluirSelecionados()">🗑 Excluir ${n===1?'o item':'os '+n+' itens'}</button>
+  </div>`;
+}
+
+function pcAtualizarBarraSelecao(){
+  const box = document.getElementById('pc-barra-selecao');
+  if(box) box.innerHTML = pcHtmlBarraSelecao();
+}
+
+function pcExcluirSelecionados(){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado' || pcSelecionados.size === 0) return;
+  const n = pcSelecionados.size;
+  confirmAction('Tirar do plano', `${n} ${n===1?'item sai':'itens saem'} deste plano. Os cadastros dos produtos não são afetados.`, ()=>{
+    plano.itens = plano.itens.filter(i => !pcSelecionados.has(i.id));
+    pcSelecionados.clear();
+    saveState();
+    showToast(`${n} ${n===1?'item retirado':'itens retirados'} do plano.`, 'success');
+    renderSugestaoCompra();
+  }, 'Tirar');
+}
+
+/* Move um bloco de itens de uma vez, mantendo a ordem relativa entre eles.
+   Serve tanto pro arrastar quanto pros botões de subir e descer. */
+function pcMoverBloco(ids, alvoId, acima){
+  const plano = pcPlanoAtual();
+  if(!plano) return false;
+  const conjunto = new Set(ids);
+  if(conjunto.has(alvoId)) return false; // soltar dentro da própria seleção não faz nada
+  const movidos = plano.itens.filter(i => conjunto.has(i.id));
+  const restantes = plano.itens.filter(i => !conjunto.has(i.id));
+  const pos = restantes.findIndex(i => i.id === alvoId);
+  if(pos < 0 || movidos.length === 0) return false;
+  restantes.splice(acima ? pos : pos + 1, 0, ...movidos);
+  plano.itens = restantes;
+  return true;
+}
+
+function pcMoverSelecao(direcao){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado' || pcSelecionados.size === 0) return;
+  const indices = plano.itens.map((i,idx)=>pcSelecionados.has(i.id)?idx:-1).filter(i=>i>=0);
+  const ids = plano.itens.filter(i=>pcSelecionados.has(i.id)).map(i=>i.id);
+  // O vizinho que a seleção vai pular. Não havendo (já está na ponta), não faz nada.
+  const alvoIdx = direcao < 0 ? indices[0] - 1 : indices[indices.length-1] + 1;
+  if(alvoIdx < 0 || alvoIdx >= plano.itens.length){ showToast('A seleção já está na ponta da lista.', 'error'); return; }
+  if(pcMoverBloco(ids, plano.itens[alvoIdx].id, direcao < 0)){
+    saveState();
+    renderSugestaoCompra();
+  }
+}
+
 /* ---------- arrastar para mudar a ordem ---------- */
 
 let pcArrastando = null;
@@ -24914,17 +25019,17 @@ function pcArrastarSolta(ev, itemId){
   const r = tr.getBoundingClientRect();
   const acima = (ev.clientY - r.top) < r.height / 2;
 
-  const itens = plano.itens;
-  const de = itens.findIndex(x => x.id === pcArrastando);
-  if(de < 0){ pcArrastarFim(); return; }
-  const [movido] = itens.splice(de, 1);
-  // o índice do alvo muda depois do splice, então é lido de novo
-  let para = itens.findIndex(x => x.id === itemId);
-  if(para < 0){ itens.splice(de, 0, movido); pcArrastarFim(); return; }
-  itens.splice(acima ? para : para + 1, 0, movido);
+  // Arrastando um item que faz parte da seleção, vai a seleção inteira
+  // junto, na ordem em que já estava.
+  const ids = (pcSelecionados.has(pcArrastando) && pcSelecionados.size > 1)
+    ? plano.itens.filter(i => pcSelecionados.has(i.id)).map(i => i.id)
+    : [pcArrastando];
 
-  saveState();
+  const moveu = pcMoverBloco(ids, itemId, acima);
   pcArrastarFim();
+  if(!moveu) return;
+  saveState();
+  if(ids.length > 1) showToast(`${ids.length} itens movidos juntos.`, 'success');
   renderSugestaoCompra();
 }
 
@@ -25199,6 +25304,7 @@ function pcIrPara(visao){
 }
 
 function pcAbrirPlano(planoId, visao){
+  if(pcPlanoId !== planoId) pcSelecionados.clear();
   pcPlanoId = planoId;
   const plano = pcPlanoAtual();
   pcVisao = visao || (plano && plano.status === 'finalizado' ? 'relatorio' : 'editor');
@@ -25339,9 +25445,12 @@ function renderPlanoEditor(){
       : '';
 
     const linhaPrincipal = `
-      <tr ${travado?'':`ondragover="pcArrastarSobre(event,'${item.id}')" ondragleave="pcArrastarSai(event)" ondrop="pcArrastarSolta(event,'${item.id}')"`}>
+      <tr class="${pcSelecionados.has(item.id)?'selecionada':''}" ${travado?'':`ondragover="pcArrastarSobre(event,'${item.id}')" ondragleave="pcArrastarSai(event)" ondrop="pcArrastarSolta(event,'${item.id}')"`}>
         <td class="col-fixa">
           <div style="display:flex;align-items:flex-start;gap:6px;">
+            ${travado?'':`<input type="checkbox" id="pc-sel-${item.id}" ${pcSelecionados.has(item.id)?'checked':''}
+                     onchange="pcAlternarSelecao('${item.id}', this.checked)"
+                     style="width:auto;margin-top:3px;" title="Selecionar para mover ou excluir em grupo">`}
             ${travado?'':`<span class="pc-alca" draggable="true" ondragstart="pcArrastarInicio(event,'${item.id}')" ondragend="pcArrastarFim()" title="Arraste para mudar a ordem">⠿</span>`}
             <div style="flex:1;min-width:0;">
               <input type="text" value="${escapeAttr(item.nome)}" ${travado?'disabled':''}
@@ -25438,11 +25547,16 @@ function renderPlanoEditor(){
 
   const tabela = `
     <div class="card">
+      <div id="pc-barra-selecao">${pcHtmlBarraSelecao()}</div>
       <div class="table-wrap">
         <table class="data-table tabela-plano">
           <thead>
             <tr>
-              <th class="col-fixa">Produto</th>
+              <th class="col-fixa">
+                ${travado?'':`<input type="checkbox" ${(itens.length>0 && itens.every(i=>pcSelecionados.has(i.id)))?'checked':''}
+                       onchange="pcSelecionarTodos(this.checked)"
+                       style="width:auto;margin-right:6px;" title="Selecionar todos os itens à vista">`}Produto
+              </th>
               ${mostrarMeses ? meses.map(m=>`<th class="num hint-cel">${monthLabel(m)}</th>`).join('') : ''}
               <th class="num">Vendido</th>
               <th class="num">Sugestão</th>
