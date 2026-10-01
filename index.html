@@ -15414,6 +15414,15 @@ function renderRepasses(){
             <option value="quinzenal">Quinzena (dia 15 / fim do mês)</option>
           </select>
         </div>
+        <div class="field">
+          <label>Mostrar no gráfico</label>
+          <select id="rp-evolucao-valores">
+            <option value="liquido">Só o valor real da Mizu</option>
+            <option value="bruto">Só o valor bruto</option>
+            <option value="ambos">Os dois lado a lado</option>
+          </select>
+          <div class="help-text">Bruto é o valor cheio da venda; real é o que sobra pra Mizu depois do repasse ao pagador.</div>
+        </div>
       </div>
       <div class="chart-box tall" id="rp-grafico-evolucao"><canvas id="rp-chart-evolucao"></canvas></div>
       <div class="form-actions" style="margin-top:10px;">
@@ -15511,6 +15520,7 @@ function renderRepasses(){
     document.querySelectorAll('.rp-checkbox-venda').forEach(cb=>{ cb.checked = e.target.checked; });
   });
   document.getElementById('rp-evolucao-agrupamento').addEventListener('change', ()=>renderTabelaRepasses());
+  document.getElementById('rp-evolucao-valores').addEventListener('change', ()=>renderTabelaRepasses());
 
   renderKpisRepasses();
   renderQuinzenasRepasse();
@@ -15547,6 +15557,7 @@ function renderKpisRepasses(){
 // cobrado do pagador terceiro. Guarda o último agrupamento calculado para
 // o botão de relatório em PDF reaproveitar sem recalcular.
 let repasseEvolucaoMensalCache = [];
+let repasseEvolucaoValores = 'liquido'; // 'liquido' | 'bruto' | 'ambos'
 let repasseEvolucaoAgrupamento = 'mensal'; // 'mensal' | 'quinzenal'
 
 // Rótulo legível de uma quinzena, a partir da data de vencimento (que já é
@@ -15564,11 +15575,25 @@ function renderGraficoEvolucaoRepasses(linhas){
 
   const titulo = document.getElementById('rp-titulo-evolucao');
   if(titulo){
-    titulo.innerHTML = ehQuinzenal
-      ? '📈 Evolução Quinzenal — Valor Real da Mizu <span class="hint">quanto a Mizu realmente recebe em cada quinzena, já descontado o repasse — usa o mesmo filtro de período abaixo</span>'
-      : '📈 Evolução Mensal — Valor Real da Mizu <span class="hint">quanto a Mizu realmente recebe por mês, já descontado o repasse — usa o mesmo filtro de período abaixo</span>';
+    const periodo = ehQuinzenal ? 'Quinzenal' : 'Mensal';
+    const quando = ehQuinzenal ? 'em cada quinzena' : 'por mês';
+    const porValores = {
+      liquido: [`Valor Real da Mizu`, `quanto a Mizu realmente recebe ${quando}, já descontado o repasse`],
+      bruto:   [`Valor Bruto`, `o valor cheio das vendas ${quando}, antes do repasse ao pagador`],
+      ambos:   [`Bruto x Valor Real da Mizu`, `a barra clara é o valor cheio da venda, a escura é o que sobra pra Mizu — a diferença entre elas é o repasse`]
+    };
+    const [rotuloValores, explicacao] = porValores[repasseEvolucaoValores] || porValores.liquido;
+    titulo.innerHTML = `📈 Evolução ${periodo} — ${rotuloValores} <span class="hint">${explicacao} — usa o mesmo filtro de período abaixo</span>`;
   }
 
+  const valoresSel = document.getElementById('rp-evolucao-valores');
+  if(valoresSel) repasseEvolucaoValores = valoresSel.value;
+  const mostraLiquido = repasseEvolucaoValores !== 'bruto';
+  const mostraBruto   = repasseEvolucaoValores !== 'liquido';
+
+  // Soma os dois valores sempre: o bruto é o valor cheio da venda e o líquido
+  // é o que sobra pra Mizu depois do repasse. Quem decide o que aparece é só
+  // o seletor — assim o relatório em PDF tem os dois à mão de qualquer jeito.
   const porPeriodo = {};
   linhas.forEach(l=>{
     if(!l.data) return;
@@ -15576,11 +15601,18 @@ function renderGraficoEvolucaoRepasses(linhas){
     // já é isso); no modo mensal, agrupa pelo mês da data da venda
     const chave = ehQuinzenal ? l.vencimento : l.data.slice(0,7);
     if(!chave) return;
-    porPeriodo[chave] = (porPeriodo[chave]||0) + l.valorComDesconto;
+    if(!porPeriodo[chave]) porPeriodo[chave] = { liquido:0, bruto:0 };
+    porPeriodo[chave].liquido += l.valorComDesconto;
+    porPeriodo[chave].bruto   += (l.valorBruto != null ? l.valorBruto : l.valorComDesconto);
   });
   const chavesOrdenadas = Object.keys(porPeriodo).sort();
   const rotular = ehQuinzenal ? rotuloQuinzena : monthLabel;
-  repasseEvolucaoMensalCache = chavesOrdenadas.map(c=>({ chave:c, rotulo: rotular(c), valorRealMizu: porPeriodo[c] }));
+  repasseEvolucaoMensalCache = chavesOrdenadas.map(c=>({
+    chave:c, rotulo: rotular(c),
+    valorRealMizu: porPeriodo[c].liquido,
+    valorBruto: porPeriodo[c].bruto,
+    repasse: porPeriodo[c].bruto - porPeriodo[c].liquido
+  }));
 
   // plugin customizado (sem depender de CDN externo) que desenha o valor em
   // reais acima de cada coluna — exatamente como pedido
@@ -15608,13 +15640,18 @@ function renderGraficoEvolucaoRepasses(linhas){
     type:'bar',
     data:{
       labels: chavesOrdenadas.map(rotular),
-      datasets:[{ label:'Valor Real da Mizu', data: chavesOrdenadas.map(c=>porPeriodo[c]), backgroundColor:'#1B4B5A', borderRadius:4 }]
+      datasets:[
+        ...(mostraBruto ? [{ label:'Valor bruto', data: chavesOrdenadas.map(c=>porPeriodo[c].bruto), backgroundColor:'#8FB3BE', borderRadius:4 }] : []),
+        ...(mostraLiquido ? [{ label:'Valor real da Mizu', data: chavesOrdenadas.map(c=>porPeriodo[c].liquido), backgroundColor:'#1B4B5A', borderRadius:4 }] : [])
+      ]
     },
     options:{
       responsive:true, maintainAspectRatio:false,
       layout:{ padding:{ top:24 } }, // espaço extra pro rótulo não cortar no topo
       plugins:{
-        legend:{ display:false },
+        // Com os dois valores na tela a legenda deixa de ser decoração: sem
+        // ela não dá pra saber qual barra é qual.
+        legend:{ display: repasseEvolucaoValores==='ambos', position:'bottom' },
         tooltip:{ callbacks:{ label:ctx=>fmtMoney(ctx.parsed.y) } }
       },
       scales:{ y:{ ticks:{ callback:v=>fmtCompact(v) } } }
@@ -17047,9 +17084,18 @@ function gerarRelatorioEvolucaoRepasses(){
     </svg>
   `;
 
+  // O PDF leva as duas colunas sempre, independentemente do que está na tela:
+  // quem recebe o relatório não tem o seletor pra alternar.
   const linhasTabela = repasseEvolucaoMensalCache.map(m=>`
-    <tr><td>${m.rotulo}</td><td style="text-align:right;">${fmtMoney(m.valorRealMizu)}</td></tr>
+    <tr>
+      <td>${m.rotulo}</td>
+      <td style="text-align:right;">${fmtMoney(m.valorBruto)}</td>
+      <td style="text-align:right;color:#888;">${fmtMoney(m.repasse)}</td>
+      <td style="text-align:right;font-weight:bold;">${fmtMoney(m.valorRealMizu)}</td>
+    </tr>
   `).join('');
+  const totalBrutoPdf = repasseEvolucaoMensalCache.reduce((s,m)=>s+m.valorBruto,0);
+  const totalRepassePdf = repasseEvolucaoMensalCache.reduce((s,m)=>s+m.repasse,0);
 
   const janela = window.open('', '_blank');
   janela.document.write(`
@@ -17078,17 +17124,27 @@ function gerarRelatorioEvolucaoRepasses(){
       <div class="meta">
         Gerado em: ${fmtDate(todayISO())}<br>
         ${pagadorFiltrado ? `Pagador: ${escapeHtml(pagadorFiltrado.nome)}<br>` : 'Pagador: Todos<br>'}
-        <span style="color:#888;">Valores já descontado o repasse — representam o quanto a Mizu efetivamente recebe em cada ${repasseEvolucaoAgrupamento==='quinzenal'?'quinzena':'mês'}.</span>
+        <span style="color:#888;">Bruto é o valor cheio das vendas; repasse é o que vai pro pagador; valor real é o que fica com a Mizu em cada ${repasseEvolucaoAgrupamento==='quinzenal'?'quinzena':'mês'}.</span>
       </div>
 
       <h2>Gráfico</h2>
       <div class="grafico-wrap">${graficoSvg}</div>
 
-      <h2>Detalhamento por Mês</h2>
+      <h2>Detalhamento por ${repasseEvolucaoAgrupamento==='quinzenal'?'Quinzena':'Mês'}</h2>
       <table>
-        <thead><tr><th>Mês</th><th style="text-align:right;">Valor Real da Mizu</th></tr></thead>
+        <thead><tr>
+          <th>${repasseEvolucaoAgrupamento==='quinzenal'?'Quinzena':'Mês'}</th>
+          <th style="text-align:right;">Valor Bruto</th>
+          <th style="text-align:right;">Repasse</th>
+          <th style="text-align:right;">Valor Real da Mizu</th>
+        </tr></thead>
         <tbody>${linhasTabela}</tbody>
-        <tfoot><tr><td>Total do período</td><td style="text-align:right;">${fmtMoney(totalGeral)}</td></tr></tfoot>
+        <tfoot><tr>
+          <td>Total do período</td>
+          <td style="text-align:right;">${fmtMoney(totalBrutoPdf)}</td>
+          <td style="text-align:right;">${fmtMoney(totalRepassePdf)}</td>
+          <td style="text-align:right;">${fmtMoney(totalGeral)}</td>
+        </tr></tfoot>
       </table>
       <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
     </body>
@@ -24142,6 +24198,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-01-k',
+    data: '2026-10-01',
+    titulo: 'Gráfico de repasses: bruto, real ou os dois',
+    itens: [
+      'O gráfico de evolução ganhou o seletor "Mostrar no gráfico": só o valor real da Mizu, só o valor bruto, ou os dois lado a lado.',
+      'Com os dois, a barra clara é o valor cheio da venda e a escura é o que sobra pra Mizu — a diferença entre elas é o repasse ao pagador.',
+      'O relatório em PDF agora traz sempre as três colunas: Valor Bruto, Repasse e Valor Real da Mizu, com o total de cada uma.'
+    ]
+  },
   {
     id: '2026-10-01-j',
     data: '2026-10-01',
