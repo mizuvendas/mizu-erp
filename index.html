@@ -812,7 +812,12 @@ table.data-table{ width:100%; font-size:13px; }
 .tabela-plano td, .tabela-plano th{ white-space:nowrap; }
 .tabela-plano .hint-cel{ color:var(--ink-faint); font-size:12px; }
 .tabela-plano input, .tabela-plano select{ font-size:13px; padding:3px 5px; }
-.tabela-plano .linha-opcoes td{ white-space:normal; }
+".tabela-plano .linha-opcoes td{ white-space:normal; }
+.pc-alca{ cursor:grab; color:var(--ink-faint); font-size:15px; line-height:1.1; user-select:none; padding:0 2px; }
+.pc-alca:active{ cursor:grabbing; }
+.tabela-plano tr.arrastando{ opacity:.35; }
+.tabela-plano tr.solta-acima td{ box-shadow:inset 0 3px 0 var(--primary); }
+.tabela-plano tr.solta-abaixo td{ box-shadow:inset 0 -3px 0 var(--primary); }
 @media print{
   .sidebar, .topbar{ display:none !important; }
   .card{ break-inside:avoid; }
@@ -24133,6 +24138,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-01-i',
+    data: '2026-10-01',
+    tour: 'plano-compra',
+    titulo: 'Plano de compra: clonar item e mudar a ordem',
+    itens: [
+      'O ⧉ ao lado da lixeira cria uma cópia do item logo abaixo dele, zerada (sem vendas, sem sugestão) — é pra quando você quer comprar algo parecido que ainda não está cadastrado.',
+      'A cópia herda embalagem, fator de conversão, fornecedor e preço, pra você só trocar o nome e pôr a quantidade.',
+      'Agora dá pra arrastar os itens pela alcinha ⠿ ao lado do nome e deixar a lista na ordem que você quiser.',
+      'O filtro por nome ficou mais visível, e quando algum filtro está ligado aparece um aviso com o atalho para limpar.'
+    ]
+  },
+  {
     id: '2026-10-01-h',
     data: '2026-10-01',
     tour: 'plano-compra',
@@ -24644,7 +24661,10 @@ function pcVendasPorMes(plano){
 }
 
 function pcChaveDoItem(item){
-  return item.grupoId || item.produtoId || item.nome;
+  // Item avulso ou clonado não tem produto no cadastro, então não existe
+  // histórico pra ele. A chave é o próprio id: casar por nome faria uma
+  // cópia herdar as vendas de outro produto que por acaso se chamasse igual.
+  return item.grupoId || item.produtoId || ('__avulso_' + item.id);
 }
 
 /* ---------- criar e manter o plano ---------- */
@@ -24725,6 +24745,93 @@ function pcSetCampo(itemId, campo, valor){
 function pcVoltarQuantidadeAutomatica(itemId){
   pcSetCampo(itemId, 'quantidade', '');
   renderSugestaoCompra();
+}
+
+/* Clona o item logo abaixo dele. A cópia nasce SEM histórico — zero vendido,
+   zero em cada mês, zero de sugestão — porque ela é um produto novo que ainda
+   não existe no cadastro: herdar as vendas do original seria contar a mesma
+   venda duas vezes. O que ela herda é o que poupa digitação: embalagem, fator
+   de conversão, fornecedores e preços. */
+function pcClonarItem(itemId){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const i = (plano.itens||[]).findIndex(x => x.id === itemId);
+  if(i < 0) return;
+  const orig = plano.itens[i];
+
+  const copia = JSON.parse(JSON.stringify(orig));
+  copia.id = uid('pci');
+  copia.nome = orig.nome + ' (cópia)';
+  copia.produtoId = null;   // deixa de apontar pro cadastro
+  copia.grupoId = null;
+  copia.manual = true;
+  copia.qtdVendida = 0;
+  copia.estoqueAtual = 0;
+  copia.sugestao = 0;
+  copia.quantidade = null;  // ela digita a que precisa
+  (copia.opcoes||[]).forEach(o => { o.id = uid('pco'); });
+
+  plano.itens.splice(i + 1, 0, copia);
+  saveState();
+  showToast('Cópia criada logo abaixo. Ajuste o nome e a quantidade.', 'success');
+  renderSugestaoCompra();
+}
+
+/* ---------- arrastar para mudar a ordem ---------- */
+
+let pcArrastando = null;
+
+function pcArrastarInicio(ev, itemId){
+  pcArrastando = itemId;
+  ev.dataTransfer.effectAllowed = 'move';
+  try{ ev.dataTransfer.setData('text/plain', itemId); }catch(e){}
+  const tr = ev.target.closest('tr');
+  if(tr) tr.classList.add('arrastando');
+}
+
+function pcArrastarSobre(ev, itemId){
+  if(!pcArrastando || pcArrastando === itemId) return;
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = 'move';
+  const tr = ev.currentTarget;
+  const r = tr.getBoundingClientRect();
+  const acima = (ev.clientY - r.top) < r.height / 2;
+  tr.classList.toggle('solta-acima', acima);
+  tr.classList.toggle('solta-abaixo', !acima);
+}
+
+function pcArrastarSai(ev){
+  ev.currentTarget.classList.remove('solta-acima', 'solta-abaixo');
+}
+
+function pcArrastarSolta(ev, itemId){
+  ev.preventDefault();
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado' || !pcArrastando || pcArrastando === itemId){ pcArrastarFim(); return; }
+
+  const tr = ev.currentTarget;
+  const r = tr.getBoundingClientRect();
+  const acima = (ev.clientY - r.top) < r.height / 2;
+
+  const itens = plano.itens;
+  const de = itens.findIndex(x => x.id === pcArrastando);
+  if(de < 0){ pcArrastarFim(); return; }
+  const [movido] = itens.splice(de, 1);
+  // o índice do alvo muda depois do splice, então é lido de novo
+  let para = itens.findIndex(x => x.id === itemId);
+  if(para < 0){ itens.splice(de, 0, movido); pcArrastarFim(); return; }
+  itens.splice(acima ? para : para + 1, 0, movido);
+
+  saveState();
+  pcArrastarFim();
+  renderSugestaoCompra();
+}
+
+function pcArrastarFim(){
+  pcArrastando = null;
+  document.querySelectorAll('.tabela-plano tr').forEach(tr=>{
+    tr.classList.remove('arrastando', 'solta-acima', 'solta-abaixo');
+  });
 }
 
 function pcRemoverItem(itemId){
@@ -25088,6 +25195,10 @@ function renderPlanoEditor(){
         </div>
       </div>
 
+      ${(pcBusca || pcFiltroFornecedor) ? `<div class="help-text" style="margin-top:10px;padding:8px 10px;background:var(--warning-soft);border-radius:var(--radius-sm);">
+        Mostrando só parte dos itens. Arrastar continua funcionando — o item vai parar exatamente onde você soltou —, mas pode haver itens escondidos entre eles.
+        <a href="#" onclick="event.preventDefault();pcBusca='';pcFiltroFornecedor='';renderSugestaoCompra();"><strong>Limpar filtros</strong></a>
+      </div>` : ''}
       <div class="form-grid" style="margin-top:12px;">
         <div class="field">
           <label>Filtrar por fornecedor</label>
@@ -25097,8 +25208,8 @@ function renderPlanoEditor(){
           </select>
         </div>
         <div class="field">
-          <label>Buscar item</label>
-          <input type="text" value="${escapeAttr(pcBusca)}" placeholder="parte do nome..."
+          <label>Filtrar por nome</label>
+          <input type="text" value="${escapeAttr(pcBusca)}" placeholder="digite parte do nome do produto..."
                  onchange="pcBusca=this.value;renderSugestaoCompra();">
         </div>
         <div class="field">
@@ -25127,16 +25238,21 @@ function renderPlanoEditor(){
       : '';
 
     const linhaPrincipal = `
-      <tr>
+      <tr ${travado?'':`ondragover="pcArrastarSobre(event,'${item.id}')" ondragleave="pcArrastarSai(event)" ondrop="pcArrastarSolta(event,'${item.id}')"`}>
         <td class="col-fixa">
-          <input type="text" value="${escapeAttr(item.nome)}" ${travado?'disabled':''}
-                 onchange="pcSetCampo('${item.id}','nome',this.value)"
-                 style="width:100%;border:none;border-bottom:1px dashed var(--border);background:transparent;font-size:13px;padding:2px 0;">
-          <div class="hint">
-            ${item.marca ? escapeHtml(item.marca)+' · ' : ''}
-            ${item.grupoId ? '🔗 vinculado · ' : ''}
-            ${item.manual ? 'adicionado à mão · ' : ''}
-            estoque ${fmtNum(item.estoqueAtual)}
+          <div style="display:flex;align-items:flex-start;gap:6px;">
+            ${travado?'':`<span class="pc-alca" draggable="true" ondragstart="pcArrastarInicio(event,'${item.id}')" ondragend="pcArrastarFim()" title="Arraste para mudar a ordem">⠿</span>`}
+            <div style="flex:1;min-width:0;">
+              <input type="text" value="${escapeAttr(item.nome)}" ${travado?'disabled':''}
+                     onchange="pcSetCampo('${item.id}','nome',this.value)"
+                     style="width:100%;border:none;border-bottom:1px dashed var(--border);background:transparent;font-size:13px;padding:2px 0;">
+              <div class="hint">
+                ${item.marca ? escapeHtml(item.marca)+' · ' : ''}
+                ${item.grupoId ? '🔗 vinculado · ' : ''}
+                ${item.manual ? 'adicionado à mão · ' : ''}
+                estoque ${fmtNum(item.estoqueAtual)}
+              </div>
+            </div>
           </div>
         </td>
         ${celulasMes}
@@ -25160,7 +25276,9 @@ function renderPlanoEditor(){
                  onchange="pcSetPrecoDireto('${item.id}', this.value)" style="width:92px;text-align:right;">
         </td>
         <td class="num" id="pc-total-${item.id}" style="font-weight:700;">${fmtMoney(c.total)}</td>
-        <td>${travado?'':`<button class="btn btn-sm btn-danger" onclick="pcRemoverItem('${item.id}')" title="Tirar do plano">🗑</button>`}</td>
+        <td style="white-space:nowrap;">${travado?'':`
+          <button class="btn btn-sm" onclick="pcClonarItem('${item.id}')" title="Criar uma cópia logo abaixo, zerada, pra você renomear">⧉</button>
+          <button class="btn btn-sm btn-danger" onclick="pcRemoverItem('${item.id}')" title="Tirar do plano">🗑</button>`}</td>
       </tr>`;
 
     if(!expandido) return linhaPrincipal;
