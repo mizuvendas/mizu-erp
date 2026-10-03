@@ -1038,6 +1038,7 @@ table.data-table{ width:100%; font-size:13px; }
         <div class="header-actions">
           <button class="btn" id="btn-sincronizar-totvs">🔄 Sincronizar TOTVS</button>
           <button class="btn" id="btn-importar-produtos">⬆ Importar Planilha</button>
+          <button class="btn" id="btn-simular-sem-temporarios" title="Ver como o sistema fica depois de apagar os produtos temporários — sem apagar nada">🔎 Simular exclusão dos temporários</button>
           <button class="btn btn-danger" id="btn-apagar-todos-produtos">🗑️ Apagar Todos</button>
           <button class="btn btn-primary" id="btn-novo-produto">+ Novo Produto</button>
         </div>
@@ -1553,6 +1554,9 @@ function defaultState(){
     planosCompra: [], // { id, nome, periodoInicio, periodoFim, percentual, status, itens:[{...,opcoes:[{fornecedor,preco}]}], fornecedores:{}, observacoes } — ver MÓDULO: PLANO DE COMPRA
     novidadeVista: '', // id da última novidade lida (ver NOVIDADES) — só pra não repetir o aviso de atualização
     gruposProdutos: [], // { id, nome, produtoIds:[], criadoEm } — produtos que são "o mesmo produto" na prática (ver abrirVincularProdutos). AGRUPAMENTO só para análise: não mexe no cadastro nem no histórico de vendas, e pode ser desfeito.
+    substituicoesProdutos: {}, // { [produtoIdAntigo]: produtoIdNovo } — item antigo do histórico de um cliente apontado para um produto REAL. Fica FORA do produto de propósito: sobrevive quando o cadastro antigo é apagado. Ver MÓDULO: PRODUTOS TEMPORÁRIOS.
+    simulacaoSemTemporarios: false, // true = o sistema se comporta como se os produtos temporários já tivessem sido apagados, sem apagar nada — ver ativarSimulacaoSemTemporarios()
+    exclusoesTemporarios: [], // auditoria da exclusão definitiva dos temporários — ver apagarTemporariosDefinitivo()
     divergenciasImportacao: [], // { id, tipo: 'codigo_nao_encontrado'|'descricao_divergente', origem: 'nota_fiscal'|'orcamento', descricaoDoc, codigoDoc, produtoIdEscolhido, resolvida, data }
     mesclagensProdutos: [], // { id, data, produtoFinalId, nomeFinal, produtosAbsorvidos:[{id,nome,marca,fornecedor,custo,precoVenda,estoqueAtual}], vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados } — histórico/auditoria de mesclagem de produtos duplicados (ver mesclarProdutos)
     contasReceberManuais: [], // { id, descricao, clienteId, valor, vencimento, recebido, dataRecebimento, obs, criadoEm }
@@ -1573,6 +1577,7 @@ function defaultState(){
     historicoPrecosCompra: [], // { id, produtoId, produtoNome, fornecedorId, fornecedorNome, custoAnterior, custoNovo, variacaoPct, data, criadoEm } — registrado automaticamente sempre que o custo de compra de um produto muda (edição inline ou formulário). Mantém só os 2000 mais recentes — ver registrarHistoricoPreco()
     config: {
       impostoPct: 4,
+      padraoProdutoTemporario: true, // produto novo entra como TEMPORÁRIO (fase de teste). Viram reais pelo botão na tela de Produtos.
       comissaoPct: 2,
       lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
       diasProdutoParado: 30, // configurável na tela de Estoque — "produto parado" = sem vender há esses dias
@@ -3557,7 +3562,7 @@ function celulaEditavelProduto(produtoId, campo, valor, tipo, negrito){
 }
 
 function ativarEdicaoInlineProdutos(){
-  document.querySelectorAll('#tbl-produtos .cell-editavel, #tbl-produtos-compra-local .cell-editavel').forEach(span=>{
+  document.querySelectorAll('#tbl-produtos-reais .cell-editavel, #tbl-produtos-temporarios .cell-editavel').forEach(span=>{
     span.addEventListener('click', function ativar(){
       if(span.querySelector('input')) return; // já está em edição
       const produtoId = span.dataset.produtoId;
@@ -3685,11 +3690,15 @@ function celulaPrecoProduto(p){
 function renderLinhaProduto(p){
   const estoqueAtual = p.estoqueAtual||0;
   const estoqueClasse = (p.estoqueMin!=null && estoqueAtual<p.estoqueMin) ? 'color:var(--negative);font-weight:700;' : '';
+  const temporario = produtoEhTemporario(p);
+  const oculto = produtoOcultoNaSimulacao(p);
   return `
-    <tr ${p.criadoRapido?'style="background:var(--warning-soft);"':''}>
+    <tr style="${oculto?'opacity:0.45;':(p.criadoRapido?'background:var(--warning-soft);':'')}">
       <td>
+        ${p.criadoRapido ? '<span class="badge badge-warning" title="Cadastro rápido feito no meio de uma venda — os dados podem estar incompletos">⚡</span> ' : ''}
         ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
         ${iconeDadosIncompletos(p)}
+        ${oculto ? '<div class="help-text" style="margin-top:2px;color:var(--warning);">🔎 escondido pela simulação</div>' : ''}
         ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
       </td>
       <td>
@@ -3703,7 +3712,7 @@ function renderLinhaProduto(p){
       <td>${celulaCodigosProduto(p)}</td>
       <td>
         <div class="cell-actions">
-          ${p.criadoRapido ? `<button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>` : ''}
+          <button class="btn btn-sm" onclick="marcarTipoProduto('${p.id}', ${temporario?'false':'true'})" title="${temporario?'Passa esse produto para a lista de produtos reais (definitivos)':'Devolve esse produto para a lista de temporários'}">${temporario?'📦 Tornar real':'🧪 Tornar temporário'}</button>
           <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
           <button class="btn btn-sm" onclick="irParaAnaliseDoProduto('${p.id}')" title="Ver esse produto na Análise de Vendas (margem realizada nas vendas)">📈 Ver Vendas</button>
           <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
@@ -3713,33 +3722,11 @@ function renderLinhaProduto(p){
     </tr>`;
 }
 
-// Linha específica da tabela de "Compra Local": mesma edição inline (clique
-// único em qualquer célula), mas sem a coluna de Estoque Mínimo, que não faz
-// tanto sentido para uma compra pontual em loja local.
+// A antiga tabela separada de "Compra Local" deixou de existir: esses
+// produtos agora aparecem na Lista de Produtos Temporários com um selo ⚡.
+// A função fica aqui como apelido, pra não quebrar chamadas antigas.
 function renderLinhaProdutoCompraLocal(p){
-  const estoqueAtual = p.estoqueAtual||0;
-  return `
-    <tr style="background:var(--warning-soft);">
-      <td>
-        ${celulaEditavelProduto(p.id,'nome',p.nome,'text',true)}
-        ${iconeDadosIncompletos(p)}
-        ${p.ondeComprado ? `<div class="help-text" style="margin-top:2px;" title="Loja onde essa compra pontual foi feita">📍 Comprado em: ${escapeHtml(p.ondeComprado)}</div>` : ''}
-      </td>
-      <td>${celulaEditavelProduto(p.id,'marca',p.marca||'','text')}</td>
-      <td>${celulaEditavelProduto(p.id,'fornecedor',p.fornecedor||'','text')}</td>
-      <td class="num">${celulaPrecoProduto(p)}</td>
-      <td class="num">${celulaEditavelProduto(p.id,'estoqueAtual',estoqueAtual,'number')}</td>
-      <td>${celulaCodigosProduto(p)}</td>
-      <td>
-        <div class="cell-actions">
-          <button class="btn btn-sm" onclick="abrirFormProduto('${p.id}')">✎ Editar</button>
-          <button class="btn btn-sm" onclick="irParaAnaliseDoProduto('${p.id}')" title="Ver esse produto na Análise de Vendas (margem realizada nas vendas)">📈 Ver Vendas</button>
-          <button class="btn btn-sm" onclick="abrirMesclagemProduto('${p.id}')" title="Buscar cadastros duplicados deste produto e unificá-los em um só">🔗 Vincular</button>
-          <button class="btn btn-sm" onclick="moverProdutoParaListaNormal('${p.id}')" title="Passa a aparecer só na Lista de Produtos normal">↩ Tirar de Compra Local</button>
-          <button class="btn btn-sm btn-danger" onclick="excluirProduto('${p.id}')">Excluir</button>
-        </div>
-      </td>
-    </tr>`;
+  return renderLinhaProduto(p);
 }
 
 // Leva da tela de Produtos direto pra Análise de Vendas já filtrada por esse
@@ -3798,55 +3785,60 @@ function buscarProdutosParecidos(texto, excluirId){
   return filtrarProdutosPorTexto(base, texto);
 }
 
+/* Duas listas, uma de cada tipo: os produtos REAIS (o cadastro que vai
+   ficar) e os TEMPORÁRIOS (tudo que foi cadastrado na fase de teste,
+   incluindo os cadastros rápidos de compra local, que antes tinham uma
+   tabela separada e agora são só um selo ⚡ dentro desta lista).
+   Ver MÓDULO: PRODUTOS TEMPORÁRIOS x PRODUTOS REAIS. */
 function renderProdutos(){
   const box = document.getElementById('produtos-content');
+  const temporarios = STATE.produtos.filter(produtoEhTemporario);
+  const reais = STATE.produtos.filter(p=>!produtoEhTemporario(p));
+  const padraoTemp = produtoTemporarioPadrao();
+  const substituicoes = Object.keys(substituicoesProdutos()).length;
+
   if(STATE.produtos.length===0){
     box.innerHTML = `
       <div class="card">
         <div class="empty-state">
           <div class="ic">📦</div>
-          <p>Nenhum produto cadastrado ainda. Clique em <strong>+ Novo Produto</strong> para começar.</p>
+          <p>Nenhum produto cadastrado ainda.</p>
+          <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-top:10px;">
+            <button class="btn btn-primary" onclick="abrirFormProduto(null, null, {temporario:false})">+ Cadastrar produto real</button>
+            <button class="btn" onclick="abrirFormProduto(null, null, {temporario:true})">+ Cadastrar produto temporário</button>
+          </div>
         </div>
       </div>
       <div id="form-produto-container"></div>`;
     return;
   }
 
-  const produtosCompraLocal = STATE.produtos.filter(p=>p.criadoRapido);
-  const produtosNormais = STATE.produtos.filter(p=>!p.criadoRapido);
-
-  box.innerHTML = `
-    ${produtosCompraLocal.length>0 ? `
-    <div class="card" style="border-left:4px solid var(--warning);">
-      <h3>⚡ Compra Local <span class="hint">produtos comprados pontualmente numa loja local para atender um cliente específico</span></h3>
-      <div class="table-wrap">
-        <table class="data-table" id="tbl-produtos-compra-local">
-          <thead>
-            <tr>
-              <th data-sort="nome">Produto</th>
-              <th data-sort="marca">Marca</th>
-              <th data-sort="fornecedor">Fornecedor</th>
-              <th class="num" data-sort="margem">Preço</th>
-              <th class="num" data-sort="estoqueAtual">Estoque</th>
-              <th data-sort="codigoBarras">Código</th>
-              <th>Ações</th>
-            </tr>
-          </thead>
-          <tbody id="tbl-produtos-compra-local-body"></tbody>
-        </table>
+  const avisoSimulacao = simulacaoSemTemporariosAtiva() ? `
+    <div class="card" style="border-left:4px solid var(--warning);background:var(--warning-soft);">
+      <h3>🔎 Simulação de exclusão ligada</h3>
+      <p class="help-text" style="margin:0;">O sistema está se comportando como se os ${temporarios.length} produto(s) temporário(s) já tivessem sido apagados: eles não aparecem mais nas buscas de produto (venda, orçamento, entrada) e viram itens órfãos no histórico de compras dos clientes. <strong>Nada foi apagado.</strong> Abra um orçamento, puxe o histórico de um cliente e vá substituindo os itens pelos produtos reais — ${substituicoes>0?`já tem ${substituicoes} substituição(ões) definida(s)`:'ainda não tem nenhuma substituição definida'}.</p>
+      <div style="margin-top:10px;">
+        <button class="btn btn-sm" onclick="sairDaSimulacaoSemTemporarios()">↩ Sair da simulação (volta tudo ao normal)</button>
       </div>
-      <div id="produtos-compra-local-paginacao"></div>
-    </div>` : ''}
+    </div>` : '';
 
-    <div class="card">
-      <h3>Lista de Produtos</h3>
-      <p class="help-text" style="margin-bottom:10px;">💡 Clique em qualquer valor da tabela (nome, categoria, marca, fornecedor, custo, preço, estoque) para editar direto aqui. Pressione Enter ou clique fora para salvar.</p>
+  const cardReais = `
+    <div class="card" style="border-left:4px solid var(--positive);">
+      <h3>📦 Produtos reais <span class="hint">o cadastro definitivo da loja — ${reais.length} produto(s)</span></h3>
+      <p class="help-text" style="margin-bottom:10px;">${reais.length===0
+        ? 'Ainda não tem nenhum produto real. É aqui que entram os produtos cadastrados pra valer — e eles continuam na lista mesmo depois que os temporários forem apagados.'
+        : '💡 Clique em qualquer valor da tabela (nome, categoria, marca, fornecedor, custo, preço, estoque) para editar direto aqui. Pressione Enter ou clique fora para salvar.'}</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button class="btn btn-primary btn-sm" onclick="abrirFormProduto(null, null, {temporario:false})">+ Cadastrar produto real</button>
+        ${temporarios.length>0 ? `<button class="btn btn-sm" onclick="marcarTodosComoReais()" title="Considera todos os produtos de teste como definitivos. Nada é apagado.">⇪ Marcar todos os temporários como reais</button>` : ''}
+      </div>
+      ${reais.length>0 ? `
       <div class="field" style="max-width:340px;margin-bottom:12px;">
-        <label>🔍 Buscar produto</label>
-        <input type="text" id="produtos-busca" placeholder="Nome, categoria, marca, fornecedor, código ou código de barras...">
+        <label>🔍 Buscar produto real</label>
+        <input type="text" id="produtos-busca-reais" value="${escapeAttr(produtosBuscaReais)}" placeholder="Nome, categoria, marca, fornecedor, código ou código de barras...">
       </div>
       <div class="table-wrap">
-        <table class="data-table" id="tbl-produtos">
+        <table class="data-table" id="tbl-produtos-reais">
           <thead>
             <tr>
               <th data-sort="nome">Produto</th>
@@ -3859,33 +3851,98 @@ function renderProdutos(){
               <th>Ações</th>
             </tr>
           </thead>
-          <tbody id="tbl-produtos-body"></tbody>
+          <tbody id="tbl-produtos-reais-body"></tbody>
         </table>
       </div>
-      <div id="produtos-paginacao"></div>
-    </div>
-    <div id="form-produto-container"></div>
-  `;
+      <div id="produtos-reais-paginacao"></div>` : ''}
+    </div>`;
 
-  document.getElementById('produtos-busca').addEventListener('input', (e)=>{
-    produtosBuscaTexto = e.target.value;
-    getPaginacao('produtos-normal').paginaAtual = 0;
-    renderTabelaProdutosNormal(produtosNormais);
-  });
+  const cardTemporarios = temporarios.length>0 ? `
+    <div class="card" style="border-left:4px solid var(--warning);">
+      <h3>🧪 Lista de produtos temporários <span class="hint">cadastros da fase de teste — ${temporarios.length} produto(s)</span></h3>
+      <p class="help-text" style="margin-bottom:10px;">Tudo que foi cadastrado durante os testes está aqui, numa lista só — inclusive os cadastros rápidos de compra local, que agora aparecem com o selo <span class="badge badge-warning">⚡</span> em vez de ficarem numa tabela separada. Quando os produtos reais estiverem prontos, estes podem ser apagados: <strong>o histórico de vendas dos clientes continua</strong>, e os itens que você tiver substituído passam a apontar pro produto real.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+        <button class="btn btn-sm" onclick="abrirFormProduto(null, null, {temporario:true})">+ Cadastrar produto temporário</button>
+        ${simulacaoSemTemporariosAtiva()
+          ? `<button class="btn btn-sm" onclick="sairDaSimulacaoSemTemporarios()">↩ Sair da simulação</button>`
+          : `<button class="btn btn-sm" onclick="ativarSimulacaoSemTemporarios()" title="Faz o sistema se comportar como se estes produtos já tivessem sido apagados, sem apagar nada">🔎 Simular a exclusão de todos</button>`}
+        <button class="btn btn-sm btn-danger" onclick="apagarTemporariosDefinitivo()" title="Apaga de verdade, reapontando o histórico pros substitutos definidos">🗑️ Apagar os temporários (definitivo)</button>
+      </div>
+      <div class="field" style="max-width:340px;margin-bottom:12px;">
+        <label>🔍 Buscar produto temporário</label>
+        <input type="text" id="produtos-busca-temporarios" value="${escapeAttr(produtosBuscaTemporarios)}" placeholder="Nome, categoria, marca, fornecedor, código ou código de barras...">
+      </div>
+      <div class="table-wrap">
+        <table class="data-table" id="tbl-produtos-temporarios">
+          <thead>
+            <tr>
+              <th data-sort="nome">Produto</th>
+              <th data-sort="categoria">Categoria / Marca</th>
+              <th data-sort="fornecedor">Fornecedor</th>
+              <th class="num" data-sort="margem">Preço</th>
+              <th class="num" data-sort="estoqueAtual">Estoque Atual</th>
+              <th class="num" data-sort="estoqueMin">Estoque Mín.</th>
+              <th data-sort="codigoBarras">Código</th>
+              <th>Ações</th>
+            </tr>
+          </thead>
+          <tbody id="tbl-produtos-temporarios-body"></tbody>
+        </table>
+      </div>
+      <div id="produtos-temporarios-paginacao"></div>
+    </div>` : '';
 
-  if(produtosCompraLocal.length>0){
-    document.getElementById('tbl-produtos-compra-local').addEventListener('sortrequest', (e)=>{
-      compraLocalSort = e.detail;
-      renderTabelaProdutosCompraLocal(produtosCompraLocal);
+  const cardPadrao = `
+    <div class="card">
+      <h3>⚙️ Como entram os produtos novos</h3>
+      <p class="help-text" style="margin-bottom:10px;">Vale pro cadastro rápido feito no meio de uma venda e pro botão <strong>+ Novo Produto</strong> do topo da tela (no formulário você sempre pode mudar).</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+        <button class="btn btn-sm ${padraoTemp?'btn-primary':''}" onclick="definirPadraoProdutoTemporario(true)">🧪 Como temporário</button>
+        <button class="btn btn-sm ${!padraoTemp?'btn-primary':''}" onclick="definirPadraoProdutoTemporario(false)">📦 Como real</button>
+        <span class="help-text" style="margin:0;">Hoje: <strong>${padraoTemp?'temporário':'real'}</strong></span>
+      </div>
+    </div>`;
+
+  // Com produto real cadastrado, a lista definitiva vem primeiro; antes
+  // disso, a dos temporários (que é onde está tudo) é que fica no topo.
+  box.innerHTML = avisoSimulacao
+    + (reais.length>0 ? cardReais + cardTemporarios : cardTemporarios + cardReais)
+    + cardPadrao
+    + '<div id="form-produto-container"></div>';
+
+  const buscaReais = document.getElementById('produtos-busca-reais');
+  if(buscaReais){
+    buscaReais.addEventListener('input', (e)=>{
+      produtosBuscaReais = e.target.value;
+      getPaginacao('produtos-reais').paginaAtual = 0;
+      renderTabelaProdutosReais(reais);
     });
-    renderTabelaProdutosCompraLocal(produtosCompraLocal);
+  }
+  const buscaTemp = document.getElementById('produtos-busca-temporarios');
+  if(buscaTemp){
+    buscaTemp.addEventListener('input', (e)=>{
+      produtosBuscaTemporarios = e.target.value;
+      getPaginacao('produtos-temporarios').paginaAtual = 0;
+      renderTabelaProdutosTemporarios(temporarios);
+    });
   }
 
-  document.getElementById('tbl-produtos').addEventListener('sortrequest', (e)=>{
-    produtosSort = e.detail;
-    renderTabelaProdutosNormal(produtosNormais);
-  });
-  renderTabelaProdutosNormal(produtosNormais);
+  const tabelaReais = document.getElementById('tbl-produtos-reais');
+  if(tabelaReais){
+    tabelaReais.addEventListener('sortrequest', (e)=>{
+      produtosSort = e.detail;
+      renderTabelaProdutosReais(reais);
+    });
+    renderTabelaProdutosReais(reais);
+  }
+  const tabelaTemp = document.getElementById('tbl-produtos-temporarios');
+  if(tabelaTemp){
+    tabelaTemp.addEventListener('sortrequest', (e)=>{
+      compraLocalSort = e.detail;
+      renderTabelaProdutosTemporarios(temporarios);
+    });
+    renderTabelaProdutosTemporarios(temporarios);
+  }
 }
 
 function ordenarProdutos(lista, sortState){
@@ -3904,32 +3961,42 @@ function ordenarProdutos(lista, sortState){
   return copia;
 }
 
-function renderTabelaProdutosNormal(produtosNormais){
-  const filtrados = filtrarProdutosPorTexto(produtosNormais, produtosBuscaTexto);
+function renderTabelaProdutosReais(reais){
+  const filtrados = filtrarProdutosPorTexto(reais, produtosBuscaReais);
   const ordenados = ordenarProdutos(filtrados, produtosSort);
-  const pagina = aplicarPaginacao('produtos-normal', ordenados);
-  document.getElementById('tbl-produtos-body').innerHTML = pagina.map(renderLinhaProduto).join('')
-    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTexto ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
-  const pagBox = document.getElementById('produtos-paginacao');
+  const pagina = aplicarPaginacao('produtos-reais', ordenados);
+  const body = document.getElementById('tbl-produtos-reais-body');
+  if(!body) return;
+  body.innerHTML = pagina.map(renderLinhaProduto).join('')
+    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaReais ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
+  const pagBox = document.getElementById('produtos-reais-paginacao');
   if(pagBox){
-    pagBox.innerHTML = renderControlePaginacao('produtos-normal', ordenados.length);
-    ativarControlePaginacao('produtos-normal', ()=>renderTabelaProdutosNormal(produtosNormais));
+    pagBox.innerHTML = renderControlePaginacao('produtos-reais', ordenados.length);
+    ativarControlePaginacao('produtos-reais', ()=>renderTabelaProdutosReais(reais));
   }
   ativarEdicaoInlineProdutos();
 }
 
-function renderTabelaProdutosCompraLocal(produtosCompraLocal){
-  const ordenados = ordenarProdutos(produtosCompraLocal, compraLocalSort);
-  const pagina = aplicarPaginacao('produtos-compra-local', ordenados);
-  document.getElementById('tbl-produtos-compra-local-body').innerHTML = pagina.map(renderLinhaProdutoCompraLocal).join('')
-    || `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum produto nesta lista.</td></tr>`;
-  const pagBox = document.getElementById('produtos-compra-local-paginacao');
+function renderTabelaProdutosTemporarios(temporarios){
+  const filtrados = filtrarProdutosPorTexto(temporarios, produtosBuscaTemporarios);
+  const ordenados = ordenarProdutos(filtrados, compraLocalSort);
+  const pagina = aplicarPaginacao('produtos-temporarios', ordenados);
+  const body = document.getElementById('tbl-produtos-temporarios-body');
+  if(!body) return;
+  body.innerHTML = pagina.map(renderLinhaProduto).join('')
+    || `<tr><td colspan="8" style="text-align:center;color:var(--ink-faint);padding:16px;">${produtosBuscaTemporarios ? 'Nenhum produto encontrado para essa busca.' : 'Nenhum produto nesta lista.'}</td></tr>`;
+  const pagBox = document.getElementById('produtos-temporarios-paginacao');
   if(pagBox){
-    pagBox.innerHTML = renderControlePaginacao('produtos-compra-local', ordenados.length);
-    ativarControlePaginacao('produtos-compra-local', ()=>renderTabelaProdutosCompraLocal(produtosCompraLocal));
+    pagBox.innerHTML = renderControlePaginacao('produtos-temporarios', ordenados.length);
+    ativarControlePaginacao('produtos-temporarios', ()=>renderTabelaProdutosTemporarios(temporarios));
   }
   ativarEdicaoInlineProdutos();
 }
+
+// Apelidos dos nomes antigos, por segurança — qualquer chamada que ainda
+// exista continua funcionando.
+function renderTabelaProdutosNormal(lista){ renderTabelaProdutosReais(lista); }
+function renderTabelaProdutosCompraLocal(lista){ renderTabelaProdutosTemporarios(lista); }
 
 // Compara, pra um produto específico, o custo mais recente pago a cada
 // fornecedor diferente — usa o histórico de mudança de custo
@@ -3956,7 +4023,10 @@ function getComparadorFornecedoresProduto(produtoId){
   return Object.values(porFornecedor).sort((a,b)=>a.custo-b.custo);
 }
 
-function abrirFormProduto(id, onSalvo){
+function abrirFormProduto(id, onSalvo, opcoes){
+  // opcoes.temporario: define o tipo já marcado ao abrir o formulário de
+  // um produto NOVO (os botões "+ Cadastrar produto real / temporário").
+  const tipoPreset = (opcoes && typeof opcoes.temporario==='boolean') ? opcoes.temporario : null;
   const produto = id ? STATE.produtos.find(p=>p.id===id) : null;
   const comparadorFornecedores = produto ? getComparadorFornecedoresProduto(produto.id) : [];
 
@@ -3978,6 +4048,13 @@ function abrirFormProduto(id, onSalvo){
             <div class="field">
               <label>Nome do Produto <span class="req">*</span></label>
               <input type="text" id="fp-nome" required value="${produto?escapeAttr(produto.nome):''}">
+            </div>
+            <div class="field">
+              <label>Tipo do cadastro</label>
+              <select id="fp-temporario">
+                <option value="1" ${(produto ? produtoEhTemporario(produto) : (tipoPreset!=null?tipoPreset:produtoTemporarioPadrao())) ? 'selected' : ''}>🧪 Temporário (fase de teste)</option>
+                <option value="0" ${!(produto ? produtoEhTemporario(produto) : (tipoPreset!=null?tipoPreset:produtoTemporarioPadrao())) ? 'selected' : ''}>📦 Real (definitivo)</option>
+              </select>
             </div>
             <div class="field">
               <label>Categoria</label>
@@ -4281,6 +4358,7 @@ function abrirFormProduto(id, onSalvo){
       custoRoyalties: custoRoyaltiesRaw!=='' ? parseFloat(custoRoyaltiesRaw) : null,
       royaltiesPct: royaltiesPctRaw!=='' ? parseFloat(royaltiesPctRaw) : null,
       decidirPrecoNaVenda: document.getElementById('fp-decidir-preco-venda').checked,
+      temporario: document.getElementById('fp-temporario').value === '1',
     };
     const localCompraEl = document.getElementById('fp-local-compra-id');
     if(localCompraEl){
@@ -4594,6 +4672,451 @@ function apagarTodosProdutos(){
   }, 'Continuar');
 }
 
+/* =========================================================
+   MÓDULO: PRODUTOS TEMPORÁRIOS x PRODUTOS REAIS
+
+   Durante os meses de teste, todo produto cadastrado no sistema é
+   um produto "de teste": nome improvisado, custo chutado, cadastro
+   rápido feito no meio de uma venda. Quando a loja entrar de vez,
+   esses produtos vão ser apagados e os produtos REAIS entram no
+   lugar, cadastrados com calma (ou pela entrada da nota).
+
+   O problema: o histórico de compra de cada cliente aponta pro
+   cadastro antigo. Apagar o cadastro não apaga o histórico (ele é
+   lido das vendas, não do cadastro — ver getHistoricoComprasCliente),
+   mas o item fica órfão: aparece na lista e não dá pra adicionar
+   num orçamento novo.
+
+   A solução deste módulo tem três partes:
+
+   1) Cada produto é TEMPORÁRIO ou REAL (p.temporario). Sem a marca,
+      vale temporário — é o que todo cadastro antigo é. A tela de
+      Produtos passa a ter uma lista de cada tipo (a antiga "Compra
+      Local" virou só um selo ⚡ dentro da lista de temporários).
+
+   2) SIMULAÇÃO: um botão faz o sistema se comportar como se os
+      temporários já tivessem sido apagados — eles desaparecem das
+      buscas de produto e viram órfãos no histórico do cliente — sem
+      apagar nada. Dá pra voltar atrás a qualquer momento.
+
+   3) SUBSTITUIÇÃO: no histórico de compras do cliente, um item órfão
+      ganha um botão pra ser apontado pro produto real equivalente
+      (com sugestão automática pelo nome). O item passa a aparecer
+      com um PONTO VERDE e volta a poder ser adicionado ao orçamento.
+      A substituição é global (vale pra todos os clientes) e fica em
+      STATE.substituicoesProdutos — fora do produto, de propósito,
+      pra sobreviver quando o cadastro antigo for apagado de vez.
+
+   Só depois de tudo conferido é que apagarTemporariosDefinitivo()
+   apaga mesmo — e aí reescreve o produtoId das vendas, orçamentos,
+   movimentos e planos de compra pelos substitutos definidos, pra que
+   nem as análises por produto se perdam.
+   ========================================================= */
+
+/* ---------- tipo do produto ---------- */
+
+// Sem marca explícita = temporário. Todo cadastro feito antes deste
+// módulo existir é de teste, então esse é o padrão certo.
+function produtoEhTemporario(p){
+  return !!p && p.temporario !== false;
+}
+
+// Como entram os produtos cadastrados de agora em diante. Começa em
+// "temporário" e a própria tela de Produtos tem o botão pra virar.
+function produtoTemporarioPadrao(){
+  return !STATE.config || STATE.config.padraoProdutoTemporario !== false;
+}
+
+function definirPadraoProdutoTemporario(temporario){
+  STATE.config.padraoProdutoTemporario = !!temporario;
+  saveState();
+  rerenderTelaAtual();
+  showToast(temporario
+    ? 'Novos produtos passam a entrar como TEMPORÁRIOS.'
+    : 'Novos produtos passam a entrar como REAIS.', 'success');
+}
+
+function marcarTipoProduto(id, temporario){
+  const produto = STATE.produtos.find(p=>p.id===id);
+  if(!produto) return;
+  produto.temporario = !!temporario;
+  if(!temporario) produto.criadoRapido = false; // produto real não é mais "cadastro rápido"
+  saveState();
+  renderProdutos();
+  showToast(temporario ? 'Produto movido para os temporários.' : 'Produto marcado como REAL.', 'success');
+}
+
+function marcarTodosComoReais(){
+  const temporarios = STATE.produtos.filter(produtoEhTemporario);
+  if(temporarios.length===0){ showToast('Não há produto temporário.', 'error'); return; }
+  confirmAction('Marcar todos como reais',
+    `Os ${temporarios.length} produto(s) da lista de temporários passam a ser considerados REAIS (definitivos). Nada é apagado e dá pra desfazer produto por produto depois.`,
+    ()=>{
+      temporarios.forEach(p=>{ p.temporario = false; p.criadoRapido = false; });
+      STATE.simulacaoSemTemporarios = false;
+      saveState();
+      renderFaixaSimulacao();
+      renderProdutos();
+      showToast(`${temporarios.length} produto(s) agora são reais.`, 'success');
+    }, 'Marcar como reais');
+}
+
+function contarProdutosPorTipo(){
+  let temporarios = 0, reais = 0;
+  STATE.produtos.forEach(p=>{ if(produtoEhTemporario(p)) temporarios++; else reais++; });
+  return { temporarios, reais, total: STATE.produtos.length };
+}
+
+/* ---------- simulação ---------- */
+
+function simulacaoSemTemporariosAtiva(){
+  return !!STATE.simulacaoSemTemporarios;
+}
+
+// Produto que a simulação está "escondendo" — existe no cadastro, mas o
+// sistema finge que não.
+function produtoOcultoNaSimulacao(p){
+  return simulacaoSemTemporariosAtiva() && produtoEhTemporario(p);
+}
+
+// Lista de produtos que o resto do sistema deve enxergar.
+function produtosDisponiveis(){
+  return simulacaoSemTemporariosAtiva()
+    ? STATE.produtos.filter(p=>!produtoEhTemporario(p))
+    : STATE.produtos.slice();
+}
+
+// Busca por id respeitando a simulação: devolve null pro produto escondido.
+function produtoDisponivelPorId(id){
+  const p = STATE.produtos.find(x=>x.id===id);
+  if(!p) return null;
+  return produtoOcultoNaSimulacao(p) ? null : p;
+}
+
+function ativarSimulacaoSemTemporarios(){
+  const contagem = contarProdutosPorTipo();
+  if(contagem.temporarios===0){ showToast('Não há produto temporário pra simular a exclusão.', 'error'); return; }
+  confirmAction('Simular a exclusão dos temporários',
+    `Nada vai ser apagado. O sistema só vai PASSAR A SE COMPORTAR como se os ${contagem.temporarios} produto(s) temporário(s) já tivessem sido excluídos: eles saem das buscas de produto (venda, orçamento, entrada) e viram itens órfãos no histórico de compras dos clientes — onde você vai poder substituí-los pelos produtos reais.`
+    + (contagem.reais===0 ? ' Atenção: você ainda não tem nenhum produto real cadastrado, então as buscas vão ficar vazias.' : '')
+    + ' Pra voltar ao normal, basta clicar em "Sair da simulação" na faixa que vai aparecer na tela.',
+    ()=>{
+      STATE.simulacaoSemTemporarios = true;
+      saveState();
+      renderFaixaSimulacao();
+      rerenderTelaAtual();
+      showToast('Simulação ligada. Nada foi apagado.', 'success');
+    }, 'Ligar a simulação');
+}
+
+function sairDaSimulacaoSemTemporarios(){
+  STATE.simulacaoSemTemporarios = false;
+  saveState();
+  renderFaixaSimulacao();
+  rerenderTelaAtual();
+  showToast('Simulação desligada — tudo voltou ao normal.', 'success');
+}
+
+// Faixa fixa no pé da tela, visível em qualquer módulo enquanto a
+// simulação estiver ligada. É a única coisa que lembra que o sistema
+// não está mostrando a verdade.
+function renderFaixaSimulacao(){
+  const existente = document.getElementById('faixa-simulacao');
+  if(!simulacaoSemTemporariosAtiva()){
+    if(existente) existente.remove();
+    document.body.style.paddingBottom = '';
+    return;
+  }
+  const contagem = contarProdutosPorTipo();
+  const substituidos = Object.keys(substituicoesProdutos()).length;
+  const html = `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:center;">
+      <span style="font-size:18px;">🔎</span>
+      <span><strong>Simulação ligada:</strong> o sistema está se comportando como se os ${contagem.temporarios} produto(s) temporário(s) tivessem sido apagados. <strong>Nada foi apagado de verdade.</strong></span>
+      ${substituidos>0 ? `<span style="opacity:.85;">${substituidos} item(ns) já substituído(s) por produto real</span>` : ''}
+      <button class="btn btn-sm" onclick="sairDaSimulacaoSemTemporarios()" style="white-space:nowrap;">↩ Sair da simulação</button>
+    </div>`;
+  if(existente){
+    existente.innerHTML = html;
+  }else{
+    const faixa = document.createElement('div');
+    faixa.id = 'faixa-simulacao';
+    faixa.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:4000;background:var(--warning,#b4690e);color:#fff;'
+      + 'padding:10px 16px;font-size:13px;box-shadow:0 -2px 10px rgba(0,0,0,.18);';
+    faixa.innerHTML = html;
+    document.body.appendChild(faixa);
+  }
+  document.body.style.paddingBottom = '56px';
+}
+
+// Re-desenha a tela que está aberta agora (qualquer uma) — usado quando a
+// simulação liga/desliga, porque o que a tela mostra passa a ser outro.
+function rerenderTelaAtual(){
+  const ativa = document.querySelector('.page.active');
+  if(!ativa) return;
+  const nome = ativa.id.replace(/^page-/, '');
+  if(typeof RENDERERS!=='undefined' && RENDERERS[nome]) RENDERERS[nome]();
+}
+
+/* ---------- substituições (item antigo -> produto real) ---------- */
+
+function substituicoesProdutos(){
+  if(!STATE.substituicoesProdutos || typeof STATE.substituicoesProdutos !== 'object'){
+    STATE.substituicoesProdutos = {};
+  }
+  return STATE.substituicoesProdutos;
+}
+
+// Segue a cadeia de substituições (A->B->C) e devolve o produto final,
+// se ele existir e estiver visível. Limite de saltos pra nunca travar
+// num ciclo, mesmo que um apareça por algum caminho inesperado.
+function resolverSubstituicaoProduto(produtoId){
+  const mapa = substituicoesProdutos();
+  let atual = produtoId, saltos = 0;
+  while(mapa[atual] && saltos < 6){ atual = mapa[atual]; saltos++; }
+  if(atual === produtoId) return null;
+  return produtoDisponivelPorId(atual);
+}
+
+// Mesma cadeia, mas ignorando a simulação e exigindo um produto REAL —
+// é o que vale na hora de apagar os temporários de verdade.
+function resolverSubstituicaoProdutoFinal(produtoId){
+  const mapa = substituicoesProdutos();
+  let atual = produtoId, saltos = 0;
+  while(mapa[atual] && saltos < 6){ atual = mapa[atual]; saltos++; }
+  if(atual === produtoId) return null;
+  const p = STATE.produtos.find(x=>x.id===atual);
+  return (p && !produtoEhTemporario(p)) ? p : null;
+}
+
+function definirSubstituicaoProduto(idAntigo, idNovo){
+  if(!idAntigo || !idNovo || idAntigo===idNovo) return false;
+  const mapa = substituicoesProdutos();
+  // não deixa fechar ciclo: se o novo (ou algum substituto dele) já aponta
+  // pro antigo, a substituição é recusada.
+  let cursor = idNovo, saltos = 0;
+  while(mapa[cursor] && saltos < 10){
+    if(mapa[cursor] === idAntigo) return false;
+    cursor = mapa[cursor];
+    saltos++;
+  }
+  mapa[idAntigo] = idNovo;
+  saveState();
+  return true;
+}
+
+function removerSubstituicaoProduto(idAntigo){
+  const mapa = substituicoesProdutos();
+  if(!mapa[idAntigo]) return false;
+  delete mapa[idAntigo];
+  saveState();
+  return true;
+}
+
+// Candidatos a substituto de um item órfão: primeiro os parecidos pelo
+// nome (mesma inteligência do Vincular Produtos — entende medida e
+// embalagem), depois o resto da lista pela busca por texto.
+function candidatosSubstituicao(nomeOriginal, idAntigo, termoBusca){
+  const disponiveis = produtosDisponiveis().filter(p=>p.id!==idAntigo);
+  if(termoBusca && termoBusca.trim()){
+    return filtrarProdutosPorTexto(disponiveis, termoBusca)
+      .slice(0, 40)
+      .map(p=>({ produto:p, nota:null, motivos:[], alertas:[] }));
+  }
+  const idsDisponiveis = new Set(disponiveis.map(p=>p.id));
+  const parecidos = (typeof produtosParecidos==='function' ? produtosParecidos(nomeOriginal, [idAntigo], 30) : [])
+    .filter(x=>idsDisponiveis.has(x.produto.id));
+  if(parecidos.length>0) return parecidos.slice(0, 20);
+  // nenhum parecido: mostra os primeiros em ordem alfabética, pra tela
+  // nunca aparecer vazia sem explicação
+  return disponiveis
+    .slice()
+    .sort((a,b)=>a.nome.localeCompare(b.nome))
+    .slice(0, 20)
+    .map(p=>({ produto:p, nota:null, motivos:[], alertas:[] }));
+}
+
+// Pontinho verde que marca "esse item aqui foi substituído por mim".
+function pontoVerdeSubstituido(titulo){
+  return `<span title="${escapeAttr(titulo||'Item substituído por um produto real')}" style="display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--positive,#1e7d4f);box-shadow:0 0 0 2px rgba(30,125,79,.22);margin-right:5px;vertical-align:middle;flex-shrink:0;"></span>`;
+}
+
+/* Janela de substituição: escolhe qual produto REAL ocupa o lugar de um
+   item antigo do histórico. onEscolhido recebe o produto escolhido. */
+function abrirSubstituirProdutoHistorico(nomeOriginal, idAntigo, onEscolhido){
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-substituir-produto';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:88vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🔁</div>
+        <div>
+          <h3>Substituir item por um produto real</h3>
+          <div class="sub">${escapeHtml(nomeOriginal||'(sem nome)')}</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-bottom:10px;">Esse item veio de uma venda antiga cujo cadastro não existe mais (ou está escondido pela simulação). Escolha abaixo qual produto real passa a representá-lo. Vale pra todos os clientes, e o histórico de preço do item continua o mesmo.</p>
+        <div class="field" style="margin-bottom:10px;">
+          <input type="text" id="sub-busca" placeholder="🔎 Buscar entre os produtos cadastrados..." style="width:100%;">
+        </div>
+        <div id="sub-lista"></div>
+        <div class="form-actions">
+          <button type="button" class="btn" id="sub-cancelar">Cancelar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('sub-cancelar').addEventListener('click', ()=>modal.remove());
+
+  function desenhar(termo){
+    const lista = candidatosSubstituicao(nomeOriginal, idAntigo, termo);
+    const box = document.getElementById('sub-lista');
+    if(lista.length===0){
+      box.innerHTML = `<div class="empty-state" style="padding:18px;"><p>${termo ? 'Nenhum produto encontrado com esse termo.' : 'Você ainda não tem nenhum produto real cadastrado pra colocar no lugar. Cadastre primeiro na tela de Produtos.'}</p></div>`;
+      return;
+    }
+    box.innerHTML = lista.map(c=>{
+      const p = c.produto;
+      const temp = produtoEhTemporario(p);
+      const nota = c.nota!=null
+        ? `<span class="badge ${c.nota>=70?'badge-positive':(c.nota>=50?'badge-warning':'badge-neutral')}" title="Quanto o nome se parece com o do item antigo">${c.nota}%</span>`
+        : '';
+      const sinais = [].concat(c.motivos||[]).concat((c.alertas||[]).map(a=>'⚠ '+a)).join(' · ');
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:600;">${escapeHtml(p.nome)} ${nota} ${temp?'<span class="badge badge-warning" title="Esse também é um produto temporário">temporário</span>':''}</div>
+            <div class="help-text" style="margin:2px 0 0;">${escapeHtml([p.marca, p.fornecedor, p.categoria].filter(Boolean).join(' · ')) || '—'}${sinais?` · ${escapeHtml(sinais)}`:''}</div>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" data-escolher="${p.id}" style="white-space:nowrap;">Usar este</button>
+        </div>`;
+    }).join('');
+    box.querySelectorAll('[data-escolher]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idNovo = btn.getAttribute('data-escolher');
+        const produto = STATE.produtos.find(p=>p.id===idNovo);
+        if(!produto) return;
+        if(!definirSubstituicaoProduto(idAntigo, idNovo)){
+          showToast('Essa substituição criaria um vínculo circular. Escolha outro produto.', 'error');
+          return;
+        }
+        modal.remove();
+        renderFaixaSimulacao();
+        showToast(`Item substituído por "${produto.nome}".`, 'success');
+        if(onEscolhido) onEscolhido(produto);
+      });
+    });
+  }
+
+  let timer = null;
+  document.getElementById('sub-busca').addEventListener('input', (e)=>{
+    const termo = e.target.value;
+    clearTimeout(timer);
+    timer = setTimeout(()=>desenhar(termo), 120);
+  });
+  desenhar('');
+}
+
+/* ---------- exclusão definitiva ---------- */
+
+/* O passo final, pra depois de tudo conferido: apaga os temporários e
+   reaponta todo o histórico (vendas, orçamentos, movimentos de estoque,
+   planos de compra e grupos de análise) pros produtos reais definidos
+   nas substituições. O que não tiver substituto continua no histórico
+   com o nome antigo, só sem cadastro vinculado — igual ao que já
+   acontece hoje quando um produto é excluído. */
+function apagarTemporariosDefinitivo(){
+  const temporarios = STATE.produtos.filter(produtoEhTemporario);
+  if(temporarios.length===0){ showToast('Não há produto temporário pra apagar.', 'error'); return; }
+
+  const idsTemporarios = new Set(temporarios.map(p=>p.id));
+  const destino = {}; // idAntigo -> produto real
+  temporarios.forEach(p=>{
+    const real = resolverSubstituicaoProdutoFinal(p.id);
+    if(real) destino[p.id] = real;
+  });
+  const comDestino = Object.keys(destino).length;
+  const semDestino = temporarios.length - comDestino;
+
+  const mensagem = `${temporarios.length} produto(s) temporário(s) serão apagados do cadastro.`
+    + (comDestino>0 ? ` ${comDestino} tem substituto real definido: as vendas, orçamentos, movimentos de estoque e planos de compra deles passam a apontar pro produto real — nenhum histórico é perdido.` : '')
+    + (semDestino>0 ? ` ${semDestino} NÃO tem substituto definido: o histórico de vendas continua aparecendo com o nome antigo, mas sem cadastro vinculado.` : '')
+    + ' Esta ação NÃO PODE ser desfeita. Exporte um backup antes.';
+
+  confirmAction('Apagar os produtos temporários', mensagem, ()=>{
+    confirmAction('Confirmar definitivamente',
+      `Última confirmação: ${temporarios.length} produto(s) temporário(s) serão apagados permanentemente.`,
+      ()=>{
+        let vendasAtualizadas = 0, orcamentosAtualizados = 0, movimentosAtualizados = 0, planosAtualizados = 0;
+
+        STATE.vendas.forEach(v=>{
+          let mexeu = false;
+          (v.itens||[]).forEach(it=>{
+            const real = destino[it.produtoId];
+            if(real){ it.produtoId = real.id; mexeu = true; }
+          });
+          if(mexeu) vendasAtualizadas++;
+        });
+        (STATE.orcamentos||[]).forEach(o=>{
+          let mexeu = false;
+          (o.itens||[]).forEach(it=>{
+            const real = destino[it.produtoId];
+            if(real){ it.produtoId = real.id; mexeu = true; }
+          });
+          if(mexeu) orcamentosAtualizados++;
+        });
+        (STATE.movimentosEstoque||[]).forEach(m=>{
+          const real = destino[m.produtoId];
+          if(real){ m.produtoId = real.id; movimentosAtualizados++; }
+        });
+        (STATE.planosCompra||[]).forEach(pl=>{
+          (pl.itens||[]).forEach(it=>{
+            const real = destino[it.produtoId];
+            if(real){ it.produtoId = real.id; planosAtualizados++; }
+          });
+        });
+        (STATE.gruposProdutos||[]).forEach(g=>{
+          const novos = (g.produtoIds||[])
+            .map(id=> destino[id] ? destino[id].id : id)
+            .filter(id=> !idsTemporarios.has(id));
+          g.produtoIds = [...new Set(novos)];
+        });
+
+        STATE.exclusoesTemporarios = STATE.exclusoesTemporarios || [];
+        STATE.exclusoesTemporarios.push({
+          id: uid('exctmp'),
+          data: todayISO(),
+          total: temporarios.length,
+          substituidos: Object.keys(destino).map(idAntigo=>{
+            const antigo = temporarios.find(t=>t.id===idAntigo);
+            return { idAntigo, nomeAntigo: antigo?antigo.nome:'', idNovo: destino[idAntigo].id, nomeNovo: destino[idAntigo].nome };
+          }),
+          semSubstituto: temporarios.filter(p=>!destino[p.id]).map(p=>({ id:p.id, nome:p.nome })),
+          vendasAtualizadas, orcamentosAtualizados, movimentosAtualizados, planosAtualizados
+        });
+
+        STATE.produtos = STATE.produtos.filter(p=>!produtoEhTemporario(p));
+        // substituições já aplicadas no histórico não precisam mais existir
+        const mapa = substituicoesProdutos();
+        Object.keys(mapa).forEach(k=>{ if(idsTemporarios.has(k)) delete mapa[k]; });
+        STATE.simulacaoSemTemporarios = false;
+
+        saveState();
+        renderFaixaSimulacao();
+        renderProdutos();
+        showToast(`${temporarios.length} produto(s) temporário(s) apagado(s). ${vendasAtualizadas} venda(s) e ${orcamentosAtualizados} orçamento(s) reapontados pros produtos reais.`, 'success');
+      },
+      'Sim, apagar os temporários'
+    );
+  }, 'Continuar');
+}
+
+// Texto digitado na busca de cada uma das duas listas de Produtos.
+let produtosBuscaReais = '';
+let produtosBuscaTemporarios = '';
+
 function getCategoriasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.categoria).filter(Boolean))]; }
 function getMarcasUnicas(){ return [...new Set(STATE.produtos.map(p=>p.marca).filter(Boolean))]; }
 
@@ -4618,6 +5141,7 @@ function getVendedoresUnicos(){ return [...new Set(STATE.vendas.map(v=>v.vendedo
 
 document.getElementById('btn-novo-produto').addEventListener('click', ()=>abrirFormProduto(null));
 document.getElementById('btn-apagar-todos-produtos').addEventListener('click', apagarTodosProdutos);
+document.getElementById('btn-simular-sem-temporarios').addEventListener('click', ativarSimulacaoSemTemporarios);
 RENDERERS.produtos = renderProdutos;
 
 /* =========================================================
@@ -5662,6 +6186,7 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
       sku: '', codigoNF: '', obs: '',
       ondeComprado, // loja local onde essa compra pontual foi feita
       criadoRapido: true, // marca visual até os dados serem completados
+      temporario: produtoTemporarioPadrao(), // produto de teste enquanto a loja não estiver com o cadastro real pronto
       criadoEm: todayISO()
     };
     STATE.produtos.push(produto);
@@ -5672,8 +6197,11 @@ function abrirCadastroRapidoProduto(nomeInicial, onCriado){
   });
 }
 
+/* Fonte única de todos os campos de busca de produto do sistema (venda,
+   orçamento, entrada de estoque, divergências...). Respeita a simulação:
+   com ela ligada, os produtos temporários simplesmente não aparecem. */
 function opcoesProdutosCombobox(){
-  return STATE.produtos.map(p=>({
+  return produtosDisponiveis().map(p=>({
     id: p.id,
     label: p.nome,
     sub: [p.marca, p.fornecedor, p.categoria].filter(Boolean).join(' · '),
@@ -6075,10 +6603,21 @@ function getHistoricoComprasCliente(clienteId){
 
   return Object.values(porProduto).map(grupo=>{
     const hist = getHistoricoPrecoItem(clienteId, grupo.produtoId);
-    const produto = STATE.produtos.find(p=>p.id===grupo.produtoId);
+    const original = STATE.produtos.find(p=>p.id===grupo.produtoId);
+    // O cadastro antigo pode ter sido apagado de verdade OU estar apenas
+    // escondido pela simulação de exclusão. Nos dois casos o item fica
+    // órfão aqui, e pode ser apontado para um produto real — ver
+    // MÓDULO: PRODUTOS TEMPORÁRIOS x PRODUTOS REAIS.
+    const disponivel = (original && !produtoOcultoNaSimulacao(original)) ? original : null;
+    const substituto = disponivel ? null : resolverSubstituicaoProduto(grupo.produtoId);
+    const produto = disponivel || substituto;
     return {
-      produtoId: grupo.produtoId,
-      nome: grupo.nome,
+      produtoId: grupo.produtoId,          // id que está gravado nas vendas (nunca muda)
+      produtoIdUsar: produto ? produto.id : null, // id que deve ir pro carrinho
+      nome: substituto ? substituto.nome : grupo.nome,
+      nomeOriginal: grupo.nome,
+      substituido: !!substituto,
+      temporarioOculto: !!(original && !disponivel),
       produtoExiste: !!produto,
       ultima: hist.ultima,
       penultima: hist.penultima,
@@ -6152,6 +6691,7 @@ function abrirHistoricoComprasCliente(clienteId, destino){
           </table>
         </div>
         <div class="help-text" id="hcc-sem-resultado" style="display:none;text-align:center;padding:14px;">Nenhum item encontrado com esse termo.</div>
+        <div class="help-text">🟢 Item com ponto verde é um item antigo que você apontou para um produto real. O histórico de preço dele (última, penúltima e maior venda) continua o mesmo.</div>
         <div class="help-text">💡 Alterar a "Origem de coleta" aqui atualiza o cadastro padrão do produto — vale pra todos os clientes/vendas daqui pra frente. Já o nome do produto pode ser editado só pra este lançamento, sem mexer no cadastro.</div>
         <div class="form-actions">
           <button type="button" class="btn" id="hcc-cancelar">Cancelar</button>
@@ -6194,7 +6734,58 @@ function abrirHistoricoComprasCliente(clienteId, destino){
     });
   }
 
+  // Guarda qual lista (filtrada ou não) está na tela agora, pra conseguir
+  // redesenhar depois de uma substituição sem perder a busca digitada.
+  let filtroAtualHcc = null;
+  function listaAtualHcc(){
+    return filtroAtualHcc || historico.map((x,i)=>({h:x, idx:i}));
+  }
+
+  // Aponta o item órfão para um produto real: a linha volta a valer, ganha
+  // o nome do produto real e o ponto verde de "eu troquei este".
+  function aplicarSubstituicaoNaLinha(idx, produtoNovo){
+    salvarEstadoLinhasVisiveis();
+    const h = historico[idx];
+    if(!h) return;
+    h.produtoIdUsar = produtoNovo.id;
+    h.substituido = true;
+    h.produtoExiste = true;
+    h.nome = produtoNovo.nome;
+    h.custo = produtoNovo.custo;
+    h.ondeComprado = produtoNovo.ondeComprado||'';
+    h.localCompraId = produtoNovo.localCompraId||null;
+    const est = estadoLinhas[idx];
+    if(est){
+      est.nome = produtoNovo.nome;
+      est.checked = true;
+      est.origemId = produtoNovo.localCompraId || '';
+    }
+    renderLinhasHcc(listaAtualHcc());
+  }
+
+  function desfazerSubstituicaoNaLinha(idx){
+    salvarEstadoLinhasVisiveis();
+    const h = historico[idx];
+    if(!h) return;
+    removerSubstituicaoProduto(h.produtoId);
+    const original = produtoDisponivelPorId(h.produtoId);
+    h.substituido = false;
+    h.produtoIdUsar = original ? original.id : null;
+    h.produtoExiste = !!original;
+    h.nome = h.nomeOriginal;
+    h.custo = original ? original.custo : null;
+    const est = estadoLinhas[idx];
+    if(est){
+      est.nome = h.nomeOriginal;
+      if(!original) est.checked = false;
+    }
+    renderFaixaSimulacao();
+    showToast('Substituição desfeita.', 'success');
+    renderLinhasHcc(listaAtualHcc());
+  }
+
   function renderLinhasHcc(itensFiltrados){
+    filtroAtualHcc = itensFiltrados;
     const tbody = modal.querySelector('#hcc-tabela tbody');
     const semResultado = document.getElementById('hcc-sem-resultado');
     if(itensFiltrados.length===0){
@@ -6210,20 +6801,28 @@ function abrirHistoricoComprasCliente(clienteId, destino){
         h.penultima ? fmtMoney(h.penultima.precoUnit) : '—',
         h.maisCaro!=null ? fmtMoney(h.maisCaro) : '—'
       ].join(' · ');
+      const orfao = !h.produtoExiste;
       return `
-      <tr data-idx="${idx}" style="${!h.produtoExiste?'opacity:0.5;':''}">
-        <td><input type="checkbox" class="hcc-check" data-idx="${idx}" ${est.checked?'checked':''} ${!h.produtoExiste?'disabled':''}></td>
-        <td><input type="text" class="hcc-nome" data-idx="${idx}" value="${escapeHtml(est.nome)}" style="width:100%;min-width:140px;" ${!h.produtoExiste?'disabled':''}>${!h.produtoExiste?' <span class="help-text" style="margin:0;">(produto excluído)</span>':''}</td>
+      <tr data-idx="${idx}" style="${orfao?'opacity:0.62;':''}">
+        <td><input type="checkbox" class="hcc-check" data-idx="${idx}" ${est.checked?'checked':''} ${orfao?'disabled':''}></td>
+        <td>
+          <div style="display:flex;align-items:center;gap:4px;">
+            ${h.substituido ? pontoVerdeSubstituido('Item substituído por um produto real: '+h.nome) : ''}
+            <input type="text" class="hcc-nome" data-idx="${idx}" value="${escapeAttr(est.nome)}" style="width:100%;min-width:140px;" ${orfao?'disabled':''}>
+          </div>
+          ${h.substituido ? `<div class="help-text" style="margin:3px 0 0;">antes era "${escapeHtml(h.nomeOriginal)}" · <button type="button" class="btn btn-sm" data-desfazer="${idx}" style="padding:1px 6px;">↩ desfazer</button></div>` : ''}
+          ${orfao ? `<div class="help-text" style="margin:3px 0 0;">${h.temporarioOculto?'produto temporário — escondido pela simulação':'produto excluído'} · <button type="button" class="btn btn-sm" data-substituir="${idx}" style="padding:1px 6px;">🔁 Substituir por um real</button></div>` : ''}
+        </td>
         <td style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;">${precosTexto}</td>
         <td>
           ${h.produtoExiste ? `
-          <select class="hcc-origem" data-idx="${idx}" data-produto-id="${h.produtoId}" style="font-size:12px;padding:4px 6px;">
+          <select class="hcc-origem" data-idx="${idx}" data-produto-id="${h.produtoIdUsar}" style="font-size:12px;padding:4px 6px;">
             <option value="">Selecione...</option>
             ${locaisCompraComEndereco().map(l=>`<option value="${l.id}" ${String(est.origemId)===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}
           </select>` : ''}
         </td>
-        <td><input type="number" class="hcc-qtd" data-idx="${idx}" min="0.01" step="0.01" value="${est.qtd}" style="text-align:center;width:100%;" ${!h.produtoExiste?'disabled':''}></td>
-        <td><input type="number" class="hcc-preco" data-idx="${idx}" min="0" step="0.01" value="${est.preco}" style="text-align:center;width:100%;" ${!h.produtoExiste?'disabled':''}></td>
+        <td><input type="number" class="hcc-qtd" data-idx="${idx}" min="0.01" step="0.01" value="${est.qtd}" style="text-align:center;width:100%;" ${orfao?'disabled':''}></td>
+        <td><input type="number" class="hcc-preco" data-idx="${idx}" min="0" step="0.01" value="${est.preco}" style="text-align:center;width:100%;" ${orfao?'disabled':''}></td>
       </tr>`;
     }).join('');
 
@@ -6233,6 +6832,23 @@ function abrirHistoricoComprasCliente(clienteId, destino){
         atualizarOrigemPadraoProduto(produtoId, sel.value || null);
         estadoLinhas[sel.getAttribute('data-idx')].origemId = sel.value;
         showToast('Origem de coleta atualizada para este produto.', 'success');
+      });
+    });
+
+    tbody.querySelectorAll('[data-substituir]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const idx = btn.getAttribute('data-substituir');
+        const h = historico[idx];
+        if(!h) return;
+        abrirSubstituirProdutoHistorico(h.nomeOriginal, h.produtoId, (produtoNovo)=>{
+          aplicarSubstituicaoNaLinha(idx, produtoNovo);
+        });
+      });
+    });
+
+    tbody.querySelectorAll('[data-desfazer]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        desfazerSubstituicaoNaLinha(btn.getAttribute('data-desfazer'));
       });
     });
   }
@@ -6258,7 +6874,8 @@ function abrirHistoricoComprasCliente(clienteId, destino){
     linhasMarcadas.forEach(idx=>{
       const h = historico[idx];
       if(!h.produtoExiste) return;
-      const produto = STATE.produtos.find(p=>p.id===h.produtoId);
+      // produtoIdUsar é o substituto real, quando o item foi substituído
+      const produto = STATE.produtos.find(p=>p.id===(h.produtoIdUsar||h.produtoId));
       if(!produto) return;
       const est = estadoLinhas[idx];
       const qtd = parseFloat(est.qtd) || 0;
@@ -24493,6 +25110,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-03-d',
+    data: '2026-10-03',
+    titulo: 'Produtos temporários x produtos reais (com simulação de exclusão)',
+    itens: [
+      'A tela de Produtos agora tem duas listas: "Produtos reais" (o cadastro definitivo) e "Lista de produtos temporários" (tudo que foi cadastrado na fase de teste). A tabela separada de Compra Local acabou — esses produtos estão na lista de temporários com o selo ⚡.',
+      'Cada linha tem um botão pra trocar o tipo do produto, e existe um "Marcar todos os temporários como reais" pra quando você quiser aproveitar o cadastro que já tem.',
+      'Você escolhe como entram os produtos novos (temporário ou real) — vale pro cadastro rápido feito no meio de uma venda.',
+      '🔎 Simular exclusão dos temporários: o sistema passa a se comportar como se eles já tivessem sido apagados (saem das buscas de produto e viram itens órfãos no histórico do cliente), mas NADA é apagado. Uma faixa fica no pé da tela com o botão de sair da simulação.',
+      'No histórico de compras do cliente (aquele que você abre no orçamento), o item órfão ganha o botão "🔁 Substituir por um real": o sistema sugere os produtos parecidos pelo nome, entendendo medida e embalagem, e você escolhe.',
+      'O item substituído aparece com um 🟢 ponto verde e volta a poder ser adicionado ao orçamento. O histórico de preço dele (última, penúltima e maior venda) continua o mesmo, e a substituição vale pra todos os clientes.',
+      'Quando tudo estiver conferido, "Apagar os temporários (definitivo)" apaga de verdade e reaponta as vendas, orçamentos, movimentos de estoque e planos de compra pros produtos reais que você escolheu — nenhum histórico se perde.'
+    ]
+  },
+  {
     id: '2026-10-03-c',
     data: '2026-10-03',
     titulo: 'Cotação: comparar preço de vários fornecedores',
@@ -27657,6 +28288,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   atualizarBadgesMenu();
   verificarBackupAoAbrirApp();
   verificarNovidadesAoAbrirApp();
+  renderFaixaSimulacao();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
 });
@@ -27665,6 +28297,7 @@ renderDashboard();
 atualizarBadgesMenu();
 verificarBackupAoAbrirApp();
 verificarNovidadesAoAbrirApp();
+renderFaixaSimulacao();
 </script>
 </body>
 </html>
