@@ -8119,6 +8119,11 @@ function renderOrcamentos(){
           <label>Data prevista de recebimento</label>
           <input type="date" id="orc-vencimento-receber">
         </div>
+        <div class="field" id="orc-wrap-prazos-boleto" style="display:none;">
+          <label>Prazos em dias <span class="hint">opcional — ex: 15/30</span></label>
+          <input type="text" id="orc-prazos-boleto" placeholder="15/30" inputmode="numeric">
+          <div class="help-text">Um boleto por prazo, contado a partir da data do orçamento. Pode escrever com barra, vírgula ou espaço: 15/30, 10 20 30, 3 e 5.</div>
+        </div>
         <div class="field" id="orc-wrap-crediario-parcelas" style="display:none;">
           <label>Quantidade de Parcelas</label>
           <input type="number" id="orc-crediario-parcelas" min="1" step="1" value="2">
@@ -8133,6 +8138,7 @@ function renderOrcamentos(){
         </div>
       </div>
       <div class="help-text" id="orc-crediario-help" style="display:none;"></div>
+      <div class="help-text" id="orc-boleto-help" style="display:none;"></div>
       <div class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px;">
         <input type="checkbox" id="orc-tem-comissao" style="width:auto;">
         <label for="orc-tem-comissao" style="margin:0;font-weight:600;color:var(--ink);">Este orçamento tem comissão (${STATE.config.comissaoPct}% sobre o valor bruto)</label>
@@ -8438,16 +8444,21 @@ function renderOrcamentos(){
     const ehBoleto = tipo==='boleto';
     const ehCrediario = tipo==='crediario';
     document.getElementById('orc-wrap-vencimento-receber').style.display = ehBoleto ? '' : 'none';
+    document.getElementById('orc-wrap-prazos-boleto').style.display = ehBoleto ? '' : 'none';
     document.getElementById('orc-wrap-crediario-parcelas').style.display = ehCrediario ? '' : 'none';
     document.getElementById('orc-wrap-crediario-dia').style.display = ehCrediario ? '' : 'none';
     document.getElementById('orc-crediario-help').style.display = ehCrediario ? '' : 'none';
+    if(!ehBoleto) document.getElementById('orc-boleto-help').style.display = 'none';
 
     if(ehBoleto && !document.getElementById('orc-vencimento-receber').value){
       const dataOrc = document.getElementById('orc-data').value || todayISO();
       document.getElementById('orc-vencimento-receber').value = addDays(dataOrc, 30);
     }
+    if(ehBoleto) atualizarResumoBoletoOrcamento();
     if(ehCrediario) atualizarResumoCrediarioOrcamento();
   });
+  document.getElementById('orc-prazos-boleto').addEventListener('input', atualizarResumoBoletoOrcamento);
+  document.getElementById('orc-data').addEventListener('change', atualizarResumoBoletoOrcamento);
   document.getElementById('orc-crediario-parcelas').addEventListener('input', atualizarResumoCrediarioOrcamento);
   ativarSeletorDiaMes('orc-crediario-dia', atualizarResumoCrediarioOrcamento);
 
@@ -8465,6 +8476,7 @@ function renderOrcamentos(){
   }
   document.getElementById('orc-tem-comissao').addEventListener('change', atualizarResumoOrcamento);
   document.getElementById('orc-acrescimo-valor').addEventListener('input', atualizarResumoOrcamento);
+  document.getElementById('orc-acrescimo-valor').addEventListener('input', atualizarResumoBoletoOrcamento);
   document.getElementById('orc-desconto-tipo').addEventListener('change', (e)=>{
     const tipo = e.target.value;
     document.getElementById('orc-wrap-desconto-pct').style.display = tipo==='pct' ? '' : 'none';
@@ -9132,6 +9144,7 @@ function coletarDadosOrcamentoEmAndamento(){
     repassePct: temRepasse ? (parseFloat(document.getElementById('orc-repasse-pct').value)||null) : null,
     condicaoPagamento,
     vencimentoReceber: condicaoPagamento==='boleto' ? (document.getElementById('orc-vencimento-receber').value||null) : null,
+    prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
     crediarioDia: condicaoPagamento==='crediario' ? (Math.min(31, Math.max(1, parseInt(document.getElementById('orc-crediario-dia').value)||10))) : null,
     itens: carrinhoOrcamentoAtual.map(it=>({...it}))
@@ -9272,6 +9285,7 @@ function salvarOrcamento(){
   const dadosBase = {
     numero, clienteId, data, validadeDias, observacoes, vendedor, temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
     condicaoPagamento, vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
+    prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
     crediarioDia: condicaoPagamento==='crediario' ? (Math.min(31, Math.max(1, parseInt(document.getElementById('orc-crediario-dia').value)||10))) : null,
     itens: carrinhoOrcamentoAtual.map(it=>({...it}))
@@ -9372,10 +9386,15 @@ function editarOrcamento(id){
   const ehBoletoEdicao = condicaoSalva==='boleto';
   const ehCrediarioEdicao = condicaoSalva==='crediario';
   document.getElementById('orc-wrap-vencimento-receber').style.display = ehBoletoEdicao ? '' : 'none';
+  document.getElementById('orc-wrap-prazos-boleto').style.display = ehBoletoEdicao ? '' : 'none';
   document.getElementById('orc-wrap-crediario-parcelas').style.display = ehCrediarioEdicao ? '' : 'none';
   document.getElementById('orc-wrap-crediario-dia').style.display = ehCrediarioEdicao ? '' : 'none';
   document.getElementById('orc-crediario-help').style.display = ehCrediarioEdicao ? '' : 'none';
-  if(ehBoletoEdicao) document.getElementById('orc-vencimento-receber').value = orcamento.vencimentoReceber || '';
+  if(ehBoletoEdicao){
+    document.getElementById('orc-vencimento-receber').value = orcamento.vencimentoReceber || '';
+    document.getElementById('orc-prazos-boleto').value = prazosBoletoTexto(orcamento.prazosBoleto);
+    atualizarResumoBoletoOrcamento();
+  }
   if(ehCrediarioEdicao){
     document.getElementById('orc-crediario-parcelas').value = orcamento.crediarioParcelas || 2;
     const diaSalvo = orcamento.crediarioDia || 10;
@@ -9813,9 +9832,22 @@ function executarConversaoOrcamentoEmVenda(orcamento){
       });
     }
   }else if(condicaoPagamento==='boleto'){
-    // usa a data prevista de recebimento salva no orçamento, se houver —
-    // senão cai no padrão de 30 dias, igual sempre foi
-    venda.receber = { vencimento: orcamento.vencimentoReceber || addDays(venda.data, 30), recebido: false, dataRecebimento: '' };
+    const prazos = orcamento.prazosBoleto || [];
+    if(prazos.length > 1){
+      // vários boletos: vira parcela a receber, igual ao crediário, pra
+      // Contas a Receber e Caixa tratarem cada boleto separadamente.
+      // A contagem dos dias parte da data do ORÇAMENTO, que é a data que o
+      // cliente viu e a que vai impressa na nota.
+      venda.prazosBoleto = prazos.slice();
+      venda.parcelasReceber = parcelasReceberDoBoleto(venda, prazos, orcamento.data || venda.data);
+    }else if(prazos.length === 1){
+      venda.prazosBoleto = prazos.slice();
+      venda.receber = { vencimento: addDays(orcamento.data || venda.data, prazos[0]), recebido: false, dataRecebimento: '' };
+    }else{
+      // usa a data prevista de recebimento salva no orçamento, se houver —
+      // senão cai no padrão de 30 dias, igual sempre foi
+      venda.receber = { vencimento: orcamento.vencimentoReceber || addDays(venda.data, 30), recebido: false, dataRecebimento: '' };
+    }
   }
   // condicaoPagamento==='vista': não gera receber nem parcelasReceber, igual salvarVenda()
 
@@ -23787,9 +23819,181 @@ async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
   };
 }
 
+/* =========================================================
+   MÓDULO: BOLETO COM PRAZOS (vários vencimentos num orçamento)
+
+   Antes, "Boleto" aqui era um boleto só, com uma data prevista de
+   recebimento. Na prática a venda a prazo quase nunca é assim: é
+   "15/30", "10/20/30", "3 e 5 dias". Cada prazo é um boleto.
+
+   O que este módulo faz:
+
+   - lê os prazos do jeito que se fala ("15/30", "10, 20", "7 14 21");
+   - transforma em datas, contadas a partir da data do orçamento;
+   - divide o total em parcelas SEM perder centavo — a última absorve
+     a diferença do arredondamento, porque a soma das duplicatas tem
+     que fechar exatamente com o valor da nota, ou a Sefaz rejeita;
+   - leva essas parcelas pra Contas a Receber na hora da conversão;
+   - e manda para a NF-e, onde elas viram as duplicatas que aparecem
+     no quadro de cobrança do DANFE, com data e valor de cada boleto.
+
+   A NFC-e (modelo 65) não tem quadro de duplicata — é cupom de
+   balcão. Lá os prazos são ignorados de propósito.
+   ========================================================= */
+
+/* Aceita qualquer separador: barra, vírgula, ponto-e-vírgula, espaço.
+   "15/30" e "15 e 30" dão a mesma coisa. */
+function parsePrazosBoleto(texto){
+  const vistos = [];
+  String(texto||'')
+    .split(/[^0-9]+/)
+    .forEach(pedaco=>{
+      if(pedaco==='') return;
+      const n = parseInt(pedaco, 10);
+      if(isNaN(n) || n < 0 || n > 3650) return;
+      vistos.push(n);
+    });
+  return vistos.slice(0, 24).sort((a,b)=>a-b);
+}
+
+function prazosBoletoTexto(prazos){
+  return (prazos||[]).join('/');
+}
+
+/* Divide `total` entre os prazos informados. Trabalha em CENTAVOS pra não
+   acumular erro de ponto flutuante: todas as parcelas levam o mesmo valor
+   arredondado pra baixo e a última fica com o resto. Assim a soma bate
+   com o total até o último centavo. */
+function calcularParcelasBoleto(total, prazos, dataBase){
+  const dias = (prazos||[]).slice().sort((a,b)=>a-b);
+  if(dias.length === 0) return [];
+  const centavos = Math.round((Number(total)||0) * 100);
+  const porParcela = Math.floor(centavos / dias.length);
+  const resto = centavos - (porParcela * dias.length);
+  return dias.map((d, i)=>({
+    numero: i+1,
+    total: dias.length,
+    dias: d,
+    vencimento: addDays(dataBase, d),
+    valor: (porParcela + (i === dias.length-1 ? resto : 0)) / 100
+  }));
+}
+
+/* As parcelas de um orçamento já salvo. Recalcula na hora a partir do
+   total atual — assim mexer num item ou no desconto não deixa boleto
+   velho pra trás. */
+function parcelasBoletoDoOrcamento(orcamento){
+  if(!orcamento || orcamento.condicaoPagamento !== 'boleto') return [];
+  const prazos = orcamento.prazosBoleto || [];
+  if(prazos.length === 0) return [];
+  return calcularParcelasBoleto(totalDocumentoParaNota(orcamento), prazos, orcamento.data || todayISO());
+}
+
+/* O valor que vai sair na nota. calcularVenda() não soma o acréscimo
+   (ele entra como vOutro na NF-e), então é somado aqui — é esse número
+   que as duplicatas têm que fechar. */
+function totalDocumentoParaNota(doc){
+  return calcularVenda(doc).bruto + (doc && doc.acrescimo ? (doc.acrescimo.valor||0) : 0);
+}
+
+/* ---------- tela do orçamento ---------- */
+
+// Mesmo total que o resumo do orçamento mostra, lido direto do formulário.
+function totalFormularioOrcamento(){
+  const tipoDesconto = document.getElementById('orc-desconto-tipo');
+  let desconto;
+  if(tipoDesconto && tipoDesconto.value === 'pct'){
+    const v = parseFloat(document.getElementById('orc-desconto-pct').value);
+    if(!isNaN(v) && v>0) desconto = { pct:v, valor:null };
+  }else if(tipoDesconto && tipoDesconto.value === 'valor'){
+    const v = parseFloat(document.getElementById('orc-desconto-valor').value);
+    if(!isNaN(v) && v>0) desconto = { pct:null, valor:v };
+  }
+  const acrescimoEl = document.getElementById('orc-acrescimo-valor');
+  const acrescimoValor = acrescimoEl ? (parseFloat(acrescimoEl.value)||0) : 0;
+  const acrescimo = acrescimoValor>0 ? { valor: acrescimoValor } : undefined;
+  return totalDocumentoParaNota({ itens: carrinhoOrcamentoAtual, desconto, acrescimo });
+}
+
+/* Prévia dos boletos embaixo do campo, atualizada a cada tecla. Também
+   preenche a "Data prevista de recebimento" com a data do primeiro
+   boleto, pra não ficarem duas verdades na mesma tela. */
+function atualizarResumoBoletoOrcamento(){
+  const campo = document.getElementById('orc-prazos-boleto');
+  const help = document.getElementById('orc-boleto-help');
+  const campoVenc = document.getElementById('orc-vencimento-receber');
+  if(!campo || !help) return;
+
+  const ehBoleto = document.getElementById('orc-condicao-pagamento').value === 'boleto';
+  if(!ehBoleto){ help.style.display = 'none'; return; }
+
+  const prazos = parsePrazosBoleto(campo.value);
+  if(prazos.length === 0){
+    help.style.display = 'none';
+    if(campoVenc){ campoVenc.disabled = false; campoVenc.title = ''; }
+    return;
+  }
+
+  const dataBase = (document.getElementById('orc-data').value) || todayISO();
+  const parcelas = calcularParcelasBoleto(totalFormularioOrcamento(), prazos, dataBase);
+
+  // a data prevista passa a ser a do primeiro boleto, e sai de edição:
+  // quem manda agora são os prazos
+  if(campoVenc && parcelas.length){
+    campoVenc.value = parcelas[0].vencimento;
+    campoVenc.disabled = true;
+    campoVenc.title = 'Definida pelos prazos em dias. Apague os prazos pra escolher a data à mão.';
+  }
+
+  help.style.display = '';
+  help.innerHTML = `💡 <strong>${parcelas.length} boleto${parcelas.length>1?'s':''}</strong>, contados a partir de ${fmtDate(dataBase)}:<br>`
+    + parcelas.map(p=>`<span style="display:inline-block;margin:3px 10px 0 0;">${p.numero}/${p.total} · <strong>${fmtDate(p.vencimento)}</strong> (${p.dias} dias) · ${fmtMoney(p.valor)}</span>`).join('')
+    + `<br><span style="opacity:.8;">Total: ${fmtMoney(parcelas.reduce((a,p)=>a+p.valor,0))} — estas datas e valores vão para o quadro de cobrança da NF-e.</span>`;
+}
+
+/* Lê os prazos do formulário na hora de salvar. */
+function prazosBoletoDoFormulario(){
+  const campo = document.getElementById('orc-prazos-boleto');
+  if(!campo) return [];
+  return parsePrazosBoleto(campo.value);
+}
+
+/* ---------- contas a receber ---------- */
+
+/* Converte as parcelas do boleto no mesmo formato que o crediário usa em
+   venda.parcelasReceber — assim Contas a Receber, Caixa e os relatórios
+   não precisam saber que existe um tipo novo de parcela. */
+function parcelasReceberDoBoleto(venda, prazos, dataBase){
+  const parcelas = calcularParcelasBoleto(totalDocumentoParaNota(venda), prazos, dataBase);
+  return parcelas.map(p=>({
+    id: uid('parc'),
+    numero: p.numero,
+    total: p.total,
+    vencimento: p.vencimento,
+    valor: p.valor,
+    recebido: false,
+    dataRecebimento: ''
+  }));
+}
+
+/* Como a nota diz que foi paga. Quando o orçamento tem prazos de boleto,
+   as parcelas vão junto: o servidor transforma cada uma numa duplicata,
+   e é isso que aparece no quadro de cobrança do DANFE com data e valor.
+   Na NFC-e esse quadro não existe — o servidor ignora as parcelas. */
 function nfePagamentoDoOrcamento(orcamento){
   const cond = orcamento.condicaoPagamento || 'vista';
-  if(cond==='boleto')    return { forma:'15', prazo:1 };
+  if(cond==='boleto'){
+    const parcelas = parcelasBoletoDoOrcamento(orcamento);
+    const pag = { forma:'15', prazo:1 };
+    if(parcelas.length){
+      pag.parcelas = parcelas.map(p=>({ numero:p.numero, vencimento:p.vencimento, valor:p.valor }));
+    }else if(orcamento.vencimentoReceber){
+      // boleto único: ainda assim vale mandar a duplicata, pra nota sair
+      // com a data de vencimento impressa
+      pag.parcelas = [{ numero:1, vencimento: orcamento.vencimentoReceber, valor: totalDocumentoParaNota(orcamento) }];
+    }
+    return pag;
+  }
   if(cond==='crediario') return { forma:'99', prazo:1 };
   return { forma:'01', prazo:0 };
 }
@@ -25315,6 +25519,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-03-f',
+    data: '2026-10-03',
+    titulo: 'Boleto com vários prazos (15/30, 10/20/30...)',
+    itens: [
+      'No orçamento, escolhendo Boleto, apareceu o campo "Prazos em dias". Você escreve 15/30 e ele entende dois boletos: um pra 15 dias e outro pra 30, contados da data do orçamento.',
+      'Pode escrever do jeito que falar — 15/30, "10 20 30", "3 e 5". Qualquer separador serve.',
+      'Logo abaixo ele mostra a conta pronta: a data de cada boleto e quanto ficou cada um. Mexeu num item ou no desconto, a prévia se refaz sozinha.',
+      'A divisão é feita em centavos e a última parcela absorve a diferença do arredondamento — a soma fecha exata com o total, que é o que a Receita exige.',
+      'Quando o orçamento vira venda, cada boleto entra em Contas a Receber separado, igual já acontece com o crediário.',
+      'Na hora de emitir a NF-e, esses prazos vão como duplicatas e aparecem no quadro de cobrança do DANFE, com a data e o valor de cada boleto.',
+      'Deixando o campo vazio, continua como era antes: um boleto só, na data prevista de recebimento.'
+    ]
+  },
   {
     id: '2026-10-03-e',
     data: '2026-10-03',
