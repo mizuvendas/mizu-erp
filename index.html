@@ -823,6 +823,16 @@ table.data-table{ width:100%; font-size:13px; }
 .tabela-plano .hint-cel{ color:var(--ink-faint); font-size:12px; }
 .tabela-plano input, .tabela-plano select{ font-size:13px; padding:3px 5px; }
 .tabela-plano .linha-opcoes td{ white-space:normal; }
+/* Matriz de cotação: mesma ideia da tabela do plano — a coluna do produto
+   fica presa, porque a tabela cresce um fornecedor por vez pra direita. */
+.tabela-cotacao thead th{ position:sticky; top:0; z-index:2; background:var(--bg-card); vertical-align:bottom; }
+.tabela-cotacao .col-fixa{ position:sticky; left:0; z-index:1; background:var(--bg-card); min-width:280px; max-width:360px; white-space:normal; }
+.tabela-cotacao thead .col-fixa{ z-index:3; }
+.tabela-cotacao td{ vertical-align:top; }
+.ct-chip{ display:inline-flex; align-items:center; gap:6px; font-size:12px; padding:5px 10px; border-radius:14px; font-weight:600; }
+.ct-chip-x{ border:none; background:transparent; cursor:pointer; color:inherit; opacity:.55; font-size:12px; padding:0 0 0 2px; }
+.ct-chip-x:hover{ opacity:1; }
+.ct-nao-tem{ display:inline-block; font-size:11.5px; font-weight:700; color:var(--negative); background:var(--negative-soft); border-radius:5px; padding:4px 8px; cursor:pointer; }
 .pc-sinal{ display:inline-block; width:11px; height:11px; border-radius:50%; margin-top:5px; flex:0 0 auto; border:1px solid rgba(0,0,0,.08); }
 .pc-sinal-ok{ background:var(--positive); box-shadow:0 0 0 2px var(--positive-soft); }
 .pc-sinal-falta{ background:var(--negative); box-shadow:0 0 0 2px var(--negative-soft); }
@@ -23951,6 +23961,8 @@ function renderSugestaoCompra(){
   if(pcVisao === 'editor'){    box.innerHTML = pcBarraAbas() + renderPlanoEditor();    return; }
   if(pcVisao === 'relatorio'){ box.innerHTML = pcBarraAbas() + renderPlanoRelatorio(); return; }
   if(pcVisao === 'meses'){     box.innerHTML = pcBarraAbas() + pcHtmlVendasMeses(); pcLigarVendasMeses(); return; }
+  if(pcVisao === 'cotacao'){   box.innerHTML = pcBarraAbas() + renderCotacaoMatriz(); ctLigarPaginacao(); return; }
+  if(pcVisao === 'comparativo'){ box.innerHTML = pcBarraAbas() + renderCotacaoComparativo(); return; }
   renderAbaSugestao();
 }
 
@@ -24480,6 +24492,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-03-c',
+    data: '2026-10-03',
+    titulo: 'Cotação: comparar preço de vários fornecedores',
+    itens: [
+      'Nova aba "4. Cotação" dentro da Sugestão de Compra. Você marca, produto por produto, quais fornecedores têm aquele item — e a lista de cada fornecedor sai pronta dessas marcações.',
+      'Selecionando vários itens de uma vez, dá pra marcar o mesmo fornecedor em todos de uma tacada.',
+      'A matriz mostra produtos nas linhas e fornecedores nas colunas, com quatro estados por célula: o preço, "não tem", "aguardando" e traço pra quem você não pediu.',
+      'A comparação é pelo CUSTO POR UNIDADE, não pelo preço da embalagem — cada fornecedor tem o próprio campo de unidades por embalagem, porque caixa de 12 e caixa de 24 não se comparam pelo preço da caixa.',
+      'O botão "Pedido de cotação" gera uma planilha com uma aba por fornecedor, só com os itens dele e a coluna de preço vazia pra ele preencher e devolver.',
+      'O comparativo mostra quanto sai comprando o mais barato de cada item, quanto sai concentrando num fornecedor só, e a diferença entre os dois. Item a item, você troca quem vai fornecer e vê quanto cada escolha custa.',
+      'A situação de cada fornecedor (não pedi / aguardando / parcial / orçado) é calculada sozinha — você não precisa manter.'
+    ]
+  },
   {
     id: '2026-10-03-b',
     data: '2026-10-03',
@@ -25111,7 +25137,8 @@ function criarPlanoDeCompra(){
     periodoFim: scPeriodoFim,
     percentual: scPercentual,
     observacoes: '',
-    fornecedores: {}, // { [nome]: { pagamento, prazo, obs } }
+    fornecedoresCotacao: [], // quem participa da cotação deste plano
+    fornecedores: {}, // { [nome]: { pagamento, prazo, obs, pedidoEnviadoEm } }
     itens: linhas.map(l => ({
       id: uid('pci'),
       produtoId: l.produtoId || null,
@@ -25127,6 +25154,7 @@ function criarPlanoDeCompra(){
       comprarEm: 'UN',
       unidadesPorEmbalagem: l.unidadesPorCaixa || 1,
       quantidade: null, // null = calculada da sugestão
+      obsCotacao: '',   // o que vai junto no pedido: "Ypê ou Start", "o mais em conta"
       manual: false,
       opcoes: l.fornecedor
         ? [{ id: uid('pco'), fornecedor: l.fornecedor, preco: l.custo || 0, obs: '', escolhida: true }]
@@ -25474,7 +25502,7 @@ function pcNovoItem(dados){
     produtoId: null, grupoId: null, nome:'', marca:'', unidade:'UN',
     qtdVendida: 0, estoqueAtual: 0, custoAtual: null, precoVenda: null,
     sugestao: 0, comprarEm:'UN', unidadesPorEmbalagem: 1,
-    quantidade: null, manual: true, opcoes: []
+    quantidade: null, manual: true, opcoes: [], obsCotacao: ''
   }, dados);
 }
 
@@ -25600,7 +25628,9 @@ function pcListaFornecedores(plano){
 
 function pcBarraAbas(){
   const aba = (id, rotulo) => {
-    const ativo = (pcVisao === id) || (id === 'planos' && (pcVisao === 'editor' || pcVisao === 'relatorio'));
+    const ativo = (pcVisao === id)
+      || (id === 'planos' && (pcVisao === 'editor' || pcVisao === 'relatorio'))
+      || (id === 'cotacao' && pcVisao === 'comparativo');
     return `<button class="btn btn-sm ${ativo ? 'btn-primary' : ''}" onclick="pcIrPara('${id}')">${rotulo}</button>`;
   };
   const qtd = pcPlanos().length;
@@ -25608,13 +25638,26 @@ function pcBarraAbas(){
     ${aba('sugestao','1. Sugestão')}
     ${aba('meses','2. Vendas mês a mês')}
     ${aba('planos',`3. Planos de compra${qtd?` (${qtd})`:''}`)}
+    ${aba('cotacao','4. Cotação')}
   </div>`;
 }
 
 function pcIrPara(visao){
   pcVisao = visao;
   if(visao === 'planos') pcPlanoId = null;
+  // A cotação é sempre de um plano: sem nenhum aberto, usa o mais recente.
+  if((visao === 'cotacao' || visao === 'comparativo') && !pcPlanoId && pcPlanos().length){
+    pcPlanoId = pcPlanos()[0].id;
+  }
   renderSugestaoCompra();
+}
+
+function ctLigarPaginacao(){
+  const box = document.getElementById('ct-paginacao');
+  const plano = pcPlanoAtual();
+  if(!box || !plano) return;
+  box.innerHTML = renderControlePaginacao('cotacao', pcItensFiltrados(plano).length);
+  ativarControlePaginacao('cotacao', renderSugestaoCompra);
 }
 
 function pcAbrirPlano(planoId, visao){
@@ -25776,6 +25819,10 @@ function renderPlanoEditor(){
               <input type="text" value="${escapeAttr(item.nome)}" ${travado?'disabled':''}
                      onchange="pcSetCampo('${item.id}','nome',this.value)"
                      style="width:100%;border:none;border-bottom:1px dashed var(--border);background:transparent;font-size:13px;padding:2px 0;">
+              <input type="text" value="${escapeAttr(item.obsCotacao||'')}" ${travado?'disabled':''}
+                     placeholder="observação pro fornecedor (ex: Ypê ou Start)"
+                     onchange="pcSetCampo('${item.id}','obsCotacao',this.value)"
+                     style="width:100%;border:none;border-bottom:1px dotted var(--border);background:transparent;font-size:11.5px;color:var(--warning);padding:1px 0;margin-top:2px;">
               <div class="hint">
                 ${item.marca ? escapeHtml(item.marca)+' · ' : ''}
                 ${item.grupoId ? '🔗 vinculado · ' : ''}
@@ -26610,6 +26657,996 @@ function _tourPosicionar(){
    novidade tem um tour. */
 function tourDaNovidade(novidade){
   return novidade && novidade.tour && TOURS[novidade.tour] ? novidade.tour : '';
+}
+
+/* =========================================================
+   MÓDULO: COTAÇÃO DE COMPRA
+
+   O caminho é o que ela descreveu: primeiro marca, produto por produto,
+   quais fornecedores têm aquele item; depois a visão por fornecedor sai
+   pronta dessas marcações. Ninguém monta a lista de um fornecedor na mão.
+
+   Onde isso mora: cada marcação é uma OPÇÃO dentro do item (o mesmo
+   item.opcoes que o plano já usava pra guardar fornecedor e preço). Marcar
+   = criar a opção sem preço; cotar = pôr preço nela; "não tem" = marcar a
+   opção como recusada. Assim a cotação e a decisão de compra são a mesma
+   estrutura, e o que foi cotado já vale como preço na hora de fechar.
+
+   A comparação é SEMPRE por custo por unidade, nunca pelo preço da
+   embalagem: um vende caixa de 12 e outro de 24, e o preço sozinho mente.
+   Por isso cada opção carrega a própria quantidade por embalagem — é o que
+   o fornecedor responde junto com o preço.
+   ========================================================= */
+
+const CT_STATUS = {
+  nao_pedi:   { rotulo:'não pedi',   cor:'#5B6472', fundo:'#F2F3F5', marca:'○' },
+  aguardando: { rotulo:'aguardando', cor:'#8A5B12', fundo:'#FBF1E2', marca:'◷' },
+  parcial:    { rotulo:'parcial',    cor:'#8A5B12', fundo:'#FBF1E2', marca:'◑' },
+  orcado:     { rotulo:'orçado',     cor:'#1E5B41', fundo:'#E7F4EE', marca:'●' }
+};
+
+/* ---------- leitura ---------- */
+
+/* Fornecedores desta cotação: os que ela adicionou ao plano mais os que já
+   aparecem marcados em algum item (um plano antigo já tinha opções). */
+function ctFornecedoresDoPlano(plano){
+  if(!plano) return [];
+  const nomes = [
+    ...(plano.fornecedoresCotacao || []),
+    ...(plano.itens || []).flatMap(i => (i.opcoes || []).map(o => o.fornecedor))
+  ].map(n => (n || '').trim()).filter(Boolean);
+  return [...new Set(nomes)].sort((a,b) => a.localeCompare(b));
+}
+
+function ctOpcaoDe(item, nome){
+  return (item.opcoes || []).find(o => (o.fornecedor || '') === nome) || null;
+}
+
+/* Quantas unidades vêm na embalagem SEGUNDO ESTE FORNECEDOR. Sem resposta
+   dele, usa o que está cadastrado no item. */
+function ctFator(item, opcao){
+  if(item.comprarEm === 'UN') return 1;
+  const f = Number(opcao && opcao.unidPorEmb) || Number(item.unidadesPorEmbalagem) || 1;
+  return f >= 1 ? f : 1;
+}
+
+function ctCustoUnit(item, opcao){
+  if(!opcao || !(Number(opcao.preco) > 0)) return null;
+  return Number(opcao.preco) / ctFator(item, opcao);
+}
+
+/* A opção mais barata POR UNIDADE entre as que responderam com preço. */
+function ctMenorOpcao(item){
+  let melhor = null, melhorCusto = Infinity;
+  (item.opcoes || []).forEach(o => {
+    if(o.naoTem) return;
+    const c = ctCustoUnit(item, o);
+    if(c != null && c < melhorCusto){ melhorCusto = c; melhor = o; }
+  });
+  return melhor;
+}
+
+function ctItensDoFornecedor(plano, nome){
+  return (plano.itens || []).filter(i => ctOpcaoDe(i, nome));
+}
+
+/* A situação do fornecedor é CALCULADA, não digitada: ela vem do que já
+   entrou nas células dele. */
+function ctStatusFornecedor(plano, nome){
+  const itens = ctItensDoFornecedor(plano, nome);
+  if(itens.length === 0) return 'nao_pedi';
+  const respondidos = itens.filter(i => {
+    const o = ctOpcaoDe(i, nome);
+    return o && (o.naoTem || Number(o.preco) > 0);
+  }).length;
+  if(respondidos === 0) return 'aguardando';
+  return respondidos === itens.length ? 'orcado' : 'parcial';
+}
+
+/* ---------- marcação (o passo 1 do fluxo dela) ---------- */
+
+function ctMarcarFornecedor(itemId, nome, marcado){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item || !nome) return;
+  item.opcoes = item.opcoes || [];
+  const existente = ctOpcaoDe(item, nome);
+  if(marcado){
+    if(!existente){
+      item.opcoes.push({
+        id: uid('pco'), fornecedor: nome, preco: 0, obs: '',
+        escolhida: item.opcoes.length === 0, naoTem: false, unidPorEmb: null
+      });
+    }
+  }else if(existente){
+    const eraEscolhida = existente.escolhida;
+    item.opcoes = item.opcoes.filter(o => o !== existente);
+    if(eraEscolhida && item.opcoes.length) item.opcoes[0].escolhida = true;
+  }
+  saveState();
+}
+
+/* Marcar em lote é o que torna o "produto por produto" viável: os quatro
+   detergentes Ypê têm os mesmos fornecedores, então vão de uma vez. */
+function ctMarcarLote(nome, marcado){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const alvos = pcSelecionados.size > 0
+    ? (plano.itens || []).filter(i => pcSelecionados.has(i.id))
+    : pcItensFiltrados(plano);
+  alvos.forEach(i => ctMarcarFornecedor(i.id, nome, marcado));
+  ctGarantirFornecedorNoPlano(nome);
+  saveState();
+  showToast(`${nome}: ${marcado ? 'marcado' : 'desmarcado'} em ${alvos.length} ${alvos.length===1?'item':'itens'}.`, 'success');
+  renderSugestaoCompra();
+}
+
+function ctGarantirFornecedorNoPlano(nome){
+  const plano = pcPlanoAtual();
+  if(!plano || !nome) return;
+  plano.fornecedoresCotacao = plano.fornecedoresCotacao || [];
+  if(!plano.fornecedoresCotacao.includes(nome)) plano.fornecedoresCotacao.push(nome);
+}
+
+function ctRemoverFornecedorDaCotacao(nome){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const qtd = ctItensDoFornecedor(plano, nome).length;
+  confirmAction('Tirar da cotação',
+    `${nome} sai desta cotação${qtd ? ` e as ${qtd} marcações dele são apagadas, com os preços que já tiver` : ''}. Os outros fornecedores não são afetados.`,
+    ()=>{
+      plano.fornecedoresCotacao = (plano.fornecedoresCotacao || []).filter(n => n !== nome);
+      (plano.itens || []).forEach(i => {
+        const o = ctOpcaoDe(i, nome);
+        if(!o) return;
+        const era = o.escolhida;
+        i.opcoes = i.opcoes.filter(x => x !== o);
+        if(era && i.opcoes.length) i.opcoes[0].escolhida = true;
+      });
+      saveState();
+      renderSugestaoCompra();
+    }, 'Tirar');
+}
+
+/* ---------- preenchimento das respostas ---------- */
+
+function ctSetPrecoCot(itemId, nome, valor){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  const o = item && ctOpcaoDe(item, nome);
+  if(!o) return;
+  o.preco = Math.max(0, parseFloat(String(valor).replace(',','.')) || 0);
+  if(o.preco > 0) o.naoTem = false;
+  saveState();
+  ctRedesenharLinhaCotacao(itemId);
+}
+
+function ctSetEmbCot(itemId, nome, valor){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  const o = item && ctOpcaoDe(item, nome);
+  if(!o) return;
+  const n = parseInt(valor, 10);
+  o.unidPorEmb = (n && n > 0) ? n : null;
+  saveState();
+  ctRedesenharLinhaCotacao(itemId);
+}
+
+function ctAlternarNaoTem(itemId, nome){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  const o = item && ctOpcaoDe(item, nome);
+  if(!o) return;
+  o.naoTem = !o.naoTem;
+  if(o.naoTem) o.preco = 0;
+  saveState();
+  renderSugestaoCompra();
+}
+
+/* Redesenha só a linha: com 9 fornecedores na tela, refazer a tabela a cada
+   preço digitado tiraria o foco do campo seguinte. */
+function ctRedesenharLinhaCotacao(itemId){
+  const plano = pcPlanoAtual();
+  const item = plano && pcItem(plano, itemId);
+  if(!item) return;
+  const ativo = document.activeElement;
+  ctFornecedoresDoPlano(plano).forEach(nome => {
+    const cel = document.getElementById('ct-cel-' + itemId + '-' + ctSlug(nome));
+    if(cel && !cel.contains(ativo)) cel.innerHTML = ctHtmlCelula(item, nome, plano.status === 'finalizado');
+  });
+  const resumo = document.getElementById('ct-resumo-linha-' + itemId);
+  if(resumo) resumo.innerHTML = ctHtmlResumoLinha(item);
+}
+
+function ctSlug(nome){
+  return String(nome || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-');
+}
+
+/* ---------- a célula ---------- */
+
+function ctHtmlCelula(item, nome, travado){
+  const o = ctOpcaoDe(item, nome);
+  if(!o){
+    return `<span style="color:var(--ink-faint);" title="Você não pediu este item para ${escapeAttr(nome)}">—</span>`;
+  }
+  if(o.naoTem){
+    return `<span class="ct-nao-tem" onclick="${travado?'':`ctAlternarNaoTem('${item.id}','${escapeAttr(nome)}')`}" title="${travado?'':'Clique para desfazer'}">não tem</span>`;
+  }
+  const menor = ctMenorOpcao(item);
+  const ehMenor = menor && menor === o;
+  const custo = ctCustoUnit(item, o);
+  const precisaEmb = item.comprarEm !== 'UN';
+  return `
+    <div style="display:flex;flex-direction:column;align-items:stretch;gap:2px;">
+      <input type="number" min="0" step="0.01" value="${o.preco > 0 ? o.preco : ''}" ${travado?'disabled':''}
+             placeholder="preço" title="Preço de uma ${PC_EMBALAGEM_NOME[item.comprarEm] || 'unidade'}"
+             onchange="ctSetPrecoCot('${item.id}','${escapeAttr(nome)}', this.value)"
+             style="width:100%;text-align:right;font-size:12.5px;padding:3px 5px;${ehMenor?'border-color:var(--positive);font-weight:700;':''}">
+      ${precisaEmb ? `<input type="number" min="1" step="1" value="${o.unidPorEmb || ''}" ${travado?'disabled':''}
+             placeholder="un/emb ${item.unidadesPorEmbalagem||1}" title="Quantas unidades vêm na embalagem deste fornecedor"
+             onchange="ctSetEmbCot('${item.id}','${escapeAttr(nome)}', this.value)"
+             style="width:100%;text-align:right;font-size:11px;padding:2px 5px;color:var(--ink-soft);">` : ''}
+      <div style="font-size:11px;${ehMenor?'color:var(--positive);font-weight:700;':'color:var(--ink-faint);'}">
+        ${custo != null ? fmtMoney(custo) + '/un' + (ehMenor ? ' · menor' : '') : `<span style="color:var(--warning);">aguardando</span>`}
+      </div>
+      ${travado?'':`<button class="btn btn-sm" style="padding:1px 4px;font-size:10px;line-height:1.4;" title="Marcar que este fornecedor não tem o item"
+         onclick="ctAlternarNaoTem('${item.id}','${escapeAttr(nome)}')">não tem</button>`}
+    </div>`;
+}
+
+function ctHtmlResumoLinha(item){
+  const menor = ctMenorOpcao(item);
+  const marcados = (item.opcoes || []).length;
+  if(marcados === 0) return `<span style="color:var(--negative);">ninguém marcado</span>`;
+  const responderam = (item.opcoes || []).filter(o => o.naoTem || Number(o.preco) > 0).length;
+  if(!menor) return `<span style="color:var(--warning);">${responderam}/${marcados} responderam</span>`;
+  return `<strong style="color:var(--positive);">${escapeHtml(menor.fornecedor || '—')}</strong>
+          <span class="hint"> · ${fmtMoney(ctCustoUnit(item, menor))}/un · ${responderam}/${marcados} responderam</span>`;
+}
+
+/* ---------- quem cota este item (o passo 1, item a item) ---------- */
+
+function ctAbrirQuemCota(itemId){
+  const plano = pcPlanoAtual();
+  const item = plano && pcItem(plano, itemId);
+  if(!item) return;
+  const emLote = itemId === '__lote__';
+
+  const candidatos = [...new Set([
+    ...ctFornecedoresDoPlano(plano),
+    ...pcListaFornecedores(plano)
+  ])].sort((a,b)=>a.localeCompare(b));
+
+  document.getElementById('modal-quem-cota')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-quem-cota';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:88vh;display:flex;flex-direction:column;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🏷️</div>
+        <div>
+          <h3>Quem cota este item</h3>
+          <div class="sub">${escapeHtml(item.nome)}</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-quem-cota').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo" style="overflow-y:auto;">
+        <div class="help-text" style="margin-bottom:10px;">Marque os fornecedores que têm este produto. A lista de cada fornecedor sai sozinha dessas marcações.</div>
+        <div id="ct-quem-lista"></div>
+        <hr class="section-divider">
+        <div class="field">
+          <label>Outro fornecedor <span class="hint">se ainda não estiver na lista</span></label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="ct-quem-novo" list="pc-fornecedores" placeholder="Nome do fornecedor" style="flex:1;">
+            <button class="btn" onclick="ctAdicionarNovoNoItem('${item.id}')">Adicionar</button>
+          </div>
+        </div>
+      </div>
+      <div class="modal-actions" style="padding:12px 18px 16px 18px;">
+        <button class="btn btn-primary" onclick="document.getElementById('modal-quem-cota').remove();renderSugestaoCompra();">Pronto</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  ctRenderQuemCotaLista(item.id, candidatos);
+}
+
+function ctRenderQuemCotaLista(itemId, candidatos){
+  const plano = pcPlanoAtual();
+  const item = pcItem(plano, itemId);
+  const box = document.getElementById('ct-quem-lista');
+  if(!box || !item) return;
+  box.innerHTML = candidatos.length ? candidatos.map(nome=>{
+    const o = ctOpcaoDe(item, nome);
+    return `<label style="display:flex;align-items:center;gap:9px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:13.5px;cursor:pointer;">
+      <input type="checkbox" style="width:auto;" ${o?'checked':''}
+             onchange="ctMarcarFornecedor('${itemId}','${escapeAttr(nome)}', this.checked); ctGarantirFornecedorNoPlano('${escapeAttr(nome)}'); saveState();">
+      <span style="flex:1;">${escapeHtml(nome)}</span>
+      ${o && Number(o.preco)>0 ? `<span class="hint">${fmtMoney(o.preco)}</span>` : ''}
+      ${o && o.naoTem ? `<span class="hint" style="color:var(--negative);">não tem</span>` : ''}
+    </label>`;
+  }).join('') : '<div class="help-text">Nenhum fornecedor cadastrado ainda — use o campo abaixo.</div>';
+}
+
+function ctAdicionarNovoNoItem(itemId){
+  const campo = document.getElementById('ct-quem-novo');
+  const nome = (campo.value || '').trim();
+  if(!nome){ showToast('Digite o nome do fornecedor.', 'error'); return; }
+  ctGarantirFornecedorNoPlano(nome);
+  ctMarcarFornecedor(itemId, nome, true);
+  saveState();
+  campo.value = '';
+  const plano = pcPlanoAtual();
+  ctRenderQuemCotaLista(itemId, [...new Set([...ctFornecedoresDoPlano(plano), ...pcListaFornecedores(plano)])].sort((a,b)=>a.localeCompare(b)));
+}
+
+/* ---------- a tela da matriz ---------- */
+
+function renderCotacaoMatriz(){
+  const plano = pcPlanoAtual();
+  if(!plano){
+    const planos = pcPlanos();
+    if(planos.length === 0){
+      return `<div class="card"><h3>Cotação</h3>
+        <p class="help-text" style="margin:6px 0 0 0;">Primeiro crie um plano de compra na aba <strong>Sugestão</strong>. A cotação é feita sobre os itens dele.</p></div>`;
+    }
+    pcPlanoId = planos[0].id;
+    return renderCotacaoMatriz();
+  }
+
+  const travado = plano.status === 'finalizado';
+  const fornecedores = ctFornecedoresDoPlano(plano);
+  const itens = pcItensFiltrados(plano);
+  const semMarcacao = (plano.itens || []).filter(i => (i.opcoes || []).length === 0).length;
+
+  const cabecalho = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">${escapeHtml(plano.nome)}</h3>
+          <div class="hint" style="margin-top:4px;">
+            ${(plano.itens||[]).length} itens · ${fornecedores.length} ${fornecedores.length===1?'fornecedor':'fornecedores'} na cotação
+            ${semMarcacao ? ` · <span style="color:var(--negative);">${semMarcacao} ${semMarcacao===1?'item sem nenhum fornecedor marcado':'itens sem nenhum fornecedor marcado'}</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="pcIrPara('planos')">← Todos os planos</button>
+          <button class="btn btn-sm" onclick="pcAbrirPlano('${plano.id}','editor')">✏️ Itens e quantidades</button>
+          ${travado?'':`<button class="btn btn-sm" onclick="ctAbrirPedidoCotacao()">⬇ Pedido de cotação</button>`}
+          <button class="btn btn-sm btn-primary" onclick="pcIrPara('comparativo')">📊 Comparativo</button>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);align-items:center;">
+        ${fornecedores.map(nome=>{
+          const st = CT_STATUS[ctStatusFornecedor(plano, nome)];
+          const n = ctItensDoFornecedor(plano, nome).length;
+          return `<span class="ct-chip" style="background:${st.fundo};color:${st.cor};" title="${n} ${n===1?'item marcado':'itens marcados'}">
+            ${st.marca} ${escapeHtml(nome)} · ${st.rotulo} (${n})
+            ${travado?'':`<button class="ct-chip-x" title="Tirar da cotação" onclick="ctRemoverFornecedorDaCotacao('${escapeAttr(nome)}')">✕</button>`}
+          </span>`;
+        }).join('') || '<span class="help-text">Nenhum fornecedor ainda. Marque quem cota em cada item, ou adicione um aqui.</span>'}
+        ${travado?'':`<button class="btn btn-sm" onclick="ctAbrirAdicionarFornecedor()">＋ Fornecedor</button>`}
+      </div>
+
+      ${travado?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;padding:8px 10px;background:var(--primary-soft);border-radius:var(--radius-sm);">
+        <strong style="font-size:12.5px;">${pcSelecionados.size > 0 ? `${pcSelecionados.size} ${pcSelecionados.size===1?'item selecionado':'itens selecionados'}` : 'Marcar de uma vez'}</strong>
+        <span class="hint">${pcSelecionados.size > 0 ? 'vale só para os selecionados' : 'sem seleção, vale para todos os itens à vista'}</span>
+        <select id="ct-lote-fornecedor" style="max-width:220px;font-size:12.5px;">
+          <option value="">escolha o fornecedor...</option>
+          ${[...new Set([...fornecedores, ...pcListaFornecedores(plano)])].sort((a,b)=>a.localeCompare(b)).map(n=>`<option value="${escapeAttr(n)}">${escapeHtml(n)}</option>`).join('')}
+        </select>
+        <button class="btn btn-sm" onclick="ctLote(true)">Marcar</button>
+        <button class="btn btn-sm" onclick="ctLote(false)">Desmarcar</button>
+      </div>`}
+
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="field">
+          <label>Filtrar por nome</label>
+          <input type="text" value="${escapeAttr(pcBusca)}" placeholder="digite parte do nome do produto..."
+                 onchange="pcBusca=this.value;renderSugestaoCompra();">
+        </div>
+      </div>
+    </div>`;
+
+  if(itens.length === 0){
+    return cabecalho + `<div class="card"><p class="help-text" style="margin:0;">Nenhum item com esse filtro.</p></div>`;
+  }
+
+  const total = itens.length;
+  const pagina = aplicarPaginacao('cotacao', itens);
+
+  const linhas = pagina.map(item=>`
+    <tr>
+      <td class="col-fixa">
+        <div style="display:flex;align-items:flex-start;gap:6px;">
+          ${travado?'':`<input type="checkbox" ${pcSelecionados.has(item.id)?'checked':''}
+                   onchange="pcAlternarSelecao('${item.id}', this.checked)" style="width:auto;margin-top:3px;">`}
+          <div style="flex:1;min-width:0;">
+            <strong style="font-size:13px;">${escapeHtml(item.nome)}</strong>
+            <div class="hint">${pcQuantidade(item)} ${item.comprarEm}${item.comprarEm!=='UN'?` de ${item.unidadesPorEmbalagem||1}`:''}
+              ${item.obsCotacao?` · <em style="color:var(--warning);font-style:normal;">${escapeHtml(item.obsCotacao)}</em>`:''}</div>
+            <div style="margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+              ${travado?'':`<button class="btn btn-sm" style="padding:2px 7px;font-size:11px;" onclick="ctAbrirQuemCota('${item.id}')">🏷️ quem cota (${(item.opcoes||[]).length})</button>`}
+              <span class="hint" id="ct-resumo-linha-${item.id}">${ctHtmlResumoLinha(item)}</span>
+            </div>
+          </div>
+        </div>
+      </td>
+      ${fornecedores.map(nome=>`
+        <td class="num" id="ct-cel-${item.id}-${ctSlug(nome)}" style="vertical-align:top;${ctOpcaoDe(item,nome) && ctMenorOpcao(item)===ctOpcaoDe(item,nome) ? 'background:var(--positive-soft);' : ''}">
+          ${ctHtmlCelula(item, nome, travado)}
+        </td>`).join('')}
+    </tr>`).join('');
+
+  const tabela = `
+    <div class="card">
+      <div class="table-wrap">
+        <table class="data-table tabela-cotacao">
+          <thead>
+            <tr>
+              <th class="col-fixa">Produto</th>
+              ${fornecedores.map(nome=>{
+                const st = CT_STATUS[ctStatusFornecedor(plano, nome)];
+                return `<th class="num" style="min-width:122px;">
+                  <span style="display:block;font-size:10.5px;color:${st.cor};font-weight:700;">${st.marca} ${st.rotulo.toUpperCase()}</span>
+                  <span style="display:block;">${escapeHtml(nome)}</span>
+                </th>`;
+              }).join('')}
+            </tr>
+          </thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </div>
+      <div id="ct-paginacao"></div>
+      <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--ink-soft);">
+        <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--positive-soft);border:1px solid var(--positive);vertical-align:-2px;"></span> menor custo por unidade</span>
+        <span><span style="color:var(--negative);font-weight:700;">não tem</span> — pedi e ele não trabalha com o item</span>
+        <span><span style="color:var(--warning);">aguardando</span> — pedi, ainda não respondeu</span>
+        <span><span style="color:var(--ink-faint);font-weight:700;">—</span> não pedi pra esse</span>
+      </div>
+      <p class="help-text" style="margin-top:10px;">
+        A comparação é pelo <strong>custo por unidade</strong>, não pelo preço da embalagem: caixa de 12 a R$ 30 é mais cara que caixa de 24 a R$ 55, mesmo parecendo mais barata. Por isso cada fornecedor tem o próprio campo de unidades por embalagem.
+      </p>
+    </div>`;
+
+  return cabecalho + tabela;
+}
+
+function ctLote(marcado){
+  const sel = document.getElementById('ct-lote-fornecedor');
+  const nome = sel && sel.value;
+  if(!nome){ showToast('Escolha o fornecedor primeiro.', 'error'); return; }
+  ctMarcarLote(nome, marcado);
+}
+
+function ctAbrirAdicionarFornecedor(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const candidatos = pcListaFornecedores(plano).filter(n => !ctFornecedoresDoPlano(plano).includes(n));
+
+  document.getElementById('modal-ct-forn')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-ct-forn';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 94vw);max-height:86vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">＋</div>
+        <div>
+          <h3>Fornecedor na cotação</h3>
+          <div class="sub">Ele entra vazio — você marca item a item quem tem o quê</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-ct-forn').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        ${candidatos.length ? candidatos.map(n=>`
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 2px;border-bottom:1px solid var(--border);font-size:13.5px;">
+            <span>${escapeHtml(n)}</span>
+            <div style="display:flex;gap:6px;">
+              <button class="btn btn-sm" onclick="ctEntrarNaCotacao('${escapeAttr(n)}', false)">Adicionar</button>
+              <button class="btn btn-sm btn-primary" onclick="ctEntrarNaCotacao('${escapeAttr(n)}', true)" title="Marca este fornecedor em todos os itens do plano">Adicionar e marcar tudo</button>
+            </div>
+          </div>`).join('') : '<div class="help-text">Todos os fornecedores cadastrados já estão nesta cotação.</div>'}
+        <hr class="section-divider">
+        <div class="field">
+          <label>Outro fornecedor</label>
+          <div style="display:flex;gap:8px;">
+            <input type="text" id="ct-forn-novo" placeholder="Nome do fornecedor" style="flex:1;">
+            <button class="btn btn-primary" onclick="ctEntrarNaCotacaoDoCampo()">Adicionar</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function ctEntrarNaCotacao(nome, marcarTudo){
+  const plano = pcPlanoAtual();
+  if(!plano || !nome) return;
+  ctGarantirFornecedorNoPlano(nome);
+  if(marcarTudo) (plano.itens || []).forEach(i => ctMarcarFornecedor(i.id, nome, true));
+  saveState();
+  document.getElementById('modal-ct-forn')?.remove();
+  showToast(marcarTudo ? `${nome} marcado em todos os itens.` : `${nome} entrou na cotação. Marque os itens que ele tem.`, 'success');
+  renderSugestaoCompra();
+}
+
+function ctEntrarNaCotacaoDoCampo(){
+  const nome = (document.getElementById('ct-forn-novo').value || '').trim();
+  if(!nome){ showToast('Digite o nome do fornecedor.', 'error'); return; }
+  ctEntrarNaCotacao(nome, false);
+}
+
+/* ---------- comparativo: a tela de decidir ---------- */
+
+/* Para cada fornecedor: quantos itens cotou, em quantos é o mais barato,
+   quanto sairia a compra se fosse tudo com ele (só o que ele cotou) e
+   quanto é a decisão real dela com ele. */
+function ctResumoFornecedores(plano){
+  const itens = plano.itens || [];
+  return ctFornecedoresDoPlano(plano).map(nome=>{
+    const meus = ctItensDoFornecedor(plano, nome);
+    let cotados = 0, menorEm = 0, totalSeTudo = 0, totalDecisao = 0, naoTem = 0;
+    meus.forEach(item=>{
+      const o = ctOpcaoDe(item, nome);
+      const qtd = pcQuantidade(item);
+      if(o.naoTem){ naoTem++; return; }
+      if(!(Number(o.preco) > 0)) return;
+      cotados++;
+      totalSeTudo += qtd * Number(o.preco);
+      if(ctMenorOpcao(item) === o) menorEm++;
+      if(pcOpcaoEscolhida(item) === o) totalDecisao += qtd * Number(o.preco);
+    });
+    const info = (plano.fornecedores || {})[nome] || {};
+    return {
+      nome, status: ctStatusFornecedor(plano, nome),
+      marcados: meus.length, cotados, naoTem, menorEm, totalSeTudo, totalDecisao,
+      pagamento: info.pagamento || '', prazo: info.prazo || ''
+    };
+  }).sort((a,b)=> b.totalDecisao - a.totalDecisao || a.nome.localeCompare(b.nome));
+}
+
+/* As três contas que decidem: comprar o mais barato de cada item (dividindo
+   o pedido), concentrar tudo no melhor fornecedor único, e a diferença —
+   que é quanto custa a comodidade de um pedido só. */
+function ctContasDaCompra(plano){
+  const itens = (plano.itens || []).filter(i => ctMenorOpcao(i));
+  const totalMaisBarato = itens.reduce((s,i)=> s + pcQuantidade(i) * Number(ctMenorOpcao(i).preco), 0);
+  const pedidos = new Set(itens.map(i => ctMenorOpcao(i).fornecedor)).size;
+
+  // "tudo com um só" só é honesto com quem cotou TODOS os itens do plano
+  let unicoNome = '', unicoTotal = Infinity, unicoFalta = 0;
+  ctFornecedoresDoPlano(plano).forEach(nome=>{
+    let total = 0, falta = 0;
+    (plano.itens || []).forEach(item=>{
+      const o = ctOpcaoDe(item, nome);
+      if(o && !o.naoTem && Number(o.preco) > 0) total += pcQuantidade(item) * Number(o.preco);
+      else falta++;
+    });
+    // quem deixa itens de fora só entra se ninguém cobrir tudo
+    const melhorAteAgora = (falta < unicoFalta) || (falta === unicoFalta && total < unicoTotal);
+    if(unicoNome === '' || melhorAteAgora){ unicoNome = nome; unicoTotal = total; unicoFalta = falta; }
+  });
+  if(unicoNome === '') { unicoTotal = 0; }
+
+  const decisao = (plano.itens || []).reduce((s,i)=>{
+    const o = pcOpcaoEscolhida(i);
+    return s + (o && !o.naoTem && Number(o.preco) > 0 ? pcQuantidade(i) * Number(o.preco) : 0);
+  }, 0);
+
+  return {
+    totalMaisBarato, pedidos, unicoNome, unicoTotal, unicoFalta,
+    diferenca: unicoTotal - totalMaisBarato, decisao,
+    itensComPreco: itens.length, itensTotal: (plano.itens || []).length
+  };
+}
+
+/* Escolhe o mais barato em todos os itens de uma vez. Sugestão, não regra:
+   ela continua podendo trocar item a item depois. */
+function ctUsarMaisBaratoEmTudo(){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  let mudou = 0;
+  (plano.itens || []).forEach(item=>{
+    const menor = ctMenorOpcao(item);
+    if(!menor) return;
+    if(pcOpcaoEscolhida(item) !== menor) mudou++;
+    (item.opcoes || []).forEach(o => { o.escolhida = (o === menor); });
+  });
+  saveState();
+  showToast(mudou ? `${mudou} ${mudou===1?'item passou':'itens passaram'} para o fornecedor mais barato.` : 'Já estava tudo no mais barato.', 'success');
+  renderSugestaoCompra();
+}
+
+function ctEscolherNoItem(itemId, nome){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  (item.opcoes || []).forEach(o => { o.escolhida = ((o.fornecedor || '') === nome); });
+  saveState();
+  renderSugestaoCompra();
+}
+
+function renderCotacaoComparativo(){
+  const plano = pcPlanoAtual();
+  if(!plano) return renderPlanosLista();
+
+  const travado = plano.status === 'finalizado';
+  const contas = ctContasDaCompra(plano);
+  const resumo = ctResumoFornecedores(plano);
+  const pendentes = resumo.filter(r => r.status === 'aguardando' || r.status === 'parcial');
+
+  const cabecalho = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">Comparativo — ${escapeHtml(plano.nome)}</h3>
+          <div class="hint" style="margin-top:4px;">
+            ${contas.itensComPreco} de ${contas.itensTotal} itens já têm pelo menos um preço
+            ${pendentes.length ? ` · <span style="color:var(--warning);">${pendentes.length} ${pendentes.length===1?'fornecedor ainda deve responder':'fornecedores ainda devem responder'}</span>` : ''}
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="pcIrPara('cotacao')">← Voltar à matriz</button>
+          ${travado?'':`<button class="btn btn-sm" onclick="ctUsarMaisBaratoEmTudo()">Usar o mais barato em tudo</button>`}
+          <button class="btn btn-sm" onclick="exportarComparativoExcel()">⬇ Excel</button>
+          <button class="btn btn-sm" onclick="window.print()">🖨 Imprimir</button>
+        </div>
+      </div>
+
+      <div class="kpi-grid" style="margin-top:14px;">
+        <div class="kpi-card">
+          <div class="kpi-label">Comprando o mais barato de cada item</div>
+          <div class="kpi-value positive">${fmtMoney(contas.totalMaisBarato)}</div>
+          <div class="kpi-sub">dividido em ${contas.pedidos} ${contas.pedidos===1?'pedido':'pedidos'}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Tudo com um fornecedor só</div>
+          <div class="kpi-value">${contas.unicoNome ? fmtMoney(contas.unicoTotal) : '—'}</div>
+          <div class="kpi-sub">${contas.unicoNome ? escapeHtml(contas.unicoNome) + (contas.unicoFalta ? ` · não tem ${contas.unicoFalta} ${contas.unicoFalta===1?'item':'itens'}` : ' · tem tudo') : 'sem preços ainda'}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Diferença entre as duas</div>
+          <div class="kpi-value" style="color:var(--warning);">${fmtMoney(Math.max(0, contas.diferenca))}</div>
+          <div class="kpi-sub">o que custa a comodidade de um pedido só</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Sua decisão</div>
+          <div class="kpi-value">${fmtMoney(contas.decisao)}</div>
+          <div class="kpi-sub">com os fornecedores que você marcou</div>
+        </div>
+      </div>
+    </div>`;
+
+  const porFornecedor = `
+    <div class="card">
+      <h3>Por fornecedor</h3>
+      <p class="help-text" style="margin:0 0 10px 0;">"Se fosse tudo com ele" só conta os itens que ele cotou — por isso comparar as colunas direto engana quando um cotou menos itens que o outro.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Fornecedor</th>
+            <th>Situação</th>
+            <th class="num">Marcados</th>
+            <th class="num">Cotou</th>
+            <th class="num">É o mais barato em</th>
+            <th class="num">Se fosse tudo com ele</th>
+            <th class="num">Sua decisão</th>
+            <th>Pagamento</th>
+          </tr></thead>
+          <tbody>
+            ${resumo.map(r=>{
+              const st = CT_STATUS[r.status];
+              return `<tr>
+                <td><strong>${escapeHtml(r.nome)}</strong></td>
+                <td><span style="color:${st.cor};font-weight:600;">${st.marca} ${st.rotulo}</span></td>
+                <td class="num">${r.marcados}</td>
+                <td class="num">${r.cotados}${r.naoTem?` <span class="hint">(${r.naoTem} não tem)</span>`:''}</td>
+                <td class="num"><strong style="color:var(--positive);">${r.menorEm}</strong></td>
+                <td class="num">${r.totalSeTudo>0?fmtMoney(r.totalSeTudo):'—'}</td>
+                <td class="num"><strong>${r.totalDecisao>0?fmtMoney(r.totalDecisao):'—'}</strong></td>
+                <td>${escapeHtml(r.pagamento || '—')}${r.prazo?` <span class="hint">· ${escapeHtml(r.prazo)}</span>`:''}</td>
+              </tr>`;
+            }).join('') || '<tr><td colspan="8" class="help-text">Nenhum fornecedor na cotação ainda.</td></tr>'}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="6">Total da sua decisão</td>
+            <td class="num" style="font-weight:700;">${fmtMoney(contas.decisao)}</td>
+            <td></td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`;
+
+  const itensComAlgo = (plano.itens || []).filter(i => (i.opcoes || []).some(o => Number(o.preco) > 0));
+  const itemAItem = `
+    <div class="card">
+      <h3>Item a item</h3>
+      <p class="help-text" style="margin:0 0 10px 0;">O sistema sugere o mais barato por unidade, mas quem decide é você — trocar aqui refaz os totais de cima.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Produto</th>
+            <th class="num">Qtd</th>
+            <th>Comprar de</th>
+            <th class="num">Custo/un</th>
+            <th class="num">Total</th>
+            <th class="num">2º mais barato</th>
+            <th class="num">Diferença</th>
+          </tr></thead>
+          <tbody>
+            ${itensComAlgo.map(item=>{
+              const ordenadas = (item.opcoes || [])
+                .filter(o => !o.naoTem && Number(o.preco) > 0)
+                .map(o => ({ o, custo: ctCustoUnit(item, o) }))
+                .sort((a,b)=> a.custo - b.custo);
+              const escolhida = pcOpcaoEscolhida(item);
+              const custoEscolhido = ctCustoUnit(item, escolhida);
+              const menor = ordenadas[0];
+              const segundo = ordenadas[1];
+              const qtd = pcQuantidade(item);
+              const perdendo = menor && escolhida !== menor.o;
+              const diferenca = perdendo ? (custoEscolhido - menor.custo) * qtd * ctFator(item, escolhida) : (segundo ? (segundo.custo - menor.custo) * qtd * ctFator(item, menor.o) : 0);
+              return `<tr>
+                <td><strong>${escapeHtml(item.nome)}</strong></td>
+                <td class="num">${fmtNum(qtd)} ${item.comprarEm}</td>
+                <td>
+                  <select ${travado?'disabled':''} onchange="ctEscolherNoItem('${item.id}', this.value)" style="font-size:12.5px;${perdendo?'border:2px solid var(--warning);background:var(--warning-soft);':''}">
+                    ${ordenadas.map(({o,custo})=>`<option value="${escapeAttr(o.fornecedor)}" ${escolhida===o?'selected':''}>${escapeHtml(o.fornecedor)} — ${fmtMoney(custo)}/un</option>`).join('')}
+                  </select>
+                </td>
+                <td class="num">${custoEscolhido!=null?`<strong style="${perdendo?'':'color:var(--positive);'}">${fmtMoney(custoEscolhido)}</strong>`:'—'}</td>
+                <td class="num"><strong>${escolhida && Number(escolhida.preco)>0 ? fmtMoney(qtd * Number(escolhida.preco)) : '—'}</strong></td>
+                <td class="num hint">${segundo?`${fmtMoney(segundo.custo)} · ${escapeHtml(segundo.o.fornecedor)}`:'só um cotou'}</td>
+                <td class="num" style="color:${perdendo?'var(--negative)':'var(--positive)'};">
+                  ${perdendo ? '−'+fmtMoney(Math.abs(diferenca)) : (segundo?fmtMoney(diferenca):'—')}
+                </td>
+              </tr>`;
+            }).join('') || '<tr><td colspan="7" class="help-text">Nenhum preço lançado ainda. Volte à matriz e preencha as respostas que já chegaram.</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+      <p class="help-text" style="margin-top:10px;">
+        Quando você escolhe um fornecedor que não é o mais barato, a última coluna fica vermelha com quanto isso custa. Não é erro — às vezes vale pelo prazo, pela entrega ou pelo pedido mínimo. O sistema só não deixa passar despercebido.
+      </p>
+    </div>`;
+
+  return cabecalho + porFornecedor + itemAItem;
+}
+
+/* ---------- os arquivos ---------- */
+
+function ctAbrirPedidoCotacao(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const fornecedores = ctFornecedoresDoPlano(plano);
+  if(fornecedores.length === 0){ showToast('Marque antes quais fornecedores cotam cada item.', 'error'); return; }
+
+  document.getElementById('modal-ct-pedido')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-ct-pedido';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:88vh;display:flex;flex-direction:column;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">⬇</div>
+        <div>
+          <h3>Pedido de cotação</h3>
+          <div class="sub">Uma planilha por fornecedor, com a coluna de preço vazia</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-ct-pedido').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo" style="overflow-y:auto;">
+        <div class="help-text" style="margin-bottom:10px;">Cada arquivo leva só os itens que você marcou para aquele fornecedor.</div>
+        ${fornecedores.map(nome=>{
+          const n = ctItensDoFornecedor(plano, nome).length;
+          const st = ctStatusFornecedor(plano, nome);
+          return `<label style="display:flex;align-items:center;gap:9px;padding:7px 2px;border-bottom:1px solid var(--border);font-size:13.5px;cursor:${n?'pointer':'not-allowed'};opacity:${n?1:.5};">
+            <input type="checkbox" class="ct-pedido-forn" value="${escapeAttr(nome)}" ${n && st!=='orcado' ? 'checked':''} ${n?'':'disabled'} style="width:auto;">
+            <span style="flex:1;">${escapeHtml(nome)}</span>
+            <span class="hint">${n} ${n===1?'item':'itens'}${st==='orcado'?' · já respondeu':''}</span>
+          </label>`;
+        }).join('')}
+      </div>
+      <div class="modal-actions" style="padding:12px 18px 16px 18px;">
+        <button class="btn" onclick="document.getElementById('modal-ct-pedido').remove()">Cancelar</button>
+        <button class="btn btn-primary" onclick="ctGerarPedidos()">Gerar planilhas</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function ctGerarPedidos(){
+  const nomes = [...document.querySelectorAll('.ct-pedido-forn:checked')].map(c => c.value);
+  if(nomes.length === 0){ showToast('Escolha pelo menos um fornecedor.', 'error'); return; }
+  document.getElementById('modal-ct-pedido')?.remove();
+  await exportarPedidoCotacaoExcel(nomes);
+}
+
+async function exportarPedidoCotacaoExcel(nomes){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  try{
+    if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.', 'error'); return; }
+
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Mizu Materiais de Limpeza';
+    wb.created = new Date();
+
+    nomes.forEach(nome=>{
+      const itens = ctItensDoFornecedor(plano, nome);
+      if(itens.length === 0) return;
+      const ws = wb.addWorksheet(nome.slice(0,28).replace(/[*?:\\\/\[\]]/g,'-'), { views:[{ state:'frozen', ySplit:6 }] });
+      ws.columns = [{width:5},{width:46},{width:30},{width:18},{width:16},{width:17}];
+
+      ws.mergeCells(1,1,1,6);
+      const t = ws.getCell(1,1);
+      t.value = 'PEDIDO DE COTAÇÃO — MIZU MATERIAIS DE LIMPEZA';
+      t.font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+      ws.getRow(1).height = 22;
+      ws.mergeCells(2,1,2,6);
+      ws.getCell(2,1).value = `Para: ${nome} · enviado em ${fmtDate(todayISO())} · ${itens.length} ${itens.length===1?'item':'itens'}`;
+      ws.getCell(2,1).font = { size:10, color:{argb:'FF'+COR.cinza} };
+      ws.mergeCells(3,1,3,6);
+      const aviso = ws.getCell(3,1);
+      aviso.value = 'Preencha as colunas PREÇO e UN. POR EMBALAGEM (em amarelo) e devolva este arquivo. Se não trabalhar com algum item, escreva "não tem" na coluna de preço.';
+      aviso.font = { size:10, color:{argb:'FF8A5B12'} };
+      aviso.alignment = { wrapText:true, vertical:'middle' };
+      aviso.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.ambarFraco} };
+      ws.getRow(3).height = 30;
+
+      const titulos = ['#','PRODUTO','OBSERVAÇÃO','QUANTIDADE','PREÇO (R$)','UN. POR EMBALAGEM'];
+      const cab = ws.getRow(6);
+      titulos.forEach((tt,i)=>{
+        const c = cab.getCell(i+1);
+        c.value = tt;
+        c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+        c.alignment = { vertical:'middle', horizontal: i<=2 ? 'left':'center', wrapText:true };
+        c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+(i>=4 ? COR.ambar : COR.escuro)} };
+      });
+      cab.height = 26;
+
+      let r = 7;
+      itens.forEach((item, idx)=>{
+        const linha = ws.getRow(r);
+        const un = item.comprarEm === 'UN' ? 'unidades' : `${PC_EMBALAGEM_NOME[item.comprarEm]}s`;
+        const totalUn = pcQuantidade(item) * pcFator(item);
+        linha.getCell(1).value = idx + 1;
+        linha.getCell(2).value = item.nome;
+        linha.getCell(3).value = item.obsCotacao || '';
+        linha.getCell(4).value = `${fmtNum(totalUn)} unidades`;
+        for(let i=1;i<=6;i++){
+          const c = linha.getCell(i);
+          c.font = { size:10 };
+          c.alignment = { vertical:'middle', horizontal: i<=3 ? 'left':'right' };
+          c.border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+          if(i >= 5) c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFFDFAF3'} };
+        }
+        linha.getCell(2).font = { size:10, bold:true };
+        r++;
+      });
+
+      ws.getCell(r+1, 2).value = 'Dúvidas: Mizu Materiais de Limpeza · Rio Verde-GO';
+      ws.getCell(r+1, 2).font = { size:9, color:{argb:'FF'+COR.cinza} };
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    baixarArquivo(buffer, `pedido_de_cotacao_${todayISO()}.xlsx`);
+
+    // gerar o pedido é o que faz o fornecedor passar a "aguardando"
+    plano.fornecedores = plano.fornecedores || {};
+    nomes.forEach(n=>{
+      plano.fornecedores[n] = plano.fornecedores[n] || { pagamento:'', prazo:'', obs:'' };
+      plano.fornecedores[n].pedidoEnviadoEm = todayISO();
+    });
+    saveState();
+    showToast(`Planilha gerada com ${nomes.length} ${nomes.length===1?'aba':'abas'}, uma por fornecedor.`, 'success');
+    renderSugestaoCompra();
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui gerar a planilha: ' + e.message, 'error');
+  }
+}
+
+async function exportarComparativoExcel(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  try{
+    if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.', 'error'); return; }
+    const fornecedores = ctFornecedoresDoPlano(plano);
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Mizu Materiais de Limpeza';
+
+    // aba 1: a matriz inteira, em custo por unidade
+    const ws = wb.addWorksheet('Comparativo', { views:[{ state:'frozen', xSplit:1, ySplit:5 }] });
+    ws.columns = [{width:44},{width:12},{width:22}, ...fornecedores.map(()=>({width:16}))];
+    ws.mergeCells(1,1,1,3+fornecedores.length);
+    ws.getCell(1,1).value = `Comparativo de cotação — ${plano.nome}`;
+    ws.getCell(1,1).font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+    ws.mergeCells(2,1,2,3+fornecedores.length);
+    ws.getCell(2,1).value = `Valores em custo por unidade · gerado em ${fmtDate(todayISO())}`;
+    ws.getCell(2,1).font = { size:10, color:{argb:'FF'+COR.cinza} };
+
+    const titulos = ['Produto','Qtd','Comprar de', ...fornecedores];
+    const cab = ws.getRow(5);
+    titulos.forEach((t,i)=>{
+      const c = cab.getCell(i+1);
+      c.value = t;
+      c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+      c.alignment = { vertical:'middle', horizontal: i===0 ? 'left':'center', wrapText:true };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+    });
+    cab.height = 26;
+
+    let r = 6;
+    (plano.itens || []).forEach(item=>{
+      const linha = ws.getRow(r);
+      const menor = ctMenorOpcao(item);
+      const escolhida = pcOpcaoEscolhida(item);
+      linha.getCell(1).value = item.nome;
+      linha.getCell(2).value = `${pcQuantidade(item)} ${item.comprarEm}`;
+      linha.getCell(3).value = escolhida ? (escolhida.fornecedor || '') : '';
+      fornecedores.forEach((nome, i)=>{
+        const o = ctOpcaoDe(item, nome);
+        const cel = linha.getCell(4 + i);
+        if(!o){ cel.value = ''; return; }
+        if(o.naoTem){
+          cel.value = 'não tem';
+          cel.font = { size:10, color:{argb:'FF'+COR.vermelho} };
+          cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.vermelhoFraco} };
+          return;
+        }
+        const custo = ctCustoUnit(item, o);
+        if(custo == null){ cel.value = 'aguardando'; cel.font = { size:10, color:{argb:'FF'+COR.ambar} }; return; }
+        cel.value = custo;
+        cel.numFmt = 'R$ #,##0.0000';
+        if(menor === o){
+          cel.font = { size:10, bold:true, color:{argb:'FF1E5B41'} };
+          cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} };
+        }
+      });
+      for(let i=1;i<=3;i++){ linha.getCell(i).font = { size:10, bold: i===1 }; linha.getCell(i).alignment = { horizontal: i===1?'left':'center' }; }
+      r++;
+    });
+    ws.autoFilter = { from:{row:5,column:1}, to:{row:r-1, column:3+fornecedores.length} };
+
+    // aba 2: resumo por fornecedor
+    const wsF = wb.addWorksheet('Por fornecedor');
+    const colsF = ['Fornecedor','Situação','Itens marcados','Cotou','Não tem','É o mais barato em','Se fosse tudo com ele','Sua decisão','Pagamento','Prazo'];
+    wsF.columns = [{width:28},{width:14},{width:15},{width:10},{width:11},{width:19},{width:20},{width:16},{width:20},{width:22}];
+    const cabF = wsF.getRow(1);
+    colsF.forEach((t,i)=>{
+      const c = cabF.getCell(i+1);
+      c.value = t;
+      c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+      c.alignment = { vertical:'middle', horizontal: i===0?'left':'center', wrapText:true };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verde} };
+    });
+    cabF.height = 28;
+    let rf = 2;
+    ctResumoFornecedores(plano).forEach(x=>{
+      const l = wsF.getRow(rf);
+      [x.nome, CT_STATUS[x.status].rotulo, x.marcados, x.cotados, x.naoTem, x.menorEm, x.totalSeTudo, x.totalDecisao, x.pagamento, x.prazo]
+        .forEach((v,i)=>{ l.getCell(i+1).value = v; });
+      l.getCell(7).numFmt = 'R$ #,##0.00';
+      l.getCell(8).numFmt = 'R$ #,##0.00';
+      for(let i=1;i<=colsF.length;i++){ l.getCell(i).font = { size:10 }; }
+      rf++;
+    });
+
+    const buffer = await wb.xlsx.writeBuffer();
+    baixarArquivo(buffer, `comparativo_cotacao_${todayISO()}.xlsx`);
+    showToast('Comparativo gerado.', 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui gerar a planilha: ' + e.message, 'error');
+  }
 }
 
 /* =========================================================
