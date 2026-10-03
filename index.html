@@ -1614,6 +1614,7 @@ function loadState(){
     state.caixa = Object.assign(defaultState().caixa, parsed.caixa||{});
     migrarFornecedoresELocaisCompra(state);
     migrarPagadoresParaClientes(state);
+    migrarAmbienteNotasFiscais(state);
     garantirClienteConsumidorFinal(state);
     return state;
   }catch(e){
@@ -8065,6 +8066,7 @@ function renderOrcamentos(){
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
             </select>
             <button type="button" class="btn btn-sm" id="orc-btn-novo-cliente" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+            <button type="button" class="btn btn-sm" onclick="selecionarConsumidorFinal('orc-cliente')" title="Venda de balcão: usa o cliente CONSUMIDOR FINAL. Na NFC-e não precisa identificar quem comprou." style="flex-shrink:0;white-space:nowrap;">🧾 Balcão</button>
             <button type="button" class="btn btn-sm" id="orc-btn-editar-cliente" title="Editar dados deste cliente" style="flex-shrink:0;display:none;">✏️</button>
             <button type="button" class="btn btn-sm" id="orc-btn-historico-compras" title="Ver produtos que este cliente já comprou antes" style="flex-shrink:0;white-space:nowrap;display:none;">🧾 Histórico</button>
           </div>
@@ -23207,6 +23209,172 @@ async function nfeLerXmlDaPasta(handle, nota){
 
 /* ---------- tela de configuração ---------- */
 
+/* =========================================================
+   MÓDULO: AMBIENTE DA NOTA FISCAL (teste x produção)
+
+   O servidor de emissão roda em um de dois ambientes, e isso muda
+   TUDO sobre o que a nota é:
+
+   - homologação (tpAmb 2): ambiente de TESTE da Receita. A nota é
+     autorizada de verdade, ganha chave e protocolo, mas a própria
+     SEFAZ troca o nome do destinatário por "NF-E EMITIDA EM AMBIENTE
+     DE HOMOLOGACAO - SEM VALOR FISCAL" e o DANFE sai com essa tarja.
+     É por isso que a nota parece um espelho: ela É um teste.
+
+   - produção (tpAmb 1): a nota vale de verdade, entra na escrita
+     fiscal e só sai de lá por cancelamento dentro do prazo legal.
+
+   Quem decide isso é a variável NFE_AMBIENTE no servidor (Render) —
+   não dá pra virar por aqui. O que este módulo faz é não deixar mais
+   ninguém descobrir isso depois, olhando o PDF: o sistema pergunta ao
+   servidor em que ambiente ele está, mostra isso em letra garrafal
+   antes de emitir, e carimba o ambiente em cada nota guardada.
+   ========================================================= */
+
+let NFE_AMBIENTE_CACHE = null; // { ambiente, em } — vale por 5 minutos
+
+/* Pergunta ao servidor (rota /status, sem senha) em que ambiente ele
+   está. Guarda a resposta pra não consultar a cada clique, e também em
+   STATE, pra tela abrir já sabendo mesmo antes da primeira consulta. */
+async function nfeConsultarAmbiente(forcar){
+  const c = nfeCfg();
+  if(!c.url) return null;
+  if(!forcar && NFE_AMBIENTE_CACHE && (Date.now()-NFE_AMBIENTE_CACHE.em) < 5*60*1000){
+    return NFE_AMBIENTE_CACHE.ambiente;
+  }
+  try{
+    const resp = await fetch(c.url + '/status', { method:'GET' });
+    const dados = await resp.json();
+    const ambiente = (dados && dados.ambiente === 'producao') ? 'producao' : 'homologacao';
+    NFE_AMBIENTE_CACHE = { ambiente, em: Date.now() };
+    if(STATE.config.nfeAmbienteConhecido !== ambiente){
+      STATE.config.nfeAmbienteConhecido = ambiente;
+      saveState();
+    }
+    return ambiente;
+  }catch(e){
+    console.warn('Não consegui perguntar ao servidor em que ambiente ele está.', e);
+    return null;
+  }
+}
+
+// O que o sistema sabe agora, sem ir na rede.
+function nfeAmbienteConhecido(){
+  return (NFE_AMBIENTE_CACHE && NFE_AMBIENTE_CACHE.ambiente)
+      || STATE.config.nfeAmbienteConhecido
+      || null;
+}
+
+function nfeAmbienteRotulo(ambiente){
+  if(ambiente === 'producao') return {
+    icone: '✅',
+    titulo: 'PRODUÇÃO',
+    cor: 'var(--positive)',
+    fundo: 'var(--positive-soft, rgba(30,125,79,.12))',
+    aviso: 'As notas emitidas aqui valem de verdade e entram na escrita fiscal.'
+  };
+  if(ambiente === 'homologacao') return {
+    icone: '🧪',
+    titulo: 'TESTE (homologação)',
+    cor: 'var(--warning)',
+    fundo: 'var(--warning-soft)',
+    aviso: 'As notas emitidas aqui NÃO têm valor fiscal. A própria Receita troca o nome do cliente por "SEM VALOR FISCAL" e o PDF sai com essa tarja — é por isso que a nota parece um espelho.'
+  };
+  return {
+    icone: '❔',
+    titulo: 'não sei dizer',
+    cor: 'var(--ink-soft)',
+    fundo: 'var(--surface-2)',
+    aviso: 'Não consegui falar com o servidor de emissão pra saber se ele está em teste ou em produção. No plano gratuito do Render a primeira chamada depois de um tempo parado demora — tente de novo em um minuto.'
+  };
+}
+
+function nfeBadgeAmbiente(ambiente){
+  const r = nfeAmbienteRotulo(ambiente);
+  return `<div style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:var(--radius-sm);background:${r.fundo};border-left:3px solid ${r.cor};">
+    <span style="font-size:17px;line-height:1.2;">${r.icone}</span>
+    <div style="flex:1;min-width:0;">
+      <div style="font-weight:700;color:${r.cor};font-size:13px;">Ambiente do servidor: ${r.titulo}</div>
+      <div class="help-text" style="margin:3px 0 0;">${r.aviso}</div>
+    </div>
+  </div>`;
+}
+
+// Selo pequeno, pra lista de orçamentos e de vendas: deixa claro que
+// aquela nota ali foi um teste, mesmo daqui a seis meses.
+function nfeSeloNotaTeste(nota){
+  return (nota && nota.ambiente === 'homologacao') ? '🧪 ' : '';
+}
+
+/* Toda nota emitida até hoje saiu em homologação (conferido no XML:
+   tpAmb 2). Carimba as antigas uma única vez, pra lista nunca mais
+   misturar teste com nota de verdade. */
+function migrarAmbienteNotasFiscais(state){
+  (state.notasFiscais||[]).forEach(n=>{
+    if(!n.ambiente) n.ambiente = 'homologacao';
+  });
+}
+
+/* ---------- virada para produção ---------- */
+
+/* O combinado com a Gilb: a NF-e e a NFC-e do Mizu saem na SÉRIE 2,
+   começando do número 1. O TOTVS já emitiu notas de verdade na série 1,
+   e número repetido na mesma série é rejeição na certa. Série própria
+   deixa os dois sistemas conviverem durante a transição. */
+function nfeAplicarNumeracaoProducao(){
+  confirmAction(
+    'Preparar a numeração para produção',
+    'Isto define SÉRIE 2 e PRÓXIMO NÚMERO 1 para a NF-e e para a NFC-e aqui no sistema — a série própria do Mizu, pra não bater com as notas que o TOTVS já emitiu na série 1. '
+    + 'Importante: no servidor (Render) as variáveis NFE_SERIE e NFCE_SERIE também precisam ficar em 2. Quem decide a série da nota é o servidor; se os dois não combinarem, a nota sai numa série e o sistema anota outra.',
+    ()=>{
+      STATE.config.nfeSerie = 2;
+      STATE.config.nfeProximoNumero = 1;
+      STATE.config.nfceSerie = 2;
+      STATE.config.nfceProximoNumero = 1;
+      saveState();
+      const campos = {
+        'cfg-nfe-serie': 2, 'cfg-nfe-numero': 1,
+        'cfg-nfce-serie': 2, 'cfg-nfce-numero': 1
+      };
+      Object.keys(campos).forEach(id=>{
+        const el = document.getElementById(id);
+        if(el) el.value = campos[id];
+      });
+      showToast('Numeração ajustada: série 2, próximo número 1, nos dois modelos.', 'success');
+    },
+    'Aplicar série 2 / nº 1'
+  );
+}
+
+// Botão "Verificar agora" da janela de configuração.
+async function nfeVerificarAmbienteNaConfig(){
+  const box = document.getElementById('cfg-nfe-ambiente');
+  if(box) box.innerHTML = '<div class="help-text">Perguntando ao servidor... (no plano gratuito do Render a primeira chamada pode demorar até um minuto)</div>';
+  const ambiente = await nfeConsultarAmbiente(true);
+  if(box) box.innerHTML = nfeBadgeAmbiente(ambiente);
+}
+
+/* ---------- venda de balcão ---------- */
+
+/* Seleciona o cliente CONSUMIDOR FINAL no seletor informado. É o atalho
+   da venda de balcão: quem só quer o cupom não precisa ser cadastrado,
+   e a NFC-e não exige identificar o comprador. */
+function selecionarConsumidorFinal(idSelect){
+  const select = document.getElementById(idSelect);
+  if(!select) return;
+  const cliente = STATE.clientes.find(c =>
+    c.consumidorFinal === true ||
+    (c.nome||'').trim().toLowerCase() === 'consumidor final'
+  );
+  if(!cliente){
+    showToast('Não achei o cliente CONSUMIDOR FINAL no cadastro.', 'error');
+    return;
+  }
+  select.value = cliente.id;
+  select.dispatchEvent(new Event('change'));
+  showToast('Venda de balcão: CONSUMIDOR FINAL selecionado. Na NFC-e o CPF é opcional.', 'success');
+}
+
 function abrirConfigNfe(){
   const c = nfeCfg();
   const pastaAtual = STATE.config.nfePastaNome || '';
@@ -23225,6 +23393,26 @@ function abrirConfigNfe(){
         <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-config-nfe').remove()">✕</button>
       </div>
       <div class="modal-rapido-corpo">
+        <div id="cfg-nfe-ambiente" style="margin-bottom:12px;">${nfeBadgeAmbiente(nfeAmbienteConhecido())}</div>
+        <div style="margin-bottom:14px;">
+          <button type="button" class="btn btn-sm" onclick="nfeVerificarAmbienteNaConfig()">🔄 Verificar o ambiente agora</button>
+        </div>
+
+        <details style="margin-bottom:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+          <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;">🚦 Virar para produção (nota de verdade)</summary>
+          <div style="padding:4px 0 12px;">
+            <p class="help-text" style="margin-top:0;">Enquanto o servidor estiver em teste, toda nota sai com a tarja "SEM VALOR FISCAL" — não é defeito do sistema, é a Receita marcando que aquilo é um ensaio. Para valer de verdade, estes cinco passos:</p>
+            <ol style="font-size:12.5px;color:var(--ink-soft);padding-left:18px;margin:0 0 10px;line-height:1.7;">
+              <li>No Render, <strong>NFE_AMBIENTE = 1</strong>.</li>
+              <li>No Render, <strong>NFE_CSC</strong> e <strong>NFE_CSC_ID</strong> com o CSC de <strong>produção</strong> gerado no portal da SEFAZ-GO. O CSC de teste não funciona em produção, e sem ele a NFC-e nem sai.</li>
+              <li>No Render, <strong>NFE_SERIE = 2</strong> e <strong>NFCE_SERIE = 2</strong> — a série própria do Mizu, pra não bater com o que o TOTVS já emitiu na série 1.</li>
+              <li>Aqui no sistema, a mesma série 2 começando do número 1.</li>
+              <li>Conferir o ambiente e emitir uma nota pequena pra testar.</li>
+            </ol>
+            <button type="button" class="btn btn-sm" onclick="nfeAplicarNumeracaoProducao()">4️⃣ Aplicar série 2 / próximo nº 1 nos dois modelos</button>
+          </div>
+        </details>
+
         <div class="field">
           <label>Endereço do servidor de emissão</label>
           <input type="text" id="cfg-nfe-url" value="${escapeAttr(c.url)}" placeholder="cole aqui o endereço do servidor">
@@ -23277,6 +23465,9 @@ function abrirConfigNfe(){
       </div>
     </div>`;
   document.body.appendChild(modal);
+  // já pergunta ao servidor em que ambiente ele está — ninguém devia precisar
+  // clicar num botão pra descobrir se a nota que vai sair vale ou não
+  nfeVerificarAmbienteNaConfig();
 }
 
 async function nfeEscolherPastaDaConfig(){
@@ -23670,7 +23861,16 @@ async function nfeEmitir(origem, modelo, opcoes){
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
 
+  // Em que ambiente o servidor está AGORA — perguntado antes de confirmar,
+  // porque é a diferença entre um ensaio e um documento fiscal de verdade.
+  const ambiente = await nfeConsultarAmbiente();
+  const avisoAmbiente =
+      ambiente === 'producao'   ? '✅ PRODUÇÃO — esta nota VALE de verdade.\n\n' :
+      ambiente === 'homologacao'? '🧪 AMBIENTE DE TESTE — esta nota NÃO tem valor fiscal.\nEla vai sair com a tarja "SEM VALOR FISCAL" e o nome do cliente trocado pela Receita.\n\n' :
+                                  '❔ Não consegui confirmar se o servidor está em teste ou em produção.\n\n';
+
   if(!opcoes.semConfirmacao && !confirm(
+      avisoAmbiente +
       `Emitir ${nomeModelo} nº ${num.proximo} (série ${num.serie})?\n\n` +
       `Cliente: ${cliente ? cliente.nome : '—'}\n` +
       `Itens: ${(orcamento.itens||[]).length}\n` +
@@ -23715,6 +23915,8 @@ async function nfeEmitir(origem, modelo, opcoes){
       modelo,
       numero: r.numeroNota,
       serie: num.serie,
+      ambiente: ambiente || 'desconhecido', // teste x produção, carimbado na hora
+
       chave: r.chave,
       protocolo: r.protocolo,
       valor: total,
@@ -23988,7 +24190,9 @@ function nfeBotoesOrcamento(orcamento){
   const nota = nfeNotaDoOrcamento(orcamento.id);
   if(nota){
     const nome = NFE_MODELO_NOME[nota.modelo] || 'Nota';
-    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">🖨️ ${nome} nº ${nota.numero}</button>`;
+    const selo = nfeSeloNotaTeste(nota);
+    const dica = selo ? 'Nota de TESTE (homologação) — sem valor fiscal' : `Protocolo ${escapeAttr(String(nota.protocolo||''))}`;
+    return `<button class="btn btn-sm" onclick="imprimirNotaFiscal('${orcamento.id}')" title="${dica}">🖨️ ${selo}${nome} nº ${nota.numero}</button>`;
   }
   const jaVirouVenda = orcamento.status==='convertido' || !!orcamento.vendaGeradaId;
   if(jaVirouVenda && nfeConfigurado()){
@@ -24038,7 +24242,9 @@ function nfeBotaoVenda(vendaId){
   const nota = nfeNotaDaVenda(vendaId);
   if(!nota) return '';
   const nome = NFE_MODELO_NOME[nota.modelo] || 'Nota';
-  return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="Baixar o PDF e o XML">🧾 ${nome} nº ${nota.numero}</button>`;
+  const selo = nfeSeloNotaTeste(nota);
+  const dica = selo ? 'Nota de TESTE (homologação) — sem valor fiscal' : 'Baixar o PDF e o XML';
+  return `<button class="btn btn-sm" onclick="baixarNotaFiscalDaVenda('${vendaId}')" title="${dica}">🧾 ${selo}${nome} nº ${nota.numero}</button>`;
 }
 
 /* =========================================================
@@ -25109,6 +25315,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-03-e',
+    data: '2026-10-03',
+    titulo: 'Dá pra ver quando a nota é teste e quando é de verdade',
+    itens: [
+      'A nota vinha saindo com cara de espelho porque ela ERA um teste: o servidor está no ambiente de homologação da Receita, que troca o nome do cliente por "SEM VALOR FISCAL" e carimba o PDF. Não era defeito do sistema.',
+      'Agora o sistema pergunta ao servidor em que ambiente ele está e mostra isso na janela de Configurar Nota Fiscal, com um botão de verificar na hora.',
+      'Na hora de emitir, a confirmação abre dizendo em letra clara se aquela nota vai valer de verdade ou se é ensaio.',
+      'Cada nota guardada passa a ter o ambiente carimbado, e as de teste aparecem com 🧪 na lista — inclusive as antigas, que foram marcadas como teste.',
+      'Dentro da configuração tem o roteiro da virada para produção: NFE_AMBIENTE=1, CSC de produção da SEFAZ-GO, série 2 nos dois modelos, e um botão que já ajusta a numeração aqui do lado.',
+      'No orçamento, o botão "🧾 Balcão" escolhe o CONSUMIDOR FINAL de uma vez — pra quem só quer o cupom e não vai ser cadastrado.'
+    ]
+  },
   {
     id: '2026-10-03-d',
     data: '2026-10-03',
