@@ -823,6 +823,9 @@ table.data-table{ width:100%; font-size:13px; }
 .tabela-plano .hint-cel{ color:var(--ink-faint); font-size:12px; }
 .tabela-plano input, .tabela-plano select{ font-size:13px; padding:3px 5px; }
 ".tabela-plano .linha-opcoes td{ white-space:normal; }
+.pc-sinal{ display:inline-block; width:9px; height:9px; border-radius:50%; margin-top:7px; flex:0 0 auto; }
+.pc-sinal-ok{ background:var(--positive); box-shadow:0 0 0 2px var(--positive-soft); }
+.pc-sinal-falta{ background:var(--negative); box-shadow:0 0 0 2px var(--negative-soft); }
 .pc-alca{ cursor:grab; color:var(--ink-faint); font-size:15px; line-height:1.1; user-select:none; padding:0 2px; }
 .pc-alca:active{ cursor:grabbing; }
 .tabela-plano tr.arrastando{ opacity:.35; }
@@ -5755,6 +5758,17 @@ function formatarRotuloIntervalo(ini, fim){
 
 function ativarDateRangePicker(id, onChange){
   const wrap = document.getElementById(id+'-wrap');
+  // Guarda o que estava escolhido quando o calendário abriu. Ao fechar, se
+  // mudou alguma coisa, a tela é avisada — antes, escolher só a data inicial
+  // e clicar fora deixava a lista parada, mostrando o período antigo.
+  let _valoresAoAbrir = null;
+  function _avisarSeMudou(){
+    if(_valoresAoAbrir === null) return;
+    const agora = (document.getElementById(id+'-ini').value||'') + '|' + (document.getElementById(id+'-fim').value||'');
+    const antes = _valoresAoAbrir;
+    _valoresAoAbrir = null;
+    if(agora !== antes && onChange) onChange(document.getElementById(id+'-ini').value, document.getElementById(id+'-fim').value);
+  }
   const inputBox = document.getElementById(id+'-input');
   const label = document.getElementById(id+'-label');
   const hiddenIni = document.getElementById(id+'-ini');
@@ -5831,6 +5845,7 @@ function ativarDateRangePicker(id, onChange){
         renderPopup();
         if(hiddenIni.value && hiddenFim.value){
           popup.classList.remove('open');
+          _valoresAoAbrir = null;
           if(onChange) onChange(hiddenIni.value, hiddenFim.value);
         }
       });
@@ -5842,12 +5857,19 @@ function ativarDateRangePicker(id, onChange){
     const abrindo = !popup.classList.contains('open');
     document.querySelectorAll('.date-range-popup.open').forEach(p=>p.classList.remove('open'));
     if(abrindo){
+      _valoresAoAbrir = (hiddenIni.value||'') + '|' + (hiddenFim.value||'');
       renderPopup();
       popup.classList.add('open');
+    }else{
+      _avisarSeMudou();
     }
   });
   document.addEventListener('click', (e)=>{
-    if(!wrap.contains(e.target)) popup.classList.remove('open');
+    if(!wrap.contains(e.target)){
+      const estavaAberto = popup.classList.contains('open');
+      popup.classList.remove('open');
+      if(estavaAberto) _avisarSeMudou();
+    }
   });
 }
 
@@ -9552,6 +9574,35 @@ function distanciaKm(lat1, lng1, lat2, lng2){
   return R * 2*Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
+/* De qual cadastro veio este ponto do roteiro, e onde a coordenada dele
+   deve ser gravada. É o que permite corrigir a localização arrastando o pino
+   no mapa: a correção vai pro cadastro, não some quando o roteiro é refeito.
+
+   Atenção ao 'tipo': num ponto de coleta ele vale 'coleta' (foi sobrescrito
+   ao montar o roteiro) e o que diz se é fornecedor ou local de compra é o
+   prefixo da 'chave' ("forn:xxx" / "local:xxx"). */
+function cadastroDoPontoRoteiro(p){
+  if(p.tipo === 'entrega'){
+    const c = STATE.clientes.find(x=>x.id===p.clienteId);
+    return c ? { registro:c, rotulo:c.nome, oque:'cliente' } : null;
+  }
+  const origem = (p.chave||'').split(':')[0];
+  const lista = origem === 'forn' ? STATE.fornecedores : (origem === 'local' ? STATE.locaisCompra : null);
+  if(!lista) return null;
+  const r = lista.find(x=>x.id===p.id);
+  return r ? { registro:r, rotulo:r.nome, oque: origem==='forn' ? 'fornecedor' : 'local de compra' } : null;
+}
+
+function salvarLocalDoPontoRoteiro(p, lat, lng){
+  const alvo = cadastroDoPontoRoteiro(p);
+  if(!alvo){ showToast('Não achei o cadastro deste ponto pra salvar a localização.', 'error'); return false; }
+  alvo.registro.lat = lat;
+  alvo.registro.lng = lng;
+  saveState();
+  showToast(`Localização de ${alvo.rotulo} salva no cadastro do ${alvo.oque}.`, 'success');
+  return true;
+}
+
 // Monta a lista de ENTREGAS pendentes (um item por orçamento em rota) e a
 // lista de PONTOS DE COLETA únicos que elas exigem (agrupando por
 // origemTipo+origemId, somando quantidade entre entregas diferentes —
@@ -10262,6 +10313,7 @@ function abrirMapaRoteiro(){
         </div>
         <div id="mapa-roteiro-leaflet" style="width:100%;height:min(640px, 68vh);border-radius:8px;background:#e9ecef;"></div>
         <div id="mapa-roteiro-status" class="help-text" style="margin-top:6px;"></div>
+        <div id="mapa-roteiro-sem-local"></div>
         <div class="form-actions">
           <button type="button" class="btn" id="mapa-roteiro-fechar">Fechar</button>
         </div>
@@ -10296,6 +10348,10 @@ function abrirMapaRoteiro(){
       // um pino numerado por parada, na ordem real do roteiro (o número no
       // pino é a posição na lista COMPLETA do roteiro, coleta e entrega
       // juntas — igual à numeração mostrada na tela e no PDF)
+      // Os pinos são ARRASTÁVEIS: o endereço que o sistema achou sozinho
+      // quase nunca cai na porta certa, e quem conhece a cidade corrige em
+      // dois segundos. Soltar o pino grava a coordenada no cadastro de
+      // origem, então a correção vale pros próximos roteiros também.
       roteiro.forEach((p,idx)=>{
         if(p.lat==null || p.lng==null) return;
         const cor = p.tipo==='coleta' ? '#C98A2C' : '#6B3FA0';
@@ -10305,9 +10361,56 @@ function abrirMapaRoteiro(){
           iconSize: [28,28], iconAnchor: [14,14]
         });
         const nomeExibicao = p.tipo==='coleta' ? p.nome : p.clienteNome;
-        L.marker([p.lat,p.lng], {icon: iconeNumerado}).addTo(mapa)
-          .bindPopup(`<strong>Parada ${idx+1} · ${p.tipo==='coleta'?'Coleta':'Entrega'}</strong><br>${escapeHtml(nomeExibicao)}`);
+        const alvo = cadastroDoPontoRoteiro(p);
+        const marcador = L.marker([p.lat,p.lng], {icon: iconeNumerado, draggable: !!alvo}).addTo(mapa);
+        marcador.bindPopup(`<strong>Parada ${idx+1} · ${p.tipo==='coleta'?'Coleta':'Entrega'}</strong><br>${escapeHtml(nomeExibicao)}`
+          + (alvo ? `<br><span style="color:#5B6472;font-size:11.5px;">Arraste o pino para corrigir — salva no cadastro do ${alvo.oque}.</span>` : ''));
+        if(alvo){
+          marcador.on('dragend', ()=>{
+            const pos = marcador.getLatLng();
+            if(salvarLocalDoPontoRoteiro(p, pos.lat, pos.lng)){
+              p.lat = pos.lat; p.lng = pos.lng;
+              const st = document.getElementById('mapa-roteiro-status');
+              if(st) st.textContent = `Localização de ${alvo.rotulo} corrigida. Feche o mapa e gere o roteiro de novo pra recalcular a ordem das paradas.`;
+            }
+          });
+        }
       });
+
+      // Pontos que ainda não têm coordenada nenhuma não apareceriam no mapa.
+      // Em vez de sumirem calados, entram numa lista: escolhendo um, cai um
+      // pino no meio do mapa pra arrastar até o lugar certo.
+      const semLocal = roteiro.filter(p=>(p.lat==null || p.lng==null) && cadastroDoPontoRoteiro(p));
+      const caixaSemLocal = document.getElementById('mapa-roteiro-sem-local');
+      if(caixaSemLocal){
+        if(semLocal.length === 0){
+          caixaSemLocal.innerHTML = '';
+        }else{
+          caixaSemLocal.innerHTML = `
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 10px;background:var(--warning-soft);border-radius:var(--radius-sm);margin-top:8px;font-size:13px;">
+              <strong>${semLocal.length} ${semLocal.length===1?'parada sem localização':'paradas sem localização'}</strong>
+              <select id="mapa-roteiro-sem-local-sel" style="max-width:280px;">
+                <option value="">Escolha para marcar no mapa...</option>
+                ${semLocal.map((p,i)=>`<option value="${i}">${escapeHtml(p.tipo==='coleta'?p.nome:p.clienteNome)}</option>`).join('')}
+              </select>
+            </div>`;
+          document.getElementById('mapa-roteiro-sem-local-sel').addEventListener('change', (e)=>{
+            const p = semLocal[parseInt(e.target.value,10)];
+            if(!p) return;
+            const alvo = cadastroDoPontoRoteiro(p);
+            const centro = mapa.getCenter();
+            const pino = L.marker([centro.lat, centro.lng], { draggable:true }).addTo(mapa);
+            pino.bindPopup(`<strong>${escapeHtml(alvo.rotulo)}</strong><br>Arraste até o local certo — salva sozinho.`).openPopup();
+            pino.on('dragend', ()=>{
+              const pos = pino.getLatLng();
+              salvarLocalDoPontoRoteiro(p, pos.lat, pos.lng);
+            });
+            const st = document.getElementById('mapa-roteiro-status');
+            if(st) st.textContent = `Arraste o pino novo até onde fica ${alvo.rotulo}.`;
+            e.target.value = '';
+          });
+        }
+      }
 
       // linha reta entre as paradas — desenhada IMEDIATAMENTE, pra sempre
       // ter alguma linha visível mesmo se a busca de rota real (abaixo)
@@ -12079,6 +12182,21 @@ function renderAnalise(){
 
     <div class="kpi-row" id="an-kpis"></div>
 
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+        <h3 style="margin:0;">Vendas por Dia <span class="hint" id="an-dia-resumo">evolução dia a dia dentro do período filtrado acima</span></h3>
+        <div class="field" style="margin:0;min-width:180px;">
+          <select id="an-dia-metrica" style="font-size:13px;">
+            <option value="bruto">Valor bruto (R$)</option>
+            <option value="lucro">Lucro líquido (R$)</option>
+            <option value="qtd">Quantidade vendida</option>
+            <option value="vendas">Número de vendas</option>
+          </select>
+        </div>
+      </div>
+      <div class="chart-box tall"><canvas id="an-chart-diario"></canvas></div>
+    </div>
+
     <div class="chart-row">
       <div class="card">
         <h3>Vendas por Mês <span class="hint">valor bruto e lucro líquido</span></h3>
@@ -12223,6 +12341,7 @@ function renderAnalise(){
   });
 
   document.getElementById('btn-exportar-analise-produto').addEventListener('click', exportarAnalisePorProdutoExcel);
+  document.getElementById('an-dia-metrica').addEventListener('change', ()=>renderGraficoVendasPorDia(window.__linhasAnaliseAtuais||[]));
 
   document.getElementById('tbl-analise').addEventListener('sortrequest', (e)=>{
     analiseSort = e.detail;
@@ -12518,9 +12637,125 @@ function exportarAnalisePorProdutoExcel(){
   showToast('Planilha exportada com sucesso.', 'success');
 }
 
+/* =========================================================
+   GRÁFICO DE VENDAS POR DIA
+   Usa o mesmo filtro de período da tela. Mostra TODOS os dias do intervalo,
+   inclusive os sem venda: um domingo zerado dito em voz alta vale mais que
+   um domingo que simplesmente não aparece — é o buraco que mostra o padrão
+   da semana.
+   ========================================================= */
+let anDiaMetrica = 'bruto';
+
+function diasEntreDatas(ini, fim){
+  const dias = [];
+  const d = new Date(ini + 'T12:00:00');
+  const ate = new Date(fim + 'T12:00:00');
+  // teto de segurança: ninguém lê um gráfico com mais de dois anos de barras
+  while(d <= ate && dias.length < 740){
+    dias.push(d.toISOString().slice(0,10));
+    d.setDate(d.getDate() + 1);
+  }
+  return dias;
+}
+
+function renderGraficoVendasPorDia(linhas){
+  const sel = document.getElementById('an-dia-metrica');
+  if(sel) anDiaMetrica = sel.value || anDiaMetrica;
+
+  const comData = linhas.filter(l=>l.data);
+  const resumoEl = document.getElementById('an-dia-resumo');
+
+  if(comData.length === 0){
+    if(resumoEl) resumoEl.textContent = 'nenhuma venda no período filtrado';
+    analiseCharts.diario = criarGraficoSeguro('an-chart-diario', {
+      type:'bar', data:{labels:[], datasets:[]},
+      options:{ responsive:true, maintainAspectRatio:false }
+    });
+    return;
+  }
+
+  const porDia = {};
+  comData.forEach(l=>{
+    if(!porDia[l.data]) porDia[l.data] = { bruto:0, lucro:0, qtd:0, vendas:new Set() };
+    porDia[l.data].bruto += l.bruto;
+    porDia[l.data].lucro += l.lucro;
+    porDia[l.data].qtd   += l.qtd;
+    porDia[l.data].vendas.add(l.vendaId);
+  });
+
+  const datas = Object.keys(porDia).sort();
+  const dias = diasEntreDatas(datas[0], datas[datas.length-1]);
+  const valorDe = d => {
+    const v = porDia[d];
+    if(!v) return 0;
+    return anDiaMetrica === 'vendas' ? v.vendas.size : v[anDiaMetrica];
+  };
+  const dados = dias.map(valorDe);
+  const ehDinheiro = anDiaMetrica === 'bruto' || anDiaMetrica === 'lucro';
+  const rotulos = { bruto:'Valor bruto', lucro:'Lucro líquido', qtd:'Quantidade vendida', vendas:'Número de vendas' };
+  const formatar = v => ehDinheiro ? fmtMoney(v) : fmtNum(Math.round(v*100)/100);
+
+  const diasComVenda = dias.filter(d=>porDia[d]).length;
+  const total = dados.reduce((s,v)=>s+v, 0);
+  const media = diasComVenda > 0 ? total/diasComVenda : 0;
+  const melhorIdx = dados.indexOf(Math.max(...dados));
+  if(resumoEl){
+    resumoEl.textContent = `${dias.length} dias no período · vendeu em ${diasComVenda} · `
+      + `média de ${formatar(media)} por dia com venda · melhor dia ${fmtDate(dias[melhorIdx])} com ${formatar(dados[melhorIdx])}`;
+  }
+
+  // Dia da semana no rótulo: é o que deixa o padrão semanal visível.
+  const SEMANA = ['dom','seg','ter','qua','qui','sex','sáb'];
+  const rotuloDia = d => {
+    const dt = new Date(d + 'T12:00:00');
+    return `${d.slice(8,10)}/${d.slice(5,7)} ${SEMANA[dt.getDay()]}`;
+  };
+  // Fim de semana em cor diferente: quase sempre é ali que está o zero.
+  const corDe = d => {
+    const dia = new Date(d + 'T12:00:00').getDay();
+    return (dia === 0 || dia === 6) ? '#8FB3BE' : '#1B4B5A';
+  };
+
+  analiseCharts.diario = criarGraficoSeguro('an-chart-diario', {
+    type:'bar',
+    data:{
+      labels: dias.map(rotuloDia),
+      datasets:[{
+        label: rotulos[anDiaMetrica],
+        data: dados,
+        backgroundColor: dias.map(corDe),
+        borderColor: dias.map(corDe),
+        borderRadius:3,
+        tension:.3,
+        pointRadius:2
+      }]
+    },
+    options:{
+      responsive:true, maintainAspectRatio:false,
+      plugins:{
+        legend:{ display:false },
+        tooltip:{ callbacks:{
+          title: ctx => fmtDate(dias[ctx[0].dataIndex]),
+          label: ctx => `${rotulos[anDiaMetrica]}: ${formatar(ctx.parsed.y)}`
+        } }
+      },
+      scales:{
+        x:{ ticks:{ autoSkip:true, maxRotation:60, minRotation:0, font:{size:10} } },
+        y:{ beginAtZero:true, ticks:{ callback: v => ehDinheiro ? fmtCompact(v) : v } }
+      }
+    }
+  });
+
+  if(typeof renderSeletorTipoGrafico === 'function'){
+    try{ renderSeletorTipoGrafico('an-chart-diario'); }catch(e){}
+  }
+}
+
 function renderChartsAnalise(linhas, ordenarVol){
   Object.values(analiseCharts).forEach(c=>c && c.destroy());
   const PALETA = ['#1B4B5A','#2E7D5B','#C98A2C','#C4483D','#5B6472','#7C9CB0','#8FBFA3','#D9A566'];
+
+  renderGraficoVendasPorDia(linhas);
 
   // Mensal
   const porMes = {};
@@ -24210,6 +24445,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-03-a',
+    data: '2026-10-03',
+    titulo: 'Mapa editável, gráfico por dia e sinal de preenchimento',
+    itens: [
+      'LOGÍSTICA: no mapa do roteiro os pinos agora são arrastáveis. Arrastou, a localização é salva no cadastro do cliente (ou do fornecedor / local de compra) — então vale para os próximos roteiros também.',
+      'LOGÍSTICA: paradas sem localização nenhuma não somem mais caladas. Elas aparecem numa lista acima do mapa e, escolhendo uma, cai um pino no meio do mapa para você arrastar até o lugar certo.',
+      'FILTRO DE DATA: escolher só a data inicial e clicar fora deixava a lista parada, mostrando o período antigo. Agora, fechando o calendário, a tela se atualiza sozinha. Vale em todas as telas que usam esse filtro, inclusive Vendas por Cliente.',
+      'ANÁLISE DE VENDAS: novo gráfico "Vendas por Dia", dia a dia dentro do período filtrado. Dá para ver em valor bruto, lucro, quantidade ou número de vendas, e trocar o tipo de gráfico como nos outros.',
+      'PLANO DE COMPRA: cada item ganhou uma bolinha ao lado da caixinha de seleção — verde quando quantidade, preço e fornecedor estão preenchidos, vermelha quando falta algum (passe o mouse para ver o que falta). No topo, quantos itens ainda estão incompletos.'
+    ]
+  },
+  {
     id: '2026-10-01-m',
     data: '2026-10-01',
     tour: 'plano-compra',
@@ -24735,6 +24982,27 @@ function pcQuantidade(item){
   }
   const sug = Number(item.sugestao) || 0;
   return Math.ceil(sug / pcFator(item));
+}
+
+/* O item está pronto pra virar pedido quando tem quantidade, preço e um
+   lugar pra comprar. Faltando qualquer um dos três, o sinal fica vermelho e
+   diz o que falta — é o que evita fechar um plano com linha pela metade. */
+function pcPendenciasItem(item){
+  const c = pcContasItem(item);
+  const faltas = [];
+  if(c.qtd <= 0) faltas.push('quantidade');
+  if(c.preco <= 0) faltas.push('preço');
+  if(!c.fornecedor) faltas.push('onde comprar');
+  return faltas;
+}
+
+function pcHtmlSinalItem(item){
+  const faltas = pcPendenciasItem(item);
+  const ok = faltas.length === 0;
+  const titulo = ok
+    ? 'Pronto: quantidade, preço e fornecedor preenchidos'
+    : 'Falta preencher: ' + faltas.join(', ');
+  return `<span class="pc-sinal ${ok?'pc-sinal-ok':'pc-sinal-falta'}" id="pc-sinal-${item.id}" title="${escapeAttr(titulo)}"></span>`;
 }
 
 function pcContasItem(item){
@@ -25389,6 +25657,11 @@ function renderPlanoEditor(){
             Vendas de ${monthLabel(plano.periodoInicio)} a ${monthLabel(plano.periodoFim)} · sugestão de ${plano.percentual}% ·
             ${travado ? `finalizado em ${fmtDate(plano.finalizadoEm)}` : 'em aberto'}
           </div>
+          ${(()=>{ const faltando = (plano.itens||[]).filter(i=>pcPendenciasItem(i).length>0).length;
+            return faltando === 0
+              ? `<div style="margin-top:6px;font-size:12.5px;"><span class="pc-sinal pc-sinal-ok"></span> Todos os ${(plano.itens||[]).length} itens preenchidos</div>`
+              : `<div style="margin-top:6px;font-size:12.5px;"><span class="pc-sinal pc-sinal-falta"></span> ${faltando} ${faltando===1?'item ainda sem':'itens ainda sem'} quantidade, preço ou fornecedor</div>`;
+          })()}
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
           <button class="btn btn-sm" onclick="pcIrPara('planos')">← Todos os planos</button>
@@ -25448,6 +25721,7 @@ function renderPlanoEditor(){
       <tr class="${pcSelecionados.has(item.id)?'selecionada':''}" ${travado?'':`ondragover="pcArrastarSobre(event,'${item.id}')" ondragleave="pcArrastarSai(event)" ondrop="pcArrastarSolta(event,'${item.id}')"`}>
         <td class="col-fixa">
           <div style="display:flex;align-items:flex-start;gap:6px;">
+            ${pcHtmlSinalItem(item)}
             ${travado?'':`<input type="checkbox" id="pc-sel-${item.id}" ${pcSelecionados.has(item.id)?'checked':''}
                      onchange="pcAlternarSelecao('${item.id}', this.checked)"
                      style="width:auto;margin-top:3px;" title="Selecionar para mover ou excluir em grupo">`}
@@ -25668,6 +25942,15 @@ function pcRedesenharLinha(itemId){
 
   const inpPreco = document.getElementById('pc-precoinput-'+itemId);
   if(inpPreco && inpPreco !== ativo) inpPreco.value = c.preco || '';
+
+  const sinal = document.getElementById('pc-sinal-'+itemId);
+  if(sinal){
+    const faltas = pcPendenciasItem(item);
+    sinal.className = 'pc-sinal ' + (faltas.length===0 ? 'pc-sinal-ok' : 'pc-sinal-falta');
+    sinal.title = faltas.length===0
+      ? 'Pronto: quantidade, preço e fornecedor preenchidos'
+      : 'Falta preencher: ' + faltas.join(', ');
+  }
 
   const põe = (id, html) => { const el = document.getElementById(id); if(el) el.innerHTML = html; };
   põe('pc-un-'+itemId, fmtNum(c.totalUnidades));
