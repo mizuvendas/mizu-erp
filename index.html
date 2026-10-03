@@ -9593,6 +9593,37 @@ function cadastroDoPontoRoteiro(p){
   return r ? { registro:r, rotulo:r.nome, oque: origem==='forn' ? 'fornecedor' : 'local de compra' } : null;
 }
 
+/* Ajusta endereço e localização direto do card da parada, sem ir até o
+   cadastro. É aqui que o problema aparece — "Endereço não cadastrado · sem
+   localização no mapa" —, então é aqui que tem que dar pra resolver.
+   Abre o mesmo seletor de mapa do cadastro (busca por nome, pino arrastável,
+   endereço editável) e grava no registro de origem. */
+function ajustarEnderecoDaParada(onde, id){
+  const lista = onde === 'cliente' ? STATE.clientes
+              : onde === 'forn'    ? STATE.fornecedores
+              : onde === 'local'   ? STATE.locaisCompra : null;
+  const registro = lista && lista.find(x=>x.id===id);
+  if(!registro){ showToast('Cadastro não encontrado.', 'error'); return; }
+  const oque = onde === 'cliente' ? 'cliente' : (onde === 'forn' ? 'fornecedor' : 'local de compra');
+
+  abrirSeletorMapaEndereco({
+    enderecoAtual: registro.endereco || '',
+    latAtual: registro.lat || null,
+    lngAtual: registro.lng || null,
+    cidadePadrao: registro.cidade || 'Rio Verde - GO',
+    onConfirmar: (dados)=>{
+      registro.endereco = dados.endereco;
+      registro.lat = dados.lat;
+      registro.lng = dados.lng;
+      saveState();
+      showToast(`Endereço de ${registro.nome} salvo no cadastro do ${oque}.`, 'success');
+      // O roteiro é ordenado por distância, então ganhar uma coordenada pode
+      // mudar a ordem das paradas: redesenha a tela inteira.
+      if(typeof renderLogistica === 'function') renderLogistica();
+    }
+  });
+}
+
 function salvarLocalDoPontoRoteiro(p, lat, lng){
   const alvo = cadastroDoPontoRoteiro(p);
   if(!alvo){ showToast('Não achei o cadastro deste ponto pra salvar a localização.', 'error'); return false; }
@@ -9903,6 +9934,10 @@ function renderLogistica(){
               <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · COLETA</div>
               <h3 style="margin:2px 0 2px;">📦 ${escapeHtml(p.nome)}</h3>
               <div class="help-text">${escapeHtml(p.endereco||'Endereço não cadastrado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
+              ${(()=>{ const origem=(p.chave||'').split(':')[0];
+                 return (origem==='forn'||origem==='local')
+                   ? `<button class="btn btn-sm" style="margin-top:6px;" onclick="ajustarEnderecoDaParada('${origem}','${p.id}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>`
+                   : ''; })()}
             </div>
           </div>
           <table class="data-table" style="margin-top:10px;">
@@ -9922,6 +9957,7 @@ function renderLogistica(){
           <h3 style="margin:2px 0 2px;">🏠 ${escapeHtml(p.clienteNome)}</h3>
           <div class="help-text">${escapeHtml(p.endereco||'Endereço não cadastrado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
           <div class="cell-actions" style="margin-top:8px;">
+            ${p.clienteId ? `<button class="btn btn-sm ${p.lat==null?'btn-primary':''}" onclick="ajustarEnderecoDaParada('cliente','${p.clienteId}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>` : ''}
             <button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${p.orcamentoId}')">📄 Controle de Entrega</button>
             <button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${p.orcamentoId}')">✓ Marcar como Entregue</button>
           </div>
@@ -24444,6 +24480,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-03-b',
+    data: '2026-10-03',
+    titulo: 'Endereço da parada ajustável na própria lista',
+    itens: [
+      'Cada parada do roteiro ganhou o botão 📍 — "Definir endereço" quando não há nenhum, "Ajustar endereço" quando já existe.',
+      'Ele abre o mesmo mapa do cadastro: busca pelo nome do lugar, pino arrastável e o endereço editável à mão.',
+      'O que você salvar vai direto para o cadastro do cliente, do fornecedor ou do local de compra, e a lista já se refaz — ganhar uma coordenada pode mudar a ordem das paradas.'
+    ]
+  },
   {
     id: '2026-10-03-a',
     data: '2026-10-03',
