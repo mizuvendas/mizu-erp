@@ -25694,6 +25694,7 @@ function renderSugestaoCompra(){
   if(pcVisao === 'meses'){     box.innerHTML = pcBarraAbas() + pcHtmlVendasMeses(); pcLigarVendasMeses(); return; }
   if(pcVisao === 'cotacao'){   box.innerHTML = pcBarraAbas() + renderCotacaoMatriz(); ctLigarPaginacao(); return; }
   if(pcVisao === 'comparativo'){ box.innerHTML = pcBarraAbas() + renderCotacaoComparativo(); return; }
+  if(pcVisao === 'pedido'){      box.innerHTML = pcBarraAbas() + renderPedidoCompra();        return; }
   renderAbaSugestao();
 }
 
@@ -26223,6 +26224,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-h',
+    data: '2026-10-05',
+    titulo: 'Pedido de compra: a etapa depois da cotação',
+    itens: [
+      'Entrou a aba "5. Pedido de compra". Depois de marcar no Comparativo de quem você vai comprar cada item, é aqui que você define a quantidade e fecha o pedido.',
+      'O pedido já aparece separado por fornecedor: cada um com os itens dele, a quantidade, o preço que ele deu e o total daquele pedido. No fim, o total da compra.',
+      'A quantidade é editável aqui e é a MESMA do plano — mexeu aqui, mexeu lá. Um número só pro item, em todas as telas.',
+      'Dá pra trocar o fornecedor sem sair da tela: se um pedido ficou pequeno demais, você joga o item pra outro e vê o total se refazer na hora. Quando escolhe quem não é o mais barato, o campo fica destacado.',
+      'Cada fornecedor tem forma de pagamento, prazo e observação, e um botão "📱 Copiar pedido" que monta o texto pronto pro WhatsApp dele.',
+      '"✓ Marcar enviado" guarda a data e deixa o bloco verde, pra você saber de quem já pediu.',
+      'O botão de Excel gera uma planilha com uma aba de Resumo e uma aba por fornecedor — cada uma é o pedido dele, com as fórmulas de total prontas.',
+      'E uma lista no fim mostra o que ainda não entra no pedido, separando quem está sem preço (cobrar o fornecedor) de quem está com quantidade zero (decisão sua).'
+    ]
+  },
   {
     id: '2026-10-05-g',
     data: '2026-10-05',
@@ -27486,6 +27502,7 @@ function pcBarraAbas(){
     ${aba('meses','2. Vendas mês a mês')}
     ${aba('planos',`3. Planos de compra${qtd?` (${qtd})`:''}`)}
     ${aba('cotacao','4. Cotação')}
+    ${aba('pedido','5. Pedido de compra')}
   </div>`;
 }
 
@@ -27493,7 +27510,7 @@ function pcIrPara(visao){
   pcVisao = visao;
   if(visao === 'planos') pcPlanoId = null;
   // A cotação é sempre de um plano: sem nenhum aberto, usa o mais recente.
-  if((visao === 'cotacao' || visao === 'comparativo') && !pcPlanoId && pcPlanos().length){
+  if((visao === 'cotacao' || visao === 'comparativo' || visao === 'pedido') && !pcPlanoId && pcPlanos().length){
     pcPlanoId = pcPlanos()[0].id;
   }
   renderSugestaoCompra();
@@ -29332,6 +29349,7 @@ function renderCotacaoComparativo(){
           ${travado?'':`<button class="btn btn-sm" onclick="ctUsarMaisBaratoEmTudo()">Usar o mais barato em tudo</button>`}
           <button class="btn btn-sm" onclick="exportarComparativoExcel()">⬇ Excel</button>
           <button class="btn btn-sm" onclick="window.print()">🖨 Imprimir</button>
+          <button class="btn btn-sm btn-primary" onclick="pcIrPara('pedido')" title="Definir as quantidades e fechar o pedido de cada fornecedor">Fechar compra →</button>
         </div>
       </div>
 
@@ -29403,7 +29421,7 @@ function renderCotacaoComparativo(){
   const itemAItem = `
     <div class="card">
       <h3>Item a item</h3>
-      <p class="help-text" style="margin:0 0 10px 0;">O sistema sugere o mais barato por unidade, mas quem decide é você — trocar aqui refaz os totais de cima.</p>
+      <p class="help-text" style="margin:0 0 10px 0;">O sistema sugere o mais barato por unidade, mas quem decide é você — trocar aqui refaz os totais de cima. É esta escolha que monta o <strong>Pedido de compra</strong>, onde você define a quantidade e fecha o pedido de cada fornecedor.</p>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>
@@ -29453,6 +29471,442 @@ function renderCotacaoComparativo(){
     </div>`;
 
   return cabecalho + porFornecedor + itemAItem;
+}
+
+/* =========================================================
+   MÓDULO: PEDIDO DE COMPRA (a etapa depois da cotação)
+
+   A cotação responde "quem tem mais barato". Esta tela responde a
+   pergunta seguinte, que é outra: "o que eu vou pedir, pra quem, e
+   quanto de cada". São coisas diferentes porque nem sempre compensa
+   comprar do mais barato — pedido mínimo, prazo, frete, a confiança
+   de quem entrega no dia.
+
+   Então aqui o pedido já sai separado por fornecedor: cada um com os
+   itens que foram marcados pra ele, a quantidade, o preço que ele deu
+   e o total. É o que vai pro WhatsApp dele, e é o mesmo recorte que a
+   planilha leva — uma aba por fornecedor.
+
+   A quantidade é editável aqui, e é a MESMA do plano: um número só pro
+   item, em todas as telas. Mexer aqui mexe lá, de propósito — dois
+   números pro mesmo item é como se perde a conta.
+   ========================================================= */
+
+/* Agrupa os itens por quem foi escolhido pra fornecer. Só entra item com
+   fornecedor escolhido e preço — o resto vai pra lista de pendências, que
+   é tão importante quanto: é o que ainda falta decidir. */
+function pcPedidoPorFornecedor(plano){
+  const grupos = new Map();
+  (plano.itens || []).forEach(item=>{
+    const o = pcOpcaoEscolhida(item);
+    if(!o || o.naoTem || !(Number(o.preco) > 0)) return;
+    const nome = (o.fornecedor || '').trim() || '(sem fornecedor)';
+    if(!grupos.has(nome)){
+      const info = (plano.fornecedores || {})[nome] || {};
+      grupos.set(nome, { nome, itens: [], subtotal: 0, unidades: 0, itensValidos: 0, itensZerados: 0,
+                         pagamento: info.pagamento || '', prazo: info.prazo || '', obs: info.obs || '' });
+    }
+    const g = grupos.get(nome);
+    const qtd = pcQuantidade(item);
+    const total = qtd * Number(o.preco);
+    // quantidade zerada continua aparecendo na lista do fornecedor — é lá que
+    // ela digita a quantidade, tirar da tela seria um beco sem saída —, mas
+    // não conta como item do pedido nem vai pro WhatsApp ou pra planilha.
+    g.itens.push({ item, opcao: o, qtd, total, foraDoPedido: qtd <= 0,
+                   custoUnit: ctCustoUnit(item, o), fator: ctFator(item, o) });
+    g.subtotal += total;
+    g.unidades += qtd * ctFator(item, o);
+    if(qtd > 0) g.itensValidos = (g.itensValidos || 0) + 1;
+    else g.itensZerados = (g.itensZerados || 0) + 1;
+  });
+  return [...grupos.values()]
+    .map(g=>({ ...g, itens: g.itens.sort((a,b)=>a.item.nome.localeCompare(b.item.nome)) }))
+    .sort((a,b)=> b.subtotal - a.subtotal || a.nome.localeCompare(b.nome));
+}
+
+/* O que ainda não dá pra pedir, e por quê. Separar os motivos importa:
+   "ninguém respondeu" é cobrar fornecedor, "sem quantidade" é decisão
+   dela, e são ações diferentes. */
+function pcPendenciasDoPedido(plano){
+  const semPreco = [], semQtd = [];
+  (plano.itens || []).forEach(item=>{
+    const o = pcOpcaoEscolhida(item);
+    if(!o || o.naoTem || !(Number(o.preco) > 0)){ semPreco.push(item); return; }
+    if(pcQuantidade(item) <= 0) semQtd.push(item);
+  });
+  return { semPreco, semQtd };
+}
+
+function pcTotalDoPedido(grupos){
+  return grupos.reduce((s,g)=> s + g.subtotal, 0);
+}
+
+/* Quantidade mexida aqui vale pro plano inteiro. Redesenha a tela toda
+   porque os subtotais e o total geral mudam junto. */
+function pcSetQuantidadePedido(itemId, valor){
+  pcSetCampo(itemId, 'quantidade', valor);
+  renderSugestaoCompra();
+}
+
+/* Trocar de fornecedor sem sair desta tela — é aqui que ela percebe que
+   ficou um pedido de R$ 40 com um fornecedor e resolve juntar com outro. */
+function pcTrocarFornecedorPedido(itemId, nome){
+  ctEscolherNoItem(itemId, nome);
+}
+
+function pcMarcarPedidoEnviado(nome){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  plano.fornecedores = plano.fornecedores || {};
+  plano.fornecedores[nome] = plano.fornecedores[nome] || { pagamento:'', prazo:'', obs:'' };
+  const atual = plano.fornecedores[nome].pedidoEnviadoEm;
+  plano.fornecedores[nome].pedidoEnviadoEm = atual ? '' : todayISO();
+  saveState();
+  renderSugestaoCompra();
+  showToast(atual ? `Pedido de ${nome} voltou para "a enviar".` : `Pedido de ${nome} marcado como enviado.`, 'success');
+}
+
+/* O texto pronto pro WhatsApp do fornecedor — é assim que a maioria dos
+   pedidos sai na prática, não por planilha. */
+function pcCopiarPedidoWhatsApp(nome){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const g = pcPedidoPorFornecedor(plano).find(x=>x.nome===nome);
+  if(!g){ showToast('Nenhum item marcado para esse fornecedor.', 'error'); return; }
+
+  const aPedir = g.itens.filter(l => !l.foraDoPedido);
+  if(aPedir.length === 0){ showToast(`Todos os itens de ${nome} estão com quantidade zero.`, 'error'); return; }
+  const linhas = [`*PEDIDO — MIZU MATERIAIS DE LIMPEZA*`, `${nome} · ${fmtDate(todayISO())}`, ''];
+  aPedir.forEach((l,i)=>{
+    const emb = l.item.comprarEm === 'UN' ? 'un' : l.item.comprarEm;
+    linhas.push(`${i+1}. ${l.item.nome}`);
+    linhas.push(`   ${fmtNum(l.qtd)} ${emb}${l.item.comprarEm!=='UN'?` de ${l.fator}`:''} × ${fmtMoney(l.opcao.preco)} = ${fmtMoney(l.total)}`);
+  });
+  linhas.push('');
+  linhas.push(`*Total: ${fmtMoney(g.subtotal)}*`);
+  if(g.pagamento) linhas.push(`Pagamento: ${g.pagamento}${g.prazo?` · ${g.prazo}`:''}`);
+  if(g.obs) linhas.push(g.obs);
+
+  const texto = linhas.join('\n');
+  navigator.clipboard.writeText(texto)
+    .then(()=>showToast(`Pedido de ${nome} copiado — cole no WhatsApp dele.`, 'success'))
+    .catch(()=>showToast('Não consegui copiar automaticamente.', 'error'));
+}
+
+/* ---------- a tela ---------- */
+
+function renderPedidoCompra(){
+  const plano = pcPlanoAtual();
+  if(!plano) return renderPlanosLista();
+
+  const travado = plano.status === 'finalizado';
+  const grupos = pcPedidoPorFornecedor(plano);
+  const total = pcTotalDoPedido(grupos);
+  const pend = pcPendenciasDoPedido(plano);
+  const unidades = grupos.reduce((s,g)=>s+g.unidades,0);
+
+  const cabecalho = `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">Pedido de compra — ${escapeHtml(plano.nome)}</h3>
+          <div class="hint" style="margin-top:4px;">
+            ${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} ·
+            ${grupos.reduce((s,g)=>s+g.itensValidos,0)} ${grupos.reduce((s,g)=>s+g.itensValidos,0)===1?'item':'itens'} ·
+            ${fmtNum(unidades)} unidades no total
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="pcIrPara('comparativo')">← Voltar ao comparativo</button>
+          <button class="btn btn-sm" onclick="exportarPedidoCompraExcel()">⬇ Excel (uma aba por fornecedor)</button>
+          <button class="btn btn-sm" onclick="window.print()">🖨 Imprimir</button>
+        </div>
+      </div>
+      <div class="kpi-grid" style="margin-top:14px;">
+        <div class="kpi-card">
+          <div class="kpi-label">Total da compra</div>
+          <div class="kpi-value">${fmtMoney(total)}</div>
+          <div class="kpi-sub">com os fornecedores que você marcou</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Pedidos a fazer</div>
+          <div class="kpi-value">${grupos.length}</div>
+          <div class="kpi-sub">${grupos.filter(g=>((plano.fornecedores||{})[g.nome]||{}).pedidoEnviadoEm).length} já enviado(s)</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Maior pedido</div>
+          <div class="kpi-value">${grupos.length?fmtMoney(grupos[0].subtotal):'—'}</div>
+          <div class="kpi-sub">${grupos.length?escapeHtml(grupos[0].nome):'nada marcado ainda'}</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Ainda não dá pra pedir</div>
+          <div class="kpi-value" style="color:${(pend.semPreco.length+pend.semQtd.length)?'var(--warning)':'var(--positive)'};">${pend.semPreco.length + pend.semQtd.length}</div>
+          <div class="kpi-sub">${(pend.semPreco.length+pend.semQtd.length)?'itens — veja embaixo':'está tudo resolvido'}</div>
+        </div>
+      </div>
+    </div>`;
+
+  const blocos = grupos.map(g=>{
+    const info = (plano.fornecedores || {})[g.nome] || {};
+    const enviado = info.pedidoEnviadoEm || '';
+    return `
+    <div class="card" style="border-left:4px solid ${enviado?'var(--positive)':'var(--primary)'};">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">${enviado?'✓ ':''}${escapeHtml(g.nome)}</h3>
+          <div class="hint" style="margin-top:3px;">
+            ${g.itensValidos} ${g.itensValidos===1?'item':'itens'} · ${fmtNum(g.unidades)} unidades
+            ${g.itensZerados?` · <span style="color:var(--warning);">${g.itensZerados} fora (quantidade zerada)</span>`:''}
+            ${enviado?` · <span style="color:var(--positive);">pedido enviado em ${fmtDate(enviado)}</span>`:''}
+          </div>
+        </div>
+        <div style="text-align:right;">
+          <div style="font-size:19px;font-weight:700;">${fmtMoney(g.subtotal)}</div>
+          <div class="cell-actions" style="justify-content:flex-end;margin-top:6px;">
+            <button class="btn btn-sm" onclick="pcCopiarPedidoWhatsApp('${escapeAttr(g.nome)}')">📱 Copiar pedido</button>
+            ${travado?'':`<button class="btn btn-sm ${enviado?'':'btn-primary'}" onclick="pcMarcarPedidoEnviado('${escapeAttr(g.nome)}')">${enviado?'↩ Desfazer envio':'✓ Marcar enviado'}</button>`}
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="data-table">
+          <thead><tr>
+            <th>Produto</th>
+            <th class="num" style="width:110px;">Quantidade</th>
+            <th class="num" style="width:110px;">Preço</th>
+            <th class="num" style="width:95px;">Custo/un</th>
+            <th class="num" style="width:110px;">Total</th>
+            <th style="width:150px;">Comprar de</th>
+          </tr></thead>
+          <tbody>
+            ${g.itens.map(l=>{
+              const menor = ctMenorOpcao(l.item);
+              const perdendo = menor && menor !== l.opcao;
+              const ordenadas = (l.item.opcoes || [])
+                .filter(o => !o.naoTem && Number(o.preco) > 0)
+                .map(o => ({ o, custo: ctCustoUnit(l.item, o) }))
+                .sort((a,b)=> a.custo - b.custo);
+              return `<tr style="${l.foraDoPedido?'opacity:.55;':''}">
+                <td>
+                  <strong>${escapeHtml(l.item.nome)}</strong>
+                  ${l.foraDoPedido?' <span class="badge badge-warning" title="Quantidade zerada: não entra no pedido, no WhatsApp nem na planilha">fora do pedido</span>':''}
+                  <div class="hint">${l.item.comprarEm==='UN' ? 'unidade' : `${PC_EMBALAGEM_NOME[l.item.comprarEm]} de ${l.fator}`}${l.item.obsCotacao?` · ${escapeHtml(l.item.obsCotacao)}`:''}</div>
+                </td>
+                <td class="num">
+                  <input type="number" min="0" step="1" value="${l.qtd}" ${travado?'disabled':''}
+                         onchange="pcSetQuantidadePedido('${l.item.id}', this.value)"
+                         style="width:72px;text-align:right;font-weight:700;">
+                  <div class="hint">${l.item.comprarEm==='UN' ? 'un' : l.item.comprarEm} · ${fmtNum(l.qtd * l.fator)} un</div>
+                </td>
+                <td class="num">${fmtMoney(l.opcao.preco)}</td>
+                <td class="num" style="${perdendo?'':'color:var(--positive);'}">${l.custoUnit!=null?fmtMoney(l.custoUnit):'—'}</td>
+                <td class="num"><strong>${fmtMoney(l.total)}</strong></td>
+                <td>
+                  <select ${travado?'disabled':''} onchange="pcTrocarFornecedorPedido('${l.item.id}', this.value)"
+                          style="font-size:12px;width:100%;${perdendo?'border:2px solid var(--warning);background:var(--warning-soft);':''}"
+                          title="${perdendo?`O mais barato é ${escapeAttr(menor.fornecedor)}`:'É o mais barato'}">
+                    ${ordenadas.map(({o,custo})=>`<option value="${escapeAttr(o.fornecedor)}" ${o===l.opcao?'selected':''}>${escapeHtml(o.fornecedor)} — ${fmtMoney(custo)}/un</option>`).join('')}
+                  </select>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="4" style="text-align:right;font-weight:600;">Total do pedido</td>
+            <td class="num" style="font-weight:700;">${fmtMoney(g.subtotal)}</td>
+            <td></td>
+          </tr></tfoot>
+        </table>
+      </div>
+
+      <div class="form-grid" style="margin-top:10px;">
+        <div class="field">
+          <label>Forma de pagamento</label>
+          <input type="text" value="${escapeAttr(g.pagamento)}" ${travado?'disabled':''}
+                 placeholder="boleto, cartão, à vista..."
+                 onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','pagamento',this.value);renderSugestaoCompra();">
+        </div>
+        <div class="field">
+          <label>Prazo</label>
+          <input type="text" value="${escapeAttr(g.prazo)}" ${travado?'disabled':''}
+                 placeholder="28 dias, 15/30..."
+                 onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','prazo',this.value);renderSugestaoCompra();">
+        </div>
+        <div class="field field-full">
+          <label>Observação do pedido</label>
+          <input type="text" value="${escapeAttr(g.obs)}" ${travado?'disabled':''}
+                 placeholder="entrega, pedido mínimo, contato..."
+                 onchange="pcSetFornecedorInfo('${escapeAttr(g.nome)}','obs',this.value);renderSugestaoCompra();">
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  const vazio = grupos.length === 0 ? `
+    <div class="card">
+      <div class="empty-state">
+        <div class="ic">🧾</div>
+        <p>Nenhum item com fornecedor e preço definidos ainda. Volte à <strong>Cotação</strong>, lance os preços que já chegaram, e escolha no <strong>Comparativo</strong> de quem você vai comprar cada item.</p>
+        <div style="margin-top:10px;">
+          <button class="btn btn-primary" onclick="pcIrPara('cotacao')">Ir para a cotação</button>
+        </div>
+      </div>
+    </div>` : '';
+
+  const pendencias = (pend.semPreco.length || pend.semQtd.length) ? `
+    <div class="card" style="border-left:4px solid var(--warning);">
+      <h3>Ainda não entram no pedido</h3>
+      ${pend.semPreco.length ? `
+        <p class="help-text" style="margin:6px 0 4px;"><strong>${pend.semPreco.length} ${pend.semPreco.length===1?'item sem preço':'itens sem preço'}</strong> — ninguém respondeu ou quem respondeu disse que não tem:</p>
+        <div class="hint">${pend.semPreco.slice(0,25).map(i=>escapeHtml(i.nome)).join(' · ')}${pend.semPreco.length>25?` … e mais ${pend.semPreco.length-25}`:''}</div>` : ''}
+      ${pend.semQtd.length ? `
+        <p class="help-text" style="margin:10px 0 4px;"><strong>${pend.semQtd.length} ${pend.semQtd.length===1?'item com quantidade zero':'itens com quantidade zero'}</strong> — tem preço, mas você zerou a quantidade:</p>
+        <div class="hint">${pend.semQtd.slice(0,25).map(i=>escapeHtml(i.nome)).join(' · ')}${pend.semQtd.length>25?` … e mais ${pend.semQtd.length-25}`:''}</div>` : ''}
+      <div style="margin-top:10px;">
+        <button class="btn btn-sm" onclick="pcIrPara('cotacao')">Ver na cotação</button>
+      </div>
+    </div>` : '';
+
+  return cabecalho + vazio + blocos + pendencias;
+}
+
+/* ---------- a planilha, uma aba por fornecedor ---------- */
+
+async function exportarPedidoCompraExcel(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const grupos = pcPedidoPorFornecedor(plano);
+  if(grupos.length === 0){ showToast('Nenhum item com fornecedor e preço definidos ainda.', 'error'); return; }
+
+  try{
+    if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.', 'error'); return; }
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Mizu Materiais de Limpeza';
+    wb.created = new Date();
+
+    // ---- aba de resumo: quanto vai pra cada um ----
+    const resumo = wb.addWorksheet('Resumo', { views:[{ state:'frozen', ySplit:5 }] });
+    resumo.columns = [{width:34},{width:12},{width:14},{width:18},{width:22},{width:18},{width:30}];
+    resumo.mergeCells(1,1,1,7);
+    resumo.getCell(1,1).value = `PEDIDO DE COMPRA — ${plano.nome}`;
+    resumo.getCell(1,1).font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+    resumo.getRow(1).height = 22;
+    resumo.mergeCells(2,1,2,7);
+    resumo.getCell(2,1).value = `Gerado em ${fmtDate(todayISO())} · ${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} · total ${fmtMoney(pcTotalDoPedido(grupos))}`;
+    resumo.getCell(2,1).font = { size:10, color:{argb:'FF'+COR.cinza} };
+
+    const cabResumo = ['FORNECEDOR','ITENS','UNIDADES','TOTAL (R$)','PAGAMENTO','PRAZO','OBSERVAÇÃO'];
+    const cr = resumo.getRow(5);
+    cabResumo.forEach((t,i)=>{
+      const c = cr.getCell(i+1);
+      c.value = t;
+      c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+      c.alignment = { vertical:'middle', horizontal: (i===0||i>=4) ? 'left':'center' };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+    });
+    cr.height = 24;
+
+    let lr = 6;
+    grupos.forEach(g=>{
+      const linha = resumo.getRow(lr++);
+      linha.getCell(1).value = g.nome;
+      linha.getCell(2).value = g.itensValidos;
+      linha.getCell(3).value = g.unidades;
+      linha.getCell(4).value = g.subtotal;
+      linha.getCell(4).numFmt = 'R$ #,##0.00';
+      linha.getCell(5).value = g.pagamento;
+      linha.getCell(6).value = g.prazo;
+      linha.getCell(7).value = g.obs;
+      for(let i=1;i<=7;i++){
+        linha.getCell(i).border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+      }
+    });
+    const totalLinha = resumo.getRow(lr);
+    totalLinha.getCell(1).value = 'TOTAL DA COMPRA';
+    totalLinha.getCell(4).value = pcTotalDoPedido(grupos);
+    totalLinha.getCell(4).numFmt = 'R$ #,##0.00';
+    [1,2,3,4].forEach(i=>{ totalLinha.getCell(i).font = { bold:true, size:11 }; });
+    totalLinha.getCell(1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} };
+    totalLinha.getCell(4).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} };
+
+    // ---- uma aba por fornecedor: é o pedido dele, pronto pra mandar ----
+    const usados = new Set();
+    grupos.filter(g => g.itensValidos > 0).forEach(g=>{
+      let aba = g.nome.slice(0,28).replace(/[*?:\\\/\[\]]/g,'-');
+      let n = 2;
+      while(usados.has(aba)){ aba = (g.nome.slice(0,25) + ' ' + n++).replace(/[*?:\\\/\[\]]/g,'-'); }
+      usados.add(aba);
+
+      const ws = wb.addWorksheet(aba, { views:[{ state:'frozen', ySplit:6 }] });
+      ws.columns = [{width:5},{width:46},{width:14},{width:16},{width:14},{width:16},{width:26}];
+
+      ws.mergeCells(1,1,1,7);
+      const t = ws.getCell(1,1);
+      t.value = 'PEDIDO DE COMPRA — MIZU MATERIAIS DE LIMPEZA';
+      t.font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+      ws.getRow(1).height = 22;
+
+      ws.mergeCells(2,1,2,7);
+      ws.getCell(2,1).value = `Para: ${g.nome} · ${fmtDate(todayISO())} · ${g.itensValidos} ${g.itensValidos===1?'item':'itens'}`;
+      ws.getCell(2,1).font = { size:10, color:{argb:'FF'+COR.cinza} };
+
+      ws.mergeCells(3,1,3,7);
+      const cond = [g.pagamento && `Pagamento: ${g.pagamento}`, g.prazo && `Prazo: ${g.prazo}`, g.obs].filter(Boolean).join(' · ');
+      ws.getCell(3,1).value = cond || 'Confirme disponibilidade e prazo de entrega.';
+      ws.getCell(3,1).font = { size:10, color:{argb:'FF8A5B12'} };
+      ws.getCell(3,1).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.ambarFraco} };
+      ws.getRow(3).height = 20;
+
+      const titulos = ['#','PRODUTO','QUANTIDADE','EMBALAGEM','UNIDADES','PREÇO (R$)','TOTAL (R$)'];
+      const cab = ws.getRow(6);
+      titulos.forEach((tt,i)=>{
+        const c = cab.getCell(i+1);
+        c.value = tt;
+        c.font = { bold:true, size:10, color:{argb:'FFFFFFFF'} };
+        c.alignment = { vertical:'middle', horizontal: i<=1 ? 'left':'center', wrapText:true };
+        c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+      });
+      cab.height = 24;
+
+      let r = 7;
+      g.itens.filter(l => !l.foraDoPedido).forEach((l, idx)=>{
+        const linha = ws.getRow(r);
+        linha.getCell(1).value = idx + 1;
+        linha.getCell(2).value = l.item.nome;
+        linha.getCell(3).value = l.qtd;
+        linha.getCell(4).value = l.item.comprarEm === 'UN' ? 'unidade' : `${PC_EMBALAGEM_NOME[l.item.comprarEm]} de ${l.fator}`;
+        linha.getCell(5).value = l.qtd * l.fator;
+        linha.getCell(6).value = Number(l.opcao.preco);
+        linha.getCell(6).numFmt = 'R$ #,##0.00';
+        linha.getCell(7).value = { formula: `C${r}*F${r}` };
+        linha.getCell(7).numFmt = 'R$ #,##0.00';
+        for(let i=1;i<=7;i++){
+          const c = linha.getCell(i);
+          c.border = { bottom:{ style:'thin', color:{argb:'FF'+COR.borda} } };
+          c.alignment = { vertical:'middle', horizontal: i<=1 ? 'left' : (i===4 ? 'center' : 'right') };
+          if(idx % 2 === 1) c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.cinzaFraco} };
+        }
+        r++;
+      });
+
+      const fim = ws.getRow(r);
+      fim.getCell(2).value = 'TOTAL DO PEDIDO';
+      fim.getCell(2).font = { bold:true, size:11 };
+      fim.getCell(7).value = { formula: `SUM(G7:G${r-1})` };
+      fim.getCell(7).numFmt = 'R$ #,##0.00';
+      fim.getCell(7).font = { bold:true, size:11 };
+      [2,7].forEach(i=>{ fim.getCell(i).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} }; });
+    });
+
+    const buf = await wb.xlsx.writeBuffer();
+    const nomeArq = `pedido_de_compra_${todayISO()}.xlsx`;
+    baixarArquivo(buf, nomeArq);
+    showToast(`Planilha gerada: Resumo + ${grupos.length} ${grupos.length===1?'aba':'abas'}, uma por fornecedor.`, 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui gerar a planilha: ' + e.message, 'error');
+  }
 }
 
 /* ---------- os arquivos ---------- */
