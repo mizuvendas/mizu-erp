@@ -26224,6 +26224,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-05-g',
+    data: '2026-10-05',
+    titulo: 'Cotação: ponto verde em quem já tem preço',
+    itens: [
+      'Lançou o preço do Renato no desinfetante? A célula ganha um 🟢 ponto verde. Vale pra todos os fornecedores, não só pro mais barato.',
+      'Antes só o mais barato ficava verde, e uma célula com preço que não fosse a menor ficava cinza igual às outras — no meio de 23 colunas dava pra lançar duas vezes ou pular alguém sem perceber.',
+      'O ponto aparece na hora, mesmo com o cursor ainda dentro da célula: antes o sinal só mudava depois que você saía dali.',
+      'O destaque do menor custo continua como era, com a borda e o "· menor" em verde forte.'
+    ]
+  },
+  {
     id: '2026-10-05-f',
     data: '2026-10-05',
     titulo: 'Cotação: arrastar o fornecedor pra perto do produto',
@@ -28824,7 +28835,18 @@ function ctRedesenharLinhaCotacao(itemId){
   const ativo = document.activeElement;
   ctFornecedoresDoPlano(plano).forEach(nome => {
     const cel = document.getElementById('ct-cel-' + itemId + '-' + ctSlug(nome));
-    if(cel && !cel.contains(ativo)) cel.innerHTML = ctHtmlCelula(item, nome, plano.status === 'finalizado');
+    if(!cel) return;
+    if(!cel.contains(ativo)){
+      cel.innerHTML = ctHtmlCelula(item, nome, plano.status === 'finalizado');
+      return;
+    }
+    // O cursor ainda está nesta célula (digitou o preço e pulou pro campo de
+    // un/emb ao lado, por exemplo). Refazer a célula inteira apagaria o campo
+    // debaixo do dedo dela, então aqui só a linha do sinal é atualizada — é o
+    // bastante pra bolinha verde aparecer na hora.
+    const o = ctOpcaoDe(item, nome);
+    const sinal = document.getElementById('ct-sinal-' + itemId + '-' + ctSlug(nome));
+    if(sinal && o && !o.naoTem) sinal.innerHTML = ctHtmlSinalCelula(item, o);
   });
   const resumo = document.getElementById('ct-resumo-linha-' + itemId);
   if(resumo) resumo.innerHTML = ctHtmlResumoLinha(item);
@@ -28836,6 +28858,28 @@ function ctSlug(nome){
 
 /* ---------- a célula ---------- */
 
+/* O pontinho verde de "este já tem preço". Vale pra toda célula cotada,
+   não só pra mais barata: com 23 colunas, saber de relance quem já
+   respondeu é o que impede de lançar duas vezes ou pular alguém. */
+function ctPontoCotado(){
+  return `<span title="Já tem preço lançado" style="display:inline-block;width:8px;height:8px;`
+       + `border-radius:50%;background:var(--positive);box-shadow:0 0 0 2px rgba(30,125,79,.22);`
+       + `margin-right:4px;vertical-align:middle;flex-shrink:0;"></span>`;
+}
+
+/* A linha de baixo da célula: ponto verde + custo por unidade, ou o aviso
+   de que ainda não respondeu. Mora numa função própria porque precisa ser
+   atualizada sozinha quando o cursor ainda está dentro da célula — trocar
+   a célula inteira nessa hora tiraria o foco de quem está digitando. */
+function ctHtmlSinalCelula(item, o){
+  const custo = ctCustoUnit(item, o);
+  if(custo == null) return `<span style="color:var(--warning);">aguardando</span>`;
+  const menor = ctMenorOpcao(item);
+  const ehMenor = menor && menor === o;
+  return `<span style="${ehMenor ? 'color:var(--positive);font-weight:700;' : 'color:var(--ink-soft);'}">`
+       + `${ctPontoCotado()}${fmtMoney(custo)}/un${ehMenor ? ' · menor' : ''}</span>`;
+}
+
 function ctHtmlCelula(item, nome, travado){
   const o = ctOpcaoDe(item, nome);
   if(!o){
@@ -28845,8 +28889,7 @@ function ctHtmlCelula(item, nome, travado){
     return `<span class="ct-nao-tem" onclick="${travado?'':`ctAlternarNaoTem('${item.id}','${escapeAttr(nome)}')`}" title="${travado?'':'Clique para desfazer'}">não tem</span>`;
   }
   const menor = ctMenorOpcao(item);
-  const ehMenor = menor && menor === o;
-  const custo = ctCustoUnit(item, o);
+  const ehMenor = menor && menor === o; // só muda a borda do campo; o resto vai em ctHtmlSinalCelula
   const precisaEmb = item.comprarEm !== 'UN';
   return `
     <div style="display:flex;flex-direction:column;align-items:stretch;gap:2px;">
@@ -28858,8 +28901,8 @@ function ctHtmlCelula(item, nome, travado){
              placeholder="un/emb ${item.unidadesPorEmbalagem||1}" title="Quantas unidades vêm na embalagem deste fornecedor"
              onchange="ctSetEmbCot('${item.id}','${escapeAttr(nome)}', this.value)"
              style="width:100%;text-align:right;font-size:11px;padding:2px 5px;color:var(--ink-soft);">` : ''}
-      <div style="font-size:11px;${ehMenor?'color:var(--positive);font-weight:700;':'color:var(--ink-faint);'}">
-        ${custo != null ? fmtMoney(custo) + '/un' + (ehMenor ? ' · menor' : '') : `<span style="color:var(--warning);">aguardando</span>`}
+      <div id="ct-sinal-${item.id}-${ctSlug(nome)}" style="font-size:11px;">
+        ${ctHtmlSinalCelula(item, o)}
       </div>
       ${travado?'':`<button class="btn btn-sm" style="padding:1px 4px;font-size:10px;line-height:1.4;" title="Marcar que este fornecedor não tem o item"
          onclick="ctAlternarNaoTem('${item.id}','${escapeAttr(nome)}')">não tem</button>`}
@@ -29095,6 +29138,7 @@ function renderCotacaoMatriz(){
       </div>
       <div id="ct-paginacao"></div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--ink-soft);">
+        <span>${ctPontoCotado()} já tem preço lançado</span>
         <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--positive-soft);border:1px solid var(--positive);vertical-align:-2px;"></span> menor custo por unidade</span>
         <span><span style="color:var(--negative);font-weight:700;">não tem</span> — pedi e ele não trabalha com o item</span>
         <span><span style="color:var(--warning);">aguardando</span> — pedi, ainda não respondeu</span>
