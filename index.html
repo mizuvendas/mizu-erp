@@ -26225,6 +26225,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-05-i',
+    data: '2026-10-05',
+    titulo: 'Escolher de quem comprar, na própria matriz da cotação',
+    itens: [
+      'Embaixo do nome de cada produto apareceu "comprar de": é ali que você escolhe de quem vai comprar aquele item, olhando os preços lado a lado. Antes isso só existia no Comparativo, atrás de um botão no canto — difícil de achar, e longe da hora em que a decisão é tomada.',
+      'Ele já vem marcado no mais barato. Trocando pra quem não é o mais barato, o campo fica destacado em laranja e o aviso diz quem era o menor — sem impedir, porque às vezes compensa pelo prazo ou pelo pedido mínimo.',
+      'A célula de quem você escolheu ganha um ✓ verde, então dá pra varrer a linha e ver de onde a compra vai sair.',
+      'O Comparativo virou a aba "5. Comparativo", em vez de um botão escondido, e o Pedido de compra passou a ser a "6.". A sequência agora é Cotação → Comparativo → Pedido.'
+    ]
+  },
+  {
     id: '2026-10-05-h',
     data: '2026-10-05',
     titulo: 'Pedido de compra: a etapa depois da cotação',
@@ -27493,7 +27504,7 @@ function pcBarraAbas(){
   const aba = (id, rotulo) => {
     const ativo = (pcVisao === id)
       || (id === 'planos' && (pcVisao === 'editor' || pcVisao === 'relatorio'))
-      || (id === 'cotacao' && pcVisao === 'comparativo');
+      ;
     return `<button class="btn btn-sm ${ativo ? 'btn-primary' : ''}" onclick="pcIrPara('${id}')">${rotulo}</button>`;
   };
   const qtd = pcPlanos().length;
@@ -27502,7 +27513,8 @@ function pcBarraAbas(){
     ${aba('meses','2. Vendas mês a mês')}
     ${aba('planos',`3. Planos de compra${qtd?` (${qtd})`:''}`)}
     ${aba('cotacao','4. Cotação')}
-    ${aba('pedido','5. Pedido de compra')}
+    ${aba('comparativo','5. Comparativo')}
+    ${aba('pedido','6. Pedido de compra')}
   </div>`;
 }
 
@@ -28860,7 +28872,7 @@ function ctRedesenharLinhaCotacao(itemId){
     // O cursor ainda está nesta célula (digitou o preço e pulou pro campo de
     // un/emb ao lado, por exemplo). Refazer a célula inteira apagaria o campo
     // debaixo do dedo dela, então aqui só a linha do sinal é atualizada — é o
-    // bastante pra bolinha verde aparecer na hora.
+    // bastante pra bolinha verde e o ✓ aparecerem na hora.
     const o = ctOpcaoDe(item, nome);
     const sinal = document.getElementById('ct-sinal-' + itemId + '-' + ctSlug(nome));
     if(sinal && o && !o.naoTem) sinal.innerHTML = ctHtmlSinalCelula(item, o);
@@ -28893,7 +28905,10 @@ function ctHtmlSinalCelula(item, o){
   if(custo == null) return `<span style="color:var(--warning);">aguardando</span>`;
   const menor = ctMenorOpcao(item);
   const ehMenor = menor && menor === o;
+  // o ✓ marca de quem a compra vai sair — é esta célula que vira o pedido
+  const ehEscolhida = pcOpcaoEscolhida(item) === o;
   return `<span style="${ehMenor ? 'color:var(--positive);font-weight:700;' : 'color:var(--ink-soft);'}">`
+       + `${ehEscolhida ? '<span title="É daqui que você vai comprar" style="color:var(--positive);font-weight:700;">✓</span> ' : ''}`
        + `${ctPontoCotado()}${fmtMoney(custo)}/un${ehMenor ? ' · menor' : ''}</span>`;
 }
 
@@ -28924,6 +28939,48 @@ function ctHtmlCelula(item, nome, travado){
       ${travado?'':`<button class="btn btn-sm" style="padding:1px 4px;font-size:10px;line-height:1.4;" title="Marcar que este fornecedor não tem o item"
          onclick="ctAlternarNaoTem('${item.id}','${escapeAttr(nome)}')">não tem</button>`}
     </div>`;
+}
+
+/* O seletor de "de quem eu compro", na coluna fixa do produto — a que
+   fica sempre visível por mais que a tabela role pro lado.
+
+   Ele existia só no Comparativo, atrás de um botão no canto. Mas a hora
+   de decidir é esta: ela está olhando os preços lado a lado. Pedir que
+   vá pra outra tela pra escolher é separar a decisão do que a embasa. */
+function ctHtmlEscolhaLinha(item, travado){
+  const ordenadas = (item.opcoes || [])
+    .filter(o => !o.naoTem && Number(o.preco) > 0)
+    .map(o => ({ o, custo: ctCustoUnit(item, o) }))
+    .sort((a,b)=> a.custo - b.custo);
+  if(ordenadas.length === 0) return '';
+
+  const escolhida = pcOpcaoEscolhida(item);
+  const menor = ctMenorOpcao(item);
+  const perdendo = menor && escolhida && escolhida !== menor;
+  const marcou = (item.opcoes || []).some(o => o.escolhida);
+
+  return `<div style="margin-top:4px;display:flex;align-items:center;gap:4px;">
+    <span class="hint" style="white-space:nowrap;">${marcou ? '✓ compro de' : 'comprar de'}</span>
+    <select ${travado?'disabled':''} onchange="ctEscolherNaMatriz('${item.id}', this.value)"
+            title="${perdendo ? `Não é o mais barato — o menor é ${escapeAttr(menor.fornecedor)}` : 'É o mais barato por unidade'}"
+            style="font-size:11.5px;padding:1px 3px;max-width:150px;${perdendo?'border:2px solid var(--warning);background:var(--warning-soft);':(marcou?'border:1px solid var(--positive);':'')}">
+      ${ordenadas.map(({o,custo})=>`<option value="${escapeAttr(o.fornecedor)}" ${escolhida===o?'selected':''}>${escapeHtml(o.fornecedor)} — ${fmtMoney(custo)}</option>`).join('')}
+    </select>
+  </div>`;
+}
+
+/* Escolher na matriz redesenha só a linha: a tabela pode ter 23 colunas e
+   90 linhas, refazer tudo a cada escolha deixaria a tela pesada. */
+function ctEscolherNaMatriz(itemId, nome){
+  const plano = pcPlanoAtual();
+  if(!plano || plano.status === 'finalizado') return;
+  const item = pcItem(plano, itemId);
+  if(!item) return;
+  (item.opcoes || []).forEach(o => { o.escolhida = ((o.fornecedor || '') === nome); });
+  saveState();
+  ctRedesenharLinhaCotacao(itemId);
+  const esc = document.getElementById('ct-escolha-' + itemId);
+  if(esc) esc.innerHTML = ctHtmlEscolhaLinha(item, false);
 }
 
 function ctHtmlResumoLinha(item){
@@ -29045,7 +29102,7 @@ function renderCotacaoMatriz(){
           <button class="btn btn-sm" onclick="pcIrPara('planos')">← Todos os planos</button>
           <button class="btn btn-sm" onclick="pcAbrirPlano('${plano.id}','editor')">✏️ Itens e quantidades</button>
           ${travado?'':`<button class="btn btn-sm" onclick="ctAbrirPedidoCotacao()">⬇ Pedido de cotação</button>`}
-          <button class="btn btn-sm btn-primary" onclick="pcIrPara('comparativo')">📊 Comparativo</button>
+          <button class="btn btn-sm btn-primary" onclick="pcIrPara('pedido')">Fechar compra →</button>
         </div>
       </div>
 
@@ -29068,6 +29125,7 @@ function renderCotacaoMatriz(){
         ${fornecedores.length>1 && !travado ? `<button class="btn btn-sm" onclick="ctOrdemAlfabetica()" title="Volta à ordem alfabética">A–Z</button>` : ''}
         ${travado?'':`<button class="btn btn-sm" onclick="ctAbrirAdicionarFornecedor()">＋ Fornecedor</button>`}
       </div>
+      ${!travado ? `<div class="hint" style="margin-top:6px;">💡 Embaixo do nome de cada produto tem <strong>"comprar de"</strong>: é ali que você escolhe de quem vai comprar aquele item. Ele já vem no mais barato e você troca quando compensar. Depois, a aba <strong>6. Pedido de compra</strong> monta o pedido de cada fornecedor.</div>` : ''}
       ${fornecedores.length>1 && !travado ? `<div class="hint" style="margin-top:6px;">Arraste um fornecedor (aqui ou no cabeçalho da coluna) pra mudar a ordem das colunas. O <strong>⇤</strong> joga ele direto pra primeira coluna, colada no nome do produto — é o jeito rápido de deixar perto quem você está cotando agora.</div>` : ''}
 
       ${travado?'':`<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;padding:8px 10px;background:var(--primary-soft);border-radius:var(--radius-sm);">
@@ -29120,6 +29178,7 @@ function renderCotacaoMatriz(){
               ${travado?'':`<button class="btn btn-sm" style="padding:2px 7px;font-size:11px;" onclick="ctAbrirQuemCota('${item.id}')">🏷️ quem cota (${(item.opcoes||[]).length})</button>`}
               <span class="hint" id="ct-resumo-linha-${item.id}">${ctHtmlResumoLinha(item)}</span>
             </div>
+            <div id="ct-escolha-${item.id}">${ctHtmlEscolhaLinha(item, travado)}</div>
           </div>
         </div>
       </td>
@@ -29156,6 +29215,7 @@ function renderCotacaoMatriz(){
       <div id="ct-paginacao"></div>
       <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--ink-soft);">
         <span>${ctPontoCotado()} já tem preço lançado</span>
+        <span><strong style="color:var(--positive);">✓</strong> é daqui que você vai comprar</span>
         <span><span style="display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--positive-soft);border:1px solid var(--positive);vertical-align:-2px;"></span> menor custo por unidade</span>
         <span><span style="color:var(--negative);font-weight:700;">não tem</span> — pedi e ele não trabalha com o item</span>
         <span><span style="color:var(--warning);">aguardando</span> — pedi, ainda não respondeu</span>
