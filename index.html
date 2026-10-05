@@ -3468,17 +3468,19 @@ RENDERERS['locais-compra'] = moduloLocaisCompra.render;
 // de dentro do formulário de Produto (botão "+ Novo"), sem navegar pra
 // outra tela. Só nome + endereço + telefone, com callback pra selecionar
 // automaticamente o item recém-criado no select que chamou o modal.
-function abrirFormFornecedorRapido(id, onCriado){
+function abrirFormFornecedorRapido(id, onCriado, nomeInicial){
   abrirFormEnderecoRapido({
     chaveEstado: 'fornecedores', prefixoId: 'forn', icone: '🏭', titulo: 'Fornecedor'
-  }, id, onCriado);
+  }, id, onCriado, nomeInicial);
 }
-function abrirFormLocalCompraRapido(id, onCriado){
+function abrirFormLocalCompraRapido(id, onCriado, nomeInicial){
   abrirFormEnderecoRapido({
     chaveEstado: 'locaisCompra', prefixoId: 'loc', icone: '📍', titulo: 'Local de Compra'
-  }, id, onCriado);
+  }, id, onCriado, nomeInicial);
 }
-function abrirFormEnderecoRapido(config, id, onCriado){
+/* nomeInicial: o que a pessoa já tinha digitado na busca que não achou nada
+   — não faz sentido mandar digitar o mesmo nome duas vezes. */
+function abrirFormEnderecoRapido(config, id, onCriado, nomeInicial){
   const item = id ? STATE[config.chaveEstado].find(x=>x.id===id) : null;
   const prefixo = 'er'; // "endereço rápido" — namespace neutro pra não colidir com o modal completo
 
@@ -3520,7 +3522,12 @@ function abrirFormEnderecoRapido(config, id, onCriado){
   `;
   document.body.appendChild(modal);
   document.getElementById(`${prefixo}-cancelar`).addEventListener('click', ()=>modal.remove());
-  document.getElementById(`${prefixo}-nome`).focus();
+  if(nomeInicial){
+    document.getElementById(`${prefixo}-nome`).value = nomeInicial;
+    document.getElementById(`${prefixo}-endereco`).focus(); // nome já veio pronto: o que falta é o endereço
+  }else{
+    document.getElementById(`${prefixo}-nome`).focus();
+  }
 
   let latSelecionadoRapido = null, lngSelecionadoRapido = null;
   ativarBotaoMapaEndereco(`${prefixo}-btn-mapa`, `${prefixo}-endereco`,
@@ -5949,6 +5956,35 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
         });
       });
     }
+    /* Ações de cadastro no rodapé da lista (opcoesExtra.acoesCriar).
+       Ficam DENTRO da lista de propósito: botões soltos embaixo do campo
+       somem atrás dela justamente quando a busca não acha nada, que é
+       quando eles importam. */
+    const acoesCriar = (opcoesExtra && opcoesExtra.acoesCriar) || [];
+    if(acoesCriar.length){
+      const htmlAcoes = acoesCriar.map(a=>
+        `<div class="combo-option combo-option-criar" data-acao="${escapeAttr(a.id)}">${escapeHtml(a.rotulo)}${termoAtual?` "${escapeHtml(termoAtual)}"`:''}</div>`
+      ).join('');
+      dropdown.innerHTML = (lista.length===0 ? '' : dropdown.innerHTML) + htmlAcoes;
+      if(lista.length>0){
+        // o innerHTML acima refez os nós: religa a seleção das opções
+        dropdown.querySelectorAll('.combo-option[data-id]').forEach(el=>{
+          el.addEventListener('mousedown', (e)=>{
+            e.preventDefault();
+            const opt = lista.find(o=>o.id===el.dataset.id);
+            selecionar(opt);
+          });
+        });
+      }
+      dropdown.querySelectorAll('[data-acao]').forEach(el=>{
+        el.addEventListener('mousedown', (e)=>{
+          e.preventDefault();
+          dropdown.classList.remove('open');
+          if(opcoesExtra.onAcaoCriar) opcoesExtra.onAcaoCriar(el.dataset.acao, termoAtual);
+        });
+      });
+    }
+
     if(permitirCriar){
       const btnCriar = dropdown.querySelector('.combo-option-criar');
       if(btnCriar){
@@ -10351,7 +10387,7 @@ function dadosLocalDaParada(p){
 /* O que dá pra puxar na hora de criar uma parada: todo cadastro que tem
    endereço no sistema, mais as paradas que já foram feitas antes — repetir
    a mesma parada é o caso mais comum de todos. */
-function opcoesCadastroParaParada(){
+function opcoesCadastroParaParada(idExcluir){
   const op = [];
   (STATE.clientes||[]).forEach(c=>op.push({
     id:'cliente:'+c.id, label:c.nome,
@@ -10368,11 +10404,19 @@ function opcoesCadastroParaParada(){
     sub:'Local de compra · ' + (l.endereco || 'sem endereço cadastrado'),
     buscaExtra: l.endereco||''
   }));
-  paradasAvulsas().filter(p=>p.concluida).forEach(p=>op.push({
-    id:'parada:'+p.id, label:p.nome,
-    sub:'Parada já feita · ' + (dadosLocalDaParada(p).endereco || 'sem endereço'),
-    buscaExtra: p.endereco||''
-  }));
+  // Toda parada que já existiu entra aqui, concluída ou não: um lugar que
+  // não é cliente nem fornecedor (banco, contabilidade, cartório) tem na
+  // própria parada o seu cadastro, e é assim que ele se reaproveita.
+  paradasAvulsas().forEach(p=>{
+    if(idExcluir && p.id===idExcluir) return; // não se oferecer a si mesma na edição
+    if(p.vinculo) return; // essa já aparece pelo cadastro de origem
+    op.push({
+      id:'parada:'+p.id,
+      label:p.nome,
+      sub:(p.concluida ? 'Parada já feita · ' : 'Parada no roteiro · ') + (dadosLocalDaParada(p).endereco || 'sem endereço'),
+      buscaExtra: p.endereco||''
+    });
+  });
   return op;
 }
 
@@ -10403,8 +10447,8 @@ function abrirFormParadaAvulsa(id){
       <div class="modal-rapido-corpo">
         <div class="field">
           <label>Já está cadastrado? <span class="hint">cliente, fornecedor, local de compra ou uma parada que você já fez</span></label>
-          ${renderComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(), null, 'Digite o nome — ex: Falcão')}
-          <div class="help-text" id="pa-vinculo-status">${parada && parada.vinculo ? `🔗 Vinculada ao cadastro de <strong>${escapeHtml((resolverCadastroDaParada(parada)||{registro:{nome:'(cadastro removido)'}}).registro.nome)}</strong> — o endereço vem de lá.` : 'Escolhendo daqui, o nome e o endereço já vêm preenchidos e ficam vinculados ao cadastro: corrigir o endereço lá vale aqui também.'}</div>
+          ${renderComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(parada?parada.id:null), null, 'Digite o nome — ex: Falcão')}
+          <div class="help-text" id="pa-vinculo-status">${parada && parada.vinculo ? `🔗 Vinculada ao cadastro de <strong>${escapeHtml((resolverCadastroDaParada(parada)||{registro:{nome:'(cadastro removido)'}}).registro.nome)}</strong> — o endereço vem de lá.` : 'Escolhendo daqui, o nome e o endereço já vêm preenchidos e ficam vinculados ao cadastro: corrigir o endereço lá vale aqui também. Digitando um nome que não existe, a própria lista oferece cadastrar na hora. Banco, contabilidade ou cartório não precisam de cadastro nenhum: preencha abaixo e a parada já fica guardada pra próxima.'}</div>
         </div>
         <div class="field">
           <label>O que é essa parada <span class="req">*</span></label>
@@ -10490,11 +10534,43 @@ function abrirFormParadaAvulsa(id){
   });
   desenharTarefas();
 
+  /* Vincula o que acabou de ser cadastrado e preenche o formulário —
+     mesmo caminho de quando a pessoa escolhe um cadastro que já existia. */
+  function usarCadastroRecemCriado(tipo, registro, oque){
+    if(!document.getElementById('pa-nome').value.trim()){
+      document.getElementById('pa-nome').value = registro.nome;
+    }
+    document.getElementById('pa-endereco').value = registro.endereco || '';
+    latEscolhida = registro.lat==null ? null : registro.lat;
+    lngEscolhida = registro.lng==null ? null : registro.lng;
+    vinculoEscolhido = { tipo, id: registro.id };
+    const busca = document.getElementById('pa-busca-cadastro');
+    const hidden = document.getElementById('pa-cadastro-id');
+    if(busca) busca.value = registro.nome;
+    if(hidden) hidden.value = tipo + ':' + registro.id;
+    const status = document.getElementById('pa-vinculo-status');
+    if(status) status.innerHTML = `🔗 Cadastrado e vinculado ao ${oque} <strong>${escapeHtml(registro.nome)}</strong>. Daqui pra frente ele aparece na busca.`;
+    const st = document.getElementById('pa-mapa-status');
+    if(st){
+      st.textContent = latEscolhida!=null
+        ? `Localização salva (${Number(latEscolhida).toFixed(5)}, ${Number(lngEscolhida).toFixed(5)})`
+        : 'Sem localização ainda — sem ela a parada entra no fim do roteiro, porque o sistema não tem como medir a distância.';
+    }
+  }
+
+  /* O nome já digitado (na busca ou no campo da parada) vai junto pro
+     cadastro rápido — ninguém devia precisar digitar duas vezes. */
+  function nomeJaDigitado(){
+    const busca = document.getElementById('pa-busca-cadastro');
+    const nome = document.getElementById('pa-nome');
+    return (busca && busca.value.trim()) || (nome && nome.value.trim()) || '';
+  }
+
   /* Escolher um cadastro preenche o resto do formulário. Escolher uma
      parada antiga traz também a lista de tarefas, desmarcada — repetir a
      ida ao banco é refazer as mesmas tarefas, não herdar os vistos da
      vez passada. */
-  ativarComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(), (opt)=>{
+  ativarComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(parada?parada.id:null), (opt)=>{
     if(!opt || !opt.id) return;
     const [tipo, id] = String(opt.id).split(':');
     const status = document.getElementById('pa-vinculo-status');
@@ -10535,6 +10611,19 @@ function abrirFormParadaAvulsa(id){
       st.textContent = latEscolhida!=null
         ? `Localização salva (${Number(latEscolhida).toFixed(5)}, ${Number(lngEscolhida).toFixed(5)})`
         : 'Sem localização ainda — sem ela a parada entra no fim do roteiro, porque o sistema não tem como medir a distância.';
+    }
+  }, {
+    acoesCriar: [
+      { id:'forn',  rotulo:'➕ Cadastrar fornecedor' },
+      { id:'local', rotulo:'➕ Cadastrar local' }
+    ],
+    onAcaoCriar: (acao, termo)=>{
+      const nome = termo || nomeJaDigitado();
+      if(acao==='forn'){
+        abrirFormFornecedorRapido(null, (novo)=>usarCadastroRecemCriado('forn', novo, 'fornecedor'), nome);
+      }else{
+        abrirFormLocalCompraRapido(null, (novo)=>usarCadastroRecemCriado('local', novo, 'local de compra'), nome);
+      }
     }
   });
 
@@ -26078,6 +26167,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-c',
+    data: '2026-10-05',
+    titulo: 'Cadastro rápido na própria janela da parada',
+    itens: [
+      'Se a busca não achou o lugar, a própria lista de sugestões oferece "➕ Cadastrar fornecedor" e "➕ Cadastrar local", com o nome que você digitou entre aspas.',
+      'O nome que você já digitou vai junto pro cadastro — ele abre com o nome preenchido e o cursor já no endereço.',
+      'Cadastrou, ele volta pra parada já vinculado, com endereço e localização preenchidos.',
+      'E toda parada que você já criou passa a aparecer na busca, não só as que já foram feitas. Lugar que não é cliente nem fornecedor — banco, contabilidade, cartório — tem na própria parada o cadastro dele: você preenche uma vez e acha pelo nome sempre.'
+    ]
+  },
   {
     id: '2026-10-05-b',
     data: '2026-10-05',
