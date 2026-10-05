@@ -1550,6 +1550,7 @@ function defaultState(){
     licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[], origem:'manual'|'pncp', ...campos extras quando origem==='pncp', ver buscarOportunidadesPNCP() }
     licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
+    paradasAvulsas: [], // { id, nome, endereco, lat, lng, tarefas:[{id,texto,feita}], concluida, concluidaEm, criadoEm } — parada do roteiro que não vem de orçamento (banco, contabilidade...). Ver MÓDULO: PARADAS AVULSAS NO ROTEIRO.
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     planosCompra: [], // { id, nome, periodoInicio, periodoFim, percentual, status, itens:[{...,opcoes:[{fornecedor,preco}]}], fornecedores:{}, observacoes } — ver MÓDULO: PLANO DE COMPRA
     novidadeVista: '', // id da última novidade lida (ver NOVIDADES) — só pra não repetir o aviso de atualização
@@ -10242,7 +10243,358 @@ function distanciaKm(lat1, lng1, lat2, lng2){
    Atenção ao 'tipo': num ponto de coleta ele vale 'coleta' (foi sobrescrito
    ao montar o roteiro) e o que diz se é fornecedor ou local de compra é o
    prefixo da 'chave' ("forn:xxx" / "local:xxx"). */
+/* =========================================================
+   MÓDULO: PARADAS AVULSAS NO ROTEIRO
+
+   Nem toda parada do dia nasce de um orçamento. Banco, contabilidade,
+   cartório, pegar uma peça, deixar um documento — o funcionário vai
+   ter que passar lá de qualquer jeito, e isso faz parte do caminho.
+   Deixar essas paradas de fora do roteiro é o mesmo que calcular o
+   trajeto errado.
+
+   Aqui elas entram como um terceiro tipo de parada, ao lado das
+   COLETAS e das ENTREGAS, e disputam a ordem pelo mesmo critério de
+   proximidade. A diferença é que a parada avulsa não tem precedência
+   nenhuma: ela não depende de coleta nem destrava entrega, então
+   pode cair em qualquer ponto do roteiro.
+
+   Cada parada carrega uma lista de tarefas com caixinha de marcar
+   ("depositar o cheque", "pegar as notas com a Dona Maria"), que vai
+   junto no roteiro impresso e no texto do WhatsApp. Marcar todas não
+   conclui a parada sozinha — quem encerra é a pessoa, no botão.
+   ========================================================= */
+
+function paradasAvulsas(){
+  if(!Array.isArray(STATE.paradasAvulsas)) STATE.paradasAvulsas = [];
+  return STATE.paradasAvulsas;
+}
+
+function paradasAvulsasAtivas(){
+  return paradasAvulsas().filter(p=>!p.concluida);
+}
+
+/* Quais paradas avulsas o usuário marcou pra entrar no roteiro de hoje.
+   Mesma ideia das entregas: parada nova já nasce marcada, e a escolha
+   fica só na tela (não precisa ir pro STATE). */
+let logisticaAvulsasSelecionadas = new Set();
+let logisticaAvulsasConhecidas = new Set();
+
+function garantirSelecaoAvulsas(lista){
+  lista.forEach(p=>{
+    if(!logisticaAvulsasConhecidas.has(p.id)){
+      logisticaAvulsasSelecionadas.add(p.id);
+      logisticaAvulsasConhecidas.add(p.id);
+    }
+  });
+  const idsAtuais = new Set(lista.map(p=>p.id));
+  [...logisticaAvulsasConhecidas].forEach(id=>{
+    if(!idsAtuais.has(id)){ logisticaAvulsasConhecidas.delete(id); logisticaAvulsasSelecionadas.delete(id); }
+  });
+}
+
+/* No formato que o cálculo do roteiro espera: mesmas chaves de posição
+   (lat/lng) que coleta e entrega usam. */
+function paradasAvulsasParaRoteiro(){
+  const ativas = paradasAvulsasAtivas();
+  garantirSelecaoAvulsas(ativas);
+  return ativas
+    .filter(p=>logisticaAvulsasSelecionadas.has(p.id))
+    .map(p=>({
+      tipo: 'avulsa',
+      chave: 'avulsa:' + p.id,
+      id: p.id,
+      nome: p.nome,
+      endereco: p.endereco || '',
+      lat: p.lat==null ? null : p.lat,
+      lng: p.lng==null ? null : p.lng,
+      tarefas: (p.tarefas||[]).map(t=>({...t}))
+    }));
+}
+
+function contarTarefasAvulsa(parada){
+  const tarefas = (parada && parada.tarefas) || [];
+  return { total: tarefas.length, feitas: tarefas.filter(t=>t.feita).length };
+}
+
+/* ---------- criar / editar ---------- */
+
+function abrirFormParadaAvulsa(id){
+  const parada = id ? paradasAvulsas().find(p=>p.id===id) : null;
+  document.getElementById('modal-parada-avulsa')?.remove();
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-parada-avulsa';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📌</div>
+        <div>
+          <h3>${parada ? 'Editar parada' : 'Nova parada no roteiro'}</h3>
+          <div class="sub">Banco, contabilidade, cartório — qualquer lugar que não vem de um orçamento</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-parada-avulsa').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>O que é essa parada <span class="req">*</span></label>
+          <input type="text" id="pa-nome" value="${parada?escapeAttr(parada.nome):''}" placeholder="Ex: Banco do Brasil — agência centro">
+        </div>
+        <div class="field">
+          <label>Endereço</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="pa-endereco" style="flex:1;min-width:200px;" value="${parada?escapeAttr(parada.endereco||''):''}" placeholder="Rua, número, bairro, cidade - UF">
+            <button type="button" class="btn btn-sm" id="pa-btn-mapa" style="flex-shrink:0;white-space:nowrap;">📍 Localizar no mapa</button>
+          </div>
+          <div class="help-text" id="pa-mapa-status">${parada&&parada.lat!=null?`Localização salva (${Number(parada.lat).toFixed(5)}, ${Number(parada.lng).toFixed(5)})`:'Sem localização ainda — sem ela a parada entra no fim do roteiro, porque o sistema não tem como medir a distância.'}</div>
+        </div>
+        <div class="field">
+          <label>Tarefas nessa parada <span class="hint">opcional</span></label>
+          <div id="pa-tarefas"></div>
+          <button type="button" class="btn btn-sm" id="pa-btn-add-tarefa" style="margin-top:6px;">+ Adicionar tarefa</button>
+          <div class="help-text">Cada linha vira uma caixinha de marcar, e sai no roteiro impresso e no WhatsApp.</div>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn" onclick="document.getElementById('modal-parada-avulsa').remove()">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="pa-salvar">${parada?'Salvar alterações':'Adicionar ao roteiro'}</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  // a localização escolhida no mapa vive aqui até salvar
+  let latEscolhida = parada ? (parada.lat==null?null:parada.lat) : null;
+  let lngEscolhida = parada ? (parada.lng==null?null:parada.lng) : null;
+
+  ativarBotaoMapaEndereco('pa-btn-mapa', 'pa-endereco',
+    ()=>({lat: latEscolhida, lng: lngEscolhida}),
+    (lat,lng)=>{
+      latEscolhida = lat; lngEscolhida = lng;
+      const st = document.getElementById('pa-mapa-status');
+      if(st) st.textContent = `Localização salva (${lat.toFixed(5)}, ${lng.toFixed(5)})`;
+    }
+  );
+
+  // lista de tarefas editável, só no formulário — o estado de "feita"
+  // de cada uma é preservado ao editar uma parada que já existe
+  let tarefasForm = parada ? (parada.tarefas||[]).map(t=>({...t})) : [];
+
+  function desenharTarefas(){
+    const box = document.getElementById('pa-tarefas');
+    if(!box) return;
+    if(tarefasForm.length===0){
+      box.innerHTML = '<div class="help-text" style="margin:0;">Nenhuma tarefa — a parada pode ser só o lugar, sem lista.</div>';
+      return;
+    }
+    box.innerHTML = tarefasForm.map((t,i)=>`
+      <div style="display:flex;gap:6px;align-items:center;margin-bottom:5px;">
+        <span class="help-text" style="margin:0;width:16px;text-align:right;">${i+1}.</span>
+        <input type="text" class="pa-tarefa-texto" data-i="${i}" value="${escapeAttr(t.texto||'')}" style="flex:1;min-width:120px;" placeholder="Ex: depositar o cheque da WBN">
+        <button type="button" class="btn btn-sm btn-danger" data-remover="${i}" title="Remover esta tarefa">✕</button>
+      </div>`).join('');
+    box.querySelectorAll('.pa-tarefa-texto').forEach(inp=>{
+      inp.addEventListener('input', ()=>{ tarefasForm[inp.dataset.i].texto = inp.value; });
+    });
+    box.querySelectorAll('[data-remover]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        lerTarefasDoFormulario();
+        tarefasForm.splice(parseInt(btn.dataset.remover,10), 1);
+        desenharTarefas();
+      });
+    });
+  }
+
+  function lerTarefasDoFormulario(){
+    document.querySelectorAll('#pa-tarefas .pa-tarefa-texto').forEach(inp=>{
+      tarefasForm[inp.dataset.i].texto = inp.value;
+    });
+  }
+
+  document.getElementById('pa-btn-add-tarefa').addEventListener('click', ()=>{
+    lerTarefasDoFormulario();
+    tarefasForm.push({ id: uid('tar'), texto:'', feita:false });
+    desenharTarefas();
+    const inputs = document.querySelectorAll('#pa-tarefas .pa-tarefa-texto');
+    if(inputs.length) inputs[inputs.length-1].focus();
+  });
+  desenharTarefas();
+
+  document.getElementById('pa-salvar').addEventListener('click', ()=>{
+    lerTarefasDoFormulario();
+    const nome = document.getElementById('pa-nome').value.trim();
+    if(!nome){ showToast('Dê um nome pra parada — é o que o funcionário vai ler.', 'error'); return; }
+    const dados = {
+      nome,
+      endereco: document.getElementById('pa-endereco').value.trim(),
+      lat: latEscolhida,
+      lng: lngEscolhida,
+      tarefas: tarefasForm.filter(t=>String(t.texto||'').trim()!=='')
+    };
+    if(parada){
+      Object.assign(parada, dados);
+      showToast('Parada atualizada.', 'success');
+    }else{
+      paradasAvulsas().push({
+        id: uid('para'),
+        concluida: false,
+        concluidaEm: '',
+        criadoEm: todayISO(),
+        ...dados
+      });
+      showToast('Parada adicionada ao roteiro.', 'success');
+    }
+    saveState();
+    modal.remove();
+    renderLogistica();
+  });
+}
+
+/* ---------- ações na lista ---------- */
+
+function concluirParadaAvulsa(id){
+  const parada = paradasAvulsas().find(p=>p.id===id);
+  if(!parada) return;
+  parada.concluida = true;
+  parada.concluidaEm = todayISO();
+  saveState();
+  renderLogistica();
+  showToast(`"${parada.nome}" marcada como feita.`, 'success');
+}
+
+function reabrirParadaAvulsa(id){
+  const parada = paradasAvulsas().find(p=>p.id===id);
+  if(!parada) return;
+  parada.concluida = false;
+  parada.concluidaEm = '';
+  saveState();
+  renderLogistica();
+  showToast(`"${parada.nome}" voltou pro roteiro.`, 'success');
+}
+
+function excluirParadaAvulsa(id){
+  const parada = paradasAvulsas().find(p=>p.id===id);
+  if(!parada) return;
+  confirmAction('Excluir parada',
+    `"${parada.nome}" vai sair do roteiro e do histórico. Se é só porque já foi feita, prefira marcar como feita — assim ela some do roteiro mas continua registrada.`,
+    ()=>{
+      STATE.paradasAvulsas = paradasAvulsas().filter(p=>p.id!==id);
+      logisticaAvulsasSelecionadas.delete(id);
+      logisticaAvulsasConhecidas.delete(id);
+      saveState();
+      renderLogistica();
+      showToast('Parada excluída.', 'success');
+    });
+}
+
+function alternarTarefaAvulsa(paradaId, tarefaId){
+  const parada = paradasAvulsas().find(p=>p.id===paradaId);
+  if(!parada) return;
+  const tarefa = (parada.tarefas||[]).find(t=>t.id===tarefaId);
+  if(!tarefa) return;
+  tarefa.feita = !tarefa.feita;
+  saveState();
+  renderLogistica();
+}
+
+function ajustarEnderecoParadaAvulsa(id){
+  ajustarEnderecoDaParada('avulsa', id);
+}
+
+/* ---------- card da tela de Logística ---------- */
+
+function cardParadasAvulsasLogistica(){
+  const ativas = paradasAvulsasAtivas();
+  garantirSelecaoAvulsas(ativas);
+  const concluidas = paradasAvulsas().filter(p=>p.concluida);
+
+  const linhas = ativas.map(p=>{
+    const marcada = logisticaAvulsasSelecionadas.has(p.id);
+    const cont = contarTarefasAvulsa(p);
+    return `
+      <tr>
+        <td><input type="checkbox" class="logistica-checkbox-avulsa" data-id="${p.id}" ${marcada?'checked':''}></td>
+        <td>
+          <strong>${escapeHtml(p.nome)}</strong>
+          ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} tarefa(s) feita(s)</div>` : ''}
+        </td>
+        <td style="font-size:12px;color:var(--ink-soft);">
+          ${escapeHtml(p.endereco||'Endereço não informado')}
+          ${p.lat==null?' · <span style="color:var(--negative);">sem localização</span>':''}
+        </td>
+        <td>
+          <div class="cell-actions">
+            <button class="btn btn-sm ${p.lat==null?'btn-primary':''}" onclick="ajustarEnderecoParadaAvulsa('${p.id}')">📍 ${p.lat==null?'Definir':'Ajustar'}</button>
+            <button class="btn btn-sm" onclick="abrirFormParadaAvulsa('${p.id}')">✎ Editar</button>
+            <button class="btn btn-sm btn-primary" onclick="concluirParadaAvulsa('${p.id}')">✓ Feita</button>
+            <button class="btn btn-sm btn-danger" onclick="excluirParadaAvulsa('${p.id}')">Excluir</button>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  return `
+    <div class="card" style="margin-top:14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+        <div>
+          <h3 style="margin:0;">📌 Paradas avulsas</h3>
+          <p class="help-text" style="margin:2px 0 0;">Banco, contabilidade, cartório — entram no mesmo roteiro das coletas e entregas, ordenadas por proximidade.</p>
+        </div>
+        <button class="btn btn-primary" onclick="abrirFormParadaAvulsa()">+ Adicionar parada</button>
+      </div>
+      ${ativas.length ? `
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="data-table">
+          <thead><tr><th style="width:34px;"></th><th>Parada</th><th>Endereço</th><th>Ações</th></tr></thead>
+          <tbody>${linhas}</tbody>
+        </table>
+      </div>` : `<div class="help-text" style="margin-top:10px;">Nenhuma parada avulsa no momento.</div>`}
+      ${concluidas.length ? `
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--ink-soft);">${concluidas.length} parada(s) já feita(s)</summary>
+        <div style="padding-top:8px;">
+          ${concluidas.slice().reverse().map(p=>`
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
+              <span style="color:var(--ink-soft);">✓ ${escapeHtml(p.nome)}${p.concluidaEm?` · ${fmtDate(p.concluidaEm)}`:''}</span>
+              <span class="cell-actions">
+                <button class="btn btn-sm" onclick="reabrirParadaAvulsa('${p.id}')">↩ Voltar pro roteiro</button>
+                <button class="btn btn-sm btn-danger" onclick="excluirParadaAvulsa('${p.id}')">Excluir</button>
+              </span>
+            </div>`).join('')}
+        </div>
+      </details>` : ''}
+    </div>`;
+}
+
+/* Card de uma parada avulsa dentro do roteiro calculado. */
+function cardRoteiroParadaAvulsa(p, idx){
+  const parada = paradasAvulsas().find(x=>x.id===p.id);
+  const tarefas = (parada && parada.tarefas) || [];
+  return `
+    <div class="card" style="border-left:4px solid #1B6B8A;margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · AVULSA</div>
+      <h3 style="margin:2px 0 2px;">📌 ${escapeHtml(p.nome)}</h3>
+      <div class="help-text">${escapeHtml(p.endereco||'Endereço não informado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
+      ${tarefas.length ? `
+      <div style="margin-top:8px;">
+        ${tarefas.map(t=>`
+          <label style="display:flex;align-items:center;gap:7px;padding:3px 0;cursor:pointer;font-size:13px;${t.feita?'color:var(--ink-faint);text-decoration:line-through;':''}">
+            <input type="checkbox" style="width:auto;" ${t.feita?'checked':''} onchange="alternarTarefaAvulsa('${p.id}','${t.id}')">
+            ${escapeHtml(t.texto)}
+          </label>`).join('')}
+      </div>` : ''}
+      <div class="cell-actions" style="margin-top:8px;">
+        <button class="btn btn-sm ${p.lat==null?'btn-primary':''}" onclick="ajustarEnderecoParadaAvulsa('${p.id}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>
+        <button class="btn btn-sm" onclick="abrirFormParadaAvulsa('${p.id}')">✎ Editar</button>
+        <button class="btn btn-sm btn-primary" onclick="concluirParadaAvulsa('${p.id}')">✓ Marcar como Feita</button>
+      </div>
+    </div>`;
+}
+
 function cadastroDoPontoRoteiro(p){
+  if(p.tipo === 'avulsa'){
+    const parada = paradasAvulsas().find(x=>x.id===p.id);
+    return parada ? { registro:parada, rotulo:parada.nome, oque:'parada' } : null;
+  }
   if(p.tipo === 'entrega'){
     const c = STATE.clientes.find(x=>x.id===p.clienteId);
     return c ? { registro:c, rotulo:c.nome, oque:'cliente' } : null;
@@ -10262,10 +10614,13 @@ function cadastroDoPontoRoteiro(p){
 function ajustarEnderecoDaParada(onde, id){
   const lista = onde === 'cliente' ? STATE.clientes
               : onde === 'forn'    ? STATE.fornecedores
-              : onde === 'local'   ? STATE.locaisCompra : null;
+              : onde === 'local'   ? STATE.locaisCompra
+              : onde === 'avulsa'  ? paradasAvulsas() : null;
   const registro = lista && lista.find(x=>x.id===id);
   if(!registro){ showToast('Cadastro não encontrado.', 'error'); return; }
-  const oque = onde === 'cliente' ? 'cliente' : (onde === 'forn' ? 'fornecedor' : 'local de compra');
+  const oque = onde === 'cliente' ? 'cliente'
+             : onde === 'forn'    ? 'fornecedor'
+             : onde === 'avulsa'  ? 'parada' : 'local de compra';
 
   abrirSeletorMapaEndereco({
     enderecoAtual: registro.endereco || '',
@@ -10387,6 +10742,9 @@ function calcularRoteiro(entregasParaRoteiro){
   const pontosColeta = computarPontosColeta(entregas);
 
   const coletasPendentes = pontosColeta.map(p=>({...p, tipo:'coleta'}));
+  // Paradas avulsas não dependem de nada e não destravam nada: entram no
+  // mesmo sorteio de proximidade, livres pra cair em qualquer ponto da rota.
+  const avulsasPendentes = paradasAvulsasParaRoteiro();
   // cada entrega rastreia quantos itens dela ainda faltam coletar
   const entregasPendentes = entregas.map(e=>({
     ...e, tipo:'entrega',
@@ -10447,13 +10805,16 @@ function calcularRoteiro(entregasParaRoteiro){
 
   // pool combinado de candidatos ao próximo passo: toda coleta pendente +
   // toda entrega já liberada (itensRestantes vazio)
-  while(coletasPendentes.length>0 || entregasPendentes.some(e=>e.itensRestantes.size===0)){
+  while(coletasPendentes.length>0 || avulsasPendentes.length>0 || entregasPendentes.some(e=>e.itensRestantes.size===0)){
     const entregasProntas = entregasPendentes.filter(e=>e.itensRestantes.size===0);
-    const candidatos = [...coletasPendentes, ...entregasProntas];
+    const candidatos = [...coletasPendentes, ...avulsasPendentes, ...entregasProntas];
     if(candidatos.length===0) break; // sobrou só entrega travada por item sem origem — sai do loop, tratada à parte
     const escolhido = popMaisProximo(candidatos);
     if(escolhido.tipo==='coleta'){
       coletasPendentes.splice(coletasPendentes.indexOf(escolhido),1); // já safe mesmo se não achar (undefined-safe: indexOf -1 vira splice(-1,1), no-op seguro o bastante aqui pois já vem de dentro da lista)
+    }else if(escolhido.tipo==='avulsa'){
+      const idxAvulsa = avulsasPendentes.indexOf(escolhido);
+      if(idxAvulsa>-1) avulsasPendentes.splice(idxAvulsa,1);
     }else{
       const idxEntrega = entregasPendentes.indexOf(entregasPendentes.find(e=>e.orcamentoId===escolhido.orcamentoId));
       if(idxEntrega>-1) entregasPendentes.splice(idxEntrega,1);
@@ -10496,10 +10857,12 @@ function otimizarRoteiro2opt(roteiro){
     for(const stop of ordem){
       if(stop.tipo==='coleta'){
         coletadoAteAqui.add(stop.chave);
-      }else{
+      }else if(stop.tipo==='entrega'){
         const deps = dependenciasPorEntrega.get(stop.orcamentoId);
         if(deps){ for(const dep of deps){ if(!coletadoAteAqui.has(dep)) return false; } }
       }
+      // parada avulsa não tem precedência nenhuma: pode ficar onde o
+      // trajeto ficar mais curto
     }
     return true;
   }
@@ -10558,15 +10921,18 @@ function renderLogistica(){
       <div id="logistica-loja-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:6px;">${STATE.config.lojaLat?`Localização salva (${STATE.config.lojaLat.toFixed(5)}, ${STATE.config.lojaLng.toFixed(5)})`:'Localização ainda não definida — o roteiro vai começar pelo ponto mais conveniente disponível, sem garantia de ser o mais próximo da loja.'}</div>
     </div>`;
 
-  if(entregas.length===0){
+  // Sem entrega nenhuma ainda dá roteiro, se houver parada avulsa: ir ao
+  // banco e à contabilidade já é um trajeto a planejar.
+  if(entregas.length===0 && paradasAvulsasAtivas().length===0){
     box.innerHTML = cardPartida + `
       <div class="card">
         <div class="empty-state">
           <div class="ic">🚚</div>
-          <p>Nenhuma entrega em rota no momento. Aprove um orçamento em Orçamentos pra ele aparecer aqui.</p>
+          <p>Nenhuma entrega em rota no momento. Aprove um orçamento em Orçamentos pra ele aparecer aqui, ou adicione uma parada avulsa abaixo.</p>
         </div>
-      </div>`;
+      </div>` + cardParadasAvulsasLogistica();
     ativarCardPartidaLogistica();
+    ativarCheckboxesAvulsas();
     return;
   }
 
@@ -10580,6 +10946,9 @@ function renderLogistica(){
   const clienteNomePorOrcamento = new Map(entregas.map(e=>[e.orcamentoId, e.clienteNome]));
 
   const linhasRoteiro = roteiro.map((p,idx)=>{
+    if(p.tipo==='avulsa'){
+      return cardRoteiroParadaAvulsa(p, idx);
+    }
     if(p.tipo==='coleta'){
       const itensAgrupados = p.itens.reduce((acc,it)=>{
         if(!acc[it.nome]) acc[it.nome] = { qtd:0, destinos:{} };
@@ -10659,14 +11028,17 @@ function renderLogistica(){
     </div>`;
 
   const qtdColetasNoRoteiro = roteiro.filter(p=>p.tipo==='coleta').length;
-  const semSelecao = entregasSelecionadas.length===0;
+  const qtdAvulsasNoRoteiro = roteiro.filter(p=>p.tipo==='avulsa').length;
+  // o roteiro só está vazio quando não sobrou NADA: nem entrega marcada,
+  // nem parada avulsa marcada
+  const semSelecao = roteiro.length===0;
 
-  box.innerHTML = cardPartida + tabelaEntregas + `
+  box.innerHTML = cardPartida + tabelaEntregas + cardParadasAvulsasLogistica() + `
     <div class="card" style="margin-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           <h3 style="margin:0;">Roteiro do dia</h3>
-          <p class="help-text" style="margin:2px 0 0;">${entregasSelecionadas.length} de ${entregas.length} entrega(s) selecionada(s) para o roteiro${semSelecao?'':` · ${qtdColetasNoRoteiro} ponto(s) de coleta`}</p>
+          <p class="help-text" style="margin:2px 0 0;">${entregasSelecionadas.length} de ${entregas.length} entrega(s) selecionada(s) para o roteiro${semSelecao?'':` · ${qtdColetasNoRoteiro} ponto(s) de coleta`}${qtdAvulsasNoRoteiro?` · ${qtdAvulsasNoRoteiro} parada(s) avulsa(s)`:''}</p>
         </div>
         <div class="cell-actions">
           <button class="btn" id="logistica-btn-pdf-roteiro" ${semSelecao?'disabled':''}>📄 Baixar Roteiro (PDF)</button>
@@ -10676,7 +11048,7 @@ function renderLogistica(){
       </div>
     </div>
     <div style="margin-top:14px;">
-      ${semSelecao ? `<div class="card"><div class="empty-state"><div class="ic">☑️</div><p>Nenhuma entrega marcada pra entrar na análise do roteiro. Marque pelo menos uma na tabela acima.</p></div></div>` : linhasRoteiro}
+      ${semSelecao ? `<div class="card"><div class="empty-state"><div class="ic">☑️</div><p>Nada marcado pra entrar no roteiro. Marque pelo menos uma entrega ou uma parada avulsa acima.</p></div></div>` : linhasRoteiro}
     </div>
     ${blocoBloqueadas}
   `;
@@ -10700,6 +11072,19 @@ function renderLogistica(){
     });
   }
   ativarCardPartidaLogistica();
+  ativarCheckboxesAvulsas();
+}
+
+/* As caixinhas que escolhem quais paradas avulsas entram no roteiro desta
+   rodada — mesma ideia das entregas. */
+function ativarCheckboxesAvulsas(){
+  document.querySelectorAll('.logistica-checkbox-avulsa').forEach(cb=>{
+    cb.addEventListener('change', ()=>{
+      const id = cb.dataset.id;
+      if(cb.checked) logisticaAvulsasSelecionadas.add(id); else logisticaAvulsasSelecionadas.delete(id);
+      renderLogistica();
+    });
+  });
 }
 
 // Liga o botão "Localizar no mapa" do card de ponto de partida — reaproveita
@@ -10869,6 +11254,18 @@ function gerarPdfRoteiro(){
   // baixa, sem cards grandes nem espaçamento generoso, pra caber várias
   // paradas numa folha só de impressão.
   const blocosHtml = roteiro.map((p,idx)=>{
+    if(p.tipo==='avulsa'){
+      const tarefas = (p.tarefas||[]).map(t=>`<span>${t.feita?'☑':'☐'} ${escapeHtml(t.texto)}</span>`).join('');
+      return `
+        <div class="parada parada-avulsa">
+          <div class="numero">${idx+1}</div>
+          <div class="corpo">
+            <div class="linha-topo"><span class="selo selo-avulsa">PARADA</span><h3>📌 ${escapeHtml(p.nome)}</h3></div>
+            <div class="endereco">${escapeHtml(p.endereco||'Endereço não informado')}</div>
+            ${tarefas ? `<div class="itens-3col">${tarefas}</div>` : ''}
+          </div>
+        </div>`;
+    }
     if(p.tipo==='coleta'){
       const itensAgrupados = p.itens.reduce((acc,it)=>{
         acc[it.nome] = (acc[it.nome]||0) + it.qtd;
@@ -10955,7 +11352,7 @@ function copiarRoteiroWhatsApp(){
   const { roteiro, entregasBloqueadas } = calcularRoteiro();
   if(roteiro.length===0){ showToast('Nenhum ponto no roteiro ainda.', 'error'); return; }
 
-  const linhas = [`*Roteiro de Entrega — ${fmtDate(todayISO())}*`, ''];
+  const linhas = [`*Roteiro do dia — ${fmtDate(todayISO())}*`, ''];
   roteiro.forEach((p,idx)=>{
     if(p.tipo==='coleta'){
       const itensAgrupados = p.itens.reduce((acc,it)=>{
@@ -10965,6 +11362,12 @@ function copiarRoteiroWhatsApp(){
       linhas.push(`${idx+1}. 📦 *COLETA* — ${p.nome}`);
       Object.entries(itensAgrupados).forEach(([nome,qtd])=>{
         linhas.push(`   • ${nome} (${fmtNum(qtd)})`);
+      });
+    }else if(p.tipo==='avulsa'){
+      linhas.push(`${idx+1}. 📌 *PARADA* — ${p.nome}`);
+      if(p.endereco) linhas.push(`   ${p.endereco}`);
+      (p.tarefas||[]).forEach(t=>{
+        linhas.push(`   ${t.feita?'☑':'☐'} ${t.texto}`);
       });
     }else{
       linhas.push(`${idx+1}. 🏠 *ENTREGA* — ${p.clienteNome}`);
@@ -11000,7 +11403,7 @@ function abrirMapaRoteiro(){
         <div class="ic-rapido">🗺️</div>
         <div>
           <h3>Roteiro no mapa</h3>
-          <div class="sub">Ordem sugerida das paradas — 🟠 coleta · 🟣 entrega</div>
+          <div class="sub">Ordem sugerida das paradas — 🟠 coleta · 🟣 entrega · 🔵 parada avulsa</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
@@ -11051,16 +11454,17 @@ function abrirMapaRoteiro(){
       // origem, então a correção vale pros próximos roteiros também.
       roteiro.forEach((p,idx)=>{
         if(p.lat==null || p.lng==null) return;
-        const cor = p.tipo==='coleta' ? '#C98A2C' : '#6B3FA0';
+        const cor = p.tipo==='coleta' ? '#C98A2C' : (p.tipo==='avulsa' ? '#1B6B8A' : '#6B3FA0');
         const iconeNumerado = L.divIcon({
           className: '',
           html: `<div style="background:${cor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12.5px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${idx+1}</div>`,
           iconSize: [28,28], iconAnchor: [14,14]
         });
-        const nomeExibicao = p.tipo==='coleta' ? p.nome : p.clienteNome;
+        const nomeExibicao = (p.tipo==='coleta' || p.tipo==='avulsa') ? p.nome : p.clienteNome;
         const alvo = cadastroDoPontoRoteiro(p);
         const marcador = L.marker([p.lat,p.lng], {icon: iconeNumerado, draggable: !!alvo}).addTo(mapa);
-        marcador.bindPopup(`<strong>Parada ${idx+1} · ${p.tipo==='coleta'?'Coleta':'Entrega'}</strong><br>${escapeHtml(nomeExibicao)}`
+        const rotuloTipo = p.tipo==='coleta' ? 'Coleta' : (p.tipo==='avulsa' ? 'Parada avulsa' : 'Entrega');
+        marcador.bindPopup(`<strong>Parada ${idx+1} · ${rotuloTipo}</strong><br>${escapeHtml(nomeExibicao)}`
           + (alvo ? `<br><span style="color:#5B6472;font-size:11.5px;">Arraste o pino para corrigir — salva no cadastro do ${alvo.oque}.</span>` : ''));
         if(alvo){
           marcador.on('dragend', ()=>{
@@ -25519,6 +25923,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-a',
+    data: '2026-10-05',
+    titulo: 'Paradas avulsas no roteiro (banco, contabilidade, cartório)',
+    itens: [
+      'Em Logística apareceu o card "Paradas avulsas". Você adiciona um lugar que não vem de orçamento nenhum — banco, contabilidade, cartório, pegar uma peça — e ele entra no MESMO roteiro das coletas e entregas.',
+      'A ordem é calculada junto com todo o resto, por proximidade. A parada avulsa não depende de coleta nem destrava entrega, então ela cai onde o trajeto ficar mais curto.',
+      'Cada parada tem uma lista de tarefas com caixinha de marcar: "depositar o cheque da WBN", "pegar as notas com a Dona Maria". O funcionário vai marcando conforme faz.',
+      'As tarefas saem no roteiro em PDF e no texto do WhatsApp, com ☐ e ☑, então dá pra mandar tudo pra ele numa mensagem só.',
+      'No mapa a parada avulsa tem pino azul, e o pino é arrastável igual aos outros — arrastou, o endereço fica salvo pra próxima.',
+      'Terminou, é só clicar em "Feita": ela sai do roteiro mas continua no histórico, e dá pra trazer de volta se precisar.',
+      'Agora dá roteiro mesmo sem nenhuma entrega aprovada: só com as paradas avulsas já vale o cálculo.'
+    ]
+  },
   {
     id: '2026-10-03-f',
     data: '2026-10-03',
