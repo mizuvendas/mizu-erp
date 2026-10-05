@@ -10299,16 +10299,81 @@ function paradasAvulsasParaRoteiro(){
   garantirSelecaoAvulsas(ativas);
   return ativas
     .filter(p=>logisticaAvulsasSelecionadas.has(p.id))
-    .map(p=>({
-      tipo: 'avulsa',
-      chave: 'avulsa:' + p.id,
-      id: p.id,
-      nome: p.nome,
-      endereco: p.endereco || '',
-      lat: p.lat==null ? null : p.lat,
-      lng: p.lng==null ? null : p.lng,
-      tarefas: (p.tarefas||[]).map(t=>({...t}))
-    }));
+    .map(p=>{
+      const local = dadosLocalDaParada(p); // cadastro vinculado manda no endereço
+      return {
+        tipo: 'avulsa',
+        chave: 'avulsa:' + p.id,
+        id: p.id,
+        nome: p.nome,
+        endereco: local.endereco,
+        lat: local.lat,
+        lng: local.lng,
+        tarefas: (p.tarefas||[]).map(t=>({...t}))
+      };
+    });
+}
+
+/* A parada pode ter sido puxada de um cadastro que já existe. Nesse caso
+   ela guarda só o vínculo (tipo + id), nunca uma cópia do endereço: assim,
+   corrigir o endereço do Falcão no cadastro dele conserta a parada, o
+   roteiro e tudo mais de uma vez só. */
+function resolverCadastroDaParada(parada){
+  const v = parada && parada.vinculo;
+  if(!v || !v.tipo || !v.id) return null;
+  const lista = v.tipo==='cliente' ? STATE.clientes
+              : v.tipo==='forn'    ? STATE.fornecedores
+              : v.tipo==='local'   ? STATE.locaisCompra : null;
+  if(!lista) return null;
+  const registro = lista.find(x=>x.id===v.id);
+  if(!registro) return null;
+  return {
+    registro,
+    tipo: v.tipo,
+    oque: v.tipo==='cliente' ? 'cliente' : (v.tipo==='forn' ? 'fornecedor' : 'local de compra')
+  };
+}
+
+/* Onde a parada fica de verdade: o cadastro vinculado manda, e o que está
+   guardado na própria parada só vale como reserva (cadastro apagado, ou
+   cadastro sem endereço preenchido). */
+function dadosLocalDaParada(p){
+  const vinc = resolverCadastroDaParada(p);
+  const reg = vinc ? vinc.registro : null;
+  return {
+    endereco: (reg && reg.endereco) ? reg.endereco : (p.endereco||''),
+    lat: (reg && reg.lat!=null) ? reg.lat : (p.lat==null?null:p.lat),
+    lng: (reg && reg.lng!=null) ? reg.lng : (p.lng==null?null:p.lng),
+    vinculo: vinc
+  };
+}
+
+/* O que dá pra puxar na hora de criar uma parada: todo cadastro que tem
+   endereço no sistema, mais as paradas que já foram feitas antes — repetir
+   a mesma parada é o caso mais comum de todos. */
+function opcoesCadastroParaParada(){
+  const op = [];
+  (STATE.clientes||[]).forEach(c=>op.push({
+    id:'cliente:'+c.id, label:c.nome,
+    sub:'Cliente · ' + (c.endereco || 'sem endereço cadastrado'),
+    buscaExtra: [c.endereco, c.cidade].filter(Boolean).join(' ')
+  }));
+  (STATE.fornecedores||[]).forEach(f=>op.push({
+    id:'forn:'+f.id, label:f.nome,
+    sub:'Fornecedor · ' + (f.endereco || 'sem endereço cadastrado'),
+    buscaExtra: f.endereco||''
+  }));
+  (STATE.locaisCompra||[]).forEach(l=>op.push({
+    id:'local:'+l.id, label:l.nome,
+    sub:'Local de compra · ' + (l.endereco || 'sem endereço cadastrado'),
+    buscaExtra: l.endereco||''
+  }));
+  paradasAvulsas().filter(p=>p.concluida).forEach(p=>op.push({
+    id:'parada:'+p.id, label:p.nome,
+    sub:'Parada já feita · ' + (dadosLocalDaParada(p).endereco || 'sem endereço'),
+    buscaExtra: p.endereco||''
+  }));
+  return op;
 }
 
 function contarTarefasAvulsa(parada){
@@ -10336,6 +10401,11 @@ function abrirFormParadaAvulsa(id){
         <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-parada-avulsa').remove()">✕</button>
       </div>
       <div class="modal-rapido-corpo">
+        <div class="field">
+          <label>Já está cadastrado? <span class="hint">cliente, fornecedor, local de compra ou uma parada que você já fez</span></label>
+          ${renderComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(), null, 'Digite o nome — ex: Falcão')}
+          <div class="help-text" id="pa-vinculo-status">${parada && parada.vinculo ? `🔗 Vinculada ao cadastro de <strong>${escapeHtml((resolverCadastroDaParada(parada)||{registro:{nome:'(cadastro removido)'}}).registro.nome)}</strong> — o endereço vem de lá.` : 'Escolhendo daqui, o nome e o endereço já vêm preenchidos e ficam vinculados ao cadastro: corrigir o endereço lá vale aqui também.'}</div>
+        </div>
         <div class="field">
           <label>O que é essa parada <span class="req">*</span></label>
           <input type="text" id="pa-nome" value="${parada?escapeAttr(parada.nome):''}" placeholder="Ex: Banco do Brasil — agência centro">
@@ -10365,6 +10435,7 @@ function abrirFormParadaAvulsa(id){
   // a localização escolhida no mapa vive aqui até salvar
   let latEscolhida = parada ? (parada.lat==null?null:parada.lat) : null;
   let lngEscolhida = parada ? (parada.lng==null?null:parada.lng) : null;
+  let vinculoEscolhido = parada && parada.vinculo ? {...parada.vinculo} : null;
 
   ativarBotaoMapaEndereco('pa-btn-mapa', 'pa-endereco',
     ()=>({lat: latEscolhida, lng: lngEscolhida}),
@@ -10419,6 +10490,54 @@ function abrirFormParadaAvulsa(id){
   });
   desenharTarefas();
 
+  /* Escolher um cadastro preenche o resto do formulário. Escolher uma
+     parada antiga traz também a lista de tarefas, desmarcada — repetir a
+     ida ao banco é refazer as mesmas tarefas, não herdar os vistos da
+     vez passada. */
+  ativarComboboxProduto('pa-busca-cadastro', 'pa-cadastro-id', opcoesCadastroParaParada(), (opt)=>{
+    if(!opt || !opt.id) return;
+    const [tipo, id] = String(opt.id).split(':');
+    const status = document.getElementById('pa-vinculo-status');
+
+    if(tipo === 'parada'){
+      const anterior = paradasAvulsas().find(x=>x.id===id);
+      if(!anterior) return;
+      const local = dadosLocalDaParada(anterior);
+      document.getElementById('pa-nome').value = anterior.nome;
+      document.getElementById('pa-endereco').value = local.endereco;
+      latEscolhida = local.lat; lngEscolhida = local.lng;
+      vinculoEscolhido = anterior.vinculo ? {...anterior.vinculo} : null;
+      tarefasForm = (anterior.tarefas||[]).map(t=>({ id: uid('tar'), texto: t.texto, feita: false }));
+      desenharTarefas();
+      if(status) status.innerHTML = `↻ Repetindo a parada <strong>${escapeHtml(anterior.nome)}</strong>${tarefasForm.length?` com as ${tarefasForm.length} tarefa(s) dela, desmarcadas`:''}.`;
+    }else{
+      const lista = tipo==='cliente' ? STATE.clientes
+                  : tipo==='forn'    ? STATE.fornecedores
+                  : tipo==='local'   ? STATE.locaisCompra : null;
+      const registro = lista && lista.find(x=>x.id===id);
+      if(!registro) return;
+      if(!document.getElementById('pa-nome').value.trim()){
+        document.getElementById('pa-nome').value = registro.nome;
+      }
+      document.getElementById('pa-endereco').value = registro.endereco || '';
+      latEscolhida = registro.lat==null ? null : registro.lat;
+      lngEscolhida = registro.lng==null ? null : registro.lng;
+      vinculoEscolhido = { tipo, id };
+      const oque = tipo==='cliente' ? 'cliente' : (tipo==='forn' ? 'fornecedor' : 'local de compra');
+      if(status){
+        status.innerHTML = registro.lat==null
+          ? `🔗 Vinculada ao ${oque} <strong>${escapeHtml(registro.nome)}</strong>, que ainda não tem localização no mapa — defina aqui embaixo e ela fica salva no cadastro dele.`
+          : `🔗 Vinculada ao ${oque} <strong>${escapeHtml(registro.nome)}</strong> — o endereço vem de lá, e corrigir lá conserta aqui também.`;
+      }
+    }
+    const st = document.getElementById('pa-mapa-status');
+    if(st){
+      st.textContent = latEscolhida!=null
+        ? `Localização salva (${Number(latEscolhida).toFixed(5)}, ${Number(lngEscolhida).toFixed(5)})`
+        : 'Sem localização ainda — sem ela a parada entra no fim do roteiro, porque o sistema não tem como medir a distância.';
+    }
+  });
+
   document.getElementById('pa-salvar').addEventListener('click', ()=>{
     lerTarefasDoFormulario();
     const nome = document.getElementById('pa-nome').value.trim();
@@ -10428,6 +10547,7 @@ function abrirFormParadaAvulsa(id){
       endereco: document.getElementById('pa-endereco').value.trim(),
       lat: latEscolhida,
       lng: lngEscolhida,
+      vinculo: vinculoEscolhido, // null quando é um lugar avulso de verdade
       tarefas: tarefasForm.filter(t=>String(t.texto||'').trim()!=='')
     };
     if(parada){
@@ -10471,6 +10591,29 @@ function reabrirParadaAvulsa(id){
   showToast(`"${parada.nome}" voltou pro roteiro.`, 'success');
 }
 
+/* Repete uma parada já feita: ir ao banco toda semana é a mesma parada,
+   com as mesmas tarefas, só que zeradas. A original fica no histórico. */
+function repetirParadaAvulsa(id){
+  const anterior = paradasAvulsas().find(p=>p.id===id);
+  if(!anterior) return;
+  const nova = {
+    id: uid('para'),
+    nome: anterior.nome,
+    endereco: anterior.endereco || '',
+    lat: anterior.lat==null ? null : anterior.lat,
+    lng: anterior.lng==null ? null : anterior.lng,
+    vinculo: anterior.vinculo ? {...anterior.vinculo} : null,
+    tarefas: (anterior.tarefas||[]).map(t=>({ id: uid('tar'), texto: t.texto, feita: false })),
+    concluida: false,
+    concluidaEm: '',
+    criadoEm: todayISO()
+  };
+  paradasAvulsas().push(nova);
+  saveState();
+  renderLogistica();
+  showToast(`"${nova.nome}" voltou pro roteiro como parada nova.`, 'success');
+}
+
 function excluirParadaAvulsa(id){
   const parada = paradasAvulsas().find(p=>p.id===id);
   if(!parada) return;
@@ -10497,6 +10640,10 @@ function alternarTarefaAvulsa(paradaId, tarefaId){
 }
 
 function ajustarEnderecoParadaAvulsa(id){
+  const parada = paradasAvulsas().find(p=>p.id===id);
+  const vinc = parada && resolverCadastroDaParada(parada);
+  // vinculada: edita o cadastro de origem, pra correção valer em todo lugar
+  if(vinc) return ajustarEnderecoDaParada(vinc.tipo, vinc.registro.id);
   ajustarEnderecoDaParada('avulsa', id);
 }
 
@@ -10510,20 +10657,22 @@ function cardParadasAvulsasLogistica(){
   const linhas = ativas.map(p=>{
     const marcada = logisticaAvulsasSelecionadas.has(p.id);
     const cont = contarTarefasAvulsa(p);
+    const local = dadosLocalDaParada(p);
     return `
       <tr>
         <td><input type="checkbox" class="logistica-checkbox-avulsa" data-id="${p.id}" ${marcada?'checked':''}></td>
         <td>
           <strong>${escapeHtml(p.nome)}</strong>
+          ${local.vinculo ? `<div class="help-text" style="margin:2px 0 0;" title="O endereço vem do cadastro — corrigir lá vale aqui">🔗 ${escapeHtml(local.vinculo.registro.nome)} (${local.vinculo.oque})</div>` : ''}
           ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} tarefa(s) feita(s)</div>` : ''}
         </td>
         <td style="font-size:12px;color:var(--ink-soft);">
-          ${escapeHtml(p.endereco||'Endereço não informado')}
-          ${p.lat==null?' · <span style="color:var(--negative);">sem localização</span>':''}
+          ${escapeHtml(local.endereco||'Endereço não informado')}
+          ${local.lat==null?' · <span style="color:var(--negative);">sem localização</span>':''}
         </td>
         <td>
           <div class="cell-actions">
-            <button class="btn btn-sm ${p.lat==null?'btn-primary':''}" onclick="ajustarEnderecoParadaAvulsa('${p.id}')">📍 ${p.lat==null?'Definir':'Ajustar'}</button>
+            <button class="btn btn-sm ${local.lat==null?'btn-primary':''}" onclick="ajustarEnderecoParadaAvulsa('${p.id}')">📍 ${local.lat==null?'Definir':'Ajustar'}</button>
             <button class="btn btn-sm" onclick="abrirFormParadaAvulsa('${p.id}')">✎ Editar</button>
             <button class="btn btn-sm btn-primary" onclick="concluirParadaAvulsa('${p.id}')">✓ Feita</button>
             <button class="btn btn-sm btn-danger" onclick="excluirParadaAvulsa('${p.id}')">Excluir</button>
@@ -10556,6 +10705,7 @@ function cardParadasAvulsasLogistica(){
             <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);font-size:12.5px;">
               <span style="color:var(--ink-soft);">✓ ${escapeHtml(p.nome)}${p.concluidaEm?` · ${fmtDate(p.concluidaEm)}`:''}</span>
               <span class="cell-actions">
+                <button class="btn btn-sm" onclick="repetirParadaAvulsa('${p.id}')" title="Cria uma parada nova igual a esta, com as mesmas tarefas desmarcadas">↻ Repetir</button>
                 <button class="btn btn-sm" onclick="reabrirParadaAvulsa('${p.id}')">↩ Voltar pro roteiro</button>
                 <button class="btn btn-sm btn-danger" onclick="excluirParadaAvulsa('${p.id}')">Excluir</button>
               </span>
@@ -10593,7 +10743,12 @@ function cardRoteiroParadaAvulsa(p, idx){
 function cadastroDoPontoRoteiro(p){
   if(p.tipo === 'avulsa'){
     const parada = paradasAvulsas().find(x=>x.id===p.id);
-    return parada ? { registro:parada, rotulo:parada.nome, oque:'parada' } : null;
+    if(!parada) return null;
+    // vinculada a um cadastro? então arrastar o pino corrige o CADASTRO,
+    // não uma cópia solta — a correção passa a valer pra todo o sistema
+    const vinc = resolverCadastroDaParada(parada);
+    if(vinc) return { registro: vinc.registro, rotulo: vinc.registro.nome, oque: vinc.oque };
+    return { registro:parada, rotulo:parada.nome, oque:'parada' };
   }
   if(p.tipo === 'entrega'){
     const c = STATE.clientes.find(x=>x.id===p.clienteId);
@@ -25923,6 +26078,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-b',
+    data: '2026-10-05',
+    titulo: 'A parada avulsa pode vir de um cadastro que já existe',
+    itens: [
+      'Na janela de nova parada entrou o campo "Já está cadastrado?". Digita "Falcão" e ele acha o cliente, o fornecedor ou o local de compra — o nome e o endereço já vêm preenchidos, com a localização exata que você tinha salvo.',
+      'A parada fica VINCULADA ao cadastro: o endereço não é copiado, é lido de lá. Se um dia você corrigir o endereço do Falcão no cadastro dele, a parada se corrige junto.',
+      'Por isso, arrastar o pino dessa parada no mapa agora salva no cadastro de origem — a correção passa a valer pra todas as entregas e coletas daquele lugar, não só pra essa parada.',
+      'A busca também acha as paradas que você já fez antes. Escolhendo uma, ela volta com as mesmas tarefas, desmarcadas.',
+      'E na lista de paradas já feitas apareceu o botão "↻ Repetir", pra ida ao banco que se repete toda semana.',
+      'Na lista, a parada vinculada mostra 🔗 com o nome do cadastro de onde veio.'
+    ]
+  },
   {
     id: '2026-10-05-a',
     data: '2026-10-05',
