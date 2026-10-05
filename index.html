@@ -26224,6 +26224,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-05-e',
+    data: '2026-10-05',
+    titulo: 'Cotação: escolher quais fornecedores aparecem na tabela',
+    itens: [
+      'Com 23 fornecedores a tabela ficava com 23 colunas, mas cada item é cotado por uns cinco — o resto da linha era traço e as primeiras colunas saíam da tela.',
+      'Agora tem "Mostrar na tabela": escolhendo um fornecedor, só a coluna dele fica, e por padrão só os itens que ele cota. É o modo de lançar os preços de quem acabou de responder.',
+      'Os chips de fornecedor viraram botões: clicou, esconde a coluna; clicou de novo, mostra. O ✕ continua sendo tirar da cotação.',
+      '"Esconder as colunas vazias" deixa só quem cota alguma coisa entre os itens à vista, e "Só quem falta responder" deixa só os que estão aguardando ou responderam pela metade.',
+      'É tudo só o que está à vista: a cotação inteira continua guardada, e o que cada fornecedor cota segue no 🏷️ quem cota de cada item.'
+    ]
+  },
+  {
     id: '2026-10-05-d',
     data: '2026-10-05',
     titulo: 'A parada avulsa diz se é coleta ou entrega',
@@ -28512,6 +28524,92 @@ const CT_STATUS = {
 
 /* Fornecedores desta cotação: os que ela adicionou ao plano mais os que já
    aparecem marcados em algum item (um plano antigo já tinha opções). */
+/* ---------- quais fornecedores aparecem na matriz ----------
+   Uma cotação com 23 fornecedores vira uma tabela de 23 colunas, mas cada
+   item é cotado por uns cinco: o resto da linha é traço, e as primeiras
+   colunas saem da tela. Daí estes dois controles:
+
+   - FOCO: escolhe um fornecedor e só ele fica na tela, junto com os itens
+     que ele cota. É o modo de lançar os preços de quem acabou de responder.
+   - VISÍVEIS: clicando nos chips, escolhe quais colunas ficam.
+
+   Nada disso muda a cotação em si — é só o que está à vista. O que cada
+   fornecedor cota continua no 🏷️ quem cota de cada item. */
+let ctVisiveis = null;        // null = todos; Set = só estes
+let ctFoco = '';              // fornecedor em foco ('' = nenhum)
+let ctSoItensDoFoco = true;   // ao focar, esconder os itens que ele não cota
+
+function ctFornecedoresNaTela(plano){
+  const todos = ctFornecedoresDoPlano(plano);
+  if(ctFoco) return todos.filter(n => n === ctFoco);
+  if(ctVisiveis && ctVisiveis.size) return todos.filter(n => ctVisiveis.has(n));
+  return todos;
+}
+
+function ctFocar(nome){
+  ctFoco = nome || '';
+  if(ctFoco) ctVisiveis = null; // foco manda sozinho
+  renderSugestaoCompra();
+}
+
+function ctFocarDoCampo(){
+  const sel = document.getElementById('ct-foco');
+  ctFocar(sel ? sel.value : '');
+}
+
+function ctAlternarSoItensDoFoco(valor){
+  ctSoItensDoFoco = !!valor;
+  renderSugestaoCompra();
+}
+
+function ctAlternarVisivel(nome){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const todos = ctFornecedoresDoPlano(plano);
+  ctFoco = '';
+  if(!ctVisiveis) ctVisiveis = new Set(todos);
+  if(ctVisiveis.has(nome)) ctVisiveis.delete(nome); else ctVisiveis.add(nome);
+  // voltou a ser "todos" (ou ninguém): limpa o filtro em vez de deixar a
+  // tela sem nenhuma coluna
+  if(ctVisiveis.size === 0 || ctVisiveis.size === todos.length) ctVisiveis = null;
+  renderSugestaoCompra();
+}
+
+function ctMostrarTodosFornecedores(){
+  ctVisiveis = null;
+  ctFoco = '';
+  renderSugestaoCompra();
+}
+
+/* Só os fornecedores que cotam alguma coisa entre os itens à vista — é o
+   que tira as colunas de traço de uma vez. */
+function ctEsconderColunasVazias(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const comAlgo = new Set();
+  pcItensFiltrados(plano).forEach(it=>{
+    (it.opcoes||[]).forEach(o=>{ if(o.fornecedor) comAlgo.add(o.fornecedor); });
+  });
+  ctFoco = '';
+  ctVisiveis = comAlgo.size ? comAlgo : null;
+  renderSugestaoCompra();
+}
+
+/* Quem ainda deve resposta: aguardando (não mandou nada) ou parcial
+   (respondeu uma parte). É a lista de quem cobrar. */
+function ctSoQuemFalta(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const faltam = ctFornecedoresDoPlano(plano).filter(n=>{
+    const st = ctStatusFornecedor(plano, n);
+    return st === 'aguardando' || st === 'parcial';
+  });
+  ctFoco = '';
+  ctVisiveis = faltam.length ? new Set(faltam) : null;
+  if(!faltam.length) showToast('Todos os fornecedores já responderam tudo.', 'success');
+  renderSugestaoCompra();
+}
+
 function ctFornecedoresDoPlano(plano){
   if(!plano) return [];
   const nomes = [
@@ -28823,7 +28921,12 @@ function renderCotacaoMatriz(){
 
   const travado = plano.status === 'finalizado';
   const fornecedores = ctFornecedoresDoPlano(plano);
-  const itens = pcItensFiltrados(plano);
+  // o filtro de colunas é só visual: a cotação inteira continua lá atrás
+  const visiveis = ctFornecedoresNaTela(plano);
+  // focado num fornecedor, as linhas que ele não cota só atrapalham
+  const itens = (ctFoco && ctSoItensDoFoco)
+    ? pcItensFiltrados(plano).filter(i => ctOpcaoDe(i, ctFoco))
+    : pcItensFiltrados(plano);
   const semMarcacao = (plano.itens || []).filter(i => (i.opcoes || []).length === 0).length;
 
   const cabecalho = `
@@ -28848,9 +28951,12 @@ function renderCotacaoMatriz(){
         ${fornecedores.map(nome=>{
           const st = CT_STATUS[ctStatusFornecedor(plano, nome)];
           const n = ctItensDoFornecedor(plano, nome).length;
-          return `<span class="ct-chip" style="background:${st.fundo};color:${st.cor};" title="${n} ${n===1?'item marcado':'itens marcados'}">
+          const naTela = visiveis.includes(nome);
+          return `<span class="ct-chip" onclick="ctAlternarVisivel('${escapeAttr(nome)}')"
+                        style="background:${st.fundo};color:${st.cor};cursor:pointer;${naTela?'':'opacity:.4;border:1px dashed currentColor;'}"
+                        title="${naTela?'Clique pra esconder esta coluna':'Escondido — clique pra mostrar de novo'} · ${n} ${n===1?'item marcado':'itens marcados'}">
             ${st.marca} ${escapeHtml(nome)} · ${st.rotulo} (${n})
-            ${travado?'':`<button class="ct-chip-x" title="Tirar da cotação" onclick="ctRemoverFornecedorDaCotacao('${escapeAttr(nome)}')">✕</button>`}
+            ${travado?'':`<button class="ct-chip-x" title="Tirar da cotação" onclick="event.stopPropagation();ctRemoverFornecedorDaCotacao('${escapeAttr(nome)}')">✕</button>`}
           </span>`;
         }).join('') || '<span class="help-text">Nenhum fornecedor ainda. Marque quem cota em cada item, ou adicione um aqui.</span>'}
         ${travado?'':`<button class="btn btn-sm" onclick="ctAbrirAdicionarFornecedor()">＋ Fornecedor</button>`}
@@ -28867,6 +28973,22 @@ function renderCotacaoMatriz(){
         <button class="btn btn-sm" onclick="ctLote(false)">Desmarcar</button>
       </div>`}
 
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:12px;padding:8px 10px;background:var(--surface-2);border-radius:var(--radius-sm);">
+        <strong style="font-size:12.5px;">Mostrar na tabela</strong>
+        <select id="ct-foco" onchange="ctFocarDoCampo()" style="max-width:240px;font-size:12.5px;">
+          <option value="">todos os fornecedores à vista</option>
+          ${fornecedores.map(n=>`<option value="${escapeAttr(n)}" ${ctFoco===n?'selected':''}>só ${escapeHtml(n)}</option>`).join('')}
+        </select>
+        ${ctFoco ? `<label style="display:flex;align-items:center;gap:5px;font-size:12.5px;cursor:pointer;">
+          <input type="checkbox" style="width:auto;" ${ctSoItensDoFoco?'checked':''} onchange="ctAlternarSoItensDoFoco(this.checked)">
+          só os itens que ele cota
+        </label>` : `
+        <button class="btn btn-sm" onclick="ctEsconderColunasVazias()" title="Deixa só quem cota alguma coisa entre os itens à vista">Esconder as colunas vazias</button>
+        <button class="btn btn-sm" onclick="ctSoQuemFalta()" title="Aguardando ou respondeu só uma parte">Só quem falta responder</button>`}
+        ${(ctFoco || ctVisiveis) ? `<button class="btn btn-sm" onclick="ctMostrarTodosFornecedores()">Mostrar todos</button>` : ''}
+        <span class="hint">${visiveis.length} de ${fornecedores.length} ${fornecedores.length===1?'fornecedor':'fornecedores'} na tabela${ctFoco?' · clique num chip acima pra trocar o foco':' · clique nos chips acima pra esconder ou mostrar'}</span>
+      </div>
+
       <div class="form-grid" style="margin-top:12px;">
         <div class="field">
           <label>Filtrar por nome</label>
@@ -28877,7 +28999,10 @@ function renderCotacaoMatriz(){
     </div>`;
 
   if(itens.length === 0){
-    return cabecalho + `<div class="card"><p class="help-text" style="margin:0;">Nenhum item com esse filtro.</p></div>`;
+    const motivo = (ctFoco && ctSoItensDoFoco)
+      ? `Nenhum item marcado para <strong>${escapeHtml(ctFoco)}</strong>${pcBusca?' com esse filtro de nome':''}. Desmarque "só os itens que ele cota" pra ver todos e marcar os dele.`
+      : 'Nenhum item com esse filtro.';
+    return cabecalho + `<div class="card"><p class="help-text" style="margin:0;">${motivo}</p></div>`;
   }
 
   const total = itens.length;
@@ -28900,7 +29025,7 @@ function renderCotacaoMatriz(){
           </div>
         </div>
       </td>
-      ${fornecedores.map(nome=>`
+      ${visiveis.map(nome=>`
         <td class="num" id="ct-cel-${item.id}-${ctSlug(nome)}" style="vertical-align:top;${ctOpcaoDe(item,nome) && ctMenorOpcao(item)===ctOpcaoDe(item,nome) ? 'background:var(--positive-soft);' : ''}">
           ${ctHtmlCelula(item, nome, travado)}
         </td>`).join('')}
@@ -28913,7 +29038,7 @@ function renderCotacaoMatriz(){
           <thead>
             <tr>
               <th class="col-fixa">Produto</th>
-              ${fornecedores.map(nome=>{
+              ${visiveis.map(nome=>{
                 const st = CT_STATUS[ctStatusFornecedor(plano, nome)];
                 return `<th class="num" style="min-width:122px;">
                   <span style="display:block;font-size:10.5px;color:${st.cor};font-weight:700;">${st.marca} ${st.rotulo.toUpperCase()}</span>
