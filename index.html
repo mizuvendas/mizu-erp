@@ -26225,6 +26225,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-05-j',
+    data: '2026-10-05',
+    titulo: 'Pedido de compra: a tela parou de se mexer',
+    itens: [
+      'Os blocos dos fornecedores estavam em ordem de valor. Como mudar uma quantidade muda o subtotal, o bloco pulava de lugar no meio da digitação — às vezes ia pro fim, às vezes pro começo.',
+      'Agora a ordem é a MESMA das colunas da cotação, aquela que você monta arrastando. Ela não muda sozinha: muda quando você arrasta lá.',
+      'E digitar a quantidade não redesenha mais a tela inteira — só os números afetados são reescritos. O cursor fica onde está, a página não volta pro topo e nada dança.'
+    ]
+  },
+  {
     id: '2026-10-05-i',
     data: '2026-10-05',
     titulo: 'Escolher de quem comprar, na própria matriz da cotação',
@@ -29579,9 +29589,18 @@ function pcPedidoPorFornecedor(plano){
     if(qtd > 0) g.itensValidos = (g.itensValidos || 0) + 1;
     else g.itensZerados = (g.itensZerados || 0) + 1;
   });
+  // A ordem é a MESMA das colunas da cotação — aquela que ela monta
+  // arrastando. Ordenar por valor parecia boa ideia e não era: mudar uma
+  // quantidade mexe no subtotal, e o bloco inteiro pulava de lugar no meio
+  // da digitação. Quem entrou depois, sem posição definida, vai pro fim.
+  const ordem = ctFornecedoresDoPlano(plano);
   return [...grupos.values()]
     .map(g=>({ ...g, itens: g.itens.sort((a,b)=>a.item.nome.localeCompare(b.item.nome)) }))
-    .sort((a,b)=> b.subtotal - a.subtotal || a.nome.localeCompare(b.nome));
+    .sort((a,b)=>{
+      const ia = ordem.indexOf(a.nome), ib = ordem.indexOf(b.nome);
+      const pa = ia < 0 ? 9999 : ia, pb = ib < 0 ? 9999 : ib;
+      return pa - pb || a.nome.localeCompare(b.nome);
+    });
 }
 
 /* O que ainda não dá pra pedir, e por quê. Separar os motivos importa:
@@ -29601,15 +29620,66 @@ function pcTotalDoPedido(grupos){
   return grupos.reduce((s,g)=> s + g.subtotal, 0);
 }
 
-/* Quantidade mexida aqui vale pro plano inteiro. Redesenha a tela toda
-   porque os subtotais e o total geral mudam junto. */
+/* Quantidade mexida aqui vale pro plano inteiro.
+
+   Só que redesenhar a tela a cada tecla é o que fazia tudo dançar: o foco
+   saía do campo, a página voltava pro topo, e o bloco do fornecedor
+   mudava de lugar. Agora só os números afetados são reescritos — a
+   estrutura da tela fica parada onde está. */
 function pcSetQuantidadePedido(itemId, valor){
   pcSetCampo(itemId, 'quantidade', valor);
-  renderSugestaoCompra();
+  pcAtualizarNumerosPedido();
+}
+
+/* Reescreve no lugar os totais da linha, o subtotal de cada fornecedor e
+   os números do topo. Nada de innerHTML em bloco: nenhum elemento é
+   recriado, então nada se move e o cursor continua onde estava. */
+function pcAtualizarNumerosPedido(){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const grupos = pcPedidoPorFornecedor(plano);
+  const pend = pcPendenciasDoPedido(plano);
+
+  grupos.forEach(g=>{
+    const s = ctSlug(g.nome);
+    g.itens.forEach(l=>{
+      const linha = document.getElementById('pc-ped-linha-' + l.item.id);
+      if(linha) linha.style.opacity = l.foraDoPedido ? '.55' : '';
+      const fora = document.getElementById('pc-ped-fora-' + l.item.id);
+      if(fora) fora.style.display = l.foraDoPedido ? '' : 'none';
+      const un = document.getElementById('pc-ped-un-' + l.item.id);
+      if(un) un.textContent = `${l.item.comprarEm==='UN' ? 'un' : l.item.comprarEm} · ${fmtNum(l.qtd * l.fator)} un`;
+      const tot = document.getElementById('pc-ped-total-' + l.item.id);
+      if(tot) tot.textContent = fmtMoney(l.total);
+    });
+    const resumo = document.getElementById('pc-ped-resumo-' + s);
+    if(resumo){
+      resumo.innerHTML = `${g.itensValidos} ${g.itensValidos===1?'item':'itens'} · ${fmtNum(g.unidades)} unidades`
+        + (g.itensZerados?` · <span style="color:var(--warning);">${g.itensZerados} fora (quantidade zerada)</span>`:'');
+    }
+    document.querySelectorAll('.pc-ped-sub-' + s).forEach(el=>{ el.textContent = fmtMoney(g.subtotal); });
+  });
+
+  const total = pcTotalDoPedido(grupos);
+  const kpiTotal = document.getElementById('pc-ped-kpi-total');
+  if(kpiTotal) kpiTotal.textContent = fmtMoney(total);
+  const kpiItens = document.getElementById('pc-ped-kpi-itens');
+  if(kpiItens){
+    const n = grupos.reduce((s,g)=>s+g.itensValidos,0);
+    const un = grupos.reduce((s,g)=>s+g.unidades,0);
+    kpiItens.textContent = `${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} · ${n} ${n===1?'item':'itens'} · ${fmtNum(un)} unidades no total`;
+  }
+  const kpiPend = document.getElementById('pc-ped-kpi-pendencias');
+  if(kpiPend){
+    const n = pend.semPreco.length + pend.semQtd.length;
+    kpiPend.textContent = n;
+    kpiPend.style.color = n ? 'var(--warning)' : 'var(--positive)';
+  }
 }
 
 /* Trocar de fornecedor sem sair desta tela — é aqui que ela percebe que
-   ficou um pedido de R$ 40 com um fornecedor e resolve juntar com outro. */
+   ficou um pedido de R$ 40 com um fornecedor e resolve juntar com outro.
+   Este refaz a tela mesmo: o item muda de bloco, não é só um número. */
 function pcTrocarFornecedorPedido(itemId, nome){
   ctEscolherNoItem(itemId, nome);
 }
@@ -29671,9 +29741,7 @@ function renderPedidoCompra(){
         <div>
           <h3 style="margin:0;">Pedido de compra — ${escapeHtml(plano.nome)}</h3>
           <div class="hint" style="margin-top:4px;">
-            ${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} ·
-            ${grupos.reduce((s,g)=>s+g.itensValidos,0)} ${grupos.reduce((s,g)=>s+g.itensValidos,0)===1?'item':'itens'} ·
-            ${fmtNum(unidades)} unidades no total
+            <span id="pc-ped-kpi-itens">${grupos.length} ${grupos.length===1?'fornecedor':'fornecedores'} · ${grupos.reduce((s,g)=>s+g.itensValidos,0)} ${grupos.reduce((s,g)=>s+g.itensValidos,0)===1?'item':'itens'} · ${fmtNum(unidades)} unidades no total</span>
           </div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -29685,7 +29753,7 @@ function renderPedidoCompra(){
       <div class="kpi-grid" style="margin-top:14px;">
         <div class="kpi-card">
           <div class="kpi-label">Total da compra</div>
-          <div class="kpi-value">${fmtMoney(total)}</div>
+          <div class="kpi-value" id="pc-ped-kpi-total">${fmtMoney(total)}</div>
           <div class="kpi-sub">com os fornecedores que você marcou</div>
         </div>
         <div class="kpi-card">
@@ -29694,13 +29762,13 @@ function renderPedidoCompra(){
           <div class="kpi-sub">${grupos.filter(g=>((plano.fornecedores||{})[g.nome]||{}).pedidoEnviadoEm).length} já enviado(s)</div>
         </div>
         <div class="kpi-card">
-          <div class="kpi-label">Maior pedido</div>
-          <div class="kpi-value">${grupos.length?fmtMoney(grupos[0].subtotal):'—'}</div>
-          <div class="kpi-sub">${grupos.length?escapeHtml(grupos[0].nome):'nada marcado ainda'}</div>
+          <div class="kpi-label">Ordem dos blocos</div>
+          <div class="kpi-value" style="font-size:15px;line-height:1.5;">a mesma da cotação</div>
+          <div class="kpi-sub">arraste os fornecedores lá pra mudar aqui</div>
         </div>
         <div class="kpi-card">
           <div class="kpi-label">Ainda não dá pra pedir</div>
-          <div class="kpi-value" style="color:${(pend.semPreco.length+pend.semQtd.length)?'var(--warning)':'var(--positive)'};">${pend.semPreco.length + pend.semQtd.length}</div>
+          <div class="kpi-value" id="pc-ped-kpi-pendencias" style="color:${(pend.semPreco.length+pend.semQtd.length)?'var(--warning)':'var(--positive)'};">${pend.semPreco.length + pend.semQtd.length}</div>
           <div class="kpi-sub">${(pend.semPreco.length+pend.semQtd.length)?'itens — veja embaixo':'está tudo resolvido'}</div>
         </div>
       </div>
@@ -29715,13 +29783,12 @@ function renderPedidoCompra(){
         <div>
           <h3 style="margin:0;">${enviado?'✓ ':''}${escapeHtml(g.nome)}</h3>
           <div class="hint" style="margin-top:3px;">
-            ${g.itensValidos} ${g.itensValidos===1?'item':'itens'} · ${fmtNum(g.unidades)} unidades
-            ${g.itensZerados?` · <span style="color:var(--warning);">${g.itensZerados} fora (quantidade zerada)</span>`:''}
+            <span id="pc-ped-resumo-${ctSlug(g.nome)}">${g.itensValidos} ${g.itensValidos===1?'item':'itens'} · ${fmtNum(g.unidades)} unidades${g.itensZerados?` · <span style="color:var(--warning);">${g.itensZerados} fora (quantidade zerada)</span>`:''}</span>
             ${enviado?` · <span style="color:var(--positive);">pedido enviado em ${fmtDate(enviado)}</span>`:''}
           </div>
         </div>
         <div style="text-align:right;">
-          <div style="font-size:19px;font-weight:700;">${fmtMoney(g.subtotal)}</div>
+          <div style="font-size:19px;font-weight:700;" class="pc-ped-sub-${ctSlug(g.nome)}">${fmtMoney(g.subtotal)}</div>
           <div class="cell-actions" style="justify-content:flex-end;margin-top:6px;">
             <button class="btn btn-sm" onclick="pcCopiarPedidoWhatsApp('${escapeAttr(g.nome)}')">📱 Copiar pedido</button>
             ${travado?'':`<button class="btn btn-sm ${enviado?'':'btn-primary'}" onclick="pcMarcarPedidoEnviado('${escapeAttr(g.nome)}')">${enviado?'↩ Desfazer envio':'✓ Marcar enviado'}</button>`}
@@ -29747,21 +29814,21 @@ function renderPedidoCompra(){
                 .filter(o => !o.naoTem && Number(o.preco) > 0)
                 .map(o => ({ o, custo: ctCustoUnit(l.item, o) }))
                 .sort((a,b)=> a.custo - b.custo);
-              return `<tr style="${l.foraDoPedido?'opacity:.55;':''}">
+              return `<tr id="pc-ped-linha-${l.item.id}" style="${l.foraDoPedido?'opacity:.55;':''}">
                 <td>
                   <strong>${escapeHtml(l.item.nome)}</strong>
-                  ${l.foraDoPedido?' <span class="badge badge-warning" title="Quantidade zerada: não entra no pedido, no WhatsApp nem na planilha">fora do pedido</span>':''}
+                  <span id="pc-ped-fora-${l.item.id}" class="badge badge-warning" title="Quantidade zerada: não entra no pedido, no WhatsApp nem na planilha" style="${l.foraDoPedido?'':'display:none;'}">fora do pedido</span>
                   <div class="hint">${l.item.comprarEm==='UN' ? 'unidade' : `${PC_EMBALAGEM_NOME[l.item.comprarEm]} de ${l.fator}`}${l.item.obsCotacao?` · ${escapeHtml(l.item.obsCotacao)}`:''}</div>
                 </td>
                 <td class="num">
                   <input type="number" min="0" step="1" value="${l.qtd}" ${travado?'disabled':''}
                          onchange="pcSetQuantidadePedido('${l.item.id}', this.value)"
                          style="width:72px;text-align:right;font-weight:700;">
-                  <div class="hint">${l.item.comprarEm==='UN' ? 'un' : l.item.comprarEm} · ${fmtNum(l.qtd * l.fator)} un</div>
+                  <div class="hint" id="pc-ped-un-${l.item.id}">${l.item.comprarEm==='UN' ? 'un' : l.item.comprarEm} · ${fmtNum(l.qtd * l.fator)} un</div>
                 </td>
                 <td class="num">${fmtMoney(l.opcao.preco)}</td>
                 <td class="num" style="${perdendo?'':'color:var(--positive);'}">${l.custoUnit!=null?fmtMoney(l.custoUnit):'—'}</td>
-                <td class="num"><strong>${fmtMoney(l.total)}</strong></td>
+                <td class="num"><strong id="pc-ped-total-${l.item.id}">${fmtMoney(l.total)}</strong></td>
                 <td>
                   <select ${travado?'disabled':''} onchange="pcTrocarFornecedorPedido('${l.item.id}', this.value)"
                           style="font-size:12px;width:100%;${perdendo?'border:2px solid var(--warning);background:var(--warning-soft);':''}"
@@ -29774,7 +29841,7 @@ function renderPedidoCompra(){
           </tbody>
           <tfoot><tr>
             <td colspan="4" style="text-align:right;font-weight:600;">Total do pedido</td>
-            <td class="num" style="font-weight:700;">${fmtMoney(g.subtotal)}</td>
+            <td class="num pc-ped-sub-${ctSlug(g.nome)}" style="font-weight:700;">${fmtMoney(g.subtotal)}</td>
             <td></td>
           </tr></tfoot>
         </table>
