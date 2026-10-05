@@ -26231,6 +26231,7 @@ const NOVIDADES = [
       'A ordem das colunas passou a ser sua: arraste o fornecedor — pelo chip lá em cima ou pelo cabeçalho da coluna — e solte em cima de outro pra trocar de lugar.',
       'O botão ⇤ joga o fornecedor direto pra primeira coluna, colada no nome do produto. É o jeito rápido de deixar por perto quem você está cotando agora.',
       'A ordem fica salva no plano, então continua lá quando você voltar. Fornecedor novo entra no fim, em ordem alfabética, sem furar a fila que você montou.',
+      'Tem também o campo "⇤ Trazer fornecedor pra frente": digite "barba", tecle Enter e o Barbarex pula pra primeira coluna. Com 23 fornecedores é mais rápido que achar o chip dele ou arrastar a coluna de longe.',
       'O botão A–Z volta tudo à ordem alfabética.',
       'O filtro de colunas que tinha entrado antes foi retirado — este jeito resolve melhor.'
     ]
@@ -28572,6 +28573,61 @@ function ctTrazerParaFrente(nome){
   showToast(`${nome} agora é a primeira coluna depois do produto.`, 'success');
 }
 
+/* Digitar o nome e ele pular pra primeira coluna. Com 23 fornecedores,
+   procurar o chip certo no meio da lista já é trabalho — escrever "barba"
+   e teclar Enter é mais rápido que qualquer arrasto.
+
+   Casa por nome exato, depois por começo, depois por pedaço no meio. Se o
+   que foi digitado servir pra mais de um, não escolhe no chute: avisa
+   quais são e pede mais uma letra. */
+function ctTrazerPeloNome(valor){
+  const plano = pcPlanoAtual();
+  if(!plano) return;
+  const texto = normalizarBusca(valor || '').trim();
+  if(!texto) return;
+
+  const lista = ctFornecedoresDoPlano(plano);
+  let achados = lista.filter(n => normalizarBusca(n) === texto);
+  if(!achados.length) achados = lista.filter(n => normalizarBusca(n).startsWith(texto));
+  if(!achados.length) achados = lista.filter(n => normalizarBusca(n).includes(texto));
+
+  if(!achados.length){
+    showToast(`Nenhum fornecedor da cotação com "${valor}".`, 'error');
+    return;
+  }
+  if(achados.length > 1){
+    showToast(`"${valor}" serve pra ${achados.length}: ${achados.slice(0,4).join(', ')}${achados.length>4?'…':''}. Escreva mais um pedaço.`, 'error');
+    return;
+  }
+  if(achados[0] === lista[0]){
+    showToast(`${achados[0]} já é a primeira coluna.`, 'success');
+    return;
+  }
+  ctTrazerParaFrente(achados[0]);
+  // a tela se refaz; devolve o cursor pro campo pra emendar o próximo
+  const campo = document.getElementById('ct-trazer');
+  if(campo) campo.focus();
+}
+
+/* Enter aceita pedaço do nome; sair do campo só vale se o nome estiver
+   inteiro (quer dizer, escolheu da lista) — senão, passar o olho pelo
+   campo e clicar fora mexeria na ordem sem querer. */
+function ctTrazerPeloCampo(ev, exigirExato){
+  const campo = document.getElementById('ct-trazer');
+  if(!campo) return;
+  if(ev && ev.key !== 'Enter') return;
+  if(ev) ev.preventDefault();
+  const valor = campo.value;
+  if(!valor.trim()) return;
+  if(exigirExato){
+    const plano = pcPlanoAtual();
+    const exato = plano && ctFornecedoresDoPlano(plano)
+      .some(n => normalizarBusca(n) === normalizarBusca(valor).trim());
+    if(!exato) return;
+  }
+  ctTrazerPeloNome(valor);
+}
+
 function ctOrdemAlfabetica(){
   const plano = pcPlanoAtual();
   if(!plano) return;
@@ -28971,6 +29027,15 @@ function renderCotacaoMatriz(){
           <input type="text" value="${escapeAttr(pcBusca)}" placeholder="digite parte do nome do produto..."
                  onchange="pcBusca=this.value;renderSugestaoCompra();">
         </div>
+        ${fornecedores.length>1 && !travado ? `
+        <div class="field">
+          <label>⇤ Trazer fornecedor pra frente</label>
+          <input type="text" id="ct-trazer" list="ct-dl-fornecedores" autocomplete="off"
+                 placeholder="digite o nome e tecle Enter — ex: barba"
+                 onkeydown="ctTrazerPeloCampo(event)" onchange="ctTrazerPeloCampo(null, true)">
+          <datalist id="ct-dl-fornecedores">${fornecedores.map(n=>`<option value="${escapeAttr(n)}"></option>`).join('')}</datalist>
+          <div class="help-text">Ele vira a primeira coluna, logo depois do produto.</div>
+        </div>` : ''}
       </div>
     </div>`;
 
