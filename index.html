@@ -10862,6 +10862,27 @@ function cardRoteiroParadaAvulsa(p, idx){
     </div>`;
 }
 
+/* O orçamento grava a origem do item como 'forn' ou 'loc'. Partes do
+   roteiro esperavam 'local', e a diferença de três letras fazia o ponto de
+   coleta vindo de um LOCAL DE COMPRA ficar sem botão de endereço e com o
+   pino travado no mapa — sem erro nenhum na tela, só o botão faltando.
+   Daqui pra frente todo mundo pergunta a estas duas funções. */
+function listaDaOrigem(tipo){
+  if(tipo === 'forn') return STATE.fornecedores;
+  if(tipo === 'loc' || tipo === 'local') return STATE.locaisCompra;
+  if(tipo === 'cliente') return STATE.clientes;
+  if(tipo === 'avulsa') return paradasAvulsas();
+  return null;
+}
+
+function nomeDaOrigem(tipo){
+  if(tipo === 'forn') return 'fornecedor';
+  if(tipo === 'loc' || tipo === 'local') return 'local de compra';
+  if(tipo === 'cliente') return 'cliente';
+  if(tipo === 'avulsa') return 'parada';
+  return 'cadastro';
+}
+
 function cadastroDoPontoRoteiro(p){
   if(p.tipo === 'avulsa'){
     const parada = paradasAvulsas().find(x=>x.id===p.id);
@@ -10877,10 +10898,10 @@ function cadastroDoPontoRoteiro(p){
     return c ? { registro:c, rotulo:c.nome, oque:'cliente' } : null;
   }
   const origem = (p.chave||'').split(':')[0];
-  const lista = origem === 'forn' ? STATE.fornecedores : (origem === 'local' ? STATE.locaisCompra : null);
+  const lista = listaDaOrigem(origem);
   if(!lista) return null;
   const r = lista.find(x=>x.id===p.id);
-  return r ? { registro:r, rotulo:r.nome, oque: origem==='forn' ? 'fornecedor' : 'local de compra' } : null;
+  return r ? { registro:r, rotulo:r.nome, oque: nomeDaOrigem(origem) } : null;
 }
 
 /* Ajusta endereço e localização direto do card da parada, sem ir até o
@@ -10889,15 +10910,10 @@ function cadastroDoPontoRoteiro(p){
    Abre o mesmo seletor de mapa do cadastro (busca por nome, pino arrastável,
    endereço editável) e grava no registro de origem. */
 function ajustarEnderecoDaParada(onde, id){
-  const lista = onde === 'cliente' ? STATE.clientes
-              : onde === 'forn'    ? STATE.fornecedores
-              : onde === 'local'   ? STATE.locaisCompra
-              : onde === 'avulsa'  ? paradasAvulsas() : null;
+  const lista = listaDaOrigem(onde);
   const registro = lista && lista.find(x=>x.id===id);
   if(!registro){ showToast('Cadastro não encontrado.', 'error'); return; }
-  const oque = onde === 'cliente' ? 'cliente'
-             : onde === 'forn'    ? 'fornecedor'
-             : onde === 'avulsa'  ? 'parada' : 'local de compra';
+  const oque = nomeDaOrigem(onde);
 
   abrirSeletorMapaEndereco({
     enderecoAtual: registro.endereco || '',
@@ -11261,8 +11277,8 @@ function renderLogistica(){
               <h3 style="margin:2px 0 2px;">📦 ${escapeHtml(p.nome)}</h3>
               <div class="help-text">${escapeHtml(p.endereco||'Endereço não cadastrado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
               ${(()=>{ const origem=(p.chave||'').split(':')[0];
-                 return (origem==='forn'||origem==='local')
-                   ? `<button class="btn btn-sm" style="margin-top:6px;" onclick="ajustarEnderecoDaParada('${origem}','${p.id}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>`
+                 return listaDaOrigem(origem)
+                   ? `<button class="btn btn-sm ${p.lat==null?'btn-primary':''}" style="margin-top:6px;" onclick="ajustarEnderecoDaParada('${origem}','${p.id}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>`
                    : ''; })()}
             </div>
           </div>
@@ -11294,8 +11310,24 @@ function renderLogistica(){
   const blocoBloqueadas = entregasBloqueadas.length ? `
     <div class="card" style="border-left:4px solid var(--negative);margin-top:16px;">
       <h3>⚠️ Entregas sem rota definida</h3>
-      <p class="help-text">Estas entregas têm item(ns) sem origem de coleta escolhida — defina a origem no orçamento pra elas entrarem no roteiro.</p>
-      ${entregasBloqueadas.map(e=>`<div style="padding:6px 0;border-bottom:1px solid var(--border);">${escapeHtml(e.clienteNome)} <button class="btn btn-sm" style="margin-left:8px;" onclick="verDetalheOrcamento('${e.orcamentoId}')">Ver Itens</button></div>`).join('')}
+      <p class="help-text">Estas entregas têm item(ns) sem <strong>origem de coleta</strong> — o sistema não sabe onde buscar a mercadoria, então não consegue montar o caminho até o cliente. Abra o orçamento e escolha de onde sai cada item. O endereço do cliente, se estiver faltando, dá pra definir aqui mesmo.</p>
+      ${entregasBloqueadas.map(e=>{
+        const semOrigem = (e.itens||[]).filter(it=>!it.origemTipo || !it.origemId);
+        return `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:180px;">
+              <strong>${escapeHtml(e.clienteNome)}</strong>
+              <div class="help-text" style="margin:2px 0 0;">
+                ${semOrigem.length ? `falta dizer onde buscar: ${semOrigem.slice(0,4).map(it=>escapeHtml(it.nome)).join(' · ')}${semOrigem.length>4?` e mais ${semOrigem.length-4}`:''}` : 'item sem origem de coleta'}
+              </div>
+            </div>
+            <div class="cell-actions">
+              ${e.clienteId ? `<button class="btn btn-sm ${e.lat==null?'btn-primary':''}" onclick="ajustarEnderecoDaParada('cliente','${e.clienteId}')">📍 ${e.lat==null?'Definir endereço':'Ajustar endereço'}</button>` : ''}
+              <button class="btn btn-sm btn-primary" onclick="verDetalheOrcamento('${e.orcamentoId}')">Definir onde buscar</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
     </div>` : '';
 
   // Visão resumida em tabela — pedida como um jeito mais rápido de ver todas
@@ -26224,6 +26256,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-k',
+    data: '2026-10-05',
+    titulo: 'Conserto: endereço do ponto de coleta que é local de compra',
+    itens: [
+      'Ponto de coleta que vem de um LOCAL DE COMPRA (não de um fornecedor) estava sem o botão de definir/ajustar endereço, e o pino dele no mapa não arrastava. Fornecedor funcionava, local de compra não.',
+      'Era uma diferença de três letras: o orçamento grava a origem como "loc" e o roteiro procurava por "local". Nada dava erro na tela — o botão simplesmente não aparecia.',
+      'Em "Entregas sem rota definida", agora o aviso diz QUAIS itens estão sem origem, e tem o botão de definir o endereço do cliente ali mesmo, além do caminho pro orçamento.'
+    ]
+  },
   {
     id: '2026-10-05-j',
     data: '2026-10-05',
