@@ -10300,6 +10300,23 @@ function distanciaKm(lat1, lng1, lat2, lng2){
    conclui a parada sozinha — quem encerra é a pessoa, no botão.
    ========================================================= */
 
+/* O que a pessoa vai fazer naquela parada. Não é enfeite: é o que o
+   roteiro usa pra saber o que vem antes.
+   - coleta  → está buscando mercadoria
+   - entrega → está levando mercadoria
+   - outra   → banco, contabilidade, cartório: não mexe com mercadoria,
+               então pode cair em qualquer ponto do caminho
+   Parada antiga, criada antes disto existir, é "outra" — era banco e
+   contabilidade que esse recurso nasceu pra resolver. */
+const PAPEL_PARADA = {
+  coleta:  { rotulo:'COLETA',  icone:'📦', cor:'#C98A2C', selo:'selo' },
+  entrega: { rotulo:'ENTREGA', icone:'🏠', cor:'#6B3FA0', selo:'selo selo-entrega' },
+  outra:   { rotulo:'PARADA',  icone:'📌', cor:'#1B6B8A', selo:'selo selo-avulsa' }
+};
+function papelDaParada(p){
+  return PAPEL_PARADA[(p && p.papel) || 'outra'] || PAPEL_PARADA.outra;
+}
+
 function paradasAvulsas(){
   if(!Array.isArray(STATE.paradasAvulsas)) STATE.paradasAvulsas = [];
   return STATE.paradasAvulsas;
@@ -10339,6 +10356,7 @@ function paradasAvulsasParaRoteiro(){
       const local = dadosLocalDaParada(p); // cadastro vinculado manda no endereço
       return {
         tipo: 'avulsa',
+        papel: p.papel || 'outra',
         chave: 'avulsa:' + p.id,
         id: p.id,
         nome: p.nome,
@@ -10453,6 +10471,16 @@ function abrirFormParadaAvulsa(id){
         <div class="field">
           <label>O que é essa parada <span class="req">*</span></label>
           <input type="text" id="pa-nome" value="${parada?escapeAttr(parada.nome):''}" placeholder="Ex: Banco do Brasil — agência centro">
+        </div>
+        <div class="field">
+          <label>O que você vai fazer aí</label>
+          <select id="pa-papel">
+            ${[['outra','📌 Outra coisa — banco, contabilidade, assinar, pagar'],
+               ['coleta','📦 Coletar — buscar mercadoria'],
+               ['entrega','🏠 Entregar — levar mercadoria']]
+              .map(([v,t])=>`<option value="${v}" ${((parada&&parada.papel)||'outra')===v?'selected':''}>${t}</option>`).join('')}
+          </select>
+          <div class="help-text">É isso que o roteiro usa pra saber o que vem antes: não dá pra entregar o que ainda não foi pego, então as paradas de <strong>entrega</strong> só entram depois das de <strong>coleta</strong>. As entregas dos orçamentos seguem a regra delas — assim que a mercadoria está pronta, saem no caminho. Quem não mexe com mercadoria anda livre.</div>
         </div>
         <div class="field">
           <label>Endereço</label>
@@ -10580,6 +10608,7 @@ function abrirFormParadaAvulsa(id){
       if(!anterior) return;
       const local = dadosLocalDaParada(anterior);
       document.getElementById('pa-nome').value = anterior.nome;
+      document.getElementById('pa-papel').value = anterior.papel || 'outra';
       document.getElementById('pa-endereco').value = local.endereco;
       latEscolhida = local.lat; lngEscolhida = local.lng;
       vinculoEscolhido = anterior.vinculo ? {...anterior.vinculo} : null;
@@ -10633,6 +10662,7 @@ function abrirFormParadaAvulsa(id){
     if(!nome){ showToast('Dê um nome pra parada — é o que o funcionário vai ler.', 'error'); return; }
     const dados = {
       nome,
+      papel: document.getElementById('pa-papel').value || 'outra',
       endereco: document.getElementById('pa-endereco').value.trim(),
       lat: latEscolhida,
       lng: lngEscolhida,
@@ -10688,6 +10718,7 @@ function repetirParadaAvulsa(id){
   const nova = {
     id: uid('para'),
     nome: anterior.nome,
+    papel: anterior.papel || 'outra',
     endereco: anterior.endereco || '',
     lat: anterior.lat==null ? null : anterior.lat,
     lng: anterior.lng==null ? null : anterior.lng,
@@ -10751,6 +10782,7 @@ function cardParadasAvulsasLogistica(){
       <tr>
         <td><input type="checkbox" class="logistica-checkbox-avulsa" data-id="${p.id}" ${marcada?'checked':''}></td>
         <td>
+          <span class="badge" style="background:${papelDaParada(p).cor};color:#fff;font-size:10px;" title="Coleta vem antes de entrega no roteiro">${papelDaParada(p).icone} ${papelDaParada(p).rotulo}</span>
           <strong>${escapeHtml(p.nome)}</strong>
           ${local.vinculo ? `<div class="help-text" style="margin:2px 0 0;" title="O endereço vem do cadastro — corrigir lá vale aqui">🔗 ${escapeHtml(local.vinculo.registro.nome)} (${local.vinculo.oque})</div>` : ''}
           ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} tarefa(s) feita(s)</div>` : ''}
@@ -10775,7 +10807,7 @@ function cardParadasAvulsasLogistica(){
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
           <h3 style="margin:0;">📌 Paradas avulsas</h3>
-          <p class="help-text" style="margin:2px 0 0;">Banco, contabilidade, cartório — entram no mesmo roteiro das coletas e entregas, ordenadas por proximidade.</p>
+          <p class="help-text" style="margin:2px 0 0;">Entram no mesmo roteiro das coletas e entregas dos orçamentos. Cada uma diz se é coleta, entrega ou outra coisa (banco, contabilidade) — e o roteiro ordena por proximidade respeitando isso.</p>
         </div>
         <button class="btn btn-primary" onclick="abrirFormParadaAvulsa()">+ Adicionar parada</button>
       </div>
@@ -10808,10 +10840,11 @@ function cardParadasAvulsasLogistica(){
 function cardRoteiroParadaAvulsa(p, idx){
   const parada = paradasAvulsas().find(x=>x.id===p.id);
   const tarefas = (parada && parada.tarefas) || [];
+  const papel = papelDaParada(p);
   return `
-    <div class="card" style="border-left:4px solid #1B6B8A;margin-bottom:10px;">
-      <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · AVULSA</div>
-      <h3 style="margin:2px 0 2px;">📌 ${escapeHtml(p.nome)}</h3>
+    <div class="card" style="border-left:4px solid ${papel.cor};margin-bottom:10px;">
+      <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · ${papel.rotulo}${p.papel==='outra'||!p.papel?' AVULSA':' (avulsa)'}</div>
+      <h3 style="margin:2px 0 2px;">${papel.icone} ${escapeHtml(p.nome)}</h3>
       <div class="help-text">${escapeHtml(p.endereco||'Endereço não informado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
       ${tarefas.length ? `
       <div style="margin-top:8px;">
@@ -10986,8 +11019,9 @@ function calcularRoteiro(entregasParaRoteiro){
   const pontosColeta = computarPontosColeta(entregas);
 
   const coletasPendentes = pontosColeta.map(p=>({...p, tipo:'coleta'}));
-  // Paradas avulsas não dependem de nada e não destravam nada: entram no
-  // mesmo sorteio de proximidade, livres pra cair em qualquer ponto da rota.
+  // Paradas avulsas entram no mesmo sorteio de proximidade. A única amarra
+  // é a óbvia: não dá pra entregar o que ainda não foi pego, então as de
+  // ENTREGA esperam as de COLETA. As de banco/contabilidade andam livres.
   const avulsasPendentes = paradasAvulsasParaRoteiro();
   // cada entrega rastreia quantos itens dela ainda faltam coletar
   const entregasPendentes = entregas.map(e=>({
@@ -11051,7 +11085,14 @@ function calcularRoteiro(entregasParaRoteiro){
   // toda entrega já liberada (itensRestantes vazio)
   while(coletasPendentes.length>0 || avulsasPendentes.length>0 || entregasPendentes.some(e=>e.itensRestantes.size===0)){
     const entregasProntas = entregasPendentes.filter(e=>e.itensRestantes.size===0);
-    const candidatos = [...coletasPendentes, ...avulsasPendentes, ...entregasProntas];
+    // Enquanto sobrar coleta avulsa pendente, as entregas avulsas ficam de
+    // fora dos candidatos. As entregas dos orçamentos não: a mercadoria
+    // delas já está resolvida pela regra própria, então saem no caminho.
+    const faltaColetaAvulsa = avulsasPendentes.some(a=>a.papel==='coleta');
+    const avulsasLiberadas = faltaColetaAvulsa
+      ? avulsasPendentes.filter(a=>a.papel!=='entrega')
+      : avulsasPendentes;
+    const candidatos = [...coletasPendentes, ...avulsasLiberadas, ...entregasProntas];
     if(candidatos.length===0) break; // sobrou só entrega travada por item sem origem — sai do loop, tratada à parte
     const escolhido = popMaisProximo(candidatos);
     if(escolhido.tipo==='coleta'){
@@ -11096,17 +11137,28 @@ function otimizarRoteiro2opt(roteiro){
     }
   });
 
+  // mesma amarra do passo anterior, agora na hora de encurtar o trajeto:
+  // nenhuma reordenação pode jogar uma entrega avulsa antes de uma coleta
+  // avulsa, por mais curto que o caminho fique
+  const totalColetasAvulsas = roteiro.filter(s=>s.tipo==='avulsa' && s.papel==='coleta').length;
+
   function precedenciaValida(ordem){
     const coletadoAteAqui = new Set();
+    let coletasAvulsasFeitas = 0;
     for(const stop of ordem){
       if(stop.tipo==='coleta'){
         coletadoAteAqui.add(stop.chave);
       }else if(stop.tipo==='entrega'){
         const deps = dependenciasPorEntrega.get(stop.orcamentoId);
         if(deps){ for(const dep of deps){ if(!coletadoAteAqui.has(dep)) return false; } }
+      }else if(stop.tipo==='avulsa'){
+        if(stop.papel==='coleta'){
+          coletasAvulsasFeitas++;
+        }else if(stop.papel==='entrega' && coletasAvulsasFeitas < totalColetasAvulsas){
+          return false;
+        }
+        // papel 'outra' (banco, contabilidade): sem amarra nenhuma
       }
-      // parada avulsa não tem precedência nenhuma: pode ficar onde o
-      // trajeto ficar mais curto
     }
     return true;
   }
@@ -11500,11 +11552,12 @@ function gerarPdfRoteiro(){
   const blocosHtml = roteiro.map((p,idx)=>{
     if(p.tipo==='avulsa'){
       const tarefas = (p.tarefas||[]).map(t=>`<span>${t.feita?'☑':'☐'} ${escapeHtml(t.texto)}</span>`).join('');
+      const papel = papelDaParada(p);
       return `
         <div class="parada parada-avulsa">
           <div class="numero">${idx+1}</div>
           <div class="corpo">
-            <div class="linha-topo"><span class="selo selo-avulsa">PARADA</span><h3>📌 ${escapeHtml(p.nome)}</h3></div>
+            <div class="linha-topo"><span class="${papel.selo}">${papel.rotulo}</span><h3>${papel.icone} ${escapeHtml(p.nome)}</h3></div>
             <div class="endereco">${escapeHtml(p.endereco||'Endereço não informado')}</div>
             ${tarefas ? `<div class="itens-3col">${tarefas}</div>` : ''}
           </div>
@@ -11608,7 +11661,8 @@ function copiarRoteiroWhatsApp(){
         linhas.push(`   • ${nome} (${fmtNum(qtd)})`);
       });
     }else if(p.tipo==='avulsa'){
-      linhas.push(`${idx+1}. 📌 *PARADA* — ${p.nome}`);
+      const papel = papelDaParada(p);
+      linhas.push(`${idx+1}. ${papel.icone} *${papel.rotulo}* — ${p.nome}`);
       if(p.endereco) linhas.push(`   ${p.endereco}`);
       (p.tarefas||[]).forEach(t=>{
         linhas.push(`   ${t.feita?'☑':'☐'} ${t.texto}`);
@@ -11698,7 +11752,7 @@ function abrirMapaRoteiro(){
       // origem, então a correção vale pros próximos roteiros também.
       roteiro.forEach((p,idx)=>{
         if(p.lat==null || p.lng==null) return;
-        const cor = p.tipo==='coleta' ? '#C98A2C' : (p.tipo==='avulsa' ? '#1B6B8A' : '#6B3FA0');
+        const cor = p.tipo==='coleta' ? '#C98A2C' : (p.tipo==='avulsa' ? papelDaParada(p).cor : '#6B3FA0');
         const iconeNumerado = L.divIcon({
           className: '',
           html: `<div style="background:${cor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12.5px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${idx+1}</div>`,
@@ -11707,7 +11761,9 @@ function abrirMapaRoteiro(){
         const nomeExibicao = (p.tipo==='coleta' || p.tipo==='avulsa') ? p.nome : p.clienteNome;
         const alvo = cadastroDoPontoRoteiro(p);
         const marcador = L.marker([p.lat,p.lng], {icon: iconeNumerado, draggable: !!alvo}).addTo(mapa);
-        const rotuloTipo = p.tipo==='coleta' ? 'Coleta' : (p.tipo==='avulsa' ? 'Parada avulsa' : 'Entrega');
+        const rotuloTipo = p.tipo==='coleta' ? 'Coleta'
+                         : (p.tipo==='avulsa' ? (papelDaParada(p).rotulo.charAt(0) + papelDaParada(p).rotulo.slice(1).toLowerCase()) + ' avulsa'
+                         : 'Entrega');
         marcador.bindPopup(`<strong>Parada ${idx+1} · ${rotuloTipo}</strong><br>${escapeHtml(nomeExibicao)}`
           + (alvo ? `<br><span style="color:#5B6472;font-size:11.5px;">Arraste o pino para corrigir — salva no cadastro do ${alvo.oque}.</span>` : ''));
         if(alvo){
@@ -26167,6 +26223,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-d',
+    data: '2026-10-05',
+    titulo: 'A parada avulsa diz se é coleta ou entrega',
+    itens: [
+      'Na janela da parada entrou "O que você vai fazer aí": 📦 Coletar, 🏠 Entregar ou 📌 Outra coisa (banco, contabilidade, assinar, pagar).',
+      'O roteiro usa isso na ordem: não dá pra entregar o que ainda não foi pego, então as paradas de ENTREGA só entram depois que todas as de COLETA já foram feitas.',
+      'As entregas dos orçamentos não mudaram: continuam com a regra delas, saindo no caminho assim que a mercadoria daquele pedido já foi coletada.',
+      'Quem não mexe com mercadoria (banco, contabilidade) continua livre pra cair em qualquer ponto do trajeto, onde ficar mais perto.',
+      'A regra vale também na hora de encurtar a rota: nenhuma reordenação joga uma entrega antes da coleta, por mais curto que o caminho fique.',
+      'Cada parada agora aparece com a cor e o selo do que ela é — na tela, no PDF, no WhatsApp e no pino do mapa.'
+    ]
+  },
   {
     id: '2026-10-05-c',
     data: '2026-10-05',
