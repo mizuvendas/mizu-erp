@@ -1593,7 +1593,9 @@ function defaultState(){
     auditoria: [], // { id, dataHora (ISO), tipo, descricao, valor|null } — trilha de auditoria financeira: registra ações que mexem com dinheiro (pagar, receber, cancelar, lançamentos de caixa, fechamentos). Mantém só os 1000 mais recentes — ver registrarAuditoria()
     historicoPrecosCompra: [], // { id, produtoId, produtoNome, fornecedorId, fornecedorNome, custoAnterior, custoNovo, variacaoPct, data, criadoEm } — registrado automaticamente sempre que o custo de compra de um produto muda (edição inline ou formulário). Mantém só os 2000 mais recentes — ver registrarHistoricoPreco()
     config: {
-      impostoPct: 4,
+      impostoPct: 4,      // aliquota efetiva do Simples sobre a venda normal
+      impostoPctST: 2.64, // a mesma venda quando a receita do produto com ST e
+                          // segregada no PGDAS-D e a parcela de ICMS sai da conta
       padraoProdutoTemporario: true, // produto novo entra como TEMPORÁRIO (fase de teste). Viram reais pelo botão na tela de Produtos.
       comissaoPct: 2,
       lojaEndereco: '', lojaLat: null, lojaLng: null, // ponto de partida do Planejador de Rotas — configurável em Logística
@@ -4088,7 +4090,7 @@ function abrirFormProduto(id, onSalvo, opcoes){
             </div>
             <div class="field">
               <label>Marca <span class="req">*</span></label>
-              <input type="text" id="fp-marca" list="dl-marcas" required value="${produto?escapeAttr(produto.marca||''):''}">
+              <input type="text" id="fp-marca" list="dl-marcas" value="${produto?escapeAttr(produto.marca||''):''}">
               <datalist id="dl-marcas">${getMarcasUnicas().map(m=>`<option value="${escapeAttr(m)}">`).join('')}</datalist>
             </div>
             <div class="field">
@@ -4128,7 +4130,7 @@ function abrirFormProduto(id, onSalvo, opcoes){
             <div class="field">
               <label>Unidade de Medida</label>
               <select id="fp-unidade">
-                ${['UN','CX','KG','L','M','PCT','PAR'].map(u=>`<option value="${u}" ${produto&&produto.unidade===u?'selected':''}>${u}</option>`).join('')}
+                ${opcoesUnidade(produto&&produto.unidade).map(u=>`<option value="${u}" ${produto&&produto.unidade===u?'selected':''}>${u}</option>`).join('')}
               </select>
             </div>
             <div class="field">
@@ -4202,6 +4204,15 @@ function abrirFormProduto(id, onSalvo, opcoes){
                   <button type="button" class="btn btn-sm" id="fp-btn-buscar-ncm" style="white-space:nowrap;">🔍 Buscar</button>
                 </div>
                 <div id="fp-ncm-sugestoes" style="margin-top:4px;"></div>
+              </div>
+              <div class="field">
+                <label>Substituição tributária</label>
+                <select id="fp-st-confirmado">
+                  <option value="" ${!produto||produto.stConfirmado==null?'selected':''}>— ainda não confirmado pelo contador —</option>
+                  <option value="sim" ${produto&&produto.stConfirmado===true?'selected':''}>Sim, tem ST (confirmado)</option>
+                  <option value="nao" ${produto&&produto.stConfirmado===false?'selected':''}>Não tem ST (confirmado)</option>
+                </select>
+                <div class="help-text">${produto&&produto.temST?'Nas notas de compra este produto <strong>veio com ST</strong>. ':''}Só marque depois que o contador responder — é o que muda a tributação da nota e o imposto da margem.</div>
               </div>
               <div class="field">
                 <label>CEST</label>
@@ -4332,8 +4343,31 @@ function abrirFormProduto(id, onSalvo, opcoes){
     const marca = document.getElementById('fp-marca').value.trim();
     const custo = parseFloat(document.getElementById('fp-custo').value);
     const precoVenda = parseFloat(document.getElementById('fp-preco').value);
-    if(!nome || !marca || isNaN(custo) || isNaN(precoVenda)){
-      showToast('Preencha nome, marca, custo e preço de venda.', 'error');
+    /* Falta campo? Diga QUAL e leve o cursor até ele. O "required" do
+       navegador fazia isso calado: o botao parecia morto porque o aviso
+       nascia num campo lá em cima, fora da tela. */
+    const obrigatorios = [
+      { ok: !!nome,             id: 'fp-nome',  rotulo: 'nome' },
+      { ok: !isNaN(custo),      id: 'fp-custo', rotulo: 'custo' },
+      { ok: !isNaN(precoVenda), id: 'fp-preco', rotulo: 'preço de venda' }
+    ];
+    /* A marca so e exigida de produto NOVO. Produto que ja existe sem
+       marca (nasceu de uma entrada de nota ou de uma planilha) nao pode
+       ficar preso: ela veio aqui mexer em outra coisa — o ST, por
+       exemplo — e perder a edicao por um campo que nem e dela seria pior
+       que o cadastro continuar incompleto. A lista de Produtos ja avisa
+       quem esta incompleto. */
+    if(!produto) obrigatorios.push({ ok: !!marca, id: 'fp-marca', rotulo: 'marca' });
+    const faltam = obrigatorios.filter(c=>!c.ok);
+    if(faltam.length){
+      showToast('Falta preencher: ' + faltam.map(c=>c.rotulo).join(', ') + '.', 'error');
+      const alvo = document.getElementById(faltam[0].id);
+      if(alvo){
+        const bloco = alvo.closest('details');
+        if(bloco) bloco.open = true;
+        alvo.scrollIntoView({ block:'center', behavior:'smooth' });
+        alvo.focus();
+      }
       return;
     }
     const codigoNF = document.getElementById('fp-codigo-nf').value.trim();
@@ -4362,6 +4396,9 @@ function abrirFormProduto(id, onSalvo, opcoes){
       custo, precoVenda,
       unidade: document.getElementById('fp-unidade').value,
       unidadesPorCaixa: unidadesPorCaixaRaw!=='' ? parseInt(unidadesPorCaixaRaw,10) : null,
+      stConfirmado: (()=>{ const el = document.getElementById('fp-st-confirmado');
+                           const v = el ? el.value : '';
+                           return v==='sim' ? true : (v==='nao' ? false : null); })(),
       estoqueMin: estoqueMinRaw!=='' ? parseFloat(estoqueMinRaw) : null,
       estoqueMax: estoqueMaxRaw!=='' ? parseFloat(estoqueMaxRaw) : null,
       sku: document.getElementById('fp-sku').value.trim(),
@@ -4399,7 +4436,10 @@ function abrirFormProduto(id, onSalvo, opcoes){
       const custoAnterior = produto.custo;
       Object.assign(produto, data);
       registrarHistoricoPreco(produto, custoAnterior);
-      showToast('Produto atualizado.', 'success');
+      // Salvou mesmo sem marca: avisa, uma vez, em vez de deixar ela
+      // descobrir pelo selo de "dados incompletos" na lista depois.
+      showToast(marca ? 'Produto atualizado.' : 'Produto atualizado — ainda sem marca preenchida.',
+                marca ? 'success' : 'info');
     }else{
       data.id = uid('prod');
       data.criadoEm = todayISO();
@@ -8847,13 +8887,26 @@ function removerItemOrcamento(idx){
 
 // Modal de edição completa de um item JÁ no carrinho do orçamento — além do
 // que já dava pra editar direto na tabela (quantidade, preço, origem), aqui
+/* As unidades de medida do sistema, em um lugar so. Antes cada tela
+   tinha a sua lista: a unidade escolhida na entrada da nota podia nao
+   existir no cadastro, e o select simplesmente perdia a escolha sem
+   avisar. Quem recebe uma unidade de fora (importacao, XML) usa
+   opcoesUnidade() para nao descartar o que ja esta gravado. */
+const UNIDADES_PRODUTO = ['UN','CX','FD','PCT','KG','G','L','ML','M','M2','PAR','DZ','SC','GL','RL','KIT'];
+
+function opcoesUnidade(atual){
+  const u = (atual||'').trim();
+  return (u && !UNIDADES_PRODUTO.includes(u)) ? [...UNIDADES_PRODUTO, u] : UNIDADES_PRODUTO;
+}
+const opcoesUnidade2 = opcoesUnidade;
+
 // dá pra ajustar nome, marca, fornecedor, unidade e custo, tudo num só
 // lugar. Vale só pra este orçamento — nunca mexe no cadastro do produto.
 function abrirEditarItemCarrinhoOrcamento(idx){
   const item = carrinhoOrcamentoAtual[idx];
   if(!item) return;
-  const unidadesPadrao = ['UN','CX','KG','L','M','PCT','PAR'];
-  const opcoesUnidade = unidadesPadrao.includes(item.unidade) ? unidadesPadrao : [...unidadesPadrao, item.unidade].filter(Boolean);
+  const unidadesPadrao = UNIDADES_PRODUTO;
+  const opcoesUnidade = opcoesUnidade2(item.unidade);
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -24240,7 +24293,7 @@ async function abrirCancelarNota(chavePronta){
           <label>Nota emitida aqui no Mizu</label>
           <select id="canc-nossa" onchange="nfeUsarNotaNoCancelamento(this.value)">
             <option value="">— digitar os dados de outra nota —</option>
-            ${nossas.map(n=>`<option value="${escapeAttr(n.id)}">${escapeHtml(nfeModeloNome(n.modelo))} nº ${n.numero} · ${escapeHtml(fmtMoney(n.valor||0))} · ${escapeHtml(nomeClientePorId(n.clienteId) || 'sem cliente')}</option>`).join('')}
+            ${nossas.map(n=>`<option value="${escapeAttr(n.id)}">${escapeHtml(nfeModeloNome(n.modelo))} nº ${n.numero} · ${escapeHtml(fmtMoney(n.valor||0))} · ${escapeHtml(((STATE.clientes.find(c=>c.id===n.clienteId)||{}).nome) || 'sem cliente')}</option>`).join('')}
           </select>
           <div class="help-text">Escolhendo aqui, a chave e o protocolo se preenchem sozinhos.</div>
         </div>` : ''}
@@ -26876,6 +26929,23 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-06-c',
+    data: '2026-10-06',
+    titulo: 'A entrada agora fecha a conta inteira: unidade, frete e boleto',
+    itens: [
+      'UNIDADE DE MEDIDA: cada item da entrada tem a sua. Antes o produto nascia sempre em "UN", no código, sem você poder dizer nada — quem vende fardo, saco ou litro ficava com a unidade errada no cadastro e na nota de saída. Agora abre a setinha do item e escolhe. A tela mostra lado a lado a unidade do fornecedor (a da nota) e a sua, que são coisas diferentes.',
+      'E a lista de unidades passou a ser uma só para todo o sistema. Antes a entrada, o cadastro e o orçamento tinham listas diferentes: escolher "FD" num lugar e não existir no outro fazia a escolha desaparecer calada.',
+      'FRETE — este era um erro que custava dinheiro: quando o fornecedor declarava o frete no TOTAL da nota e não distribuía entre os itens, o frete simplesmente não entrava no custo. O preço de venda saía calculado sobre um custo barato demais, e nada na tela avisava. Agora o sistema vê essa diferença e rateia ele mesmo, proporcional ao valor de cada item.',
+      'Frete pago por fora (conhecimento de transporte, ou dinheiro direto pro motorista) tem campo próprio e entra no custo do mesmo jeito.',
+      'E a nota que diz "frete por sua conta" sem trazer valor nenhum agora avisa, em laranja, que o custo está incompleto — em vez de deixar você precificar por cima de um número que está faltando.',
+      'CONFERÊNCIA: a tela soma os itens e compara com o total da nota. Se não fechar, avisa antes de concluir. Custo errado aqui é custo errado em todos os produtos daquela nota de uma vez.',
+      'PAGAMENTO: o XML já traz o carnê do boleto digitado pelo fornecedor — número, vencimento e valor de cada parcela. A tela mostra, e ao concluir a entrada ela oferece lançar tudo em Contas a Pagar com os vencimentos certos. Você confirma antes: se já tinha lançado aquele boleto à mão, não vira conta dobrada. E uma nota já lançada não pode ser lançada de novo.',
+      'A compra de fornecedor agora é uma coisa só: a mercadoria entra no estoque e a conta entra no financeiro, pela mesma tela.',
+      'CORRIGIDO: o campo Marca era obrigatório no cadastro do produto, e produto nascido de entrada de nota nasce sem marca. Resultado: você abria o produto, mudava alguma coisa, clicava em Salvar Alterações e NADA acontecia — o navegador barrava calado. Agora ele diz o que falta e leva o cursor até lá, e produto que já existe sem marca não fica mais preso.',
+      'CORRIGIDO: a tela de cancelar nota quebrava ao abrir, justamente quando já existia nota emitida aqui no Mizu — ou seja, exatamente quando você precisava dela.'
+    ]
+  },
   {
     id: '2026-10-06-b',
     data: '2026-10-06',
@@ -30822,6 +30892,27 @@ function enLerXml(texto, nomeArquivo){
   const emit = dom.getElementsByTagName('emit')[0];
   const ide  = dom.getElementsByTagName('ide')[0];
   const total = dom.getElementsByTagName('ICMSTot')[0];
+  const transp = dom.getElementsByTagName('transp')[0];
+  // modFrete diz QUEM paga o frete. Se nao for o fornecedor, o frete nao
+  // esta nesta nota - e e isso que faz o custo parecer certo e estar errado.
+  const modFrete = transp ? enTexto(transp,'modFrete') : '';
+
+  // As duplicatas sao o carne do boleto, ja dentro do XML.
+  const duplicatas = [];
+  for(const dup of dom.getElementsByTagName('dup')){
+    duplicatas.push({
+      numero: enTexto(dup,'nDup'),
+      vencimento: (enTexto(dup,'dVenc')||'').slice(0,10),
+      valor: enNum(dup,'vDup')
+    });
+  }
+  // a forma de pagamento (pode vir mais de uma; fica a de maior valor)
+  let formaPagamento = '';
+  let maiorPag = -1;
+  for(const det of dom.getElementsByTagName('detPag')){
+    const v = enNum(det,'vPag');
+    if(v > maiorPag){ maiorPag = v; formaPagamento = enTexto(det,'tPag'); }
+  }
 
   const dest = dom.getElementsByTagName('dest')[0];
   const cnpjDest = dest ? enTexto(dest,'CNPJ') : '';
@@ -30874,6 +30965,7 @@ function enLerXml(texto, nomeArquivo){
       produtoId: null,
       acao: null,            // 'vincular' | 'novo' | 'ignorar'
       unidadesPorCaixa: null,
+      unidadeVenda: '',      // vazio = herda do produto casado, ou UN
       nomeProduto: '',
       codigoBarras: '',
       marca: '', categoria: '', linha: '',
@@ -30896,6 +30988,12 @@ function enLerXml(texto, nomeArquivo){
     data: (ide ? enTexto(ide,'dhEmi') : '').slice(0,10),
     valorNota: total ? enNum(total,'vNF') : 0,
     freteNota: total ? enNum(total,'vFrete') : 0,
+    modFrete,
+    fretePorFora: 0,
+    duplicatas,
+    formaPagamento,
+    formaPagamentoTexto: '',
+    despesaId: null,     // preenchido quando ela lanca em Contas a Pagar
     status: 'rascunho',
     criadoEm: new Date().toISOString(),
     itens
@@ -30951,9 +31049,146 @@ function enCustoUnitario(item){
   const un = Number(item.unidadesPorCaixa) || 1;
   const qtd = Number(item.qtdNota) || 0;
   if(qtd <= 0 || un <= 0) return 0;
+  // vFrete e o frete que o fornecedor rateou; freteRateado e o que nos
+  // rateamos (o que ele declarou so no total, mais o pago por fora).
   const totalPago = (item.vProd||0) + (item.vIPI||0) + (item.vICMSST||0)
-                  + (item.vFrete||0) + (item.vSeg||0) + (item.vOutro||0) - (item.vDesc||0);
+                  + (item.vFrete||0) + (item.freteRateado||0)
+                  + (item.vSeg||0) + (item.vOutro||0) - (item.vDesc||0);
   return totalPago / (qtd * un);
+}
+
+/* ---------- conferencia do valor ---------- */
+
+/* Soma o que a nota cobrou, item por item, do jeito que a Receita soma:
+   produtos + IPI + ST + frete + seguro + outras despesas - desconto.
+   Se nao bater com o vNF da propria nota, algo foi lido errado. */
+function enSomaDosItens(e){
+  return (e.itens||[]).reduce((s,it)=>s
+    + (Number(it.vProd)||0) + (Number(it.vIPI)||0) + (Number(it.vICMSST)||0)
+    + (Number(it.vFrete)||0) + (Number(it.vSeg)||0) + (Number(it.vOutro)||0)
+    - (Number(it.vDesc)||0), 0);
+}
+
+/* O frete que o fornecedor rateou ja esta dentro da soma dos itens; o
+   que ele declarou so no total ainda nao. Por isso ele entra aqui. */
+function enConferenciaValor(e){
+  const declarado = Number(e && e.valorNota) || 0;
+  if(declarado <= 0) return null;   // entrada manual sem valor informado
+  const somado = enSomaDosItens(e) + enFreteNaoRateado(e);
+  const diferenca = declarado - somado;
+  return {
+    declarado, somado, diferenca,
+    bate: Math.abs(diferenca) < 0.05
+  };
+}
+
+/* ---------- pagamento ---------- */
+
+/* O codigo tPag do XML. So os que aparecem numa compra de fornecedor;
+   o resto cai em "outros" e ela corrige na tela. */
+const EN_FORMAS_PAGAMENTO = {
+  '01':'Dinheiro', '02':'Cheque', '03':'Cartão de crédito', '04':'Cartão de débito',
+  '05':'Crédito na loja', '10':'Vale alimentação', '11':'Vale refeição', '12':'Vale presente',
+  '13':'Vale combustível', '14':'Duplicata mercantil', '15':'Boleto bancário',
+  '16':'Depósito bancário', '17':'PIX', '18':'Transferência bancária', '19':'Programa de fidelidade',
+  '90':'Sem pagamento', '99':'Outros'
+};
+
+function enNomeFormaPagamento(e){
+  if(!e) return '';
+  if(e.formaPagamentoTexto) return e.formaPagamentoTexto;
+  return EN_FORMAS_PAGAMENTO[e.formaPagamento] || '';
+}
+
+/* As parcelas: o que o XML chama de duplicata. Numero do boleto,
+   vencimento e valor de cada uma - o carne inteiro, ja digitado pelo
+   fornecedor. Nao ha razao para ela redigitar. */
+function enParcelas(e){
+  return (e && Array.isArray(e.duplicatas)) ? e.duplicatas : [];
+}
+
+function enTotalParcelas(e){
+  return enParcelas(e).reduce((s,p)=>s + (Number(p.valor)||0), 0);
+}
+
+/* ---------- frete ---------- */
+
+/* Quem paga o frete, como o XML declara. Importa porque modFrete 1 ou 2
+   significa que o frete NAO esta dentro desta nota - e portanto nao esta
+   no custo, por mais que a conta pareca fechada. */
+const EN_MOD_FRETE = {
+  '0': { nome: 'Por conta do fornecedor (CIF)',  dentroDaNota: true  },
+  '1': { nome: 'Por sua conta (FOB)',            dentroDaNota: false },
+  '2': { nome: 'Por conta de terceiros',         dentroDaNota: false },
+  '3': { nome: 'Transporte próprio do remetente', dentroDaNota: true  },
+  '4': { nome: 'Transporte próprio seu',          dentroDaNota: false },
+  '9': { nome: 'Sem frete',                       dentroDaNota: true  }
+};
+
+function enItensAtivos(e){
+  return (e.itens||[]).filter(it=>it.acao !== 'ignorar');
+}
+
+/* O frete que o fornecedor declarou no total da nota mas NAO distribuiu
+   entre os itens. E a diferenca que estava sendo perdida. */
+function enFreteNaoRateado(e){
+  if(!e) return 0;
+  const noTotal = Number(e.freteNota) || 0;
+  const nosItens = enItensAtivos(e).reduce((s,it)=>s + (Number(it.vFrete)||0), 0);
+  const sobra = noTotal - nosItens;
+  return sobra > 0.009 ? sobra : 0;
+}
+
+/* Tudo que precisa ser dividido por nos: o que o fornecedor nao rateou
+   mais o que ela pagou por fora. */
+function enFreteARatear(e){
+  return enFreteNaoRateado(e) + (Number(e && e.fretePorFora) || 0);
+}
+
+function enFreteTotal(e){
+  if(!e) return 0;
+  const nosItens = enItensAtivos(e).reduce((s,it)=>s + (Number(it.vFrete)||0), 0);
+  return Math.max(Number(e.freteNota)||0, nosItens) + (Number(e && e.fretePorFora) || 0);
+}
+
+/* Grava o rateio em cada item. Fica gravado, em vez de calculado na
+   hora, para que enCustoUnitario continue recebendo so o item - ela
+   mexe nesses numeros a cada tecla e a conta tem de ser barata. */
+function enRecalcularFrete(e){
+  if(!e) return;
+  const aRatear = enFreteARatear(e);
+  const ativos = enItensAtivos(e);
+  const base = ativos.reduce((s,it)=>s + (Number(it.vProd)||0), 0);
+  (e.itens||[]).forEach(it=>{ it.freteRateado = 0; });
+  if(aRatear <= 0 || ativos.length === 0) return;
+  if(base > 0){
+    ativos.forEach(it=>{
+      it.freteRateado = aRatear * ((Number(it.vProd)||0) / base);
+    });
+  }else{
+    // nota sem valor nos itens (entrada manual recem-criada): divide igual,
+    // senao o frete simplesmente desapareceria
+    ativos.forEach(it=>{ it.freteRateado = aRatear / ativos.length; });
+  }
+}
+
+function enSetFretePorFora(entradaId, valor){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  e.fretePorFora = Number(valor) || 0;
+  enRecalcularFrete(e);
+  saveState();
+  renderEntradaNota();
+}
+
+/* A unidade com que ELA vende, que e a que vai para o cadastro e para
+   a nota de saida. A unidade da nota (uCom) e do fornecedor e nunca muda.
+   Ordem: o que ela escolheu > o que o produto casado ja tem > UN. */
+function enUnidadeVenda(item){
+  if(item && (item.unidadeVenda||'').trim()) return item.unidadeVenda.trim();
+  const prod = item && item.produtoId ? STATE.produtos.find(p=>p.id===item.produtoId) : null;
+  if(prod && (prod.unidade||'').trim()) return prod.unidade.trim();
+  return 'UN';
 }
 
 function enUnidadesTotais(item){
@@ -30963,9 +31198,24 @@ function enUnidadesTotais(item){
 /* O imposto de um produto com ST é menor: o ICMS já foi pago antes e sai
    da conta do Simples. Enquanto o contador não confirma quais produtos
    são ST, ela pode simular os dois cenários aqui e ver a diferença. */
-function enImpostoPct(item){
-  if(item.impostoPct != null) return Number(item.impostoPct);
+/* A aliquota do produto com ST so vale quando o contador CONFIRMOU aquele
+   produto. O fornecedor dizer que reteve e indicio; quem decide a tributacao
+   dela e ele. Precificar com 2,64% antes disso e apostar - e se a aposta
+   falhar, a margem fica menor do que ela planejou. */
+function impostoPadrao(){
   return (STATE.config.impostoPct != null) ? Number(STATE.config.impostoPct) : 4;
+}
+function impostoComST(){
+  return (STATE.config.impostoPctST != null) ? Number(STATE.config.impostoPctST) : 2.64;
+}
+function impostoDoProduto(prod){
+  return (prod && prod.stConfirmado === true) ? impostoComST() : impostoPadrao();
+}
+
+function enImpostoPct(item){
+  if(item && item.impostoPct != null) return Number(item.impostoPct);
+  const prod = item && item.produtoId ? STATE.produtos.find(p=>p.id===item.produtoId) : null;
+  return impostoDoProduto(prod);
 }
 
 function enConta(item, precoVenda){
@@ -31127,12 +31377,17 @@ async function enImportarArquivos(files){
           it.marca = achou.produto.marca || '';
           it.categoria = achou.produto.categoria || '';
           it.linha = achou.produto.linha || '';
+          it.unidadeVenda = achou.produto.unidade || '';
         }else{
           it.acao = 'novo';
           it.nomeProduto = it.nomeNaNota;
           it.codigoBarras = it.ean || '';
         }
       });
+
+      // o frete que o fornecedor declarou no total e nao rateou por item
+      // tem de ser rateado agora, antes de qualquer custo aparecer na tela
+      enRecalcularFrete(nota);
 
       entradas().push(nota);
       ok++;
@@ -31163,7 +31418,10 @@ function enApagar(id){
 function enNovaManual(){
   const nota = {
     id: uid('ent'), tipo: 'manual', chave: '', fornecedorNome: '', fornecedorCnpj: '', fornecedorUF: '',
-    numero: '', serie: '', data: todayISO(), valorNota: 0, status: 'rascunho',
+    numero: '', serie: '', data: todayISO(), valorNota: 0,
+    freteNota: 0, modFrete: '', fretePorFora: 0,
+    duplicatas: [], formaPagamento: '', formaPagamentoTexto: '', despesaId: null,
+    status: 'rascunho',
     criadoEm: new Date().toISOString(), itens: []
   };
   entradas().push(nota);
@@ -31179,7 +31437,7 @@ function enAdicionarItemManual(){
     id: uid('eni'), codigoFornecedor:'', nomeNaNota:'', ean:'', ncm:'', cest:'', cfop:'', cst:'', csosn:'', origem:'0',
     unidadeNota:'UN', qtdNota:1, valorUnitNota:0, vProd:0, vDesc:0, vFrete:0, vOutro:0, vSeg:0, vIPI:0,
     vICMSST:0, vICMSSTRet:0, comST:false, sinaisST:[],
-    produtoId:null, acao:'novo', unidadesPorCaixa:1, nomeProduto:'', codigoBarras:'',
+    produtoId:null, acao:'novo', unidadesPorCaixa:1, unidadeVenda:'', nomeProduto:'', codigoBarras:'',
     marca:'', categoria:'', linha:'', precoVenda:null, conferido:false, manual:true
   });
   saveState();
@@ -31214,6 +31472,28 @@ function enCfopEntrada(e){
 function enUnidadePerigosa(it){
   const u = (it.unidadeNota || '').toUpperCase().trim();
   return u !== '' && u !== 'UN' && u !== 'UND' && u !== 'PEC';
+}
+
+/* O que a Receita exige em cada item da nota de saida. Conferir aqui, com o
+   XML do fornecedor na mao, e barato; conferir na hora da venda, com o cliente
+   esperando, e caro - e e quando a gente costuma descobrir. */
+function faltaParaEmitirNota(prod){
+  if(!prod) return ['produto nao cadastrado'];
+  const falta = [];
+  if(!(prod.ncm||'').replace(/\D/g,'')) falta.push('NCM');
+  if(!(prod.unidade||'').trim()) falta.push('unidade');
+  // CSOSN 500 (produto com ST) exige CEST no XML - sem ele a nota e rejeitada
+  if(prod.stConfirmado === true && !(prod.cest||'').replace(/\D/g,'')) falta.push('CEST (exigido para produto com ST)');
+  return falta;
+}
+
+function enHtmlSeloNota(prod){
+  if(!prod) return '';
+  const falta = faltaParaEmitirNota(prod);
+  if(falta.length === 0){
+    return `<span title="Tem tudo que a Receita exige" style="color:var(--positive);font-size:11px;">✓ pronto p/ nota</span>`;
+  }
+  return `<span title="Sem isso a Receita rejeita a nota deste item" style="color:var(--warning);font-size:11px;">⚠ falta ${escapeHtml(falta.join(', '))}</span>`;
 }
 
 function enResolvidos(e){
@@ -31288,6 +31568,8 @@ function enHtmlConferencia(e){
           <input type="date" value="${escapeAttr(e.data)}" onchange="enSetNota('${e.id}','data',this.value)"></div>` : ''}
       </div>
 
+      ${enHtmlNotaEPagamento(e, travado)}
+
       <!-- ---------- o tamanho do trabalho, antes de começar ---------- -->
       <div style="margin:14px 0 8px;">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -31314,13 +31596,13 @@ function enHtmlConferencia(e){
           <thead><tr>
             <th style="width:26px;"></th>
             <th>Item da nota</th>
-            <th class="num">Qtd</th>
+            <th class="num" style="text-align:right;">Qtd</th>
             <th>Produto no sistema</th>
-            <th class="num" title="Quantas unidades de venda vêm em cada embalagem da nota">Fator</th>
-            <th class="num">Entra</th>
-            <th class="num">Custo un.</th>
-            <th class="num">Preço</th>
-            <th class="num">Margem</th>
+            <th class="num" style="text-align:right;" title="Quantas unidades de venda vêm em cada embalagem da nota">Fator</th>
+            <th class="num" style="text-align:right;">Entra</th>
+            <th class="num" style="text-align:right;">Custo un.</th>
+            <th class="num" style="text-align:right;">Preço</th>
+            <th class="num" style="text-align:right;">Margem</th>
             <th style="width:30px;"></th>
           </tr></thead>
           <tbody>
@@ -31330,6 +31612,183 @@ function enHtmlConferencia(e){
       </div>
       ${visiveis.length===0 ? `<div class="help-text" style="margin-top:10px;">Tudo resolvido. Desmarque "ocultar" para rever.</div>` : ''}
     </div>`;
+}
+
+/* O painel do dinheiro da nota: quanto ela custou, quanto de frete tem
+   dentro, e como vai ser paga. Fica no cabecalho porque vale para a nota
+   inteira, nao para um item. */
+function enHtmlNotaEPagamento(e, travado){
+  const conf = enConferenciaValor(e);
+  const mod = EN_MOD_FRETE[e.modFrete];
+  const naoRateado = enFreteNaoRateado(e);
+  const porFora = Number(e.fretePorFora) || 0;
+  const freteTotal = enFreteTotal(e);
+  const parcelas = enParcelas(e);
+  const forma = enNomeFormaPagamento(e);
+  const manual = e.tipo === 'manual';
+
+  // Frete por sua conta e a nota nao traz valor nenhum: o custo esta
+  // incompleto e nada na tela diria isso sozinho.
+  const freteFaltando = mod && !mod.dentroDaNota && freteTotal <= 0;
+
+  return `
+    <details ${(freteFaltando || (conf && !conf.bate) || (manual && !travado)) ? 'open' : ''}
+             style="margin-top:12px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+      <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;">
+        💰 Valor da nota, frete e pagamento
+        <span class="help-text" style="margin:0;font-weight:400;">
+          ${e.valorNota?fmtMoney(e.valorNota):'sem valor informado'}${freteTotal?` · frete ${fmtMoney(freteTotal)}`:''}${forma?` · ${escapeHtml(forma)}`:''}${parcelas.length?` · ${parcelas.length}x`:''}
+        </span>
+        ${freteFaltando?'<span style="color:var(--warning);font-weight:700;"> ⚠ frete</span>':''}
+        ${(conf && !conf.bate)?'<span style="color:var(--warning);font-weight:700;"> ⚠ não fecha</span>':''}
+      </summary>
+
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px;padding-bottom:12px;">
+
+        <!-- ---- o valor ---- -->
+        <div>
+          <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Valor</div>
+          ${manual && !travado
+            ? `<div class="field"><label>Valor total da nota</label>
+                 <input type="number" step="0.01" min="0" value="${e.valorNota||''}"
+                        onchange="enSetValorNota('${e.id}', this.value)"></div>`
+            : `<div style="font-size:13px;display:flex;justify-content:space-between;">
+                 <span class="help-text" style="margin:0;">Total da nota</span><strong>${fmtMoney(e.valorNota||0)}</strong></div>`}
+          <div style="font-size:13px;display:flex;justify-content:space-between;">
+            <span class="help-text" style="margin:0;">Soma dos itens</span><span>${fmtMoney(enSomaDosItens(e))}</span></div>
+          ${conf ? (conf.bate
+            ? `<div style="font-size:12.5px;color:var(--positive);margin-top:4px;">✓ a soma dos itens fecha com o total da nota</div>`
+            : `<div style="font-size:12.5px;color:var(--warning);margin-top:4px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--warning-soft);">
+                 ⚠️ <strong>Diferença de ${fmtMoney(Math.abs(conf.diferenca))}</strong> entre o total da nota e a soma dos itens.
+                 Antes de concluir, confira — se o custo entrar errado aqui, entra errado em todos os produtos desta nota.
+               </div>`) : ''}
+        </div>
+
+        <!-- ---- o frete ---- -->
+        <div>
+          <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Frete</div>
+          <div style="font-size:13px;">
+            ${mod?`<div style="display:flex;justify-content:space-between;"><span class="help-text" style="margin:0;">Quem paga</span><span>${escapeHtml(mod.nome)}</span></div>`:''}
+            <div style="display:flex;justify-content:space-between;">
+              <span class="help-text" style="margin:0;">Rateado pelo fornecedor</span>
+              <span>${fmtMoney(enItensAtivos(e).reduce((s,it)=>s+(Number(it.vFrete)||0),0))}</span></div>
+            ${naoRateado?`<div style="display:flex;justify-content:space-between;">
+              <span class="help-text" style="margin:0;" title="O fornecedor declarou no total da nota mas não distribuiu entre os itens — nós distribuímos">Declarado só no total</span>
+              <span>${fmtMoney(naoRateado)}</span></div>`:''}
+            ${porFora?`<div style="display:flex;justify-content:space-between;">
+              <span class="help-text" style="margin:0;">Pago por fora</span><span>${fmtMoney(porFora)}</span></div>`:''}
+            <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+              <strong>Frete no custo</strong><strong>${fmtMoney(freteTotal)}</strong></div>
+          </div>
+          ${travado?'':`
+          <div class="field" style="margin-top:8px;">
+            <label>Frete pago por fora (R$)</label>
+            <input type="number" step="0.01" min="0" value="${e.fretePorFora||''}"
+                   placeholder="0,00" onchange="enSetFretePorFora('${e.id}', this.value)">
+            <div class="help-text">Conhecimento de transporte, ou o que você pagou direto ao motorista. Entra no custo de cada produto.</div>
+          </div>`}
+          ${freteFaltando?`<div style="margin-top:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--warning-soft);font-size:12.5px;">
+            ⚠️ Esta nota diz <strong>${escapeHtml(mod.nome)}</strong> e não traz valor de frete.
+            Se você pagou frete, informe acima — sem isso o custo de todos estes produtos sai <strong>mais barato do que foi</strong>,
+            e o preço de venda sai junto.
+          </div>`:''}
+          ${enFreteARatear(e)>0?`<div class="help-text" style="margin-top:6px;">
+            ${fmtMoney(enFreteARatear(e))} rateado${porFora?'':' por nós'} entre ${enItensAtivos(e).length} item(ns), proporcional ao valor de cada um.
+          </div>`:''}
+        </div>
+
+        <!-- ---- o pagamento ---- -->
+        <div>
+          <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Pagamento</div>
+          ${travado && !parcelas.length && !forma
+            ? '<div class="help-text">A nota não informou forma de pagamento.</div>'
+            : ''}
+          ${travado
+            ? `${forma?`<div style="font-size:13px;">${escapeHtml(forma)}</div>`:''}`
+            : `<div class="field">
+                 <label>Forma de pagamento</label>
+                 <select onchange="enSetNotaERedesenha('${e.id}','formaPagamento',this.value)">
+                   <option value="">— não informada —</option>
+                   ${Object.entries(EN_FORMAS_PAGAMENTO).map(([k,v])=>`<option value="${k}" ${e.formaPagamento===k?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+                 </select>
+               </div>`}
+          ${parcelas.length ? `
+            <div style="font-size:12.5px;margin-top:6px;">
+              ${parcelas.map((p,i)=>travado
+                ? `<div style="display:flex;justify-content:space-between;gap:8px;">
+                     <span class="help-text" style="margin:0;">${p.numero?escapeHtml(p.numero):(i+1)+'ª'} · ${escapeHtml(enData(p.vencimento)||'sem vencimento')}</span>
+                     <span>${fmtMoney(p.valor)}</span></div>`
+                : `<div style="display:flex;gap:4px;align-items:center;margin-bottom:3px;">
+                     <span class="help-text" style="margin:0;width:22px;flex-shrink:0;">${i+1}ª</span>
+                     <input type="date" value="${escapeAttr(p.vencimento||'')}" style="flex:1;min-width:0;font-size:12px;padding:2px 4px;"
+                            onchange="enSetParcela('${e.id}',${i},'vencimento',this.value)">
+                     <input type="number" step="0.01" min="0" value="${p.valor||''}" style="width:88px;flex-shrink:0;text-align:right;font-size:12px;padding:2px 4px;"
+                            onchange="enSetParcela('${e.id}',${i},'valor',this.value)">
+                     <button class="btn btn-sm" style="padding:1px 5px;flex-shrink:0;" title="tirar esta parcela"
+                             onclick="enRemoverParcela('${e.id}',${i})">✕</button>
+                   </div>`).join('')}
+              <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+                <strong>${parcelas.length} parcela(s)</strong><strong>${fmtMoney(enTotalParcelas(e))}</strong></div>
+            </div>
+            ${Math.abs(enTotalParcelas(e) - (Number(e.valorNota)||0)) > 0.05 && e.valorNota ? `
+              <div class="help-text" style="color:var(--warning);margin-top:4px;">
+                As parcelas somam ${fmtMoney(enTotalParcelas(e))}, diferente do total da nota.
+              </div>` : ''}
+          ` : `<div class="help-text" style="margin-top:6px;">Esta nota não trouxe parcelas (duplicatas).${travado?'':' Você pode adicionar abaixo.'}</div>`}
+          ${travado?'':`<button class="btn btn-sm" style="margin-top:8px;" onclick="enAdicionarParcela('${e.id}')">+ parcela</button>`}
+          ${e.despesaId
+            ? `<div style="margin-top:8px;font-size:12.5px;color:var(--positive);">✓ já lançado em Contas a Pagar</div>`
+            : (travado ? `<button class="btn btn-sm btn-primary" style="margin-top:8px;" onclick="enAbrirLancarDespesa('${e.id}')">💳 Lançar em Contas a Pagar</button>` : '')}
+        </div>
+      </div>
+    </details>`;
+}
+
+function enSetValorNota(entradaId, valor){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  e.valorNota = Number(valor) || 0;
+  saveState();
+  renderEntradaNota();
+}
+
+function enSetNotaERedesenha(entradaId, campo, valor){
+  enSetNota(entradaId, campo, valor);
+  renderEntradaNota();
+}
+
+function enSetParcela(entradaId, idx, campo, valor){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e || !Array.isArray(e.duplicatas) || !e.duplicatas[idx]) return;
+  e.duplicatas[idx][campo] = (campo === 'valor') ? (Number(valor)||0) : valor;
+  saveState();
+  renderEntradaNota();
+}
+
+function enRemoverParcela(entradaId, idx){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e || !Array.isArray(e.duplicatas)) return;
+  e.duplicatas.splice(idx, 1);
+  saveState();
+  renderEntradaNota();
+}
+
+function enAdicionarParcela(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  if(!Array.isArray(e.duplicatas)) e.duplicatas = [];
+  // Sugere o que falta para fechar o valor da nota, com vencimento um mes
+  // depois da ultima parcela - que e como um carne de boleto costuma ser.
+  const falta = Math.max(0, (Number(e.valorNota)||0) - enTotalParcelas(e));
+  const ultima = e.duplicatas[e.duplicatas.length-1];
+  const base = (ultima && ultima.vencimento) ? ultima.vencimento : (e.data || todayISO());
+  e.duplicatas.push({
+    numero: String(e.duplicatas.length + 1),
+    vencimento: addMonths(base, 1),
+    valor: Math.round(falta * 100) / 100
+  });
+  saveState();
+  renderEntradaNota();
 }
 
 function enHtmlLinha(e, it, travado){
@@ -31368,9 +31827,15 @@ function enHtmlLinha(e, it, travado){
           ? `<div style="display:flex;align-items:center;gap:4px;">
                <span title="${escapeAttr(it.casadoPor||'')}">${it.casamentoForte===false?'<span style="color:var(--warning);" title="casou pelo nome — confira">⚠</span> ':''}${escapeHtml(prod.nome)}</span>
              </div>
+             <div>${enHtmlSeloNota(prod)}</div>
              ${travado?'':`<button class="btn btn-sm" style="padding:1px 6px;font-size:11px;margin-top:2px;" onclick="enTrocarProduto('${e.id}','${it.id}')">trocar</button>`}`
           : `${travado?'<span class="help-text">—</span>':`<button class="btn btn-sm" style="padding:2px 8px;" onclick="enTrocarProduto('${e.id}','${it.id}')">🔎 procurar</button>
-             <div style="margin-top:3px;"><input type="text" placeholder="ou cadastrar como..." value="${escapeAttr(it.nomeProduto||'')}" style="font-size:12px;padding:2px 5px;" onchange="enSetItem('${e.id}','${it.id}','nomeProduto',this.value)"></div>`}`}
+             <div style="margin-top:4px;">
+               <div class="help-text" style="margin:0 0 1px;font-size:10.5px;">ou cadastrar com este nome:</div>
+               <input type="text" value="${escapeAttr(it.nomeProduto||'')}" style="font-size:12px;padding:2px 5px;width:100%;"
+                      title="Nome com que o produto vai nascer no seu cadastro. O nome ao lado e o do fornecedor e nao muda."
+                      onchange="enSetItem('${e.id}','${it.id}','nomeProduto',this.value)">
+             </div>`}`}
       </td>
       <td class="num">
         <input type="number" step="1" min="1" value="${it.unidadesPorCaixa||''}" ${travado?'disabled':''}
@@ -31378,7 +31843,7 @@ function enHtmlLinha(e, it, travado){
                title="${perigo?'A nota veio em '+escapeAttr(it.unidadeNota)+' — informe quantas unidades vêm dentro':'unidades por embalagem'}"
                oninput="enMudouUnidades('${e.id}','${it.id}', this.value)">
       </td>
-      <td class="num" id="en-entra-${it.id}">${it.unidadesPorCaixa?fmtNum(enUnidadesTotais(it)):'—'}</td>
+      <td class="num" id="en-entra-${it.id}">${it.unidadesPorCaixa?fmtNum(enUnidadesTotais(it))+' <span class="help-text" style="margin:0;">'+escapeHtml(enUnidadeVenda(it))+'</span>':'—'}</td>
       <td class="num" id="en-custo-${it.id}">${it.unidadesPorCaixa?fmtMoney(conta.custo):'<span class="help-text" style="margin:0;">—</span>'}</td>
       <td class="num">
         <input type="number" step="0.01" min="0" id="en-preco-${it.id}" value="${it.precoVenda ?? ''}" ${travado?'disabled':''}
@@ -31413,6 +31878,13 @@ function enHtmlDetalhe(e, it, travado){
           <div class="field"><label>Código de barras</label>
             <input type="text" value="${escapeAttr(it.codigoBarras || it.ean || '')}" ${travado?'disabled':''}
                    onchange="enSetItem('${e.id}','${it.id}','codigoBarras',this.value)"></div>
+          <div class="field">
+            <label>Unidade de venda</label>
+            <select ${travado?'disabled':''} onchange="enSetItem('${e.id}','${it.id}','unidadeVenda',this.value)">
+              ${opcoesUnidade(enUnidadeVenda(it)).map(u=>`<option value="${u}" ${enUnidadeVenda(it)===u?'selected':''}>${u}</option>`).join('')}
+            </select>
+            <div class="help-text">A nota veio em <strong>${escapeHtml(it.unidadeNota||'—')}</strong> (do fornecedor). Aqui é como <strong>você</strong> vende.</div>
+          </div>
           <div class="field"><label>Marca</label>
             <input type="text" list="en-marcas" value="${escapeAttr(it.marca||'')}" ${travado?'disabled':''}
                    onchange="enSetItem('${e.id}','${it.id}','marca',this.value)"></div>
@@ -31450,8 +31922,8 @@ function enHtmlDetalhe(e, it, travado){
           <label>Imposto a considerar</label>
           <select ${travado?'disabled':''} onchange="enSetImposto('${e.id}','${it.id}', this.value)">
             <option value="" ${it.impostoPct==null?'selected':''}>padrão do sistema (${enImpostoPct({})}%)</option>
-            <option value="4" ${it.impostoPct==4?'selected':''}>4,00% — sem ST</option>
-            <option value="2.64" ${it.impostoPct==2.64?'selected':''}>2,64% — com ST segregada</option>
+            <option value="${impostoPadrao()}" ${it.impostoPct==impostoPadrao()?'selected':''}>${impostoPadrao()}% — sem ST</option>
+            <option value="${impostoComST()}" ${it.impostoPct==impostoComST()?'selected':''}>${impostoComST()}% — com ST segregada</option>
           </select>
         </div>
       </div>
@@ -31555,6 +32027,9 @@ function enSetItem(entradaId, itemId, campo, valor){
     if(!it.codigoBarras) it.codigoBarras = it.ean || '';
   }
   it[campo] = valor;
+  // tirar ou devolver um item muda a base do rateio: o frete que cabia
+  // nele tem de ir para os outros, senao some da conta
+  if(campo === 'acao') enRecalcularFrete(e);
   saveState();
   renderEntradaNota();
 }
@@ -31569,7 +32044,9 @@ function enAtualizarNumeros(e, it){
   const custo = document.getElementById('en-custo-' + it.id);
   if(custo) custo.textContent = it.unidadesPorCaixa ? fmtMoney(enCustoUnitario(it)) : '—';
   const entra = document.getElementById('en-entra-' + it.id);
-  if(entra) entra.textContent = it.unidadesPorCaixa ? fmtNum(enUnidadesTotais(it)) : '—';
+  if(entra) entra.innerHTML = it.unidadesPorCaixa
+    ? fmtNum(enUnidadesTotais(it)) + ' <span class="help-text" style="margin:0;">' + escapeHtml(enUnidadeVenda(it)) + '</span>'
+    : '—';
   const conta = document.getElementById('en-conta-' + it.id);
   if(conta) conta.innerHTML = enHtmlConta(it);
   const linha = document.getElementById('en-linha-' + it.id);
@@ -31762,6 +32239,9 @@ function enConcluir(entradaId){
   const novos = ativos.filter(it=>it.acao === 'novo').length;
   const unidades = ativos.reduce((s,it)=>s + enUnidadesTotais(it), 0);
 
+  // garantia: nenhum caminho chega ao custo gravado sem o frete rateado
+  enRecalcularFrete(e);
+
   const opAtual = enOperacao(e);
   confirmAction('Concluir a entrada',
     `${escapeHtml(opAtual ? opAtual.nome : '')} — ${ativos.length} item(ns), ${fmtNum(unidades)} unidades.`
@@ -31778,7 +32258,7 @@ function enConcluir(entradaId){
           prod = {
             id: uid('prod'),
             nome: (it.nomeProduto || it.nomeNaNota || '').trim(),
-            unidade: 'UN',
+            unidade: enUnidadeVenda(it),
             custo: 0, precoVenda: 0, estoqueAtual: 0,
             temporario: false,
             criadoEm: todayISO()
@@ -31790,14 +32270,22 @@ function enConcluir(entradaId){
         // o que a nota ensinou sobre o produto
         if(it.ncm) prod.ncm = it.ncm;
         if(it.cest) prod.cest = it.cest;
+        // A origem (nacional, importado...) vem no XML e e exigida em toda nota
+        // de saida. Nao gravar deixava tudo como nacional por omissao.
+        if(it.origem !== '' && it.origem != null) prod.origemItem = String(it.origem);
         if(it.codigoBarras) prod.codigoBarras = it.codigoBarras;
         if(it.codigoFornecedor) prod.codigoNF = it.codigoFornecedor;
+        if((it.unidadeVenda||'').trim()) prod.unidade = it.unidadeVenda.trim();
         if(it.marca) prod.marca = it.marca;
         if(it.categoria) prod.categoria = it.categoria;
         if(it.linha) prod.linha = it.linha;
         if(e.fornecedorNome) prod.fornecedor = e.fornecedorNome;
         prod.unidadesPorCaixa = Number(it.unidadesPorCaixa) || 1;
+        // "temST" e o que os FORNECEDORES praticam - informacao, muda a cada
+        // nota. "stConfirmado" e o que o CONTADOR disse, e esse manda: entrada
+        // nenhuma sobrescreve, e so ele muda a tributacao.
         prod.temST = !!it.comST;
+        if(prod.stConfirmado === undefined) prod.stConfirmado = null;
         if(it.impostoPct != null) prod.impostoPct = it.impostoPct;
 
         // A operação decide o que a entrada faz: bonificação entra sem custo
@@ -31816,10 +32304,149 @@ function enConcluir(entradaId){
       e.status = 'concluida';
       e.concluidaEm = new Date().toISOString();
       saveState();
-      entradaAtualId = null;
       renderEntradaNota();
       showToast('Entrada concluída. Estoque e custos atualizados.', 'success');
+      // A mercadoria entrou; falta o dinheiro sair. Ela confirma, porque
+      // lancar automatico duplicaria um boleto ja lancado a mao.
+      if(!e.despesaId && enParcelasParaDespesa(e).length > 0){
+        enAbrirLancarDespesa(e.id);
+      }else{
+        entradaAtualId = null;
+        renderEntradaNota();
+      }
     }, 'Concluir');
+}
+
+/* ===========================================================
+   DA ENTRADA PARA CONTAS A PAGAR
+
+   A nota de compra e duas coisas ao mesmo tempo: mercadoria que
+   entra no estoque e dinheiro que sai do caixa. O sistema ja tratava
+   a primeira; a segunda ela lancava de novo, a mao, em outra tela —
+   e o XML ja traz o carne do boleto digitado pelo fornecedor.
+
+   Ela confirma antes de lancar, de proposito: se o boleto ja foi
+   lancado a mao, lancar automatico faria a conta aparecer duas vezes
+   no financeiro dela, o que e pior que nao lancar.
+   =========================================================== */
+
+function enDescricaoDespesa(e){
+  const quem = e.fornecedorNome || 'fornecedor';
+  return e.numero ? `NF ${e.numero} — ${quem}` : `Compra — ${quem}`;
+}
+
+/* As parcelas que vao virar a despesa. Sem duplicata na nota, vira uma
+   parcela unica no valor da nota — a vista ou com o vencimento que ela
+   puser na tela. */
+function enParcelasParaDespesa(e){
+  const p = enParcelas(e).filter(x=>(Number(x.valor)||0) > 0);
+  if(p.length) return p.map(x=>({ vencimento: x.vencimento || e.data || todayISO(), valor: Number(x.valor)||0 }));
+  const total = Number(e.valorNota) || 0;
+  if(total <= 0) return [];
+  return [{ vencimento: e.data || todayISO(), valor: total }];
+}
+
+function enAbrirLancarDespesa(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  if(e.despesaId){
+    showToast('Esta nota já foi lançada em Contas a Pagar.', 'error');
+    return;
+  }
+  const parcelas = enParcelasParaDespesa(e);
+  if(parcelas.length === 0){
+    showToast('Informe o valor da nota (ou as parcelas) antes de lançar a despesa.', 'error');
+    return;
+  }
+  const total = parcelas.reduce((s,p)=>s + p.valor, 0);
+  const forma = enNomeFormaPagamento(e);
+
+  // Se ja existe uma despesa parecida, avisa: e exatamente o caso de
+  // boleto lancado a mao antes de dar entrada na nota.
+  const parecida = (STATE.despesas||[]).find(d=>{
+    if((d.descricao||'').trim() === enDescricaoDespesa(e).trim()) return true;
+    const t = (d.parcelasDetalhe||[]).reduce((s,p)=>s+(Number(p.valor)||0),0);
+    return (d.categoria||'')==='Fornecedor' && Math.abs(t - total) < 0.05;
+  });
+
+  document.getElementById('modal-en-despesa')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-en-despesa';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px,94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💳</div>
+        <div>
+          <h3>Lançar em Contas a Pagar</h3>
+          <div class="sub">${escapeHtml(enDescricaoDespesa(e))}</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        ${parecida ? `<div style="padding:8px 10px;border-radius:var(--radius-sm);background:var(--warning-soft);font-size:13px;margin-bottom:10px;">
+          ⚠️ Já existe uma despesa parecida: <strong>${escapeHtml(parecida.descricao||'')}</strong>.
+          Se for o mesmo boleto que você já lançou à mão, não lance de novo — ficaria contado duas vezes.
+        </div>` : ''}
+        <div class="form-grid">
+          <div class="field field-full">
+            <label>Descrição</label>
+            <input type="text" id="end-descricao" value="${escapeAttr(enDescricaoDespesa(e))}">
+          </div>
+          <div class="field">
+            <label>Categoria</label>
+            <input type="text" id="end-categoria" list="end-categorias" value="Fornecedor">
+            <datalist id="end-categorias">
+              ${['Fornecedor','Aluguel','Energia','Água','Imposto','Outros'].map(c=>`<option value="${c}">`).join('')}
+            </datalist>
+          </div>
+          <div class="field">
+            <label>Forma</label>
+            <input type="text" id="end-forma" value="${escapeAttr(forma)}" placeholder="boleto, PIX...">
+          </div>
+        </div>
+        <div style="margin-top:10px;font-weight:700;font-size:12.5px;">Parcelas</div>
+        <div style="font-size:13px;">
+          ${parcelas.map((p,i)=>`<div style="display:flex;justify-content:space-between;gap:8px;padding:2px 0;">
+            <span class="help-text" style="margin:0;">${i+1}ª · ${escapeHtml(enData(p.vencimento)||'—')}</span>
+            <span>${fmtMoney(p.valor)}</span></div>`).join('')}
+          <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+            <strong>Total</strong><strong>${fmtMoney(total)}</strong></div>
+        </div>
+        <div class="help-text" style="margin-top:8px;">
+          Para mudar vencimento ou valor, feche aqui e ajuste as parcelas no painel
+          "Valor da nota, frete e pagamento" da entrada.
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn" id="end-cancelar">Não lançar</button>
+        <button type="button" class="btn btn-primary" id="end-confirmar">✓ Lançar ${parcelas.length} parcela(s)</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('end-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('end-confirmar').addEventListener('click', ()=>{
+    const despesa = {
+      id: uid('desp'),
+      descricao: document.getElementById('end-descricao').value.trim() || enDescricaoDespesa(e),
+      categoria: document.getElementById('end-categoria').value.trim() || 'Fornecedor',
+      tipo: 'boleto',
+      formaPagamento: document.getElementById('end-forma').value.trim(),
+      // de onde veio, para dar para voltar da despesa para a nota
+      entradaId: e.id,
+      notaChave: e.chave || '',
+      parcelasDetalhe: parcelas.map(p=>({
+        vencimento: p.vencimento, valor: p.valor, pago:false, dataPagamento:'', precisaRevisao:false
+      })),
+      repeticaoIlimitada: false,
+      criadoEm: todayISO()
+    };
+    STATE.despesas.push(despesa);
+    e.despesaId = despesa.id;
+    saveState();
+    modal.remove();
+    renderEntradaNota();
+    showToast(`Lançado em Contas a Pagar: ${despesa.parcelasDetalhe.length} parcela(s).`, 'success');
+  });
 }
 
 RENDERERS['entrada-nota'] = renderEntradaNota;
