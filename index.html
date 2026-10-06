@@ -24610,7 +24610,7 @@ async function stBuscar(){
   const prog = document.getElementById('st-progresso');
   if(btn){ btn.disabled = true; btn.textContent = 'Buscando...'; }
 
-  let paginas = 0;
+  let paginas = 0, recebidos = 0, descartados = 0;
   const LIMITE_PAGINAS = 40; // trava de segurança: 40 x 50 = 2000 documentos
   try{
     while(paginas < LIMITE_PAGINAS){
@@ -24629,12 +24629,25 @@ async function stBuscar(){
       paginas++;
       stRenderizar();
 
-      if(prog) prog.innerHTML = `Lidas ${est.notas} nota(s). Documento ${est.ultNSU} de ${est.maxNSU}.`;
+      // Contar o que a Receita MANDOU, não só o que conseguimos ler: já houve
+      // um defeito em que todo documento era descartado em silêncio e a tela
+      // dizia "0 notas" como se não existisse nada do lado de lá.
+      recebidos += (r.docZipRecebidos || 0);
+      descartados += (r.docZipDescartados || 0);
+      if(prog) prog.innerHTML = `Lidas ${est.notas} nota(s) de ${recebidos} documento(s). Posição ${est.ultNSU} de ${est.maxNSU}.`;
 
       // PARAR quando a Receita diz que acabou é obrigatório: insistir depois
       // disso é "consumo indevido" e ela bloqueia o CNPJ por uma hora.
       if(r.acabou){
-        if(prog) prog.innerHTML = `✅ Fim do histórico disponível. ${est.notas} nota(s) lida(s), ${Object.keys(est.porNcm).length} produto(s) diferentes.`;
+        if(prog){
+          if(recebidos === 0){
+            prog.innerHTML = `✅ Fim do histórico. A Receita <strong>não tinha nenhum documento</strong> para este CNPJ nessa consulta — não é falha do sistema.`;
+          }else if(descartados > 0){
+            prog.innerHTML = `⚠️ Fim do histórico. A Receita mandou ${recebidos} documento(s), mas ${descartados} não puderam ser lidos. ${est.notas} nota(s) aproveitada(s).`;
+          }else{
+            prog.innerHTML = `✅ Fim do histórico disponível. ${recebidos} documento(s), ${est.notas} nota(s) com itens, ${Object.keys(est.porNcm).length} produto(s) diferentes.`;
+          }
+        }
         break;
       }
     }
