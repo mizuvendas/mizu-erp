@@ -8324,6 +8324,7 @@ function renderOrcamentos(){
         </label>
         <button class="btn btn-sm" onclick="abrirConfigNfe()" style="margin-bottom:2px;" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
         <button class="btn btn-sm" onclick="abrirCancelarNota()" style="margin-bottom:2px;" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
+        <button class="btn btn-sm" onclick="abrirAnaliseST()" style="margin-bottom:2px;" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -24425,6 +24426,305 @@ async function nfeEnviarCancelamento(){
   }
 }
 
+/* =========================================================
+   NOTAS DE COMPRA: DESCOBRIR QUEM TEM SUBSTITUIÇÃO TRIBUTÁRIA
+
+   A pergunta "quais dos meus produtos têm ST?" não se responde com
+   lista genérica da internet: o que vale é o que os fornecedores
+   efetivamente praticam NOS PRODUTOS QUE ELA COMPRA. E isso está em
+   campos estruturados do XML da nota de entrada — CST, CSOSN, CFOP,
+   CEST, ICMS-ST — então a leitura é determinística.
+
+   Esta tela baixa essas notas da Receita (serviço de distribuição,
+   usando o certificado que já está no servidor) e agrupa por NCM, que
+   é como o contador responde.
+
+   O que ela NÃO é: autoridade. Fornecedor erra, e produto que é ST em
+   Goiás pode chegar sem retenção — aí a obrigação passa pra Mizu, na
+   entrada. Isso está dito na tela, não só aqui.
+   ========================================================= */
+
+function stEstado(){
+  if(!STATE.analiseST){
+    STATE.analiseST = { ultNSU:0, maxNSU:0, notas:0, resumos:0, atualizadoEm:null, porNcm:{} };
+  }
+  if(!STATE.analiseST.porNcm) STATE.analiseST.porNcm = {};
+  return STATE.analiseST;
+}
+
+/* Guardamos o AGREGADO, não as notas inteiras: o navegador tem alguns
+   megabytes de espaço, e um ano de XMLs não cabe. O que interessa aqui
+   cabe numa linha por NCM. */
+function stAbsorverDocumentos(documentos){
+  const est = stEstado();
+  (documentos||[]).forEach(doc=>{
+    if(doc.tipo === 'resumo'){ est.resumos++; return; }
+    if(doc.tipo !== 'nota' || !doc.temItens) return;
+    est.notas++;
+    const fornecedor = doc.emitenteNome || doc.emitenteCnpj || '(sem nome)';
+    (doc.itens||[]).forEach(it=>{
+      const ncm = (it.ncm||'').trim() || 'sem-ncm';
+      if(!est.porNcm[ncm]){
+        est.porNcm[ncm] = { ncm, cest:'', nomes:[], itens:0, comST:0, semST:0, fornecedores:{}, sinais:[] };
+      }
+      const g = est.porNcm[ncm];
+      g.itens++;
+      if(it.comST) g.comST++; else g.semST++;
+      if(it.cest && !g.cest) g.cest = it.cest;
+      const nome = (it.nome||'').trim();
+      if(nome && g.nomes.length < 5 && !g.nomes.includes(nome)) g.nomes.push(nome);
+      if(!g.fornecedores[fornecedor]) g.fornecedores[fornecedor] = { comST:0, semST:0 };
+      if(it.comST) g.fornecedores[fornecedor].comST++; else g.fornecedores[fornecedor].semST++;
+      (it.sinaisST||[]).forEach(s=>{ if(!g.sinais.includes(s)) g.sinais.push(s); });
+    });
+  });
+  est.atualizadoEm = new Date().toISOString();
+}
+
+/* Três conclusões possíveis, e a terceira é a interessante: quando dois
+   fornecedores tratam o MESMO NCM de formas diferentes, alguém está
+   errado — e é exatamente isso que o contador precisa olhar. */
+function stConclusao(g){
+  if(g.comST > 0 && g.semST === 0) return { rotulo:'sempre com ST', cor:'var(--warning)', peso:3 };
+  if(g.comST === 0 && g.semST > 0) return { rotulo:'nunca com ST', cor:'var(--positive)', peso:1 };
+  return { rotulo:'DIVERGENTE', cor:'var(--negative, #B02A37)', peso:4 };
+}
+
+function stLinhasOrdenadas(){
+  const est = stEstado();
+  return Object.values(est.porNcm).sort((a,b)=>{
+    const pa = stConclusao(a).peso, pb = stConclusao(b).peso;
+    if(pa !== pb) return pb - pa;          // divergentes primeiro, depois os com ST
+    return b.itens - a.itens;              // dentro do grupo, o mais comprado
+  });
+}
+
+async function abrirAnaliseST(){
+  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
+  document.getElementById('modal-analise-st')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-analise-st';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(980px, 96vw);max-height:92vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📥</div>
+        <div>
+          <h3>Notas de compra — quem tem substituição tributária</h3>
+          <div class="sub">Lido das notas que os seus fornecedores emitiram para a Mizu</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-analise-st').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">
+          O sistema baixa da Receita as notas emitidas <strong>contra o seu CNPJ</strong> e lê, item por item,
+          como cada fornecedor classificou o produto. São campos estruturados do XML — não é chute.
+        </p>
+        <div id="st-acoes" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;"></div>
+        <div id="st-progresso" class="help-text" style="margin:0 0 12px;"></div>
+        <div id="st-conteudo"></div>
+        <div class="help-text" style="margin-top:16px;padding:10px;border-radius:var(--radius-sm);background:var(--warning-soft);">
+          ⚠️ <strong>Isto é evidência, não decisão.</strong> Um fornecedor pode classificar errado, e produto
+          que é ST em Goiás pode chegar <em>sem</em> retenção — nesse caso a obrigação de recolher passa pra
+          Mizu, na entrada. Use esta lista para o contador confirmar, não no lugar dele.
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  stRenderizar();
+}
+
+function stRenderizar(){
+  const est = stEstado();
+  const acoes = document.getElementById('st-acoes');
+  const box = document.getElementById('st-conteudo');
+  if(!acoes || !box) return;
+
+  const temDados = Object.keys(est.porNcm).length > 0;
+  acoes.innerHTML = `
+    <button class="btn btn-primary" id="st-btn-buscar" onclick="stBuscar()">
+      ${est.ultNSU > 0 ? '🔄 Buscar notas novas' : '📥 Buscar notas na Receita'}
+    </button>
+    ${temDados ? `<button class="btn" onclick="exportarAnaliseSTExcel()">⬇ Planilha para o contador</button>` : ''}
+    ${temDados ? `<button class="btn btn-sm" onclick="stLimpar()">Limpar e recomeçar</button>` : ''}
+    ${est.atualizadoEm ? `<span class="help-text" style="margin:0;">última busca: ${escapeHtml(new Date(est.atualizadoEm).toLocaleString('pt-BR'))}</span>` : ''}`;
+
+  if(!temDados){
+    box.innerHTML = `<div class="empty-state"><div class="ic">📥</div>
+      <p>Nenhuma nota de compra lida ainda. Clique em "Buscar notas na Receita" — a primeira busca
+      pode demorar alguns minutos, porque ela percorre todo o histórico disponível.</p></div>`;
+    return;
+  }
+
+  const linhas = stLinhasOrdenadas();
+  const divergentes = linhas.filter(g=>stConclusao(g).peso===4).length;
+  const comST = linhas.filter(g=>stConclusao(g).peso===3).length;
+
+  box.innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+      ${stCartao('Produtos diferentes', linhas.length, 'var(--ink)')}
+      ${stCartao('Sempre com ST', comST, 'var(--warning)')}
+      ${stCartao('Divergentes', divergentes, 'var(--negative, #B02A37)')}
+      ${stCartao('Notas lidas', est.notas, 'var(--ink-soft)')}
+    </div>
+    ${est.resumos > 0 ? `<div class="help-text" style="margin:0 0 10px;padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);">
+      ${est.resumos} nota(s) vieram só como <strong>resumo</strong>, sem os itens — a Receita só entrega o XML
+      completo por um tempo. Essas não entram na análise; os XMLs delas estão com os fornecedores.
+    </div>` : ''}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>NCM</th><th>Produtos</th><th class="num">Compras</th>
+          <th class="num">Com ST</th><th class="num">Sem ST</th><th>Conclusão</th><th>Sinais encontrados</th>
+        </tr></thead>
+        <tbody>${linhas.map(g=>{
+          const c = stConclusao(g);
+          return `<tr>
+            <td><strong>${escapeHtml(g.ncm)}</strong>${g.cest?`<div class="help-text" style="margin:0;">CEST ${escapeHtml(g.cest)}</div>`:''}</td>
+            <td>${g.nomes.map(n=>escapeHtml(n)).join('<br>')}</td>
+            <td class="num">${g.itens}</td>
+            <td class="num">${g.comST}</td>
+            <td class="num">${g.semST}</td>
+            <td><strong style="color:${c.cor};">${c.rotulo}</strong>
+                ${c.peso===4?`<div class="help-text" style="margin:0;">fornecedores discordam</div>`:''}</td>
+            <td class="help-text" style="margin:0;">${g.sinais.map(s=>escapeHtml(s)).join('<br>') || '—'}</td>
+          </tr>`;
+        }).join('')}</tbody>
+      </table>
+    </div>`;
+}
+
+function stCartao(titulo, valor, cor){
+  return `<div style="flex:1;min-width:130px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);">
+    <div class="help-text" style="margin:0;">${escapeHtml(titulo)}</div>
+    <div style="font-size:22px;font-weight:700;color:${cor};">${valor}</div>
+  </div>`;
+}
+
+/* O laço fica aqui, não no servidor: cada chamada à Receita demora, e uma
+   requisição longa demais morre no tempo limite. Aqui dá pra mostrar o
+   progresso e parar na hora certa. */
+async function stBuscar(){
+  const est = stEstado();
+  const btn = document.getElementById('st-btn-buscar');
+  const prog = document.getElementById('st-progresso');
+  if(btn){ btn.disabled = true; btn.textContent = 'Buscando...'; }
+
+  let paginas = 0;
+  const LIMITE_PAGINAS = 40; // trava de segurança: 40 x 50 = 2000 documentos
+  try{
+    while(paginas < LIMITE_PAGINAS){
+      if(prog) prog.innerHTML = `Consultando a Receita... página ${paginas+1}. A primeira chamada do dia pode levar até 1 minuto.`;
+      const r = await nfeChamar('/recebidas', { ultNSU: est.ultNSU || 0 });
+
+      if(!r.ok){
+        if(prog) prog.innerHTML = `<span style="color:var(--negative,#B02A37);">A Receita respondeu ${escapeHtml(r.codigoStatus||'?')}: ${escapeHtml(r.mensagem||'')}</span>`;
+        break;
+      }
+
+      stAbsorverDocumentos(r.documentos);
+      est.ultNSU = r.ultNSU || est.ultNSU;
+      est.maxNSU = r.maxNSU || est.maxNSU;
+      saveState();
+      paginas++;
+      stRenderizar();
+
+      if(prog) prog.innerHTML = `Lidas ${est.notas} nota(s). Documento ${est.ultNSU} de ${est.maxNSU}.`;
+
+      // PARAR quando a Receita diz que acabou é obrigatório: insistir depois
+      // disso é "consumo indevido" e ela bloqueia o CNPJ por uma hora.
+      if(r.acabou){
+        if(prog) prog.innerHTML = `✅ Fim do histórico disponível. ${est.notas} nota(s) lida(s), ${Object.keys(est.porNcm).length} produto(s) diferentes.`;
+        break;
+      }
+    }
+    if(paginas >= LIMITE_PAGINAS && prog){
+      prog.innerHTML = `Parei em ${paginas} páginas para não sobrecarregar. Clique de novo para continuar de onde parou.`;
+    }
+  }catch(e){
+    console.error(e);
+    if(prog) prog.innerHTML = `<span style="color:var(--negative,#B02A37);">Não consegui buscar: ${escapeHtml(e.message)}</span>`;
+  }finally{
+    if(btn){ btn.disabled = false; }
+    stRenderizar();
+  }
+}
+
+function stLimpar(){
+  confirmAction('Limpar a análise',
+    'Isso apaga a leitura feita até aqui e a próxima busca recomeça do início do histórico. As notas na Receita não são afetadas.',
+    ()=>{
+      STATE.analiseST = { ultNSU:0, maxNSU:0, notas:0, resumos:0, atualizadoEm:null, porNcm:{} };
+      saveState();
+      stRenderizar();
+    }, 'Limpar');
+}
+
+/* A planilha é o entregável de verdade: é ela que vai pro contador, com uma
+   coluna vazia pra ele marcar. Sem isso, a conversa volta a ser "me diz quais
+   produtos têm ST" — a pergunta que ninguém consegue responder de cabeça. */
+async function exportarAnaliseSTExcel(){
+  const linhas = stLinhasOrdenadas();
+  if(linhas.length === 0){ showToast('Nada para exportar ainda.', 'error'); return; }
+  showToast('Montando a planilha...', 'info');
+  try{
+    // carregarExcelJs() devolve true/false e deixa ExcelJS no escopo global —
+    // atribuir o retorno a uma variavel de mesmo nome esconderia a biblioteca.
+    if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.', 'error'); return; }
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'Mizu Materiais de Limpeza';
+    const ws = wb.addWorksheet('Produtos comprados');
+
+    ws.mergeCells('A1:H1');
+    ws.getCell('A1').value = 'Produtos comprados — classificação de ST pelos fornecedores';
+    ws.getCell('A1').font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+    ws.mergeCells('A2:H2');
+    ws.getCell('A2').value = 'Lido dos XMLs das notas de entrada. "Com ST" = o fornecedor marcou CST 10/30/60/70, '
+      + 'CSOSN 201/202/203/500, CFOP de ST ou destacou ICMS-ST. Última coluna para o contador preencher.';
+    ws.getCell('A2').font = { size:10, color:{argb:'FF'+COR.cinza} };
+    ws.getCell('A2').alignment = { wrapText:true };
+    ws.getRow(2).height = 30;
+
+    const cab = ['NCM','CEST','Produtos (como vêm na nota)','Compras','Com ST','Sem ST','Conclusão','TEM ST? (contador)'];
+    const linhaCab = ws.addRow([]);
+    ws.addRow(cab);
+    const rc = ws.lastRow;
+    rc.eachCell(c=>{
+      c.font = { bold:true, color:{argb:'FFFFFFFF'} };
+      c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} };
+      c.alignment = { vertical:'middle', wrapText:true };
+    });
+
+    linhas.forEach(g=>{
+      const c = stConclusao(g);
+      const r = ws.addRow([
+        g.ncm, g.cest || '', g.nomes.join(' · '),
+        g.itens, g.comST, g.semST, c.rotulo, ''
+      ]);
+      if(c.peso === 4){
+        r.eachCell(cel=>{ cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.vermelhoFraco} }; });
+      }else if(c.peso === 3){
+        r.eachCell(cel=>{ cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.ambarFraco} }; });
+      }
+      // a coluna do contador fica destacada, pra ele saber onde escrever
+      r.getCell(8).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FFFFFF00'} };
+      r.getCell(8).border = { top:{style:'thin'}, left:{style:'thin'}, bottom:{style:'thin'}, right:{style:'thin'} };
+    });
+
+    ws.columns = [
+      {width:14},{width:12},{width:46},{width:10},{width:10},{width:10},{width:18},{width:20}
+    ];
+    ws.views = [{ state:'frozen', ySplit: linhaCab.number + 1 }];
+
+    const buffer = await wb.xlsx.writeBuffer();
+    baixarArquivo(buffer, `produtos-st-${todayISO()}.xlsx`);
+    showToast('Planilha pronta.', 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui montar a planilha: ' + e.message, 'error');
+  }
+}
+
 function abrirConfigNfe(){
   const c = nfeCfg();
   const pastaAtual = STATE.config.nfePastaNome || '';
@@ -26538,6 +26838,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-06-a',
+    data: '2026-10-06',
+    titulo: 'Descobrir quais produtos têm substituição tributária',
+    itens: [
+      'Entrou o botão "📥 Notas de Compra (ST)", na tela de Orçamentos. Ele baixa da Receita as notas que os seus FORNECEDORES emitiram para a Mizu e lê, item por item, como cada um classificou o produto.',
+      'Por que isso e não uma lista da internet: a pergunta "quais dos meus produtos têm ST?" se responde melhor pelo que o mercado efetivamente pratica NOS SEUS produtos. E está em campos estruturados do XML (CST, CSOSN, CFOP, CEST, ICMS-ST) — é leitura, não chute.',
+      'O resultado vem agrupado por NCM, que é como o contador responde, com três conclusões: sempre com ST, nunca com ST, e DIVERGENTE — quando dois fornecedores tratam o mesmo produto de formas diferentes. Essa terceira é a mais útil: alguém está errado, e é ali que vale olhar.',
+      'O botão "Planilha para o contador" gera um Excel com uma coluna amarela vazia para ele marcar. Assim nenhum produto fica implícito, e a responsabilidade fica registrada do lado dele.',
+      'A busca para sozinha quando chega ao fim do histórico. Isso é de propósito: insistir depois disso faz a Receita bloquear o CNPJ por uma hora.',
+      'Um aviso que fica na tela: isto é evidência, não decisão. Fornecedor erra, e produto que é ST em Goiás pode chegar sem retenção — nesse caso a obrigação de recolher passa para a Mizu, na entrada.'
+    ]
+  },
   {
     id: '2026-10-05-l',
     data: '2026-10-05',
