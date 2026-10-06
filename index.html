@@ -8323,6 +8323,7 @@ function renderOrcamentos(){
           Esconder já entregues e virados em venda
         </label>
         <button class="btn btn-sm" onclick="abrirConfigNfe()" style="margin-bottom:2px;" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
+        <button class="btn btn-sm" onclick="abrirCancelarNota()" style="margin-bottom:2px;" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
@@ -23952,11 +23953,14 @@ async function nfeEscolherPasta(){
   }
 }
 
-async function nfeGravarXmlNaPasta(handle, chave, xml, dataISO){
+/* O sufixo existe por causa do cancelamento: o XML do evento é um arquivo
+   SEPARADO do XML da autorização, e gravar os dois com o mesmo nome apagaria
+   a nota original — que precisa ser guardada por 5 anos do mesmo jeito. */
+async function nfeGravarXmlNaPasta(handle, chave, xml, dataISO, sufixo){
   const [ano, mes] = dataISO.split('-');
   const pastaAno = await handle.getDirectoryHandle(ano, {create:true});
   const pastaMes = await pastaAno.getDirectoryHandle(mes, {create:true});
-  const arquivo = await pastaMes.getFileHandle(`NFe${chave}.xml`, {create:true});
+  const arquivo = await pastaMes.getFileHandle(`NFe${chave}${sufixo||''}.xml`, {create:true});
   const escritor = await arquivo.createWritable();
   await escritor.write(xml);
   await escritor.close();
@@ -24141,6 +24145,284 @@ function selecionarConsumidorFinal(idSelect){
   select.value = cliente.id;
   select.dispatchEvent(new Event('change'));
   showToast('Venda de balcão: CONSUMIDOR FINAL selecionado. Na NFC-e o CPF é opcional.', 'success');
+}
+
+/* =========================================================
+   CANCELAR UMA NOTA JA AUTORIZADA (evento 110111)
+
+   Vale pra QUALQUER nota do CNPJ da Mizu — tenha ela saído daqui ou
+   de outro sistema. O evento de cancelamento só precisa da chave de
+   acesso, do protocolo de autorização e do certificado, e o
+   certificado já está no nosso servidor. Foi assim que cancelamos
+   notas emitidas no Varejonline quando ele travou.
+   ========================================================= */
+
+function nfeSoDigitos(valor){ return String(valor == null ? '' : valor).replace(/\D/g, ''); }
+
+/* Modelo, série e número moram DENTRO da chave de acesso. Ler de lá, em
+   vez de pedir que ela digite de novo, elimina a pior falha possível
+   aqui: cancelar a nota errada por ter trocado um dígito. */
+function nfeLerChave(valor){
+  const c = nfeSoDigitos(valor);
+  if(c.length !== 44) return null;
+  return {
+    chave: c,
+    cnpj: c.slice(6, 20),
+    modelo: c.slice(20, 22),
+    serie: String(parseInt(c.slice(22, 25), 10)),
+    numero: String(parseInt(c.slice(25, 34), 10))
+  };
+}
+
+function nfeModeloNome(modelo){ return String(modelo) === '65' ? 'NFC-e' : 'NF-e'; }
+
+/* A Receita conta CARACTERES, não palavras, e texto colado do navegador
+   costuma trazer espaço duplo e quebra de linha. Normalizar antes de
+   contar evita recusa por tamanho numa justificativa que parecia boa. */
+function nfeJustificativa(texto){
+  const limpo = String(texto == null ? '' : texto).replace(/\s+/g, ' ').trim();
+  return { texto: limpo, tamanho: limpo.length, ok: limpo.length >= 15 && limpo.length <= 255 };
+}
+
+/* As notas que saíram daqui — pra preencher com um clique em vez de
+   digitar 44 dígitos na mão. Nota de outro sistema entra digitada. */
+function nfeNotasCancelaveis(){
+  return (STATE.notasFiscais || [])
+    .filter(n => n.status === 'autorizada' && n.chave && n.protocolo)
+    .slice().reverse();
+}
+
+async function abrirCancelarNota(chavePronta){
+  if(!nfeConfigurado()){ abrirConfigNfe(); return; }
+  document.getElementById('modal-cancelar-nota')?.remove();
+
+  const nossas = nfeNotasCancelaveis();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-cancelar-nota';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho" style="background:#B02A37;">
+        <div class="ic-rapido">🚫</div>
+        <div>
+          <h3>Cancelar uma nota fiscal</h3>
+          <div class="sub">Vale pra nota emitida aqui ou em outro sistema</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-cancelar-nota').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div id="canc-ambiente" style="margin-bottom:12px;">${nfeBadgeAmbiente(nfeAmbienteConhecido())}</div>
+        <p class="help-text" style="margin-top:0;">
+          O cancelamento só vale dentro do prazo: <strong>24 horas</strong> da autorização pra NF-e,
+          <strong>30 minutos</strong> pra NFC-e em Goiás. Passou disso, a Receita recusa e o caminho
+          passa a ser carta de correção ou nota de devolução.
+        </p>
+
+        ${nossas.length ? `
+        <div class="field">
+          <label>Nota emitida aqui no Mizu</label>
+          <select id="canc-nossa" onchange="nfeUsarNotaNoCancelamento(this.value)">
+            <option value="">— digitar os dados de outra nota —</option>
+            ${nossas.map(n=>`<option value="${escapeAttr(n.id)}">${escapeHtml(nfeModeloNome(n.modelo))} nº ${n.numero} · ${escapeHtml(fmtMoney(n.valor||0))} · ${escapeHtml(nomeClientePorId(n.clienteId) || 'sem cliente')}</option>`).join('')}
+          </select>
+          <div class="help-text">Escolhendo aqui, a chave e o protocolo se preenchem sozinhos.</div>
+        </div>` : ''}
+
+        <div class="field">
+          <label>Chave de acesso (44 dígitos)</label>
+          <input type="text" id="canc-chave" inputmode="numeric" autocomplete="off"
+                 placeholder="cole aqui os 44 dígitos" value="${escapeAttr(chavePronta || '')}"
+                 oninput="nfeConferirChaveCancelamento()">
+          <div class="help-text" id="canc-chave-aviso">Está no rodapé do DANFE, embaixo do código de barras.</div>
+        </div>
+
+        <div class="field">
+          <label>Protocolo de autorização</label>
+          <input type="text" id="canc-protocolo" inputmode="numeric" autocomplete="off" placeholder="ex.: 152260986717767">
+          <div class="help-text">É o número do protocolo da <strong>autorização</strong> da nota — não o da nota. Aparece na consulta do portal da NF-e, na linha "Autorização de Uso".</div>
+        </div>
+
+        <div class="field">
+          <label>Motivo do cancelamento</label>
+          <textarea id="canc-justificativa" rows="3" placeholder="de 15 a 255 caracteres" oninput="nfeContarJustificativa()"></textarea>
+          <div class="help-text" id="canc-contagem">0 caracteres — faltam 15.</div>
+          <div class="help-text">Um motivo específico ("venda não concretizada", "erro na emissão") protege melhor numa fiscalização do que um genérico.</div>
+        </div>
+
+        <div class="modal-actions" style="margin-top:18px;">
+          <button class="btn" onclick="document.getElementById('modal-cancelar-nota').remove()">Fechar</button>
+          <button class="btn btn-primary" id="canc-enviar" style="background:#B02A37;border-color:#B02A37;" onclick="nfeEnviarCancelamento()">Cancelar esta nota</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  nfeContarJustificativa();
+  nfeConferirChaveCancelamento();
+
+  // Pergunta o ambiente de verdade: cancelar nota de produção num servidor
+  // em teste falha com "nota não consta na base" e queima tempo do prazo.
+  nfeConsultarAmbiente(true).then(ambiente=>{
+    const box = document.getElementById('canc-ambiente');
+    if(box) box.innerHTML = nfeBadgeAmbiente(ambiente);
+  });
+}
+
+function nfeUsarNotaNoCancelamento(id){
+  const nota = (STATE.notasFiscais || []).find(n => n.id === id);
+  if(!nota) return;
+  const chave = document.getElementById('canc-chave');
+  const prot = document.getElementById('canc-protocolo');
+  if(chave) chave.value = nota.chave || '';
+  if(prot) prot.value = nota.protocolo || '';
+  nfeConferirChaveCancelamento();
+}
+
+/* Devolve na hora o que a chave diz ser: se ela colou a chave errada, o
+   número que aparece aqui não vai bater com a nota que ela quer cancelar. */
+function nfeConferirChaveCancelamento(){
+  const campo = document.getElementById('canc-chave');
+  const aviso = document.getElementById('canc-chave-aviso');
+  if(!campo || !aviso) return;
+  const digitos = nfeSoDigitos(campo.value);
+  if(digitos.length === 0){
+    aviso.innerHTML = 'Está no rodapé do DANFE, embaixo do código de barras.';
+    return;
+  }
+  const info = nfeLerChave(digitos);
+  if(!info){
+    aviso.innerHTML = `<span style="color:var(--warning);">${digitos.length} de 44 dígitos.</span>`;
+    return;
+  }
+  aviso.innerHTML = `<span style="color:var(--positive);">✓ ${escapeHtml(nfeModeloNome(info.modelo))} nº ${escapeHtml(info.numero)}, série ${escapeHtml(info.serie)}</span> — confira se é esta mesmo.`;
+}
+
+function nfeContarJustificativa(){
+  const campo = document.getElementById('canc-justificativa');
+  const saida = document.getElementById('canc-contagem');
+  if(!campo || !saida) return;
+  const j = nfeJustificativa(campo.value);
+  if(j.tamanho < 15){
+    saida.innerHTML = `<span style="color:var(--warning);">${j.tamanho} caracteres — faltam ${15 - j.tamanho}.</span>`;
+  }else if(j.tamanho > 255){
+    saida.innerHTML = `<span style="color:var(--negative, #B02A37);">${j.tamanho} caracteres — ${j.tamanho - 255} a mais do que a Receita aceita.</span>`;
+  }else{
+    saida.innerHTML = `<span style="color:var(--positive);">✓ ${j.tamanho} caracteres</span>`;
+  }
+}
+
+async function nfeEnviarCancelamento(){
+  const info = nfeLerChave(document.getElementById('canc-chave').value);
+  if(!info){ showToast('A chave de acesso precisa ter 44 dígitos.', 'error'); return; }
+
+  const protocolo = nfeSoDigitos(document.getElementById('canc-protocolo').value);
+  if(!protocolo){ showToast('Informe o protocolo de autorização da nota.', 'error'); return; }
+
+  const just = nfeJustificativa(document.getElementById('canc-justificativa').value);
+  if(!just.ok){
+    showToast(`O motivo precisa ter de 15 a 255 caracteres — o seu tem ${just.tamanho}.`, 'error');
+    return;
+  }
+
+  // Ambiente conferido AGORA, não pelo cache: ela pode ter acabado de virar
+  // o servidor pra produção na outra aba.
+  const ambiente = await nfeConsultarAmbiente(true);
+  const avisoAmbiente = ambiente === 'homologacao'
+    ? '🧪 O servidor está em AMBIENTE DE TESTE.\n\nSe esta nota foi autorizada em produção, a Receita vai responder que ela não existe. Vire o servidor para produção antes.\n\n'
+    : (ambiente === 'producao' ? '' : '❔ Não consegui confirmar o ambiente do servidor.\n\n');
+
+  if(!confirm(
+      avisoAmbiente +
+      `Cancelar a ${nfeModeloNome(info.modelo)} nº ${info.numero} (série ${info.serie})?\n\n` +
+      `Chave: ${info.chave}\n` +
+      `Protocolo: ${protocolo}\n` +
+      `Motivo: ${just.texto}\n\n` +
+      `O cancelamento não tem volta.`)){
+    return;
+  }
+
+  // Pega a pasta ANTES da espera, enquanto o clique ainda "vale" pro navegador.
+  let pasta = null;
+  try{ pasta = await nfePastaSalva(true); }catch(e){ console.warn(e); }
+
+  const botao = document.getElementById('canc-enviar');
+  if(botao){ botao.disabled = true; botao.textContent = 'Enviando...'; }
+  showToast('Enviando o cancelamento para a Receita... pode demorar até 1 minuto.', 'info');
+
+  try{
+    const r = await nfeChamar('/cancelar', {
+      chave: info.chave,
+      protocolo,
+      justificativa: just.texto
+    });
+
+    if(!r.ok && !r.jaEstavaCancelada){
+      if(botao){ botao.disabled = false; botao.textContent = 'Cancelar esta nota'; }
+      nfeMostrarArquivos({
+        titulo: 'A Receita não aceitou o cancelamento',
+        subtitulo: `${nfeModeloNome(info.modelo)} nº ${info.numero}`,
+        sucesso: false,
+        chave: info.chave,
+        linhas: [
+          ['Código', r.codigoStatus || '—'],
+          ['Motivo', r.mensagem || '—'],
+          ['Ambiente do servidor', r.ambiente === 'producao' ? 'produção' : 'teste']
+        ]
+      });
+      return;
+    }
+
+    // ---- aceito: registrar antes de qualquer coisa que possa falhar ----
+    const nossa = (STATE.notasFiscais || []).find(n => n.chave === info.chave);
+    if(nossa){
+      nossa.status = 'cancelada';
+      nossa.canceladaEm = todayISO();
+      nossa.protocoloCancelamento = r.protocoloEvento || null;
+      nossa.motivoCancelamento = just.texto;
+      saveState();
+      try{ renderListaOrcamentos(); }catch(e){}
+    }
+
+    const xml = r.xml || null;
+    let avisoPasta = null;
+    if(xml && pasta){
+      try{
+        // Sufixo próprio: o XML do cancelamento é um arquivo SEPARADO do XML
+        // da autorização. Gravar com o mesmo nome apagaria a nota original.
+        await nfeGravarXmlNaPasta(pasta, info.chave, xml, todayISO(), '-cancelamento');
+      }catch(e){
+        console.error(e);
+        avisoPasta = 'Não consegui gravar o XML do cancelamento na pasta. Baixe o arquivo abaixo.';
+      }
+    }else if(xml){
+      avisoPasta = null;
+    }
+
+    nfeMostrarArquivos({
+      titulo: r.jaEstavaCancelada ? 'Esta nota já estava cancelada' : 'Nota cancelada',
+      subtitulo: `${nfeModeloNome(info.modelo)} nº ${info.numero}, série ${info.serie}`,
+      sucesso: true,
+      chave: info.chave,
+      xmlTexto: xml,
+      nomeArquivo: `NFe${info.chave}-cancelamento`,
+      linhas: [
+        ['Situação', r.jaEstavaCancelada ? 'já cancelada antes desta tentativa' : 'cancelamento registrado'],
+        ['Código da Receita', r.codigoStatus || '—'],
+        ['Mensagem', r.mensagem || '—'],
+        ['Protocolo do cancelamento', r.protocoloEvento || '—'],
+        ['Registrado em', r.dataEvento || '—'],
+        ['Motivo informado', just.texto]
+      ],
+      avisoPasta
+    });
+
+    document.getElementById('modal-cancelar-nota')?.remove();
+    showToast(r.jaEstavaCancelada ? 'Esta nota já estava cancelada.' : 'Nota cancelada na Receita.', 'success');
+
+  }catch(e){
+    console.error(e);
+    if(botao){ botao.disabled = false; botao.textContent = 'Cancelar esta nota'; }
+    showToast('Não consegui cancelar: ' + e.message, 'error');
+  }
 }
 
 function abrirConfigNfe(){
@@ -26256,6 +26538,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-05-l',
+    data: '2026-10-05',
+    titulo: 'Cancelamento de nota fiscal',
+    itens: [
+      'Entrou o botão "🚫 Cancelar Nota", na tela de Orçamentos, do lado de Configurar Nota Fiscal.',
+      'Funciona pra QUALQUER nota do CNPJ da Mizu — inclusive as emitidas em outro sistema. O cancelamento só precisa da chave de acesso, do protocolo de autorização e do certificado, e o certificado já está no nosso servidor.',
+      'Nota emitida aqui no Mizu se preenche com um clique: escolhe na lista e a chave e o protocolo entram sozinhos.',
+      'Ao digitar a chave, o sistema já mostra de que nota ela é (modelo, número e série) — assim dá pra conferir ANTES de mandar, em vez de descobrir depois que cancelou a errada.',
+      'O motivo é conferido na hora: a Receita exige de 15 a 255 caracteres, e o contador embaixo do campo diz quanto falta.',
+      'Antes de enviar, o sistema pergunta ao servidor em que ambiente ele está. Nota de produção não pode ser cancelada por servidor em teste, e esse aviso aparece antes de queimar tempo do prazo.',
+      'O XML do cancelamento é guardado como arquivo SEPARADO (NFe...-cancelamento.xml), do lado do XML da nota. É ele que o contador precisa pro SPED.',
+      'Lembrete que aparece na tela: NF-e cancela em até 24 horas da autorização; NFC-e em Goiás, 30 minutos.'
+    ]
+  },
   {
     id: '2026-10-05-k',
     data: '2026-10-05',
