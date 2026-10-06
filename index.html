@@ -909,6 +909,9 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="logistica" href="#">
       <span class="ic ic-operacao">🚚</span> Logística
     </a>
+    <a class="nav-item" data-page="entrada-nota" href="#">
+      <span class="ic ic-operacao">📥</span> Entrada de Nota
+    </a>
     <a class="nav-item" data-page="estoque" href="#">
       <span class="ic ic-operacao">📊</span> Estoque
     </a>
@@ -1078,6 +1081,19 @@ table.data-table{ width:100%; font-size:13px; }
     </section>
 
     <!-- ============ ESTOQUE ============ -->
+    <!-- ============ ENTRADA DE NOTA ============ -->
+    <section class="page" id="page-entrada-nota">
+      <div class="page-header">
+        <div>
+          <h2>Entrada de Nota</h2>
+          <p class="subtitle">O XML do fornecedor já traz NCM, impostos e custo — aqui você decide o produto, a conversão da embalagem e o preço de venda</p>
+        </div>
+      </div>
+      <datalist id="en-marcas"></datalist>
+      <datalist id="en-categorias"></datalist>
+      <div id="entrada-nota-content"></div>
+    </section>
+
     <section class="page" id="page-estoque">
       <div class="page-header">
         <div>
@@ -26861,6 +26877,23 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-10-06-b',
+    data: '2026-10-06',
+    titulo: 'Entrada de Nota',
+    itens: [
+      'Entrou no menu, em Operação: "📥 Entrada de Nota". Você importa o XML da nota do fornecedor e ele lê tudo que já está lá dentro — NCM, CEST, CFOP, CST/CSOSN, origem, quantidade, custo, IPI, ST e frete. Esses campos você não digita nunca mais.',
+      'Sobram três decisões, e a tela é organizada nelas: 1) que produto é este item, 2) quantas unidades vêm na embalagem, 3) por quanto vender.',
+      'O casamento com o seu cadastro é automático, em cascata: vínculo salvo do fornecedor → código de barras → código do fornecedor → nome igual → nome parecido (esse vem marcado com "confira"). E o vínculo fica guardado: da segunda nota daquele fornecedor em diante, ele casa sozinho.',
+      'O fator de conversão resolve a caixa: a nota vem em CX, você vende por unidade. Informa uma vez quantas vêm dentro e o sistema calcula o custo REAL por unidade — com IPI, ST, frete e desconto rateados, não o valor de face da nota.',
+      'A parte do preço é uma calculadora de verdade e funciona nos dois sentidos: digite o preço e veja a margem, ou digite a margem e veja o preço. Mostra o lucro por unidade e o lucro da nota inteira.',
+      'Dá para simular o imposto: 4% sem ST contra 2,64% com ST segregada. Enquanto o contador não confirma quais produtos são ST, você vê quanto a resposta dele vale em dinheiro.',
+      'Item que veio com ST fica marcado. Item com CEST que veio SEM retenção ganha o aviso de possível antecipação a recolher — é o caso que passa despercebido e vira multa.',
+      'O botão "📋 Dúvidas para o contador" junta só as perguntas em aberto daquela nota, em texto pronto para copiar e mandar. Sem print da tela cheia: ele responde item por item.',
+      'Também dá para fazer entrada manual, com os mesmos campos e as mesmas regras.',
+      'Ao concluir, o estoque entra em unidades, o custo do produto vira o custo real da nota, e marca, categoria, linha, código de barras e NCM ficam gravados no cadastro.'
+    ]
+  },
+  {
     id: '2026-10-06-a',
     data: '2026-10-06',
     titulo: 'Descobrir quais produtos têm substituição tributária',
@@ -30709,6 +30742,938 @@ async function exportarPedidoCompraExcel(){
     showToast('Não consegui gerar a planilha: ' + e.message, 'error');
   }
 }
+
+/* =========================================================
+   ENTRADA DE NOTA
+
+   O XML da nota do fornecedor já traz, em campos estruturados, quase
+   tudo que a gente passa a vida digitando: NCM, CEST, CFOP, CST/CSOSN,
+   origem, quantidade, custo, impostos. Esta tela lê isso e deixa para
+   ela só as três decisões que a máquina não pode tomar sozinha:
+
+     1. QUAL produto do sistema é este item da nota
+     2. QUANTAS unidades vêm na embalagem (o fator de conversão)
+     3. POR QUANTO vender
+
+   A terceira é a que decide dinheiro, então ela ganhou uma calculadora
+   de verdade: custo real por unidade (com IPI, ST, frete e desconto
+   rateados), imposto, comissão, e a margem recalculando a cada tecla —
+   nos dois sentidos, preço → margem e margem → preço.
+
+   Tudo roda no navegador. Nenhuma chamada ao servidor, nenhum upload:
+   o XML é lido aqui mesmo.
+   ========================================================= */
+
+/* ---------- estado ---------- */
+
+function entradas(){
+  if(!Array.isArray(STATE.entradas)) STATE.entradas = [];
+  return STATE.entradas;
+}
+
+/* O vínculo "código do fornecedor → produto daqui" é o que faz a segunda
+   nota do mesmo fornecedor casar sozinha. Sem isso, ela reconferiria os
+   mesmos itens todo mês. */
+function vinculosFornecedor(){
+  if(!STATE.vinculosFornecedor) STATE.vinculosFornecedor = {};
+  return STATE.vinculosFornecedor;
+}
+function chaveVinculo(cnpj, codigo){
+  return `${(cnpj||'').replace(/\D/g,'')}|${(codigo||'').trim().toUpperCase()}`;
+}
+
+let entradaAtualId = null;
+
+function entradaAtual(){
+  return entradas().find(e=>e.id===entradaAtualId) || null;
+}
+
+/* ---------- leitura do XML ---------- */
+
+const EN_CFOP_ST = ['1401','1403','1406','1407','2401','2403','2406','2407',
+                    '5401','5402','5403','5405','5409','5410','5411','5412','5413','5414',
+                    '6401','6402','6403','6404','6409','6410','6411','6412','6413','6414'];
+const EN_CST_ST   = ['10','30','60','70'];
+const EN_CSOSN_ST = ['201','202','203','500'];
+
+function enTexto(no, tag){
+  if(!no) return '';
+  const el = no.getElementsByTagName(tag)[0];
+  return el ? (el.textContent||'').trim() : '';
+}
+function enNum(no, tag){ const v = parseFloat(enTexto(no, tag)); return isFinite(v) ? v : 0; }
+
+function enFilho(no, nome){
+  if(!no) return null;
+  for(const f of no.children){ if(f.nodeName === nome) return f; }
+  return null;
+}
+
+/* Lê o XML de uma NF-e de entrada e devolve a nota já no formato da tela. */
+function enLerXml(texto, nomeArquivo){
+  const dom = new DOMParser().parseFromString(texto, 'application/xml');
+  if(dom.getElementsByTagName('parsererror').length){
+    throw new Error('Este arquivo não é um XML válido.');
+  }
+  const infNFe = dom.getElementsByTagName('infNFe')[0];
+  if(!infNFe) throw new Error('Não encontrei uma NF-e dentro deste arquivo. Confira se é o XML da nota (não o DANFE em PDF).');
+
+  const chave = (infNFe.getAttribute('Id')||'').replace(/\D/g,'');
+  const emit = dom.getElementsByTagName('emit')[0];
+  const ide  = dom.getElementsByTagName('ide')[0];
+  const total = dom.getElementsByTagName('ICMSTot')[0];
+
+  const dest = dom.getElementsByTagName('dest')[0];
+  const cnpjDest = dest ? enTexto(dest,'CNPJ') : '';
+
+  const itens = [];
+  for(const det of dom.getElementsByTagName('det')){
+    const prod = enFilho(det, 'prod');
+    const imposto = enFilho(det, 'imposto');
+    const icms = imposto ? enFilho(imposto, 'ICMS') : null;
+    const grupo = icms ? icms.children[0] : null;
+    const ipi = imposto ? enFilho(imposto, 'IPI') : null;
+    const ipiTrib = ipi ? enFilho(ipi, 'IPITrib') : null;
+
+    const cst   = grupo ? enTexto(grupo,'CST') : '';
+    const csosn = grupo ? enTexto(grupo,'CSOSN') : '';
+    const cfop  = enTexto(prod,'CFOP');
+    const cest  = enTexto(prod,'CEST');
+    const vICMSST    = grupo ? enNum(grupo,'vICMSST') : 0;
+    const vICMSSTRet = grupo ? enNum(grupo,'vICMSSTRet') : 0;
+
+    const sinais = [];
+    if(cst && EN_CST_ST.includes(cst))      sinais.push('CST ' + cst);
+    if(csosn && EN_CSOSN_ST.includes(csosn))sinais.push('CSOSN ' + csosn);
+    if(cfop && EN_CFOP_ST.includes(cfop))   sinais.push('CFOP ' + cfop);
+    if(vICMSST > 0)    sinais.push('ICMS-ST retido nesta nota');
+    if(vICMSSTRet > 0) sinais.push('ICMS-ST retido antes');
+
+    itens.push({
+      id: uid('eni'),
+      // ---- o que veio na nota (não se edita) ----
+      codigoFornecedor: enTexto(prod,'cProd'),
+      nomeNaNota: enTexto(prod,'xProd'),
+      ean: (enTexto(prod,'cEAN')||'').replace(/SEM GTIN/i,'').trim(),
+      ncm: enTexto(prod,'NCM'),
+      cest, cfop, cst, csosn,
+      origem: grupo ? enTexto(grupo,'orig') : '',
+      unidadeNota: enTexto(prod,'uCom'),
+      qtdNota: enNum(prod,'qCom'),
+      valorUnitNota: enNum(prod,'vUnCom'),
+      vProd: enNum(prod,'vProd'),
+      vDesc: enNum(prod,'vDesc'),
+      vFrete: enNum(prod,'vFrete'),
+      vOutro: enNum(prod,'vOutro'),
+      vSeg: enNum(prod,'vSeg'),
+      vIPI: ipiTrib ? enNum(ipiTrib,'vIPI') : 0,
+      vICMSST, vICMSSTRet,
+      comST: sinais.length > 0,
+      sinaisST: sinais,
+      // ---- o que ela decide ----
+      produtoId: null,
+      acao: null,            // 'vincular' | 'novo' | 'ignorar'
+      unidadesPorEmbalagem: null,
+      nomeProduto: '',
+      codigoBarras: '',
+      marca: '', categoria: '', linha: '',
+      precoVenda: null,
+      conferido: false
+    });
+  }
+
+  return {
+    id: uid('ent'),
+    tipo: 'xml',
+    arquivo: nomeArquivo || '',
+    chave,
+    fornecedorNome: emit ? enTexto(emit,'xNome') : '',
+    fornecedorCnpj: emit ? enTexto(emit,'CNPJ') : '',
+    fornecedorUF:   emit ? enTexto(emit,'UF') : '',
+    destinatarioCnpj: cnpjDest,
+    numero: ide ? enTexto(ide,'nNF') : '',
+    serie:  ide ? enTexto(ide,'serie') : '',
+    data: (ide ? enTexto(ide,'dhEmi') : '').slice(0,10),
+    valorNota: total ? enNum(total,'vNF') : 0,
+    freteNota: total ? enNum(total,'vFrete') : 0,
+    status: 'rascunho',
+    criadoEm: new Date().toISOString(),
+    itens
+  };
+}
+
+/* ---------- casamento com o cadastro ---------- */
+
+/* Cascata, do sinal mais forte pro mais fraco. O código de barras é
+   universal; o código do fornecedor só vale dentro daquele fornecedor;
+   o nome é o último recurso, e por isso vem marcado como "confira". */
+function enCasarItem(entrada, item){
+  const v = vinculosFornecedor()[chaveVinculo(entrada.fornecedorCnpj, item.codigoFornecedor)];
+  if(v){
+    const p = STATE.produtos.find(x=>x.id===v);
+    if(p) return { produto:p, como:'vínculo salvo deste fornecedor', forte:true };
+  }
+  if(item.ean && item.ean.length >= 8){
+    const p = STATE.produtos.find(x=>(x.codigoBarras||'').replace(/\D/g,'') === item.ean.replace(/\D/g,''));
+    if(p) return { produto:p, como:'código de barras', forte:true };
+  }
+  if(item.codigoFornecedor){
+    const p = STATE.produtos.find(x=>(x.codigoNF||'').trim().toUpperCase() === item.codigoFornecedor.trim().toUpperCase());
+    if(p) return { produto:p, como:'código do fornecedor no cadastro', forte:true };
+  }
+  const alvo = enNormalizar(item.nomeNaNota);
+  if(alvo.length > 6){
+    const p = STATE.produtos.find(x=>enNormalizar(x.nome) === alvo);
+    if(p) return { produto:p, como:'nome igual', forte:false };
+    const parecido = STATE.produtos.find(x=>{
+      const n = enNormalizar(x.nome);
+      return n.length > 6 && (n.includes(alvo) || alvo.includes(n));
+    });
+    if(parecido) return { produto:parecido, como:'nome parecido — confira', forte:false };
+  }
+  return null;
+}
+
+function enNormalizar(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
+}
+
+/* ---------- a conta ---------- */
+
+/* Custo REAL por unidade de venda.
+
+   O valor de face da nota mente em duas direções: por cima, porque IPI,
+   ST e frete entram no que ela de fato pagou; por baixo, porque o
+   desconto sai. E tudo isso está no preço da EMBALAGEM, não da unidade
+   que ela vende. */
+function enCustoUnitario(item){
+  const un = Number(item.unidadesPorEmbalagem) || 1;
+  const qtd = Number(item.qtdNota) || 0;
+  if(qtd <= 0 || un <= 0) return 0;
+  const totalPago = (item.vProd||0) + (item.vIPI||0) + (item.vICMSST||0)
+                  + (item.vFrete||0) + (item.vSeg||0) + (item.vOutro||0) - (item.vDesc||0);
+  return totalPago / (qtd * un);
+}
+
+function enUnidadesTotais(item){
+  return (Number(item.qtdNota)||0) * (Number(item.unidadesPorEmbalagem)||1);
+}
+
+/* O imposto de um produto com ST é menor: o ICMS já foi pago antes e sai
+   da conta do Simples. Enquanto o contador não confirma quais produtos
+   são ST, ela pode simular os dois cenários aqui e ver a diferença. */
+function enImpostoPct(item){
+  if(item.impostoPct != null) return Number(item.impostoPct);
+  return (STATE.config.impostoPct != null) ? Number(STATE.config.impostoPct) : 4;
+}
+
+function enConta(item, precoVenda){
+  const custo = enCustoUnitario(item);
+  const preco = Number(precoVenda) || 0;
+  const impPct = enImpostoPct(item);
+  const comPct = Number(STATE.config.comissaoPct || 0);
+  const imposto = preco * impPct / 100;
+  const comissao = preco * comPct / 100;
+  const lucro = preco - custo - imposto - comissao;
+  return {
+    custo, preco, impPct, comPct, imposto, comissao, lucro,
+    margemPct: preco > 0 ? (lucro / preco * 100) : 0,
+    markupPct: custo > 0 ? ((preco - custo) / custo * 100) : 0
+  };
+}
+
+/* O caminho inverso: ela diz a margem que quer, o sistema diz o preço.
+   preco = custo / (1 - margem - imposto - comissao) */
+function enPrecoPelaMargem(item, margemPct){
+  const custo = enCustoUnitario(item);
+  const divisor = 1 - (Number(margemPct)||0)/100 - enImpostoPct(item)/100 - Number(STATE.config.comissaoPct||0)/100;
+  if(divisor <= 0) return 0;
+  return custo / divisor;
+}
+
+/* ---------- decisões que dependem do contador ---------- */
+
+/* O que o sistema NÃO pode decidir sozinho, listado de um jeito que dê
+   pra mandar pro contador e ele responder item por item. É de propósito
+   que isto não é um print da tela: o print manda junto um monte de coisa
+   que ele não precisa ler. */
+function enPendenciasFiscais(entrada){
+  const lista = [];
+  (entrada.itens||[]).forEach(it=>{
+    if(it.acao === 'ignorar') return;
+    const nome = it.nomeProduto || it.nomeNaNota;
+    if(it.comST){
+      lista.push({
+        item: nome, ncm: it.ncm, cest: it.cest,
+        pergunta: `Esta nota veio com ST (${it.sinaisST.join(', ')}). Na minha venda deste produto, uso CSOSN 500 e CFOP 5405, ou 102 e 5102?`,
+        tipo: 'st-veio'
+      });
+    }else if(it.cest){
+      lista.push({
+        item: nome, ncm: it.ncm, cest: it.cest,
+        pergunta: `Tem CEST ${it.cest} (pertence a um segmento de ST), mas a nota veio SEM retenção, de ${entrada.fornecedorUF || 'outro estado'}. É ST em Goiás? Se for, há antecipação a recolher na entrada?`,
+        tipo: 'cest-sem-retencao'
+      });
+    }
+  });
+  return lista;
+}
+
+function enTextoParaContador(entrada){
+  const p = enPendenciasFiscais(entrada);
+  if(p.length === 0) return '';
+  const linhas = [
+    `Nota de entrada ${entrada.numero || ''} — ${entrada.fornecedorNome} (${entrada.fornecedorUF || ''})`,
+    `Emitida em ${entrada.data || '—'}`,
+    '',
+    'Preciso da sua orientação nestes itens:',
+    ''
+  ];
+  p.forEach((q,i)=>{
+    linhas.push(`${i+1}) ${q.item}`);
+    linhas.push(`   NCM ${q.ncm || '—'}${q.cest ? ' · CEST ' + q.cest : ''}`);
+    linhas.push(`   ${q.pergunta}`);
+    linhas.push('');
+  });
+  return linhas.join('\n');
+}
+
+/* ---------- telas ---------- */
+
+function renderEntradaNota(){
+  const box = document.getElementById('entrada-nota-content');
+  if(!box) return;
+  // as marcas e categorias que ela já usa viram sugestão nos campos, pra não
+  // nascerem três grafias da mesma marca a cada entrada de nota
+  const dlM = document.getElementById('en-marcas');
+  if(dlM) dlM.innerHTML = getMarcasUnicas().sort().map(m=>`<option value="${escapeAttr(m)}">`).join('');
+  const dlC = document.getElementById('en-categorias');
+  if(dlC) dlC.innerHTML = getCategoriasUnicas().sort().map(c=>`<option value="${escapeAttr(c)}">`).join('');
+  if(entradaAtual()) { box.innerHTML = enHtmlConferencia(entradaAtual()); return; }
+  box.innerHTML = enHtmlLista();
+}
+
+function enHtmlLista(){
+  const lista = entradas().slice().reverse();
+  return `
+    <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+        <button class="btn btn-primary" onclick="document.getElementById('en-arquivo').click()">📄 Importar XML da nota</button>
+        <button class="btn" onclick="enNovaManual()">✍️ Entrada manual</button>
+        <input type="file" id="en-arquivo" accept=".xml,text/xml,application/xml" multiple style="display:none;" onchange="enImportarArquivos(this.files)">
+      </div>
+      <p class="help-text" style="margin-top:0;">
+        O XML da nota do fornecedor já traz NCM, CEST, CFOP, impostos e o custo de cada item.
+        Importando, você só decide três coisas: qual produto é, quantas unidades vêm na embalagem,
+        e por quanto vender.
+      </p>
+
+      ${lista.length === 0 ? `<div class="empty-state"><div class="ic">📥</div>
+        <p>Nenhuma entrada ainda. Importe o XML de uma nota de compra para começar.</p></div>` : `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Fornecedor</th><th>Nota</th><th class="num">Itens</th><th class="num">Valor</th><th>Situação</th><th>Ações</th></tr></thead>
+          <tbody>${lista.map(e=>`
+            <tr>
+              <td>${escapeHtml(enData(e.data) || '—')}</td>
+              <td>${escapeHtml(e.fornecedorNome || '(manual)')}</td>
+              <td>${escapeHtml(e.numero || '—')}${e.serie?`/${escapeHtml(e.serie)}`:''}</td>
+              <td class="num">${(e.itens||[]).length}</td>
+              <td class="num">${fmtMoney(e.valorNota||0)}</td>
+              <td>${e.status==='concluida'
+                    ? `<span style="color:var(--positive);font-weight:700;">✓ concluída</span>`
+                    : `<span style="color:var(--warning);font-weight:700;">rascunho</span>`}</td>
+              <td class="cell-actions">
+                <button class="btn btn-sm" onclick="enAbrir('${e.id}')">${e.status==='concluida'?'Ver':'Conferir'}</button>
+                ${e.status!=='concluida'?`<button class="btn btn-sm btn-danger" onclick="enApagar('${e.id}')">Apagar</button>`:''}
+              </td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>`}
+    </div>`;
+}
+
+async function enImportarArquivos(files){
+  const arquivos = [...(files||[])];
+  if(arquivos.length === 0) return;
+  let ok = 0, erros = [];
+  for(const f of arquivos){
+    try{
+      const texto = await f.text();
+      const nota = enLerXml(texto, f.name);
+
+      const cnpjMizu = (STATE.config.cnpj || '46836769000145').replace(/\D/g,'');
+      if(nota.destinatarioCnpj && cnpjMizu && nota.destinatarioCnpj.replace(/\D/g,'') !== cnpjMizu){
+        erros.push(`${f.name}: esta nota não foi emitida para a Mizu (destinatário ${nota.destinatarioCnpj}).`);
+        continue;
+      }
+      if(entradas().some(e=>e.chave && e.chave === nota.chave)){
+        erros.push(`${f.name}: esta nota já foi importada.`);
+        continue;
+      }
+
+      // Casamento automático, feito na importação: ela abre a tela com o
+      // trabalho já meio andado em vez de uma lista crua.
+      nota.itens.forEach(it=>{
+        const achou = enCasarItem(nota, it);
+        if(achou){
+          it.produtoId = achou.produto.id;
+          it.acao = 'vincular';
+          it.casadoPor = achou.como;
+          it.casamentoForte = achou.forte;
+          it.unidadesPorEmbalagem = achou.produto.unidadesPorEmbalagem || null;
+          it.precoVenda = achou.produto.precoVenda || null;
+          it.marca = achou.produto.marca || '';
+          it.categoria = achou.produto.categoria || '';
+          it.linha = achou.produto.linha || '';
+        }else{
+          it.acao = 'novo';
+          it.nomeProduto = it.nomeNaNota;
+          it.codigoBarras = it.ean || '';
+        }
+      });
+
+      entradas().push(nota);
+      ok++;
+      entradaAtualId = nota.id;
+    }catch(e){
+      erros.push(`${f.name}: ${e.message}`);
+    }
+  }
+  saveState();
+  renderEntradaNota();
+  if(ok) showToast(`${ok} nota(s) importada(s).`, 'success');
+  erros.forEach(m=>showToast(m, 'error'));
+  const inp = document.getElementById('en-arquivo');
+  if(inp) inp.value = '';
+}
+
+function enAbrir(id){ entradaAtualId = id; renderEntradaNota(); }
+function enVoltar(){ entradaAtualId = null; renderEntradaNota(); }
+
+function enApagar(id){
+  const e = entradas().find(x=>x.id===id);
+  if(!e) return;
+  confirmAction('Apagar esta entrada',
+    `A entrada da nota ${e.numero || '(manual)'} de ${e.fornecedorNome || ''} será apagada. Nada que já foi concluído é desfeito.`,
+    ()=>{ STATE.entradas = entradas().filter(x=>x.id!==id); saveState(); renderEntradaNota(); }, 'Apagar');
+}
+
+function enNovaManual(){
+  const nota = {
+    id: uid('ent'), tipo: 'manual', chave: '', fornecedorNome: '', fornecedorCnpj: '', fornecedorUF: '',
+    numero: '', serie: '', data: todayISO(), valorNota: 0, status: 'rascunho',
+    criadoEm: new Date().toISOString(), itens: []
+  };
+  entradas().push(nota);
+  entradaAtualId = nota.id;
+  saveState();
+  enAdicionarItemManual();
+}
+
+function enAdicionarItemManual(){
+  const e = entradaAtual();
+  if(!e) return;
+  e.itens.push({
+    id: uid('eni'), codigoFornecedor:'', nomeNaNota:'', ean:'', ncm:'', cest:'', cfop:'', cst:'', csosn:'', origem:'0',
+    unidadeNota:'UN', qtdNota:1, valorUnitNota:0, vProd:0, vDesc:0, vFrete:0, vOutro:0, vSeg:0, vIPI:0,
+    vICMSST:0, vICMSSTRet:0, comST:false, sinaisST:[],
+    produtoId:null, acao:'novo', unidadesPorEmbalagem:1, nomeProduto:'', codigoBarras:'',
+    marca:'', categoria:'', linha:'', precoVenda:null, conferido:false, manual:true
+  });
+  saveState();
+  renderEntradaNota();
+}
+
+/* ---------- a tela de conferência ---------- */
+
+function enHtmlConferencia(e){
+  const travado = e.status === 'concluida';
+  const pend = enPendenciasFiscais(e);
+  const prontos = (e.itens||[]).filter(it=>enItemPronto(it)).length;
+  const ativos  = (e.itens||[]).filter(it=>it.acao !== 'ignorar').length;
+
+  return `
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <button class="btn btn-sm" onclick="enVoltar()">← Voltar</button>
+          <h3 style="margin:8px 0 2px;">${escapeHtml(e.fornecedorNome || 'Entrada manual')}</h3>
+          <div class="help-text" style="margin:0;">
+            ${e.numero?`Nota ${escapeHtml(e.numero)}${e.serie?'/'+escapeHtml(e.serie):''} · `:''}
+            ${escapeHtml(enData(e.data)||'')} ${e.fornecedorUF?`· ${escapeHtml(e.fornecedorUF)}`:''}
+            ${e.valorNota?`· ${fmtMoney(e.valorNota)}`:''}
+          </div>
+        </div>
+        <div class="cell-actions">
+          ${pend.length ? `<button class="btn btn-sm" style="border-color:var(--warning);color:var(--warning);" onclick="enAbrirPerguntasContador('${e.id}')">📋 ${pend.length} dúvida(s) para o contador</button>` : ''}
+          ${e.tipo==='manual' && !travado ? `<button class="btn btn-sm" onclick="enAdicionarItemManual()">+ Item</button>` : ''}
+          ${!travado ? `<button class="btn btn-primary" onclick="enConcluir('${e.id}')">✓ Concluir entrada (${prontos}/${ativos})</button>` : `<span style="color:var(--positive);font-weight:700;">✓ entrada concluída</span>`}
+        </div>
+      </div>
+
+      ${e.tipo==='manual' && !travado ? `
+      <div class="form-grid" style="margin-top:12px;">
+        <div class="field"><label>Fornecedor</label>
+          <input type="text" value="${escapeAttr(e.fornecedorNome)}" onchange="enSetNota('${e.id}','fornecedorNome',this.value)"></div>
+        <div class="field"><label>Número da nota</label>
+          <input type="text" value="${escapeAttr(e.numero)}" onchange="enSetNota('${e.id}','numero',this.value)"></div>
+        <div class="field"><label>Data</label>
+          <input type="date" value="${escapeAttr(e.data)}" onchange="enSetNota('${e.id}','data',this.value)"></div>
+      </div>` : ''}
+
+      <div class="help-text" style="margin:14px 0 6px;">
+        ${ativos} item(ns) · ${prontos} pronto(s) para concluir.
+        ${pend.length ? `<strong style="color:var(--warning);">${pend.length} com dúvida fiscal</strong> — dá pra concluir assim mesmo e ajustar depois.` : ''}
+      </div>
+
+      <div id="en-itens">${(e.itens||[]).map(it=>enHtmlItem(e, it, travado)).join('')}</div>
+    </div>`;
+}
+
+function enItemPronto(it){
+  if(it.acao === 'ignorar') return true;
+  if(!it.unidadesPorEmbalagem || Number(it.unidadesPorEmbalagem) <= 0) return false;
+  if(it.acao === 'novo' && !(it.nomeProduto||'').trim()) return false;
+  if(it.acao === 'vincular' && !it.produtoId) return false;
+  return true;
+}
+
+function enHtmlItem(e, it, travado){
+  if(it.acao === 'ignorar'){
+    return `<div class="card" id="en-item-${it.id}" style="margin-top:10px;opacity:.55;">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
+        <div><strong>${escapeHtml(it.nomeNaNota||'(item)')}</strong>
+          <div class="help-text" style="margin:0;">fora desta entrada</div></div>
+        ${travado?'':`<button class="btn btn-sm" onclick="enSetItem('${e.id}','${it.id}','acao','novo')">Trazer de volta</button>`}
+      </div></div>`;
+  }
+
+  const prod = it.produtoId ? STATE.produtos.find(p=>p.id===it.produtoId) : null;
+  const conta = enConta(it, it.precoVenda);
+  const pronto = enItemPronto(it);
+
+  return `
+  <div class="card" id="en-item-${it.id}" style="margin-top:10px;border-left:4px solid ${pronto?'var(--positive)':'var(--warning)'};">
+    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
+      <div style="flex:1;min-width:240px;">
+        <strong style="font-size:15px;">${escapeHtml(it.nomeNaNota || it.nomeProduto || '(sem nome)')}</strong>
+        <div class="help-text" style="margin:2px 0 0;">
+          ${it.codigoFornecedor?`cód. fornecedor ${escapeHtml(it.codigoFornecedor)} · `:''}
+          ${it.ncm?`NCM ${escapeHtml(it.ncm)}`:'<span style="color:var(--warning);">sem NCM</span>'}
+          ${it.cest?` · CEST ${escapeHtml(it.cest)}`:''}
+          ${it.cfop?` · CFOP ${escapeHtml(it.cfop)}`:''}
+          ${(it.cst||it.csosn)?` · ${it.cst?'CST':'CSOSN'} ${escapeHtml(it.cst||it.csosn)}`:''}
+        </div>
+        <div class="help-text" style="margin:2px 0 0;">
+          ${fmtNum(it.qtdNota)} ${escapeHtml(it.unidadeNota||'')} × ${fmtMoney(it.valorUnitNota)}
+          ${it.vIPI?` · IPI ${fmtMoney(it.vIPI)}`:''}
+          ${it.vICMSST?` · ICMS-ST ${fmtMoney(it.vICMSST)}`:''}
+          ${it.vFrete?` · frete ${fmtMoney(it.vFrete)}`:''}
+          ${it.vDesc?` · desconto −${fmtMoney(it.vDesc)}`:''}
+        </div>
+        ${it.comST ? `<div style="margin-top:6px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--warning-soft);font-size:12.5px;">
+            ⚠️ <strong>Veio com substituição tributária</strong> — ${escapeHtml(it.sinaisST.join(', '))}
+          </div>` : (it.cest ? `<div style="margin-top:6px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:12.5px;">
+            Tem CEST (segmento de ST) mas veio <strong>sem retenção</strong>. Se for ST em Goiás, pode haver antecipação a recolher.
+          </div>` : '')}
+      </div>
+      ${travado?'':`<button class="btn btn-sm" onclick="enSetItem('${e.id}','${it.id}','acao','ignorar')" title="Não entra nesta entrada">✕ ignorar</button>`}
+    </div>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-top:12px;">
+
+      <!-- ---------- qual produto ---------- -->
+      <div>
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">1 · Que produto é este</div>
+        ${it.produtoId && prod ? `
+          <div style="padding:8px;border:1px solid var(--positive);border-radius:var(--radius-sm);">
+            <strong>${escapeHtml(prod.nome)}</strong>
+            <div class="help-text" style="margin:0;">
+              estoque ${fmtNum(prod.estoqueAtual||0)} ${escapeHtml(prod.unidade||'')} ·
+              casou por ${escapeHtml(it.casadoPor||'escolha manual')}
+              ${it.casamentoForte === false ? ' <strong style="color:var(--warning);">— confira</strong>' : ''}
+            </div>
+            ${travado?'':`<button class="btn btn-sm" style="margin-top:6px;" onclick="enTrocarProduto('${e.id}','${it.id}')">Trocar</button>
+            <button class="btn btn-sm" style="margin-top:6px;" onclick="enSetItem('${e.id}','${it.id}','acao','novo')">É produto novo</button>`}
+          </div>` : `
+          <div style="padding:8px;border:1px dashed var(--warning);border-radius:var(--radius-sm);">
+            <strong style="color:var(--warning);">Produto novo</strong>
+            <div class="field" style="margin-top:6px;">
+              <label>Nome no seu cadastro</label>
+              <input type="text" value="${escapeAttr(it.nomeProduto||'')}" ${travado?'disabled':''}
+                     onchange="enSetItem('${e.id}','${it.id}','nomeProduto',this.value)">
+            </div>
+            ${travado?'':`<button class="btn btn-sm" onclick="enTrocarProduto('${e.id}','${it.id}')">Já existe — procurar</button>`}
+          </div>`}
+
+        <div class="form-grid" style="margin-top:8px;">
+          <div class="field"><label>Código de barras</label>
+            <input type="text" value="${escapeAttr(it.codigoBarras || it.ean || '')}" ${travado?'disabled':''}
+                   onchange="enSetItem('${e.id}','${it.id}','codigoBarras',this.value)"></div>
+          <div class="field"><label>Marca</label>
+            <input type="text" list="en-marcas" value="${escapeAttr(it.marca||'')}" ${travado?'disabled':''}
+                   onchange="enSetItem('${e.id}','${it.id}','marca',this.value)"></div>
+          <div class="field"><label>Categoria</label>
+            <input type="text" list="en-categorias" value="${escapeAttr(it.categoria||'')}" ${travado?'disabled':''}
+                   onchange="enSetItem('${e.id}','${it.id}','categoria',this.value)"></div>
+          <div class="field"><label>Linha</label>
+            <select ${travado?'disabled':''} onchange="enSetItem('${e.id}','${it.id}','linha',this.value)">
+              ${['','econômica','intermediária','premium'].map(l=>`<option value="${l}" ${it.linha===l?'selected':''}>${l||'— não definida —'}</option>`).join('')}
+            </select></div>
+        </div>
+      </div>
+
+      <!-- ---------- conversão ---------- -->
+      <div>
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">2 · Quantas unidades vêm aí dentro</div>
+        <div class="field">
+          <label>Unidades por ${escapeHtml(it.unidadeNota || 'embalagem')}</label>
+          <input type="number" step="1" min="1" id="en-un-${it.id}" value="${it.unidadesPorEmbalagem||''}" ${travado?'disabled':''}
+                 placeholder="ex.: 12" oninput="enMudouUnidades('${e.id}','${it.id}', this.value)">
+          <div class="help-text" id="en-un-ajuda-${it.id}">
+            ${it.unidadesPorEmbalagem
+              ? `Entram <strong>${fmtNum(enUnidadesTotais(it))}</strong> unidades no estoque.`
+              : 'A nota veio em ' + escapeHtml(it.unidadeNota||'?') + '. Quantas unidades de venda tem em cada uma?'}
+          </div>
+        </div>
+        <div style="padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);">
+          <div class="help-text" style="margin:0;">Custo real por unidade</div>
+          <div style="font-size:20px;font-weight:700;" id="en-custo-${it.id}">${fmtMoney(conta.custo)}</div>
+          <div class="help-text" style="margin:0;">já com IPI, ST, frete e desconto</div>
+        </div>
+      </div>
+
+      <!-- ---------- o preço ---------- -->
+      <div>
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">3 · Por quanto vender</div>
+        <div class="form-grid">
+          <div class="field"><label>Preço de venda</label>
+            <input type="number" step="0.01" min="0" id="en-preco-${it.id}" value="${it.precoVenda ?? ''}" ${travado?'disabled':''}
+                   oninput="enMudouPreco('${e.id}','${it.id}', this.value)"></div>
+          <div class="field"><label>Margem desejada (%)</label>
+            <input type="number" step="0.1" id="en-margem-${it.id}" value="${conta.margemPct ? conta.margemPct.toFixed(1) : ''}" ${travado?'disabled':''}
+                   oninput="enMudouMargem('${e.id}','${it.id}', this.value)"></div>
+        </div>
+        <div class="field">
+          <label>Imposto a considerar</label>
+          <select ${travado?'disabled':''} onchange="enSetImposto('${e.id}','${it.id}', this.value)">
+            <option value="" ${it.impostoPct==null?'selected':''}>padrão do sistema (${enImpostoPct({})}%)</option>
+            <option value="4" ${it.impostoPct==4?'selected':''}>4,00% — sem ST</option>
+            <option value="2.64" ${it.impostoPct==2.64?'selected':''}>2,64% — com ST segregada</option>
+          </select>
+          <div class="help-text">Produto com ST paga menos imposto no Simples. Troque aqui para ver a diferença no lucro.</div>
+        </div>
+        <div id="en-conta-${it.id}">${enHtmlConta(it)}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+function enHtmlConta(it){
+  const c = enConta(it, it.precoVenda);
+  if(!c.preco) return `<div class="help-text" style="margin:0;">Informe o preço ou a margem para ver o lucro.</div>`;
+  const cor = c.lucro >= 0 ? 'var(--positive)' : 'var(--negative, #B02A37)';
+  return `
+    <div style="padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:13px;">
+      ${[['Preço de venda', fmtMoney(c.preco)],
+         ['− Custo', '−' + fmtMoney(c.custo)],
+         [`− Imposto (${c.impPct}%)`, '−' + fmtMoney(c.imposto)],
+         ...(c.comPct ? [[`− Comissão (${c.comPct}%)`, '−' + fmtMoney(c.comissao)]] : [])
+        ].map(l=>`<div style="display:flex;justify-content:space-between;"><span class="help-text" style="margin:0;">${l[0]}</span><span>${l[1]}</span></div>`).join('')}
+      <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+        <strong>Lucro por unidade</strong>
+        <strong style="color:${cor};">${fmtMoney(c.lucro)}</strong>
+      </div>
+      <div style="display:flex;justify-content:space-between;">
+        <span class="help-text" style="margin:0;">margem ${c.margemPct.toFixed(1)}% · markup ${c.markupPct.toFixed(0)}%</span>
+        <span class="help-text" style="margin:0;">na nota toda: <strong style="color:${cor};">${fmtMoney(c.lucro * enUnidadesTotais(it))}</strong></span>
+      </div>
+    </div>`;
+}
+
+/* ---------- edição ---------- */
+
+function enItem(entradaId, itemId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return [null,null];
+  return [e, (e.itens||[]).find(i=>i.id===itemId) || null];
+}
+
+function enSetNota(entradaId, campo, valor){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  e[campo] = valor;
+  saveState();
+}
+
+function enSetItem(entradaId, itemId, campo, valor){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  if(campo === 'acao' && valor === 'novo'){
+    it.produtoId = null;
+    it.casadoPor = '';
+    if(!it.nomeProduto) it.nomeProduto = it.nomeNaNota;
+    if(!it.codigoBarras) it.codigoBarras = it.ean || '';
+  }
+  it[campo] = valor;
+  saveState();
+  renderEntradaNota();
+}
+
+/* Redesenha SÓ os números, não a linha inteira: refazer o card a cada
+   tecla apagaria o campo debaixo do dedo dela. */
+function enAtualizarNumeros(e, it){
+  const custo = document.getElementById('en-custo-' + it.id);
+  if(custo) custo.textContent = fmtMoney(enCustoUnitario(it));
+  const conta = document.getElementById('en-conta-' + it.id);
+  if(conta) conta.innerHTML = enHtmlConta(it);
+  const ajuda = document.getElementById('en-un-ajuda-' + it.id);
+  if(ajuda && it.unidadesPorEmbalagem){
+    ajuda.innerHTML = `Entram <strong>${fmtNum(enUnidadesTotais(it))}</strong> unidades no estoque.`;
+  }
+  const card = document.getElementById('en-item-' + it.id);
+  if(card) card.style.borderLeftColor = enItemPronto(it) ? 'var(--positive)' : 'var(--warning)';
+}
+
+function enMudouUnidades(entradaId, itemId, valor){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  it.unidadesPorEmbalagem = Number(valor) || null;
+  saveState();
+  enAtualizarNumeros(e, it);
+  const campoMargem = document.getElementById('en-margem-' + it.id);
+  if(campoMargem && it.precoVenda){
+    campoMargem.value = enConta(it, it.precoVenda).margemPct.toFixed(1);
+  }
+}
+
+function enMudouPreco(entradaId, itemId, valor){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  it.precoVenda = Number(valor) || null;
+  saveState();
+  enAtualizarNumeros(e, it);
+  const campo = document.getElementById('en-margem-' + it.id);
+  if(campo && document.activeElement !== campo){
+    const m = enConta(it, it.precoVenda).margemPct;
+    campo.value = it.precoVenda ? m.toFixed(1) : '';
+  }
+}
+
+function enMudouMargem(entradaId, itemId, valor){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  const preco = enPrecoPelaMargem(it, valor);
+  it.precoVenda = preco > 0 ? Math.round(preco * 100) / 100 : null;
+  saveState();
+  enAtualizarNumeros(e, it);
+  const campo = document.getElementById('en-preco-' + it.id);
+  if(campo && document.activeElement !== campo) campo.value = it.precoVenda ?? '';
+}
+
+function enSetImposto(entradaId, itemId, valor){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  it.impostoPct = valor === '' ? null : Number(valor);
+  saveState();
+  enAtualizarNumeros(e, it);
+  const campo = document.getElementById('en-margem-' + it.id);
+  if(campo && it.precoVenda) campo.value = enConta(it, it.precoVenda).margemPct.toFixed(1);
+}
+
+/* Data no formato de quem lê, não no do arquivo. */
+function enData(iso){
+  if(!iso) return '';
+  const [a,m,d] = String(iso).slice(0,10).split('-');
+  return (a && m && d) ? `${d}/${m}/${a}` : iso;
+}
+
+function enTrocarProduto(entradaId, itemId){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  document.getElementById('modal-en-produto')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-en-produto';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px,94vw);max-height:84vh;overflow:hidden;display:flex;flex-direction:column;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🔎</div>
+        <div><h3>Qual produto é este?</h3>
+          <div class="sub">${escapeHtml((it.nomeNaNota || it.nomeProduto || '').slice(0,60))}</div></div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-en-produto').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo" style="overflow:auto;">
+        <div class="field">
+          <input type="text" id="en-busca-produto" placeholder="digite parte do nome, marca ou código de barras" autocomplete="off"
+                 oninput="enFiltrarProdutos('${entradaId}','${itemId}', this.value)">
+        </div>
+        <div id="en-lista-produtos"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  enFiltrarProdutos(entradaId, itemId, it.nomeNaNota || '');
+  const campo = document.getElementById('en-busca-produto');
+  if(campo){ campo.value = it.nomeNaNota || ''; campo.focus(); campo.select(); }
+}
+
+function enFiltrarProdutos(entradaId, itemId, termo){
+  const box = document.getElementById('en-lista-produtos');
+  if(!box) return;
+  const alvo = enNormalizar(termo);
+  const palavras = alvo.split(' ').filter(p=>p.length > 2);
+  const achados = STATE.produtos.filter(p=>{
+    if(!alvo) return true;
+    const texto = enNormalizar(`${p.nome} ${p.marca||''} ${p.codigoBarras||''} ${p.codigoNF||''}`);
+    // qualquer palavra serve: o nome na nota do fornecedor quase nunca é
+    // igual ao nome do cadastro, e exigir a frase inteira não acharia nada
+    return palavras.length ? palavras.some(w=>texto.includes(w)) : texto.includes(alvo);
+  }).slice(0, 40);
+
+  box.innerHTML = achados.length === 0
+    ? `<div class="help-text">Nenhum produto encontrado. Feche e use "É produto novo".</div>`
+    : achados.map(p=>`
+      <div class="combo-option" style="cursor:pointer;padding:8px;border-bottom:1px solid var(--border);"
+           onclick="enEscolherProduto('${entradaId}','${itemId}','${p.id}')">
+        ${escapeHtml(p.nome)}
+        <div class="combo-sub">${escapeHtml(p.marca||'')}${p.codigoBarras?' · '+escapeHtml(p.codigoBarras):''} · estoque ${fmtNum(p.estoqueAtual||0)}</div>
+      </div>`).join('');
+}
+
+function enEscolherProduto(entradaId, itemId, produtoId){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  const p = STATE.produtos.find(x=>x.id===produtoId);
+  it.produtoId = produtoId;
+  it.acao = 'vincular';
+  it.casadoPor = 'escolha manual';
+  it.casamentoForte = true;
+  if(p){
+    if(!it.unidadesPorEmbalagem) it.unidadesPorEmbalagem = p.unidadesPorEmbalagem || null;
+    if(it.precoVenda == null) it.precoVenda = p.precoVenda || null;
+    it.marca = it.marca || p.marca || '';
+    it.categoria = it.categoria || p.categoria || '';
+  }
+  saveState();
+  document.getElementById('modal-en-produto')?.remove();
+  renderEntradaNota();
+}
+
+/* ---------- as perguntas do contador ---------- */
+
+function enAbrirPerguntasContador(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  const texto = enTextoParaContador(e);
+  const pend = enPendenciasFiscais(e);
+  document.getElementById('modal-en-contador')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-en-contador';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px,94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📋</div>
+        <div><h3>Dúvidas para o contador</h3>
+          <div class="sub">${pend.length} item(ns) desta nota</div></div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-en-contador').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">
+          Só o que está em aberto, sem o resto da tela junto. Ele responde item por item.
+        </p>
+        <textarea id="en-texto-contador" rows="14" style="width:100%;font-family:inherit;font-size:13px;">${escapeHtml(texto)}</textarea>
+        <div class="modal-actions" style="margin-top:12px;">
+          <button class="btn" onclick="document.getElementById('modal-en-contador').remove()">Fechar</button>
+          <button class="btn btn-primary" onclick="enCopiarContador()">📋 Copiar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+function enCopiarContador(){
+  const t = document.getElementById('en-texto-contador');
+  if(!t) return;
+  t.select();
+  navigator.clipboard.writeText(t.value)
+    .then(()=>showToast('Copiado. Cole no WhatsApp do contador.', 'success'))
+    .catch(()=>showToast('Selecione o texto e copie com Ctrl+C.', 'error'));
+}
+
+/* ---------- concluir ---------- */
+
+function enConcluir(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  const ativos = (e.itens||[]).filter(it=>it.acao !== 'ignorar');
+  const faltando = ativos.filter(it=>!enItemPronto(it));
+  if(ativos.length === 0){ showToast('Nenhum item para dar entrada.', 'error'); return; }
+  if(faltando.length){
+    showToast(`${faltando.length} item(ns) sem produto ou sem o fator de conversão.`, 'error');
+    return;
+  }
+
+  const novos = ativos.filter(it=>it.acao === 'novo').length;
+  const unidades = ativos.reduce((s,it)=>s + enUnidadesTotais(it), 0);
+
+  confirmAction('Concluir a entrada',
+    `${ativos.length} item(ns) entram no estoque (${fmtNum(unidades)} unidades no total).`
+    + (novos ? ` ${novos} produto(s) novo(s) serão cadastrados.` : '')
+    + ' O custo de cada produto passa a ser o custo real desta nota. Isso não pode ser desfeito automaticamente.',
+    ()=>{
+      ativos.forEach(it=>{
+        const custo = enCustoUnitario(it);
+        let prod = it.produtoId ? STATE.produtos.find(p=>p.id===it.produtoId) : null;
+
+        if(!prod){
+          prod = {
+            id: uid('prod'),
+            nome: (it.nomeProduto || it.nomeNaNota || '').trim(),
+            unidade: 'UN',
+            custo: 0, precoVenda: 0, estoqueAtual: 0,
+            temporario: false,
+            criadoEm: todayISO()
+          };
+          STATE.produtos.push(prod);
+          it.produtoId = prod.id;
+        }
+
+        // o que a nota ensinou sobre o produto
+        if(it.ncm) prod.ncm = it.ncm;
+        if(it.cest) prod.cest = it.cest;
+        if(it.codigoBarras) prod.codigoBarras = it.codigoBarras;
+        if(it.codigoFornecedor) prod.codigoNF = it.codigoFornecedor;
+        if(it.marca) prod.marca = it.marca;
+        if(it.categoria) prod.categoria = it.categoria;
+        if(it.linha) prod.linha = it.linha;
+        if(e.fornecedorNome) prod.fornecedor = e.fornecedorNome;
+        prod.unidadesPorEmbalagem = Number(it.unidadesPorEmbalagem) || 1;
+        prod.temST = !!it.comST;
+        if(it.impostoPct != null) prod.impostoPct = it.impostoPct;
+
+        prod.custo = Math.round(custo * 10000) / 10000;
+        if(it.precoVenda) prod.precoVenda = Number(it.precoVenda);
+        prod.estoqueAtual = (Number(prod.estoqueAtual)||0) + enUnidadesTotais(it);
+
+        // o vínculo que faz a próxima nota deste fornecedor casar sozinha
+        if(e.fornecedorCnpj && it.codigoFornecedor){
+          vinculosFornecedor()[chaveVinculo(e.fornecedorCnpj, it.codigoFornecedor)] = prod.id;
+        }
+      });
+
+      e.status = 'concluida';
+      e.concluidaEm = new Date().toISOString();
+      saveState();
+      entradaAtualId = null;
+      renderEntradaNota();
+      showToast('Entrada concluída. Estoque e custos atualizados.', 'success');
+    }, 'Concluir');
+}
+
+RENDERERS['entrada-nota'] = renderEntradaNota;
 
 /* ---------- os arquivos ---------- */
 
