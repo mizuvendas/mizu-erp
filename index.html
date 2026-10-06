@@ -27632,7 +27632,7 @@ function pcOpcaoEscolhida(item){
 }
 
 function pcFator(item){
-  const f = Number(item.unidadesPorEmbalagem);
+  const f = Number(item.unidadesPorCaixa);
   return (item.comprarEm === 'UN' || !f || f < 1) ? 1 : f;
 }
 
@@ -27743,7 +27743,7 @@ function criarPlanoDeCompra(){
       precoVenda: l.precoVenda,
       sugestao: l.sugestao,
       comprarEm: 'UN',
-      unidadesPorEmbalagem: l.unidadesPorCaixa || 1,
+      unidadesPorCaixa: l.unidadesPorCaixa || 1,
       quantidade: null, // null = calculada da sugestão
       obsCotacao: '',   // o que vai junto no pedido: "Ypê ou Start", "o mais em conta"
       manual: false,
@@ -27776,8 +27776,8 @@ function pcSetCampo(itemId, campo, valor){
 
   if(campo === 'quantidade'){
     item.quantidade = (valor === '' || valor === null) ? null : Math.max(0, Number(valor) || 0);
-  }else if(campo === 'unidadesPorEmbalagem'){
-    item.unidadesPorEmbalagem = Math.max(1, parseInt(valor, 10) || 1);
+  }else if(campo === 'unidadesPorCaixa'){
+    item.unidadesPorCaixa = Math.max(1, parseInt(valor, 10) || 1);
   }else if(campo === 'nome'){
     const novo = (valor || '').trim();
     if(!novo){ showToast('O nome não pode ficar vazio.', 'error'); renderSugestaoCompra(); return; }
@@ -28092,7 +28092,7 @@ function pcNovoItem(dados){
     id: uid('pci'),
     produtoId: null, grupoId: null, nome:'', marca:'', unidade:'UN',
     qtdVendida: 0, estoqueAtual: 0, custoAtual: null, precoVenda: null,
-    sugestao: 0, comprarEm:'UN', unidadesPorEmbalagem: 1,
+    sugestao: 0, comprarEm:'UN', unidadesPorCaixa: 1,
     quantidade: null, manual: true, opcoes: [], obsCotacao: ''
   }, dados);
 }
@@ -28120,7 +28120,7 @@ function pcAdicionarProduto(produtoId){
     custoAtual: p.custo ?? null,
     precoVenda: p.precoVenda ?? null,
     sugestao: Math.round(vendido * (plano.percentual/100) * 100) / 100,
-    unidadesPorEmbalagem: p.unidadesPorCaixa || 1,
+    unidadesPorCaixa: p.unidadesPorCaixa || 1,
     manual: true,
     opcoes: p.fornecedor ? [{ id: uid('pco'), fornecedor:p.fornecedor, preco:p.custo || 0, obs:'', escolhida:true }] : []
   }));
@@ -28434,8 +28434,8 @@ function renderPlanoEditor(){
           </select>
         </td>
         <td class="num">
-          <input type="number" min="1" step="1" value="${item.unidadesPorEmbalagem||1}" ${travado||item.comprarEm==='UN'?'disabled':''}
-                 onchange="pcSetCampo('${item.id}','unidadesPorEmbalagem',this.value)" style="width:70px;text-align:right;">
+          <input type="number" min="1" step="1" value="${item.unidadesPorCaixa||1}" ${travado||item.comprarEm==='UN'?'disabled':''}
+                 onchange="pcSetCampo('${item.id}','unidadesPorCaixa',this.value)" style="width:70px;text-align:right;">
         </td>
         <td class="num" id="pc-qtdcel-${item.id}">${pcHtmlQuantidade(item, travado)}</td>
         <td class="num" id="pc-un-${item.id}">${fmtNum(c.totalUnidades)}</td>
@@ -29431,7 +29431,7 @@ function ctOpcaoDe(item, nome){
    dele, usa o que está cadastrado no item. */
 function ctFator(item, opcao){
   if(item.comprarEm === 'UN') return 1;
-  const f = Number(opcao && opcao.unidPorEmb) || Number(item.unidadesPorEmbalagem) || 1;
+  const f = Number(opcao && opcao.unidPorEmb) || Number(item.unidadesPorCaixa) || 1;
   return f >= 1 ? f : 1;
 }
 
@@ -29647,7 +29647,7 @@ function ctHtmlCelula(item, nome, travado){
              onchange="ctSetPrecoCot('${item.id}','${escapeAttr(nome)}', this.value)"
              style="width:100%;text-align:right;font-size:12.5px;padding:3px 5px;${ehMenor?'border-color:var(--positive);font-weight:700;':''}">
       ${precisaEmb ? `<input type="number" min="1" step="1" value="${o.unidPorEmb || ''}" ${travado?'disabled':''}
-             placeholder="un/emb ${item.unidadesPorEmbalagem||1}" title="Quantas unidades vêm na embalagem deste fornecedor"
+             placeholder="un/emb ${item.unidadesPorCaixa||1}" title="Quantas unidades vêm na embalagem deste fornecedor"
              onchange="ctSetEmbCot('${item.id}','${escapeAttr(nome)}', this.value)"
              style="width:100%;text-align:right;font-size:11px;padding:2px 5px;color:var(--ink-soft);">` : ''}
       <div id="ct-sinal-${item.id}-${ctSlug(nome)}" style="font-size:11px;">
@@ -29889,7 +29889,7 @@ function renderCotacaoMatriz(){
                    onchange="pcAlternarSelecao('${item.id}', this.checked)" style="width:auto;margin-top:3px;">`}
           <div style="flex:1;min-width:0;">
             <strong style="font-size:13px;">${escapeHtml(item.nome)}</strong>
-            <div class="hint">${pcQuantidade(item)} ${item.comprarEm}${item.comprarEm!=='UN'?` de ${item.unidadesPorEmbalagem||1}`:''}
+            <div class="hint">${pcQuantidade(item)} ${item.comprarEm}${item.comprarEm!=='UN'?` de ${item.unidadesPorCaixa||1}`:''}
               ${item.obsCotacao?` · <em style="color:var(--warning);font-style:normal;">${escapeHtml(item.obsCotacao)}</em>`:''}</div>
             <div style="margin-top:3px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
               ${travado?'':`<button class="btn btn-sm" style="padding:2px 7px;font-size:11px;" onclick="ctAbrirQuemCota('${item.id}')">🏷️ quem cota (${(item.opcoes||[]).length})</button>`}
@@ -30873,7 +30873,7 @@ function enLerXml(texto, nomeArquivo){
       // ---- o que ela decide ----
       produtoId: null,
       acao: null,            // 'vincular' | 'novo' | 'ignorar'
-      unidadesPorEmbalagem: null,
+      unidadesPorCaixa: null,
       nomeProduto: '',
       codigoBarras: '',
       marca: '', categoria: '', linha: '',
@@ -30948,7 +30948,7 @@ function enNormalizar(s){
    desconto sai. E tudo isso está no preço da EMBALAGEM, não da unidade
    que ela vende. */
 function enCustoUnitario(item){
-  const un = Number(item.unidadesPorEmbalagem) || 1;
+  const un = Number(item.unidadesPorCaixa) || 1;
   const qtd = Number(item.qtdNota) || 0;
   if(qtd <= 0 || un <= 0) return 0;
   const totalPago = (item.vProd||0) + (item.vIPI||0) + (item.vICMSST||0)
@@ -30957,7 +30957,7 @@ function enCustoUnitario(item){
 }
 
 function enUnidadesTotais(item){
-  return (Number(item.qtdNota)||0) * (Number(item.unidadesPorEmbalagem)||1);
+  return (Number(item.qtdNota)||0) * (Number(item.unidadesPorCaixa)||1);
 }
 
 /* O imposto de um produto com ST é menor: o ICMS já foi pago antes e sai
@@ -31122,7 +31122,7 @@ async function enImportarArquivos(files){
           it.acao = 'vincular';
           it.casadoPor = achou.como;
           it.casamentoForte = achou.forte;
-          it.unidadesPorEmbalagem = achou.produto.unidadesPorEmbalagem || null;
+          it.unidadesPorCaixa = achou.produto.unidadesPorCaixa || null;
           it.precoVenda = achou.produto.precoVenda || null;
           it.marca = achou.produto.marca || '';
           it.categoria = achou.produto.categoria || '';
@@ -31179,20 +31179,72 @@ function enAdicionarItemManual(){
     id: uid('eni'), codigoFornecedor:'', nomeNaNota:'', ean:'', ncm:'', cest:'', cfop:'', cst:'', csosn:'', origem:'0',
     unidadeNota:'UN', qtdNota:1, valorUnitNota:0, vProd:0, vDesc:0, vFrete:0, vOutro:0, vSeg:0, vIPI:0,
     vICMSST:0, vICMSSTRet:0, comST:false, sinaisST:[],
-    produtoId:null, acao:'novo', unidadesPorEmbalagem:1, nomeProduto:'', codigoBarras:'',
+    produtoId:null, acao:'novo', unidadesPorCaixa:1, nomeProduto:'', codigoBarras:'',
     marca:'', categoria:'', linha:'', precoVenda:null, conferido:false, manual:true
   });
   saveState();
   renderEntradaNota();
 }
 
-/* ---------- a tela de conferência ---------- */
+/* As operações de entrada que mudam o que acontece com a mercadoria.
+   Sem isso, tudo que entra vira estoque de venda pelo preço da nota — e
+   bonificação (que chegou de graça) entraria somando custo que não houve. */
+const EN_OPERACOES = [
+  { id:'revenda',   nome:'Compra para revenda',        cfopGO:'1102', cfopFora:'2102', estoque:true,  custo:true  },
+  { id:'consumo',   nome:'Uso e consumo da loja',      cfopGO:'1556', cfopFora:'2556', estoque:false, custo:true  },
+  { id:'bonificacao', nome:'Bonificação, doação ou brinde', cfopGO:'1910', cfopFora:'2910', estoque:true, custo:false },
+  { id:'devolucao', nome:'Devolução de venda',         cfopGO:'1202', cfopFora:'2202', estoque:true,  custo:false },
+];
+
+function enOperacao(e){
+  return EN_OPERACOES.find(o=>o.id === (e && e.operacao)) || null;
+}
+
+/* O CFOP da SUA entrada não é o da nota: o do fornecedor é de saída (5xxx
+   dentro do estado, 6xxx pra fora) e o seu é o espelho (1xxx / 2xxx). */
+function enCfopEntrada(e){
+  const op = enOperacao(e);
+  if(!op) return '';
+  const deFora = (e.fornecedorUF || '').toUpperCase() !== 'GO' && (e.fornecedorUF || '') !== '';
+  return deFora ? op.cfopFora : op.cfopGO;
+}
+
+/* Unidade que não é UN é onde o fator de conversão decide se o estoque
+   fica certo ou fica errado por meses sem ninguém perceber. */
+function enUnidadePerigosa(it){
+  const u = (it.unidadeNota || '').toUpperCase().trim();
+  return u !== '' && u !== 'UN' && u !== 'UND' && u !== 'PEC';
+}
+
+function enResolvidos(e){
+  const ativos = (e.itens||[]).filter(it=>it.acao !== 'ignorar');
+  return { ativos, prontos: ativos.filter(it=>enItemPronto(it)) };
+}
+
+let enItemAberto = null;
+let enEsconderProntos = false;
+
+function enAlternarItem(id){
+  enItemAberto = (enItemAberto === id) ? null : id;
+  renderEntradaNota();
+}
+function enAlternarEsconder(){
+  enEsconderProntos = !enEsconderProntos;
+  renderEntradaNota();
+}
 
 function enHtmlConferencia(e){
   const travado = e.status === 'concluida';
   const pend = enPendenciasFiscais(e);
-  const prontos = (e.itens||[]).filter(it=>enItemPronto(it)).length;
-  const ativos  = (e.itens||[]).filter(it=>it.acao !== 'ignorar').length;
+  const { ativos, prontos } = enResolvidos(e);
+  const pct = ativos.length ? Math.round(prontos.length / ativos.length * 100) : 0;
+  const novos = ativos.filter(it=>it.acao === 'novo' && !it.produtoId).length;
+  const op = enOperacao(e);
+
+  const visiveis = (e.itens||[]).filter(it=>{
+    if(it.acao === 'ignorar') return !enEsconderProntos;
+    return enEsconderProntos ? !enItemPronto(it) : true;
+  });
 
   return `
     <div class="card">
@@ -31202,113 +31254,162 @@ function enHtmlConferencia(e){
           <h3 style="margin:8px 0 2px;">${escapeHtml(e.fornecedorNome || 'Entrada manual')}</h3>
           <div class="help-text" style="margin:0;">
             ${e.numero?`Nota ${escapeHtml(e.numero)}${e.serie?'/'+escapeHtml(e.serie):''} · `:''}
-            ${escapeHtml(enData(e.data)||'')} ${e.fornecedorUF?`· ${escapeHtml(e.fornecedorUF)}`:''}
-            ${e.valorNota?`· ${fmtMoney(e.valorNota)}`:''}
+            ${escapeHtml(enData(e.data)||'')}${e.fornecedorUF?` · ${escapeHtml(e.fornecedorUF)}`:''}
+            ${e.valorNota?` · ${fmtMoney(e.valorNota)}`:''}
+            ${enCfopEntrada(e)?` · CFOP de entrada <strong>${enCfopEntrada(e)}</strong>`:''}
           </div>
         </div>
         <div class="cell-actions">
-          ${pend.length ? `<button class="btn btn-sm" style="border-color:var(--warning);color:var(--warning);" onclick="enAbrirPerguntasContador('${e.id}')">📋 ${pend.length} dúvida(s) para o contador</button>` : ''}
+          ${pend.length ? `<button class="btn btn-sm" style="border-color:var(--warning);color:var(--warning);" onclick="enAbrirPerguntasContador('${e.id}')">📋 ${pend.length} dúvida(s) p/ contador</button>` : ''}
           ${e.tipo==='manual' && !travado ? `<button class="btn btn-sm" onclick="enAdicionarItemManual()">+ Item</button>` : ''}
-          ${!travado ? `<button class="btn btn-primary" onclick="enConcluir('${e.id}')">✓ Concluir entrada (${prontos}/${ativos})</button>` : `<span style="color:var(--positive);font-weight:700;">✓ entrada concluída</span>`}
+          ${!travado ? `<button class="btn btn-primary" onclick="enConcluir('${e.id}')">✓ Concluir entrada</button>` : `<span style="color:var(--positive);font-weight:700;">✓ concluída</span>`}
         </div>
       </div>
 
-      ${e.tipo==='manual' && !travado ? `
+      <!-- ---------- o que vale pra nota inteira ---------- -->
       <div class="form-grid" style="margin-top:12px;">
+        <div class="field">
+          <label>Operação ${op?'':'<span style="color:var(--warning);">— precisa escolher</span>'}</label>
+          <select ${travado?'disabled':''} onchange="enSetOperacao('${e.id}', this.value)">
+            <option value="">— selecione —</option>
+            ${EN_OPERACOES.map(o=>`<option value="${o.id}" ${e.operacao===o.id?'selected':''}>${escapeHtml(o.nome)}</option>`).join('')}
+          </select>
+          <div class="help-text">${op
+            ? (op.estoque ? (op.custo ? 'Entra no estoque de venda, com o custo da nota.' : 'Entra no estoque de venda com <strong>custo zero</strong>.')
+                          : 'Vai para consumo da loja — <strong>não</strong> entra no estoque de venda.')
+            : 'Define se a mercadoria entra no estoque de venda e com que custo.'}</div>
+        </div>
+        ${e.tipo==='manual' && !travado ? `
         <div class="field"><label>Fornecedor</label>
           <input type="text" value="${escapeAttr(e.fornecedorNome)}" onchange="enSetNota('${e.id}','fornecedorNome',this.value)"></div>
         <div class="field"><label>Número da nota</label>
           <input type="text" value="${escapeAttr(e.numero)}" onchange="enSetNota('${e.id}','numero',this.value)"></div>
         <div class="field"><label>Data</label>
-          <input type="date" value="${escapeAttr(e.data)}" onchange="enSetNota('${e.id}','data',this.value)"></div>
-      </div>` : ''}
-
-      <div class="help-text" style="margin:14px 0 6px;">
-        ${ativos} item(ns) · ${prontos} pronto(s) para concluir.
-        ${pend.length ? `<strong style="color:var(--warning);">${pend.length} com dúvida fiscal</strong> — dá pra concluir assim mesmo e ajustar depois.` : ''}
+          <input type="date" value="${escapeAttr(e.data)}" onchange="enSetNota('${e.id}','data',this.value)"></div>` : ''}
       </div>
 
-      <div id="en-itens">${(e.itens||[]).map(it=>enHtmlItem(e, it, travado)).join('')}</div>
+      <!-- ---------- o tamanho do trabalho, antes de começar ---------- -->
+      <div style="margin:14px 0 8px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:200px;height:20px;border-radius:10px;overflow:hidden;background:var(--negative-soft, #FBEAE8);display:flex;">
+            <div style="width:${pct}%;background:var(--positive);color:#fff;font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;transition:width .2s;">${pct>12?pct+'%':''}</div>
+            <div style="flex:1;color:var(--negative, #B02A37);font-size:11.5px;font-weight:700;display:flex;align-items:center;justify-content:center;">${pct<88?(100-pct)+'%':''}</div>
+          </div>
+          <span class="help-text" style="margin:0;">${prontos.length} de ${ativos.length} prontos</span>
+          ${!travado ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" style="width:auto;" ${enEsconderProntos?'checked':''} onchange="enAlternarEsconder()"> Ocultar os já resolvidos</label>` : ''}
+        </div>
+      </div>
+
+      ${!travado ? `
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);">
+        <span class="help-text" style="margin:0;">Em todos de uma vez:</span>
+        <input type="number" step="0.1" id="en-margem-geral" placeholder="margem %" style="width:110px;">
+        <button class="btn btn-sm" onclick="enAplicarMargemTodos('${e.id}')">Aplicar margem</button>
+        ${novos ? `<button class="btn btn-sm" onclick="enProcurarTodosNovos('${e.id}')">🔎 Procurar os ${novos} não encontrado(s)</button>` : ''}
+      </div>` : ''}
+
+      <div class="table-wrap">
+        <table class="data-table" style="font-size:13px;">
+          <thead><tr>
+            <th style="width:26px;"></th>
+            <th>Item da nota</th>
+            <th class="num">Qtd</th>
+            <th>Produto no sistema</th>
+            <th class="num" title="Quantas unidades de venda vêm em cada embalagem da nota">Fator</th>
+            <th class="num">Entra</th>
+            <th class="num">Custo un.</th>
+            <th class="num">Preço</th>
+            <th class="num">Margem</th>
+            <th style="width:30px;"></th>
+          </tr></thead>
+          <tbody>
+            ${visiveis.map(it=>enHtmlLinha(e, it, travado)).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${visiveis.length===0 ? `<div class="help-text" style="margin-top:10px;">Tudo resolvido. Desmarque "ocultar" para rever.</div>` : ''}
     </div>`;
 }
 
-function enItemPronto(it){
-  if(it.acao === 'ignorar') return true;
-  if(!it.unidadesPorEmbalagem || Number(it.unidadesPorEmbalagem) <= 0) return false;
-  if(it.acao === 'novo' && !(it.nomeProduto||'').trim()) return false;
-  if(it.acao === 'vincular' && !it.produtoId) return false;
-  return true;
-}
-
-function enHtmlItem(e, it, travado){
-  if(it.acao === 'ignorar'){
-    return `<div class="card" id="en-item-${it.id}" style="margin-top:10px;opacity:.55;">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">
-        <div><strong>${escapeHtml(it.nomeNaNota||'(item)')}</strong>
-          <div class="help-text" style="margin:0;">fora desta entrada</div></div>
-        ${travado?'':`<button class="btn btn-sm" onclick="enSetItem('${e.id}','${it.id}','acao','novo')">Trazer de volta</button>`}
-      </div></div>`;
-  }
-
+function enHtmlLinha(e, it, travado){
+  const aberto = enItemAberto === it.id;
+  const pronto = enItemPronto(it);
   const prod = it.produtoId ? STATE.produtos.find(p=>p.id===it.produtoId) : null;
   const conta = enConta(it, it.precoVenda);
-  const pronto = enItemPronto(it);
+  const perigo = enUnidadePerigosa(it) && !it.unidadesPorCaixa;
 
-  return `
-  <div class="card" id="en-item-${it.id}" style="margin-top:10px;border-left:4px solid ${pronto?'var(--positive)':'var(--warning)'};">
-    <div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;align-items:flex-start;">
-      <div style="flex:1;min-width:240px;">
-        <strong style="font-size:15px;">${escapeHtml(it.nomeNaNota || it.nomeProduto || '(sem nome)')}</strong>
-        <div class="help-text" style="margin:2px 0 0;">
-          ${it.codigoFornecedor?`cód. fornecedor ${escapeHtml(it.codigoFornecedor)} · `:''}
+  if(it.acao === 'ignorar'){
+    return `<tr style="opacity:.5;">
+      <td>✕</td>
+      <td colspan="8">${escapeHtml(it.nomeNaNota||'(item)')} — fora desta entrada</td>
+      <td>${travado?'':`<button class="btn btn-sm" onclick="enSetItem('${e.id}','${it.id}','acao','novo')" title="Trazer de volta">↩</button>`}</td>
+    </tr>`;
+  }
+
+  const linha = `
+    <tr id="en-linha-${it.id}" style="border-left:3px solid ${pronto?'var(--positive)':'var(--warning)'};">
+      <td title="${pronto?'pronto':'falta resolver'}">${pronto?'<span style="color:var(--positive);">●</span>':'<span style="color:var(--warning);">●</span>'}</td>
+      <td>
+        <div>${escapeHtml(it.nomeNaNota || it.nomeProduto || '(sem nome)')}</div>
+        <div class="help-text" style="margin:0;font-size:11px;">
           ${it.ncm?`NCM ${escapeHtml(it.ncm)}`:'<span style="color:var(--warning);">sem NCM</span>'}
           ${it.cest?` · CEST ${escapeHtml(it.cest)}`:''}
           ${it.cfop?` · CFOP ${escapeHtml(it.cfop)}`:''}
-          ${(it.cst||it.csosn)?` · ${it.cst?'CST':'CSOSN'} ${escapeHtml(it.cst||it.csosn)}`:''}
+          ${(it.cst||it.csosn)?` · ${escapeHtml(it.cst||it.csosn)}`:''}
+          ${it.comST?` · <strong style="color:var(--warning);">ST</strong>`:''}
         </div>
-        <div class="help-text" style="margin:2px 0 0;">
-          ${fmtNum(it.qtdNota)} ${escapeHtml(it.unidadeNota||'')} × ${fmtMoney(it.valorUnitNota)}
-          ${it.vIPI?` · IPI ${fmtMoney(it.vIPI)}`:''}
-          ${it.vICMSST?` · ICMS-ST ${fmtMoney(it.vICMSST)}`:''}
-          ${it.vFrete?` · frete ${fmtMoney(it.vFrete)}`:''}
-          ${it.vDesc?` · desconto −${fmtMoney(it.vDesc)}`:''}
-        </div>
-        ${it.comST ? `<div style="margin-top:6px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--warning-soft);font-size:12.5px;">
-            ⚠️ <strong>Veio com substituição tributária</strong> — ${escapeHtml(it.sinaisST.join(', '))}
-          </div>` : (it.cest ? `<div style="margin-top:6px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:12.5px;">
-            Tem CEST (segmento de ST) mas veio <strong>sem retenção</strong>. Se for ST em Goiás, pode haver antecipação a recolher.
-          </div>` : '')}
-      </div>
-      ${travado?'':`<button class="btn btn-sm" onclick="enSetItem('${e.id}','${it.id}','acao','ignorar')" title="Não entra nesta entrada">✕ ignorar</button>`}
-    </div>
+      </td>
+      <td class="num" style="white-space:nowrap;">
+        ${fmtNum(it.qtdNota)}<br><span class="help-text" style="margin:0;">${escapeHtml(it.unidadeNota||'')}</span>
+      </td>
+      <td>
+        ${prod
+          ? `<div style="display:flex;align-items:center;gap:4px;">
+               <span title="${escapeAttr(it.casadoPor||'')}">${it.casamentoForte===false?'<span style="color:var(--warning);" title="casou pelo nome — confira">⚠</span> ':''}${escapeHtml(prod.nome)}</span>
+             </div>
+             ${travado?'':`<button class="btn btn-sm" style="padding:1px 6px;font-size:11px;margin-top:2px;" onclick="enTrocarProduto('${e.id}','${it.id}')">trocar</button>`}`
+          : `${travado?'<span class="help-text">—</span>':`<button class="btn btn-sm" style="padding:2px 8px;" onclick="enTrocarProduto('${e.id}','${it.id}')">🔎 procurar</button>
+             <div style="margin-top:3px;"><input type="text" placeholder="ou cadastrar como..." value="${escapeAttr(it.nomeProduto||'')}" style="font-size:12px;padding:2px 5px;" onchange="enSetItem('${e.id}','${it.id}','nomeProduto',this.value)"></div>`}`}
+      </td>
+      <td class="num">
+        <input type="number" step="1" min="1" value="${it.unidadesPorCaixa||''}" ${travado?'disabled':''}
+               style="width:62px;text-align:right;${perigo?'border:2px solid var(--warning);background:var(--warning-soft);':''}"
+               title="${perigo?'A nota veio em '+escapeAttr(it.unidadeNota)+' — informe quantas unidades vêm dentro':'unidades por embalagem'}"
+               oninput="enMudouUnidades('${e.id}','${it.id}', this.value)">
+      </td>
+      <td class="num" id="en-entra-${it.id}">${it.unidadesPorCaixa?fmtNum(enUnidadesTotais(it)):'—'}</td>
+      <td class="num" id="en-custo-${it.id}">${it.unidadesPorCaixa?fmtMoney(conta.custo):'<span class="help-text" style="margin:0;">—</span>'}</td>
+      <td class="num">
+        <input type="number" step="0.01" min="0" id="en-preco-${it.id}" value="${it.precoVenda ?? ''}" ${travado?'disabled':''}
+               style="width:84px;text-align:right;" oninput="enMudouPreco('${e.id}','${it.id}', this.value)">
+      </td>
+      <td class="num">
+        <input type="number" step="0.1" id="en-margem-${it.id}" value="${it.unidadesPorCaixa&&conta.margemPct?conta.margemPct.toFixed(1):''}" ${travado?'disabled':''}
+               style="width:70px;text-align:right;" oninput="enMudouMargem('${e.id}','${it.id}', this.value)">
+      </td>
+      <td>
+        <button class="btn btn-sm" style="padding:2px 6px;" onclick="enAlternarItem('${it.id}')" title="Mais detalhes">${aberto?'▴':'▾'}</button>
+      </td>
+    </tr>`;
 
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:14px;margin-top:12px;">
+  if(!aberto) return linha;
 
-      <!-- ---------- qual produto ---------- -->
+  return linha + `
+    <tr><td colspan="10" style="background:var(--surface-2);padding:12px;">
+      ${enHtmlDetalhe(e, it, travado)}
+    </td></tr>`;
+}
+
+/* O detalhe só abre quando ela pede: é onde ficam as coisas que se
+   preenchem uma vez por produto, não a cada nota. */
+function enHtmlDetalhe(e, it, travado){
+  const c = enConta(it, it.precoVenda);
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;">
       <div>
-        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">1 · Que produto é este</div>
-        ${it.produtoId && prod ? `
-          <div style="padding:8px;border:1px solid var(--positive);border-radius:var(--radius-sm);">
-            <strong>${escapeHtml(prod.nome)}</strong>
-            <div class="help-text" style="margin:0;">
-              estoque ${fmtNum(prod.estoqueAtual||0)} ${escapeHtml(prod.unidade||'')} ·
-              casou por ${escapeHtml(it.casadoPor||'escolha manual')}
-              ${it.casamentoForte === false ? ' <strong style="color:var(--warning);">— confira</strong>' : ''}
-            </div>
-            ${travado?'':`<button class="btn btn-sm" style="margin-top:6px;" onclick="enTrocarProduto('${e.id}','${it.id}')">Trocar</button>
-            <button class="btn btn-sm" style="margin-top:6px;" onclick="enSetItem('${e.id}','${it.id}','acao','novo')">É produto novo</button>`}
-          </div>` : `
-          <div style="padding:8px;border:1px dashed var(--warning);border-radius:var(--radius-sm);">
-            <strong style="color:var(--warning);">Produto novo</strong>
-            <div class="field" style="margin-top:6px;">
-              <label>Nome no seu cadastro</label>
-              <input type="text" value="${escapeAttr(it.nomeProduto||'')}" ${travado?'disabled':''}
-                     onchange="enSetItem('${e.id}','${it.id}','nomeProduto',this.value)">
-            </div>
-            ${travado?'':`<button class="btn btn-sm" onclick="enTrocarProduto('${e.id}','${it.id}')">Já existe — procurar</button>`}
-          </div>`}
-
-        <div class="form-grid" style="margin-top:8px;">
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">Cadastro do produto</div>
+        <div class="form-grid">
           <div class="field"><label>Código de barras</label>
             <input type="text" value="${escapeAttr(it.codigoBarras || it.ean || '')}" ${travado?'disabled':''}
                    onchange="enSetItem('${e.id}','${it.id}','codigoBarras',this.value)"></div>
@@ -31323,52 +31424,88 @@ function enHtmlItem(e, it, travado){
               ${['','econômica','intermediária','premium'].map(l=>`<option value="${l}" ${it.linha===l?'selected':''}>${l||'— não definida —'}</option>`).join('')}
             </select></div>
         </div>
+        ${it.comST ? `<div style="margin-top:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--warning-soft);font-size:12.5px;">
+            ⚠️ <strong>Veio com ST</strong> — ${escapeHtml((it.sinaisST||[]).join(', '))}
+          </div>` : (it.cest ? `<div style="margin-top:8px;padding:6px 8px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:12.5px;">
+            Tem CEST (segmento de ST) e veio <strong>sem retenção</strong>. Se for ST em Goiás, pode haver antecipação a recolher.
+          </div>` : '')}
       </div>
 
-      <!-- ---------- conversão ---------- -->
       <div>
-        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">2 · Quantas unidades vêm aí dentro</div>
-        <div class="field">
-          <label>Unidades por ${escapeHtml(it.unidadeNota || 'embalagem')}</label>
-          <input type="number" step="1" min="1" id="en-un-${it.id}" value="${it.unidadesPorEmbalagem||''}" ${travado?'disabled':''}
-                 placeholder="ex.: 12" oninput="enMudouUnidades('${e.id}','${it.id}', this.value)">
-          <div class="help-text" id="en-un-ajuda-${it.id}">
-            ${it.unidadesPorEmbalagem
-              ? `Entram <strong>${fmtNum(enUnidadesTotais(it))}</strong> unidades no estoque.`
-              : 'A nota veio em ' + escapeHtml(it.unidadeNota||'?') + '. Quantas unidades de venda tem em cada uma?'}
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">O que a nota cobrou</div>
+        <div style="font-size:13px;">
+          ${[['Produto', fmtMoney(it.vProd||0)],
+             ...(it.vIPI?[['IPI', fmtMoney(it.vIPI)]]:[]),
+             ...(it.vICMSST?[['ICMS-ST', fmtMoney(it.vICMSST)]]:[]),
+             ...(it.vFrete?[['Frete', fmtMoney(it.vFrete)]]:[]),
+             ...(it.vSeg?[['Seguro', fmtMoney(it.vSeg)]]:[]),
+             ...(it.vOutro?[['Outras despesas', fmtMoney(it.vOutro)]]:[]),
+             ...(it.vDesc?[['Desconto', '−'+fmtMoney(it.vDesc)]]:[])
+            ].map(l=>`<div style="display:flex;justify-content:space-between;"><span class="help-text" style="margin:0;">${l[0]}</span><span>${l[1]}</span></div>`).join('')}
+          <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
+            <strong>Custo por unidade</strong><strong>${fmtMoney(enCustoUnitario(it))}</strong>
           </div>
         </div>
-        <div style="padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);">
-          <div class="help-text" style="margin:0;">Custo real por unidade</div>
-          <div style="font-size:20px;font-weight:700;" id="en-custo-${it.id}">${fmtMoney(conta.custo)}</div>
-          <div class="help-text" style="margin:0;">já com IPI, ST, frete e desconto</div>
-        </div>
-      </div>
-
-      <!-- ---------- o preço ---------- -->
-      <div>
-        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">3 · Por quanto vender</div>
-        <div class="form-grid">
-          <div class="field"><label>Preço de venda</label>
-            <input type="number" step="0.01" min="0" id="en-preco-${it.id}" value="${it.precoVenda ?? ''}" ${travado?'disabled':''}
-                   oninput="enMudouPreco('${e.id}','${it.id}', this.value)"></div>
-          <div class="field"><label>Margem desejada (%)</label>
-            <input type="number" step="0.1" id="en-margem-${it.id}" value="${conta.margemPct ? conta.margemPct.toFixed(1) : ''}" ${travado?'disabled':''}
-                   oninput="enMudouMargem('${e.id}','${it.id}', this.value)"></div>
-        </div>
-        <div class="field">
+        <div class="field" style="margin-top:10px;">
           <label>Imposto a considerar</label>
           <select ${travado?'disabled':''} onchange="enSetImposto('${e.id}','${it.id}', this.value)">
             <option value="" ${it.impostoPct==null?'selected':''}>padrão do sistema (${enImpostoPct({})}%)</option>
             <option value="4" ${it.impostoPct==4?'selected':''}>4,00% — sem ST</option>
             <option value="2.64" ${it.impostoPct==2.64?'selected':''}>2,64% — com ST segregada</option>
           </select>
-          <div class="help-text">Produto com ST paga menos imposto no Simples. Troque aqui para ver a diferença no lucro.</div>
         </div>
-        <div id="en-conta-${it.id}">${enHtmlConta(it)}</div>
       </div>
-    </div>
-  </div>`;
+
+      <div>
+        <div style="font-weight:700;font-size:12.5px;margin-bottom:6px;">O que sobra</div>
+        <div id="en-conta-${it.id}">${enHtmlConta(it)}</div>
+        ${travado?'':`<button class="btn btn-sm" style="margin-top:8px;" onclick="enSetItem('${e.id}','${it.id}','acao','ignorar')">✕ tirar este item da entrada</button>`}
+      </div>
+    </div>`;
+}
+
+function enSetOperacao(entradaId, valor){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  e.operacao = valor || null;
+  saveState();
+  renderEntradaNota();
+}
+
+/* Decidir a margem uma vez e aplicar em tudo é o que transforma uma nota
+   de 11 itens em um campo preenchido, em vez de onze. */
+function enAplicarMargemTodos(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  const campo = document.getElementById('en-margem-geral');
+  if(!e || !campo) return;
+  const margem = Number(campo.value);
+  if(!margem){ showToast('Informe a margem em %.', 'error'); return; }
+  let n = 0;
+  (e.itens||[]).forEach(it=>{
+    if(it.acao === 'ignorar') return;
+    if(!it.unidadesPorCaixa) return;   // sem conversão, o preço sairia errado
+    const preco = enPrecoPelaMargem(it, margem);
+    if(preco > 0){ it.precoVenda = Math.round(preco*100)/100; n++; }
+  });
+  saveState();
+  renderEntradaNota();
+  showToast(n ? `Margem de ${margem}% aplicada em ${n} item(ns).`
+              : 'Nenhum item tinha o fator de conversão preenchido ainda.', n?'success':'error');
+}
+
+function enProcurarTodosNovos(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  const primeiro = (e.itens||[]).find(it=>it.acao!=='ignorar' && !it.produtoId);
+  if(primeiro) enTrocarProduto(entradaId, primeiro.id);
+}
+
+function enItemPronto(it){
+  if(it.acao === 'ignorar') return true;
+  if(!it.unidadesPorCaixa || Number(it.unidadesPorCaixa) <= 0) return false;
+  if(it.acao === 'novo' && !(it.nomeProduto||'').trim()) return false;
+  if(it.acao === 'vincular' && !it.produtoId) return false;
+  return true;
 }
 
 function enHtmlConta(it){
@@ -31424,23 +31561,25 @@ function enSetItem(entradaId, itemId, campo, valor){
 
 /* Redesenha SÓ os números, não a linha inteira: refazer o card a cada
    tecla apagaria o campo debaixo do dedo dela. */
+/* Redesenha SÓ as células que mudaram, nunca a linha: refazer a linha
+   apagaria o campo debaixo do dedo dela no meio da digitação. */
 function enAtualizarNumeros(e, it){
+  // Sem o fator de conversão, o "custo por unidade" seria o custo da CAIXA
+  // com nome de unidade — um número errado com cara de certo. Melhor um traço.
   const custo = document.getElementById('en-custo-' + it.id);
-  if(custo) custo.textContent = fmtMoney(enCustoUnitario(it));
+  if(custo) custo.textContent = it.unidadesPorCaixa ? fmtMoney(enCustoUnitario(it)) : '—';
+  const entra = document.getElementById('en-entra-' + it.id);
+  if(entra) entra.textContent = it.unidadesPorCaixa ? fmtNum(enUnidadesTotais(it)) : '—';
   const conta = document.getElementById('en-conta-' + it.id);
   if(conta) conta.innerHTML = enHtmlConta(it);
-  const ajuda = document.getElementById('en-un-ajuda-' + it.id);
-  if(ajuda && it.unidadesPorEmbalagem){
-    ajuda.innerHTML = `Entram <strong>${fmtNum(enUnidadesTotais(it))}</strong> unidades no estoque.`;
-  }
-  const card = document.getElementById('en-item-' + it.id);
-  if(card) card.style.borderLeftColor = enItemPronto(it) ? 'var(--positive)' : 'var(--warning)';
+  const linha = document.getElementById('en-linha-' + it.id);
+  if(linha) linha.style.borderLeftColor = enItemPronto(it) ? 'var(--positive)' : 'var(--warning)';
 }
 
 function enMudouUnidades(entradaId, itemId, valor){
   const [e, it] = enItem(entradaId, itemId);
   if(!it) return;
-  it.unidadesPorEmbalagem = Number(valor) || null;
+  it.unidadesPorCaixa = Number(valor) || null;
   saveState();
   enAtualizarNumeros(e, it);
   const campoMargem = document.getElementById('en-margem-' + it.id);
@@ -31551,7 +31690,7 @@ function enEscolherProduto(entradaId, itemId, produtoId){
   it.casadoPor = 'escolha manual';
   it.casamentoForte = true;
   if(p){
-    if(!it.unidadesPorEmbalagem) it.unidadesPorEmbalagem = p.unidadesPorEmbalagem || null;
+    if(!it.unidadesPorCaixa) it.unidadesPorCaixa = p.unidadesPorCaixa || null;
     if(it.precoVenda == null) it.precoVenda = p.precoVenda || null;
     it.marca = it.marca || p.marca || '';
     it.categoria = it.categoria || p.categoria || '';
@@ -31615,12 +31754,19 @@ function enConcluir(entradaId){
     showToast(`${faltando.length} item(ns) sem produto ou sem o fator de conversão.`, 'error');
     return;
   }
+  if(!e.operacao){
+    showToast('Escolha a Operação desta nota — é ela que diz se a mercadoria entra no estoque de venda.', 'error');
+    return;
+  }
 
   const novos = ativos.filter(it=>it.acao === 'novo').length;
   const unidades = ativos.reduce((s,it)=>s + enUnidadesTotais(it), 0);
 
+  const opAtual = enOperacao(e);
   confirmAction('Concluir a entrada',
-    `${ativos.length} item(ns) entram no estoque (${fmtNum(unidades)} unidades no total).`
+    `${escapeHtml(opAtual ? opAtual.nome : '')} — ${ativos.length} item(ns), ${fmtNum(unidades)} unidades.`
+    + (opAtual && !opAtual.estoque ? ' NÃO entram no estoque de venda.' : '')
+    + (opAtual && !opAtual.custo ? ' O custo dos produtos NÃO será alterado.' : '')
     + (novos ? ` ${novos} produto(s) novo(s) serão cadastrados.` : '')
     + ' O custo de cada produto passa a ser o custo real desta nota. Isso não pode ser desfeito automaticamente.',
     ()=>{
@@ -31650,13 +31796,16 @@ function enConcluir(entradaId){
         if(it.categoria) prod.categoria = it.categoria;
         if(it.linha) prod.linha = it.linha;
         if(e.fornecedorNome) prod.fornecedor = e.fornecedorNome;
-        prod.unidadesPorEmbalagem = Number(it.unidadesPorEmbalagem) || 1;
+        prod.unidadesPorCaixa = Number(it.unidadesPorCaixa) || 1;
         prod.temST = !!it.comST;
         if(it.impostoPct != null) prod.impostoPct = it.impostoPct;
 
-        prod.custo = Math.round(custo * 10000) / 10000;
+        // A operação decide o que a entrada faz: bonificação entra sem custo
+        // (não houve desembolso) e uso e consumo não entra no estoque de venda.
+        const op = enOperacao(e) || { estoque:true, custo:true };
+        if(op.custo) prod.custo = Math.round(custo * 10000) / 10000;
         if(it.precoVenda) prod.precoVenda = Number(it.precoVenda);
-        prod.estoqueAtual = (Number(prod.estoqueAtual)||0) + enUnidadesTotais(it);
+        if(op.estoque) prod.estoqueAtual = (Number(prod.estoqueAtual)||0) + enUnidadesTotais(it);
 
         // o vínculo que faz a próxima nota deste fornecedor casar sozinha
         if(e.fornecedorCnpj && it.codigoFornecedor){
