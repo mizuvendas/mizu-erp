@@ -24541,18 +24541,27 @@ function stRenderizar(){
   if(!acoes || !box) return;
 
   const temDados = Object.keys(est.porNcm).length > 0;
+  // "Recomeçar" não depende de ter produto lido: depende de a busca já ter
+  // andado. Amarrar os dois escondia o botão justamente de quem mais precisa
+  // dele — quem buscou, não trouxe nada, e precisa refazer do zero.
+  const jaBuscou = temDados || (est.ultNSU || 0) > 0 || !!est.atualizadoEm;
   acoes.innerHTML = `
     <button class="btn btn-primary" id="st-btn-buscar" onclick="stBuscar()">
       ${est.ultNSU > 0 ? '🔄 Buscar notas novas' : '📥 Buscar notas na Receita'}
     </button>
     ${temDados ? `<button class="btn" onclick="exportarAnaliseSTExcel()">⬇ Planilha para o contador</button>` : ''}
-    ${temDados ? `<button class="btn btn-sm" onclick="stLimpar()">Limpar e recomeçar</button>` : ''}
+    ${jaBuscou ? `<button class="btn btn-sm" onclick="stLimpar()">↩ Limpar e recomeçar do zero</button>` : ''}
     ${est.atualizadoEm ? `<span class="help-text" style="margin:0;">última busca: ${escapeHtml(new Date(est.atualizadoEm).toLocaleString('pt-BR'))}</span>` : ''}`;
 
   if(!temDados){
     box.innerHTML = `<div class="empty-state"><div class="ic">📥</div>
-      <p>Nenhuma nota de compra lida ainda. Clique em "Buscar notas na Receita" — a primeira busca
-      pode demorar alguns minutos, porque ela percorre todo o histórico disponível.</p></div>`;
+      ${jaBuscou
+        ? `<p>A busca já percorreu até a posição ${est.ultNSU} e não trouxe nenhum produto.
+           Para refazer desde o começo, clique em <strong>"↩ Limpar e recomeçar do zero"</strong> e
+           depois em "Buscar". Sem limpar, ela continua de onde parou e não revê o que já passou.</p>`
+        : `<p>Nenhuma nota de compra lida ainda. Clique em "Buscar notas na Receita" — a primeira busca
+           pode demorar alguns minutos, porque ela percorre todo o histórico disponível.</p>`}
+      </div>`;
     return;
   }
 
