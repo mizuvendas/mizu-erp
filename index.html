@@ -31477,23 +31477,50 @@ function enUnidadePerigosa(it){
 /* O que a Receita exige em cada item da nota de saida. Conferir aqui, com o
    XML do fornecedor na mao, e barato; conferir na hora da venda, com o cliente
    esperando, e caro - e e quando a gente costuma descobrir. */
-function faltaParaEmitirNota(prod){
-  if(!prod) return ['produto nao cadastrado'];
+function faltaParaEmitirNota(prod, item){
+  if(!prod) return ['produto não cadastrado'];
+  // O que vai existir DEPOIS que esta entrada for concluida: o que o
+  // cadastro ja tem, mais o que a nota esta trazendo.
+  const ncm     = (prod.ncm||'').replace(/\D/g,'')  || (item ? (item.ncm||'').replace(/\D/g,'') : '');
+  const cest    = (prod.cest||'').replace(/\D/g,'') || (item ? (item.cest||'').replace(/\D/g,'') : '');
+  const unidade = (prod.unidade||'').trim()        || (item ? enUnidadeVenda(item) : '');
   const falta = [];
-  if(!(prod.ncm||'').replace(/\D/g,'')) falta.push('NCM');
-  if(!(prod.unidade||'').trim()) falta.push('unidade');
+  if(!ncm) falta.push('NCM');
+  if(!unidade) falta.push('unidade');
   // CSOSN 500 (produto com ST) exige CEST no XML - sem ele a nota e rejeitada
-  if(prod.stConfirmado === true && !(prod.cest||'').replace(/\D/g,'')) falta.push('CEST (exigido para produto com ST)');
+  if(prod.stConfirmado === true && !cest) falta.push('CEST (exigido para produto com ST)');
   return falta;
 }
 
-function enHtmlSeloNota(prod){
+/* O que esta nota esta completando no cadastro. Dizer isso e melhor que
+   ficar calado: ela ve que o campo em branco vai se resolver sozinho e
+   nao sai procurando o que preencher. */
+/* "a, b e c" em vez de "a e b e c". */
+function enLista(xs){
+  if(xs.length <= 1) return xs.join('');
+  return xs.slice(0,-1).join(', ') + ' e ' + xs[xs.length-1];
+}
+
+function enNotaCompleta(prod, item){
+  if(!prod || !item) return [];
+  const lista = [];
+  if(!(prod.ncm||'').replace(/\D/g,'')  && (item.ncm||'').replace(/\D/g,''))  lista.push('NCM');
+  if(!(prod.cest||'').replace(/\D/g,'') && (item.cest||'').replace(/\D/g,'')) lista.push('CEST');
+  if(!(prod.unidade||'').trim())                                             lista.push('unidade');
+  return lista;
+}
+
+function enHtmlSeloNota(prod, item){
   if(!prod) return '';
-  const falta = faltaParaEmitirNota(prod);
-  if(falta.length === 0){
-    return `<span title="Tem tudo que a Receita exige" style="color:var(--positive);font-size:11px;">✓ pronto p/ nota</span>`;
+  const falta = faltaParaEmitirNota(prod, item);
+  if(falta.length){
+    return `<span title="Nem o cadastro nem esta nota têm isso. Sem isso a Receita rejeita a nota deste item." style="color:var(--warning);font-size:11px;">⚠ falta ${escapeHtml(falta.join(', '))}</span>`;
   }
-  return `<span title="Sem isso a Receita rejeita a nota deste item" style="color:var(--warning);font-size:11px;">⚠ falta ${escapeHtml(falta.join(', '))}</span>`;
+  const vemDaNota = enNotaCompleta(prod, item);
+  if(vemDaNota.length){
+    return `<span title="O cadastro estava sem isso; esta nota traz, e vai gravar quando você concluir a entrada." style="color:var(--positive);font-size:11px;">✓ pronto p/ nota <span class="help-text" style="margin:0;font-size:10.5px;">(esta nota completa ${escapeHtml(enLista(vemDaNota))})</span></span>`;
+  }
+  return `<span title="Tem tudo que a Receita exige" style="color:var(--positive);font-size:11px;">✓ pronto p/ nota</span>`;
 }
 
 function enResolvidos(e){
@@ -31827,7 +31854,7 @@ function enHtmlLinha(e, it, travado){
           ? `<div style="display:flex;align-items:center;gap:4px;">
                <span title="${escapeAttr(it.casadoPor||'')}">${it.casamentoForte===false?'<span style="color:var(--warning);" title="casou pelo nome — confira">⚠</span> ':''}${escapeHtml(prod.nome)}</span>
              </div>
-             <div>${enHtmlSeloNota(prod)}</div>
+             <div>${enHtmlSeloNota(prod, it)}</div>
              ${travado?'':`<button class="btn btn-sm" style="padding:1px 6px;font-size:11px;margin-top:2px;" onclick="enTrocarProduto('${e.id}','${it.id}')">trocar</button>`}`
           : `${travado?'<span class="help-text">—</span>':`<button class="btn btn-sm" style="padding:2px 8px;" onclick="enTrocarProduto('${e.id}','${it.id}')">🔎 procurar</button>
              <div style="margin-top:4px;">
@@ -31840,8 +31867,9 @@ function enHtmlLinha(e, it, travado){
       <td class="num">
         <input type="number" step="1" min="1" value="${it.unidadesPorCaixa||''}" ${travado?'disabled':''}
                style="width:62px;text-align:right;${perigo?'border:2px solid var(--warning);background:var(--warning-soft);':''}"
-               title="${perigo?'A nota veio em '+escapeAttr(it.unidadeNota)+' — informe quantas unidades vêm dentro':'unidades por embalagem'}"
+               title="${perigo?'A nota veio em '+escapeAttr(it.unidadeNota)+' — informe quantas unidades vêm dentro de cada '+escapeAttr(it.unidadeNota):'Quantas unidades de venda vêm em cada embalagem da nota'}"
                oninput="enMudouUnidades('${e.id}','${it.id}', this.value)">
+        ${perigo ? `<div class="help-text" style="margin:1px 0 0;font-size:10px;color:var(--warning);line-height:1.2;">quantas vêm<br>em 1 ${escapeHtml(it.unidadeNota)}?</div>` : ''}
       </td>
       <td class="num" id="en-entra-${it.id}">${it.unidadesPorCaixa?fmtNum(enUnidadesTotais(it))+' <span class="help-text" style="margin:0;">'+escapeHtml(enUnidadeVenda(it))+'</span>':'—'}</td>
       <td class="num" id="en-custo-${it.id}">${it.unidadesPorCaixa?fmtMoney(conta.custo):'<span class="help-text" style="margin:0;">—</span>'}</td>
@@ -31915,8 +31943,14 @@ function enHtmlDetalhe(e, it, travado){
              ...(it.vDesc?[['Desconto', '−'+fmtMoney(it.vDesc)]]:[])
             ].map(l=>`<div style="display:flex;justify-content:space-between;"><span class="help-text" style="margin:0;">${l[0]}</span><span>${l[1]}</span></div>`).join('')}
           <div style="display:flex;justify-content:space-between;border-top:1px solid var(--border);margin-top:4px;padding-top:4px;">
-            <strong>Custo por unidade</strong><strong>${fmtMoney(enCustoUnitario(it))}</strong>
+            <strong>Custo por unidade</strong>
+            ${Number(it.unidadesPorCaixa)
+              ? `<strong>${fmtMoney(enCustoUnitario(it))}</strong>`
+              : `<strong style="color:var(--warning);">—</strong>`}
           </div>
+          ${Number(it.unidadesPorCaixa)
+            ? `<div class="help-text" style="margin:2px 0 0;font-size:11px;">${fmtNum(it.qtdNota)} ${escapeHtml(it.unidadeNota||'')} × ${fmtNum(it.unidadesPorCaixa)} = ${fmtNum(enUnidadesTotais(it))} ${escapeHtml(enUnidadeVenda(it))}</div>`
+            : `<div class="help-text" style="margin:2px 0 0;color:var(--warning);">Falta o <strong>fator</strong>: quantas unidades vêm em cada ${escapeHtml(it.unidadeNota||'embalagem')}. Sem ele este valor seria o da embalagem inteira.</div>`}
         </div>
         <div class="field" style="margin-top:10px;">
           <label>Imposto a considerar</label>
@@ -31981,6 +32015,9 @@ function enItemPronto(it){
 }
 
 function enHtmlConta(it){
+  if(!Number(it.unidadesPorCaixa)){
+    return `<div class="help-text" style="margin:0;">Preencha o <strong>fator</strong> (quantas unidades vêm na embalagem) para ver o lucro. Sem ele a conta sairia pela embalagem inteira, não pela unidade.</div>`;
+  }
   const c = enConta(it, it.precoVenda);
   if(!c.preco) return `<div class="help-text" style="margin:0;">Informe o preço ou a margem para ver o lucro.</div>`;
   const cor = c.lucro >= 0 ? 'var(--positive)' : 'var(--negative, #B02A37)';
