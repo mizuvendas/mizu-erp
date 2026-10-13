@@ -1246,6 +1246,7 @@ table.data-table{ width:100%; font-size:13px; }
           <p class="subtitle">Vendas em que uma empresa paga em nome de outra — ex: Oscar vende, WBN paga</p>
         </div>
         <div class="header-actions">
+          <button class="btn btn-primary" id="btn-nova-cobranca-avulsa" title="Um valor que o pagador deve e que não veio de venda — um acerto, uma diferença">🧾 Cobrança Avulsa</button>
           <button class="btn" id="btn-relatorio-pdf-repasses">📄 Gerar Relatório PDF</button>
           <button class="btn" id="btn-exportar-repasses">⬇ Exportar Excel</button>
           <button class="btn" id="btn-corrigir-desconto-duplicado" style="border-color:var(--negative);color:var(--negative);">🔧 Apagar Todos os Descontos de Repasse</button>
@@ -1560,6 +1561,12 @@ function defaultState(){
     marcas: [],
     pagadores: [], // { id, nome, contato, obs, criadoEm }
     pagamentosRepasse: [], // { id, pagadorId, data, valor, obs, criadoEm } — pagamento recebido do pagador, sobre o saldo GERAL dele (não vinculado a uma venda específica)
+    // Cobrança que o pagador deve e que NÃO veio de venda nenhuma: um acerto,
+    // uma diferença, um frete combinado à parte. Fica fora de STATE.vendas de
+    // propósito — não é venda, então não pode entrar no faturamento, no
+    // estoque, na comissão nem nos relatórios de produto.
+    // { id, pagadorId, data, vencimento, descricao, valor, repasse:{abatimentos:[]}, criadoEm }
+    cobrancasRepasse: [],
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
@@ -17029,6 +17036,60 @@ function getValoresFinanceirosVenda(venda){
   };
 }
 
+/* As telas de pagamento do repasse (marcar como pago, abatimento, editar e
+   cancelar pagamento) mexem sempre em <doc>.repasse.abatimentos. Venda e
+   cobrança avulsa têm as duas esse mesmo formato, então basta achar o
+   documento certo e o resto do código continua valendo. */
+function repasseDoc(id){
+  const v = STATE.vendas.find(x=>x.id===id);
+  if(v) return v;
+  return (STATE.cobrancasRepasse||[]).find(c=>c.id===id) || null;
+}
+
+function ehCobrancaAvulsa(id){
+  return !!(STATE.cobrancasRepasse||[]).find(c=>c.id===id);
+}
+
+/* As cobranças avulsas, na mesma forma das linhas de venda. É isso que faz
+   elas aparecerem na tabela, nos totais, nas quinzenas, no PDF e no Excel
+   sem eu precisar mexer em nenhuma dessas telas. */
+function getLinhasCobrancaAvulsa(){
+  return (STATE.cobrancasRepasse||[]).map(c=>{
+    const pagador = STATE.pagadores.find(p=>p.id===c.pagadorId);
+    const valor = Number(c.valor) || 0;
+    const abatimentos = (c.repasse && c.repasse.abatimentos) || [];
+    const totalAbatido = abatimentos.reduce((s,a)=>s+(Number(a.valor)||0), 0);
+    const saldoPendente = valor - totalAbatido;
+    const vencimento = c.vencimento || calcularVencimentoQuinzenal(c.data);
+    const dataUltimoPagamento = abatimentos.length>0
+      ? abatimentos.reduce((maisRecente,a)=>a.data>maisRecente?a.data:maisRecente, abatimentos[0].data)
+      : null;
+    const diasAtraso = (saldoPendente>0.005 && vencimento<todayISO())
+      ? Math.floor((new Date(todayISO())-new Date(vencimento))/(1000*60*60*24))
+      : 0;
+    return {
+      vendaId: c.id,          // o resto da tela chama de vendaId; aqui é o id da cobrança
+      avulsa: true,
+      descricao: `${c.descricao||'Cobrança avulsa'} — ${fmtDate(c.data)}`,
+      clienteNome: c.descricao || 'Cobrança avulsa',
+      pagadorNome: pagador?pagador.nome:'(pagador removido)',
+      pagadorId: c.pagadorId,
+      data: c.data,
+      vencimento,
+      valorBrutoOriginal: valor,
+      valorBruto: valor,
+      temDescontoVenda: false,
+      // não houve mercadoria: nada de custo, imposto de venda ou comissão
+      custo: 0, imposto: 0, comissao: 0,
+      descontoPct: null, descontoValorFixo: null,
+      valorComDesconto: valor,
+      lucroFinal: valor,
+      abatimentos, totalAbatido, dataUltimoPagamento, diasAtraso, saldoPendente,
+      statusRecebimento: saldoPendente<=0.005 ? 'quitado' : (totalAbatido>0 ? 'parcial' : (vencimento<todayISO() ? 'atrasado' : 'pendente'))
+    };
+  });
+}
+
 function getLinhasRepasse(){
   return STATE.vendas
     .filter(v=>v.pagadorId && v.status!=='cancelada')
@@ -17091,7 +17152,8 @@ function getLinhasRepasse(){
         saldoPendente,
         statusRecebimento: saldoPendente<=0.005 ? 'quitado' : (totalAbatido>0 ? 'parcial' : (vencimento<todayISO() ? 'atrasado' : 'pendente'))
       };
-    });
+    })
+    .concat(getLinhasCobrancaAvulsa());
 }
 
 let repasseSort = {key:'vencimento', dir:'asc'};
@@ -17933,8 +17995,11 @@ function renderTabelaRepasses(){
 
   document.getElementById('repasses-table-body').innerHTML = pagina.length ? pagina.map(l=>`
     <tr>
-      <td><input type="checkbox" class="rp-checkbox-venda" data-venda-id="${l.vendaId}"></td>
-      <td>${escapeHtml(l.clienteNome)}</td>
+      <td>${l.avulsa ? '' : `<input type="checkbox" class="rp-checkbox-venda" data-venda-id="${l.vendaId}">`}</td>
+      <td>
+        ${escapeHtml(l.clienteNome)}
+        ${l.avulsa ? '<div class="help-text" style="margin:1px 0 0;" title="Não veio de venda: não entra no faturamento, não baixou estoque e não gerou comissão">🧾 cobrança avulsa</div>' : ''}
+      </td>
       <td>${fmtDate(l.data)}</td>
       <td>${escapeHtml(l.pagadorNome)}</td>
       <td>${fmtDate(l.vencimento)}</td>
@@ -17955,11 +18020,15 @@ function renderTabelaRepasses(){
       </td>
       <td>
         <div class="cell-actions">
-          ${(l.descontoPct!=null||l.descontoValorFixo!=null) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
+          ${(!l.avulsa && (l.descontoPct!=null||l.descontoValorFixo!=null)) ? `<button class="btn btn-sm" onclick="abrirFormDescontoRepasse('${l.vendaId}')">Editar Desconto</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm btn-primary" onclick="marcarRepasseComoPago('${l.vendaId}')">✓ Marcar como Pago</button>` : ''}
           ${l.saldoPendente>0.005 ? `<button class="btn btn-sm" onclick="abrirFormAbatimentoRepasse('${l.vendaId}')">💵 Pagamento Parcial</button>` : ''}
-          ${(l.abatimentos&&l.abatimentos.length>0) ? `<button class="btn btn-sm" title="Ver, alterar ou cancelar os pagamentos já lançados nesta venda" onclick="verHistoricoAbatimentos('${l.vendaId}')">📜 Pagamentos${l.statusRecebimento==='quitado'?' (Quitado)':''}</button>` : ''}
-          ${anexoControleEntregaBtn(l.vendaId)}
+          ${(l.abatimentos&&l.abatimentos.length>0) ? `<button class="btn btn-sm" title="Ver, alterar ou cancelar os pagamentos já lançados aqui" onclick="verHistoricoAbatimentos('${l.vendaId}')">📜 Pagamentos${l.statusRecebimento==='quitado'?' (Quitado)':''}</button>` : ''}
+          ${l.avulsa
+            ? `<button class="btn btn-sm" onclick="abrirFormCobrancaAvulsa('${l.vendaId}')">✏️ Editar</button>
+               <button class="btn btn-sm" style="border-color:var(--negative);color:var(--negative);" title="Apagar esta cobrança — ela não é venda, nada de estoque ou faturamento muda" onclick="excluirCobrancaAvulsa('${l.vendaId}')">🗑️ Excluir</button>`
+            : `${anexoControleEntregaBtn(l.vendaId)}
+               <button class="btn btn-sm" style="border-color:var(--negative);color:var(--negative);" title="A venda continua existindo — só deixa de ser cobrança deste pagador" onclick="tirarVendaDoRepasse('${l.vendaId}')">↩ Tirar do repasse</button>`}
         </div>
       </td>
     </tr>
@@ -17986,6 +18055,184 @@ function renderTabelaRepasses(){
     pagBox.innerHTML = renderControlePaginacao('repasses', total);
     ativarControlePaginacao('repasses', renderTabelaRepasses);
   }
+}
+
+/* =========================================================
+   TIRAR UMA VENDA DO REPASSE
+
+   Uma linha de repasse E uma venda. Entao "apagar" aqui nao pode
+   apagar a venda: o faturamento, o estoque baixado e a comissao
+   continuam valendo — o que muda e so quem paga.
+
+   v.repasse fica INTACTO de proposito. Se ela colocar o pagador de
+   volta pela edicao da venda, os pagamentos ja lancados voltam junto,
+   em vez de ter de ser redigitados.
+   ========================================================= */
+function tirarVendaDoRepasse(vendaId){
+  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  if(!venda) return;
+  const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
+  if(!linha) return;
+  const abatimentos = (venda.repasse && venda.repasse.abatimentos) || [];
+  const jaPago = abatimentos.reduce((s,a)=>s+(Number(a.valor)||0), 0);
+
+  confirmAction(
+    'Tirar esta venda do repasse',
+    `<strong>${escapeHtml(linha.clienteNome)}</strong> — ${fmtDate(linha.data)}, ${fmtMoney(linha.valorBruto)}.`
+    + `<br><br>A venda <strong>continua existindo</strong>: o faturamento, o estoque que já baixou e a comissão ficam como estão. `
+    + `O que muda é que <strong>${escapeHtml(linha.pagadorNome)}</strong> deixa de dever por ela, e a linha some desta tela.`
+    + (jaPago > 0.005
+        ? `<br><br>⚠️ Esta venda já tem <strong>${fmtMoney(jaPago)}</strong> em pagamentos lançados. Eles ficam guardados, mas somem dos totais do repasse enquanto ela estiver fora.`
+        : '')
+    + `<br><br>Para voltar atrás, edite a venda e marque o pagador de novo — os pagamentos voltam junto.`,
+    ()=>{
+      venda.pagadorId = null;   // v.repasse fica, pra poder voltar atras
+      saveState();
+      showToast('Venda tirada do repasse. Ela continua no faturamento.', 'success');
+      renderKpisRepasses();
+      renderQuinzenasRepasse();
+      renderSaldoPorPagador();
+      renderTabelaRepasses();
+    },
+    'Tirar do repasse'
+  );
+}
+
+/* =========================================================
+   COBRANCA AVULSA — o que o pagador deve e nao veio de venda
+
+   Um acerto, uma diferenca, um frete combinado a parte. Nao e venda,
+   entao mora fora de STATE.vendas: nao entra no faturamento, nao baixa
+   estoque, nao gera comissao e nao aparece em relatorio de produto.
+   Na tela de Repasses, porem, e uma linha como qualquer outra.
+   ========================================================= */
+function abrirFormCobrancaAvulsa(cobrancaId){
+  const c = cobrancaId ? (STATE.cobrancasRepasse||[]).find(x=>x.id===cobrancaId) : null;
+  if(cobrancaId && !c) return;
+  if((STATE.pagadores||[]).length === 0){
+    showToast('Cadastre um pagador antes de lançar uma cobrança avulsa.', 'error');
+    return;
+  }
+  const hoje = todayISO();
+
+  document.getElementById('modal-cobranca-avulsa')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-cobranca-avulsa';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">🧾</div>
+        <div>
+          <h3>${c ? 'Editar Cobrança Avulsa' : 'Nova Cobrança Avulsa'}</h3>
+          <div class="sub">Um valor que o pagador deve e que não veio de venda nenhuma</div>
+        </div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="form-grid">
+          <div class="field field-full">
+            <label>Pagador <span class="req">*</span></label>
+            <select id="ca-pagador">
+              <option value="">Selecione...</option>
+              ${STATE.pagadores.map(p=>`<option value="${p.id}" ${c&&c.pagadorId===p.id?'selected':''}>${escapeHtml(p.nome)}</option>`).join('')}
+            </select>
+          </div>
+          <div class="field field-full">
+            <label>Descrição <span class="req">*</span></label>
+            <input type="text" id="ca-descricao" value="${c?escapeAttr(c.descricao||''):''}" placeholder="Ex: acerto de diferença da quinzena, frete combinado à parte">
+            <div class="help-text">É o que vai aparecer no lugar do nome do cliente, na tela e no relatório que você manda pro pagador.</div>
+          </div>
+          <div class="field">
+            <label>Data <span class="req">*</span></label>
+            <input type="date" id="ca-data" value="${c?escapeAttr(c.data):hoje}">
+          </div>
+          <div class="field">
+            <label>Valor <span class="req">*</span></label>
+            <input type="number" step="0.01" min="0" id="ca-valor" value="${c&&c.valor!=null?c.valor:''}">
+          </div>
+          <div class="field field-full">
+            <label>Vencimento</label>
+            <input type="date" id="ca-vencimento" value="${c?escapeAttr(c.vencimento||''):''}">
+            <div class="help-text">Deixe em branco para usar a quinzena da data (dia 15 ou último dia do mês), igual às vendas.</div>
+          </div>
+        </div>
+        <div style="margin-top:10px;padding:8px 10px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:12.5px;">
+          Isto <strong>não é uma venda</strong>: não entra no faturamento, não baixa estoque e não gera comissão.
+          Aparece só aqui no repasse, como valor a receber do pagador.
+        </div>
+      </div>
+      <div class="form-actions">
+        <button type="button" class="btn" id="ca-cancelar">Cancelar</button>
+        <button type="button" class="btn btn-primary" id="ca-salvar">${c ? 'Salvar Alterações' : 'Lançar Cobrança'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  document.getElementById('ca-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('ca-salvar').addEventListener('click', ()=>{
+    const pagadorId = document.getElementById('ca-pagador').value;
+    const descricao = document.getElementById('ca-descricao').value.trim();
+    const data = document.getElementById('ca-data').value;
+    const valor = parseFloat(document.getElementById('ca-valor').value);
+    const vencimento = document.getElementById('ca-vencimento').value;
+    const faltam = [];
+    if(!pagadorId) faltam.push('pagador');
+    if(!descricao)  faltam.push('descrição');
+    if(!data)       faltam.push('data');
+    if(isNaN(valor) || valor <= 0) faltam.push('valor');
+    if(faltam.length){
+      showToast('Falta preencher: ' + faltam.join(', ') + '.', 'error');
+      return;
+    }
+    if(c){
+      // o valor nao pode cair abaixo do que ja foi pago, senao o saldo fica
+      // negativo e a linha aparece quitada devendo dinheiro de volta
+      const jaPago = ((c.repasse&&c.repasse.abatimentos)||[]).reduce((s,a)=>s+(Number(a.valor)||0),0);
+      if(valor < jaPago - 0.005){
+        showToast(`Esta cobrança já recebeu ${fmtMoney(jaPago)}. O valor não pode ficar abaixo disso — cancele um pagamento antes.`, 'error');
+        return;
+      }
+      Object.assign(c, { pagadorId, descricao, data, valor, vencimento: vencimento || calcularVencimentoQuinzenal(data) });
+      showToast('Cobrança atualizada.', 'success');
+    }else{
+      STATE.cobrancasRepasse.push({
+        id: uid('cobr'), pagadorId, descricao, data, valor,
+        vencimento: vencimento || calcularVencimentoQuinzenal(data),
+        repasse: { abatimentos: [] },
+        criadoEm: new Date().toISOString()
+      });
+      showToast('Cobrança avulsa lançada no repasse.', 'success');
+    }
+    saveState();
+    modal.remove();
+    renderKpisRepasses();
+    renderQuinzenasRepasse();
+    renderSaldoPorPagador();
+    renderTabelaRepasses();
+  });
+}
+
+function excluirCobrancaAvulsa(cobrancaId){
+  const c = (STATE.cobrancasRepasse||[]).find(x=>x.id===cobrancaId);
+  if(!c) return;
+  const jaPago = ((c.repasse&&c.repasse.abatimentos)||[]).reduce((s,a)=>s+(Number(a.valor)||0),0);
+  confirmAction(
+    'Excluir esta cobrança',
+    `<strong>${escapeHtml(c.descricao||'Cobrança avulsa')}</strong> — ${fmtMoney(c.valor)}.`
+    + (jaPago > 0.005
+        ? `<br><br>⚠️ Esta cobrança já recebeu <strong>${fmtMoney(jaPago)}</strong>. Excluindo, esse registro de pagamento some junto.`
+        : '')
+    + `<br><br>Como não é venda, nada de estoque ou faturamento é afetado. Esta ação não pode ser desfeita.`,
+    ()=>{
+      STATE.cobrancasRepasse = STATE.cobrancasRepasse.filter(x=>x.id!==cobrancaId);
+      saveState();
+      showToast('Cobrança excluída.', 'success');
+      renderKpisRepasses();
+      renderQuinzenasRepasse();
+      renderSaldoPorPagador();
+      renderTabelaRepasses();
+    },
+    'Excluir'
+  );
 }
 
 function abrirFormDescontoRepasse(vendaId){
@@ -18170,7 +18417,7 @@ function abrirFormDescontoRepasse(vendaId){
 // feito em outro dia e isso importa pra saber a quantos dias ele está sendo
 // registrado com atraso.
 function marcarRepasseComoPago(vendaId){
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  const venda = repasseDoc(vendaId);
   if(!venda) return;
   const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
   if(!linha || linha.saldoPendente<=0.005) return;
@@ -18357,7 +18604,7 @@ function abrirAnexoControleEntrega(vendaId){
 }
 
 function abrirFormAbatimentoRepasse(vendaId){
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  const venda = repasseDoc(vendaId);
   if(!venda) return;
   const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
 
@@ -18428,7 +18675,7 @@ function abrirFormAbatimentoRepasse(vendaId){
 }
 
 function verHistoricoAbatimentos(vendaId){
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  const venda = repasseDoc(vendaId);
   if(!venda) return;
   const linha = getLinhasRepasse().find(l=>l.vendaId===vendaId);
   const abatimentos = (venda.repasse && venda.repasse.abatimentos) || [];
@@ -18501,7 +18748,7 @@ function verHistoricoAbatimentos(vendaId){
 // venda específica — pedido do usuário: poder corrigir um pagamento errado
 // sem precisar cancelar e lançar tudo de novo do zero.
 function editarAbatimentoRepasse(vendaId, abatimentoId){
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  const venda = repasseDoc(vendaId);
   if(!venda || !venda.repasse) return;
   const abatimento = (venda.repasse.abatimentos||[]).find(a=>a.id===abatimentoId);
   if(!abatimento) return;
@@ -18566,7 +18813,7 @@ function editarAbatimentoRepasse(vendaId, abatimentoId){
 }
 
 function removerAbatimentoRepasse(vendaId, abatimentoId){
-  const venda = STATE.vendas.find(v=>v.id===vendaId);
+  const venda = repasseDoc(vendaId);
   if(!venda || !venda.repasse) return;
   confirmAction('Cancelar pagamento', 'Isso vai cancelar este pagamento e devolver o saldo devedor da venda ao que era antes dele. Esta ação não pode ser desfeita. Deseja continuar?', ()=>{
     venda.repasse.abatimentos = venda.repasse.abatimentos.filter(a=>a.id!==abatimentoId);
@@ -18583,6 +18830,7 @@ function removerAbatimentoRepasse(vendaId, abatimentoId){
 }
 
 document.getElementById('btn-exportar-repasses').addEventListener('click', exportarRepassesExcel);
+document.getElementById('btn-nova-cobranca-avulsa').addEventListener('click', ()=>abrirFormCobrancaAvulsa());
 document.getElementById('btn-corrigir-desconto-duplicado').addEventListener('click', corrigirDescontoDuplicadoRepasse);
 
 // Ferramenta de manutenção: apaga COMPLETAMENTE todos os descontos de
@@ -26929,6 +27177,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-10-13-a',
+    data: '2026-10-13',
+    titulo: 'Repasses: tirar uma venda dali, e cobrar o que não veio de venda',
+    itens: [
+      'TIRAR DO REPASSE: cada linha ganhou o botão "↩ Tirar do repasse". A venda CONTINUA EXISTINDO — o faturamento, o estoque que já baixou e a comissão ficam como estão. O que muda é que aquele pagador deixa de dever por ela e a linha some desta tela. É pro caso de "essa venda não era desse pagador".',
+      'E dá pra voltar atrás: os pagamentos já lançados naquela venda ficam guardados. Se você editar a venda e marcar o pagador de novo, ela volta pro repasse com os pagamentos junto, sem redigitar nada.',
+      'COBRANÇA AVULSA: botão novo no topo da tela. É pra um valor que o pagador deve e que não veio de venda nenhuma — um acerto, uma diferença, um frete combinado à parte. Você informa pagador, descrição, data e valor; o vencimento cai sozinho na quinzena (dia 15 ou último dia do mês), igual às vendas.',
+      'A cobrança avulsa se comporta como qualquer linha do repasse: entra nos totais, no saldo do pagador, no fechamento da quinzena, no relatório PDF e no Excel, aceita pagamento parcial e quitação.',
+      'Mas ela NÃO é venda, de propósito: não entra no faturamento, não baixa estoque, não gera comissão e não aparece em relatório de produto. Na tabela ela vem marcada com 🧾 "cobrança avulsa", pra ninguém confundir.',
+      'Se você já recebeu parte de uma cobrança avulsa, o sistema não deixa baixar o valor dela abaixo do que já foi pago — isso deixaria o saldo negativo e a linha apareceria quitada devendo dinheiro de volta.'
+    ]
+  },
   {
     id: '2026-10-06-d',
     data: '2026-10-06',
