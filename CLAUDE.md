@@ -264,3 +264,175 @@ na primeira compra de um fornecedor.
 **Ordem de construção combinada:** 2 → 3 → 4 → 5 → 6 → 1. A caixa de
 entrada fica por último porque depende do servidor e do DistDFe (cStat 656
 bloqueia por uma hora).
+
+
+---
+
+## O que mudou em 14/10/2026
+
+Tudo isto está em `index.html`, passou em todas as baterias de teste válidas
+e na varredura dos 25 menus, e está publicado.
+
+### Produtos
+- Listagem refeita: código, cód. barras, produto (com marca e fornecedor embaixo),
+  setor, custo/venda/margem, estoque com carinha, ações. Linhas zebradas.
+- Cadastro virou **página inteira** (`page-produto-cadastro`), seis seções, índice e
+  foto fixos à direita. O modal antigo continua existindo e é usado **só** quando
+  `abrirFormProduto(id, onSalvo)` é chamado de dentro de uma venda ou orçamento —
+  sair da tela ali seria perder a venda.
+- `SETORES_PRODUTO` — entrada / intermediário / premium. O nome é **Setor**, não
+  "Linha": "Linha" já é usada no dia a dia pra linha do fabricante.
+- Sugestão de NCM pelo nome (`sugerirNcmLocal`): 1) o que já veio nas notas de
+  entrada, 2) `NCM_RAMO`, a tabela do ramo embutida, 3) a tabela oficial
+  (BrasilAPI) a pedido. CEST fica travado até o NCM ter 8 dígitos
+  (`cestsDoNcm`), e a configuração tributária é sugerida por origem + ST.
+- O aviso de que há sugestão aparece **embaixo do campo do nome** — sem isso
+  ela nasce lá na seção de Tributação, fora da vista de quem digita o nome.
+  Foi exatamente o que a dona reportou.
+
+### O que falta num produto — regra única
+- `produtoPendencias(p)` devolve `{bloqueia, completar}`. É a mesma regra na
+  listagem, no cadastro, no carrinho do orçamento e na emissão da nota.
+  `pendenciasDeNota`, `produtoEmiteNota`, `textoPendencias` e `campoDaPendencia`
+  são apelidos em cima dela — **não escrever uma segunda regra.**
+- `abrirCorrigirProdutoFiscal(id)` corrige NCM/CEST/unidade/ST numa caixinha,
+  sem sair do orçamento.
+
+### Histórico sem produto (apagar o cadastro e refazer)
+- `orfaosDoHistorico()` acha os produtos apagados que ainda aparecem em vendas e
+  orçamentos. `abrirReligarHistorico(produtoId)` aparece sozinha ao cadastrar um
+  produto novo e religa **todos os clientes de uma vez** via
+  `definirSubstituicaoProduto` (produto antigo → produto novo).
+- `idsEquivalentesProduto(produtoId)` é o que mantém o histórico de preço
+  (última, penúltima, mais caro) funcionando depois do recadastro. **Sem isso o
+  histórico some na prática**: as vendas antigas guardam o código antigo e a tela
+  pergunta pelo novo. Qualquer consulta por `it.produtoId` tem de passar por aqui.
+
+### Entrada de nota — o desenho aprovado, construído
+- Seis telas (`en3*`): lista NF-e → associar → cadastrar → fator → preço → finalizar.
+  Fator e finalizar são **modais**; o resto é página. Cabeçalho de tabela azul,
+  coluna FISCAL em azul mais fundo.
+- `en3Procurar` + `en3ModalComparar`: os dois modais da associação automática.
+- Copiar coluna: campo comum não pergunta nada; **tributação confere o NCM** e
+  avisa se diferem. Confirmação só onde é destrutivo.
+- `en2SugerirFator` lê "c/12", "fardo c/50", "12x1L" e **não** cai em "c/1000fls".
+- A tela antiga (`enHtmlConferencia`) continua no arquivo mas não é mais alcançada.
+  Tirar quando a dona disser.
+
+### Orçamento — três modelos, o mesmo motor
+- `STATE.config.orcamentoModelo`: `'classico'`, `'esteira'` ou `'balcao'`.
+- A esteira **não é uma tela nova**: `orcAplicarEsteira()` roda no fim de
+  `renderOrcamentos()`, depois de todos os listeners, e move os cards 1/2/(3+4)
+  para dentro de `orc-passo-1/2/3`. Mover um nó preserva os eventos, então tudo
+  que o clássico faz a esteira faz igual, por construção.
+  - **Armadilha já paga:** marcar o ponto de inserção ANTES de mover o primeiro
+    card. Assim que c1 muda de pai, `c1.parentNode` vira a própria parada 1 e as
+    paradas 2 e 3 nascem dentro dela, escondidas.
+  - Se os títulos "1." a "4." mudarem, `orcCardPorTitulo` devolve null e a esteira
+    simplesmente não se aplica — o clássico continua inteiro.
+- `orcHtmlPainelDoDia()`: os quatro números (aguardando cliente / em separação /
+  na rua / entregue sem nota) aparecem nos **três** modelos.
+
+### Orçamento — o terceiro modelo: BALCÃO
+- `STATE.config.orcamentoModelo`: `'classico'` | `'esteira'` | `'balcao'`.
+- O caminho do "Venda Fácil" do Microvix, tela a tela como ela mostrou: barra
+  única no alto (cliente à esquerda, campo de bipar no meio), carrinho no
+  corpo, faixa de situação embaixo e duas saídas — **Pré-venda** (que é o
+  orçamento) ou **Continuar para pagamento** (que fecha a venda).
+- Começa em **Consumidor final**. Só no fim pergunta o nome (obrigatório) e o
+  CPF (opcional) — `orcBalcaoPedirNome`. Se o CPF já existir no cadastro, usa
+  o cliente existente em vez de duplicar.
+- A linha do carrinho mostra **custo e margem coloridos** (≥20% verde, ≥8%
+  âmbar, abaixo vermelho). É o que o Microvix esconde e o que evita baixar o
+  preço no balcão até virar prejuízo.
+- Como a esteira, **não é motor novo**: `orcAplicarBalcao` guarda os cards
+  1–4 do clássico em `#orc-balcao-extras` (o botão "⋯ Dados adicionais"
+  revela) e escreve nos mesmos campos escondidos. Repasse, comissão, condição
+  de pagamento, origem de coleta e a validação do salvar continuam valendo.
+- `orcBalcaoPronto` é a tela de ✓ com imprimir orçamento, controle de
+  separação e entrega, WhatsApp, nota, XML, fechar a venda agora e nova venda.
+- Pagamento: `ORC_FORMAS_BALCAO` (Dinheiro, PIX, Cartão, Crediário, Boleto).
+  O motor grava **uma** forma por venda; dividir a mesma venda em duas formas
+  não existe ainda. A barra Restante/Troco já está desenhada pra quando
+  entrar, e o rótulo escolhido vai pra observação pra não virar tudo
+  "à vista".
+
+### O menu lateral do balcão (≡ Pedidos)
+- `orcBalcaoAbrirPainel()` abre a gaveta da direita com três abas:
+  **Em aberto** (pendente/enviado), **Aprovados** (aprovado ainda não
+  faturado + tudo que está em separação ou na rua) e **Vendas feitas**.
+- Busca por número, cliente ou produto dentro da gaveta.
+- Os botões chamam as MESMAS funções do resto do sistema — `editarOrcamento`,
+  `converterOrcamentoEmVenda`, `abrirOpcoesControleEntrega`,
+  `marcarEntregaConcluida`, `marcarRetiradaOrcamento`, `verDetalheOrcamento`,
+  `gerarPdfOrcamento`, `gerarPdfVenda`, `abrirDetalheVendaCliente`,
+  `abrirHistoricoComprasCliente`. Nada aqui é lista nova.
+- `orcBalcaoEfetivar(id)` é o "Faturar Pedido": traz a pré-venda pro balcão
+  com os itens no carrinho; a faixa vira "Faturar pedido N" e o botão
+  Pré-venda dá lugar a Salvar.
+- **🧾 Histórico** também na barra do balcão, ao lado de Pesquisar — aparece
+  quando o cliente escolhido já comprou aqui. Mesmo modal do clássico.
+
+### Visual (base: Linx Microvix, cores Mizu)
+- `--primary` agora é **#0081A7**. `--primary-escuro` #1B4B5A é o botão que fecha
+  o passo (concluir, lançar, emitir) — cor diferente porque a consequência é outra.
+  `--primary-fundo` #006C8D é a coluna de destaque no cabeçalho da tabela.
+- `.data-table thead th` ficou azul em **todo** o sistema; linhas zebradas;
+  `--shadow: none` (o desenho é plano); `.nav-item.active` com faixa azul;
+  `.barra-acoes` é a barra de ações no pé de uma tabela.
+
+### Correções de passagem
+- `addDays` tolera data ruim ou dias ausentes. Um único orçamento sem
+  `validadeDias` deixava a tela de Orçamentos **em branco**.
+- `carrinhoLimpar` chamava `confirmarAcao`, que não existe — era `confirmAction`.
+- `carrinhoAdicionar` usava `prompt()`, que não aparece em toda tela onde o
+  sistema roda; virou caixinha própria.
+- `en3Finalizar` tratava `enConferenciaValor` como se nunca voltasse null —
+  entrada manual sem valor informado quebrava a tela.
+- **`[hidden]` não funcionava no sistema inteiro.** `.btn` é `inline-flex` e
+  a faixa de faturar tem `display:flex` no próprio style — os dois ganham do
+  `[hidden]` do navegador. Resultado: a faixa "Faturar pedido" aparecia numa
+  venda nova e o botão Salvar aparecia junto com Pré-venda. Entrou
+  `[hidden]{ display:none !important; }` no CSS, logo antes de `.btn`.
+- O campo de custo do item chama-se **`custoUnit`**, não `custo`. A linha do
+  balcão lia `it.custo` e mostrava custo R$ 0,00 com margem 96% — justo o
+  número que ela olha pra decidir o preço. Hoje lê `custoUnit` e, se faltar,
+  cai no custo do cadastro.
+- Os quatro quadradinhos do painel do dia somavam `o.total`, campo que o
+  orçamento **não guarda** — davam sempre R$ 0,00. Agora somam por
+  `calcularVenda`, igual à lista e ao PDF.
+- Cadastrar o cliente no fim da venda de balcão não repintava a barra de
+  cima: ficava "Consumidor final" com o cliente já selecionado.
+
+### Paridade entre os três modelos — como provar
+`smoke_paridade.py` monta o MESMO orçamento (dois itens, cliente, vendedor,
+comissão, repasse 20% pra um pagador, boleto, desconto de 5%, observação) nos
+três modelos e compara o registro salvo **campo a campo**: clienteId,
+condicaoPagamento, crediarioDia, crediarioParcelas, desconto, itens,
+observacoes, pagadorId, prazosBoleto, repassePct, temComissao, validadeDias,
+vencimentoReceber, vendedor. Os três gravam igual.
+Além disso, uma varredura compara todos os `id`, todos os handlers inline e
+todo texto de botão/rótulo visível: **nada que o clássico tem falta na esteira
+ou no balcão** (os dois só acrescentam). Rodar isso sempre que mexer no
+formulário de orçamento.
+
+## Testes
+`smoke_en3.py`, `smoke_esteira.py`, `smoke_balcao.py`, `smoke_balcao_menu.py`,
+`smoke_produtos.py`, `smoke_pendencias.py`, `smoke_orfaos.py` são novos.
+Viraram `.obsoleto` (não testam mais nada que exista): `smoke_bloco_a/b/c/d`,
+`smoke_en2`, `smoke_entrada2` (chamavam `en2Ir`, do modelo antigo de entrada),
+`smoke.py` (olhava a tabela antiga de Produtos) e `smoke_ficha` (chamava
+`nfeCnpjValido`, que já não existia antes desta sessão).
+**Os testes vivem só no container da sessão; não estão no repositório.**
+
+## Em aberto
+- NF-e: falta `NFE_SERIE=2`, `NFCE_SERIE=2` e o CSC de produção no Render, e um
+  teste de verdade contra a SEFAZ. **Não emitir da Mizu antes disso.**
+- DistDFe (notas chegando sozinhas da Receita): o leitor existe, falta ligar —
+  precisa do certificado A1 no servidor e de um intervalo de consulta (cStat 656
+  bloqueia por 1 hora).
+- Lista de compra: hoje é clicar produto por produto. A dona quer que nasça do
+  histórico de vendas por período, filtrada por setor.
+- Quando ela escolher entre clássico, esteira e balcão, apagar os outros dois.
+- Pagamento dividido (metade PIX, metade dinheiro) não existe — mexe no Caixa
+  e no Contas a Receber.
