@@ -436,3 +436,58 @@ Viraram `.obsoleto` (não testam mais nada que exista): `smoke_bloco_a/b/c/d`,
 - Quando ela escolher entre clássico, esteira e balcão, apagar os outros dois.
 - Pagamento dividido (metade PIX, metade dinheiro) não existe — mexe no Caixa
   e no Contas a Receber.
+
+---
+
+## MULTIUSUÁRIO — duas máquinas no mesmo sistema (14/10/2026)
+
+Supabase, projeto **mizu-erp**, região São Paulo, plano Free.
+URL e publishable key ficam em `const NUVEM` no topo do bloco da nuvem.
+A publishable key é pública por natureza; quem protege é o login + a RLS.
+A senha do banco e as secret keys **nunca** entram no repositório.
+
+### O desenho
+- `public.registros (colecao, id, dados jsonb, excluido, atualizado_em, atualizado_por)`
+  — um registro por linha. Listas com `id` viram uma linha por item; blocos
+  soltos (config, contadores, mapas) viram uma linha só, com `colecao='_doc'`.
+- `public.usuarios (id, nome, email, dono, ativo, permissoes jsonb)`
+  — o PRIMEIRO que se cadastra vira dono e já nasce liberado; os demais
+  entram desligados e sem acesso.
+- O SQL que monta isso está em `mizu-supabase.sql` (fora do repositório, com
+  a dona). Pode rodar de novo: não duplica nada.
+
+### Offline continua mandando
+O localStorage é a verdade. A nuvem é a segunda cópia. `saveState()` chama
+`nuvemAoSalvar()`, que agenda a subida 1,5s depois. Sem internet, a venda
+acontece igual e o rodapé mostra quantas coisas estão esperando.
+
+### Como ele sabe o que mudou
+`nuvemInstantaneo()` varre o STATE e `nuvemDigital()` guarda uma impressão
+digital curta por registro no espelho (`mizu_espelho_v1`). Guardar uma cópia
+inteira do STATE só pra comparar dobraria o armazenamento.
+
+### Três armadilhas já pagas — não desfazer
+1. **Máquina nova BAIXA antes de subir** (`primeiraVez` em `nuvemSincronizar`).
+   Sem isso, a configuração de fábrica da máquina nova subia por cima da
+   configuração real da loja e voltava em branco pra todo mundo.
+2. **"Minha alteração ainda não subiu" só vale com a chave JÁ no espelho.**
+   Sem o `chave in espelho`, numa máquina nova toda chave que existe por
+   padrão parecia alterada e nunca recebia a versão da loja.
+3. **`_doc` desconhecido também entra.** Um bloco criado depois (analiseST,
+   carrinhoCompra) precisa nascer na máquina nova.
+
+### Permissão
+Menu a menu, marcado pela dona em cada usuário. O dono vê tudo.
+`temAcesso(pagina)` é consultado em `navigateTo` — esconder o item da lateral
+não bastaria, o atalho ou um botão de outra tela ainda chamariam direto.
+"Usuários" fica fora da lista de menus concedíveis de propósito.
+
+**Limite honesto:** a permissão é aplicada na tela. Alguém com conhecimento
+técnico e a senha dele poderia chamar a API direto e ler coleções de menus
+não liberados. Para um funcionário de confiança está de bom tamanho; se um
+dia precisar, dá pra amarrar coleção→menu dentro da própria RLS.
+
+### Medido com a base real (933 produtos, 1721 movimentos, 3.340 registros)
+Primeira subida 2,6s; ciclo seguinte 0,3s; primeira carga numa máquina
+nova 1,2s. `smoke_nuvem.py` (14 grupos, Supabase de mentira) e
+`smoke_nuvem_real.py` (base de verdade) cobrem isso.

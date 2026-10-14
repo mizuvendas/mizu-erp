@@ -1762,6 +1762,7 @@ function saveState(){
     showToast('Erro ao salvar dados. Veja o console.', 'error');
   }
   atualizarBadgesMenu();
+  if(typeof nuvemAoSalvar === 'function') nuvemAoSalvar();
 }
 
 /* =========================================================
@@ -2017,6 +2018,12 @@ function navigateTo(page){
   const paginaOrcamentosAtiva = document.getElementById('page-orcamentos') && document.getElementById('page-orcamentos').classList.contains('active');
   if(paginaOrcamentosAtiva && page!=='orcamentos' && typeof salvarRascunhoAutomaticoAoSair==='function'){
     salvarRascunhoAutomaticoAoSair();
+  }
+  /* Esconder o menu não basta: o endereço, um atalho ou um botão de
+     dentro de outra tela ainda chamariam navigateTo direto. */
+  if(typeof temAcesso === 'function' && !temAcesso(page)){
+    showToast('Você não tem acesso a esta tela.', 'error');
+    return;
   }
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page===page));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -36810,6 +36817,757 @@ async function exportarComparativoExcel(){
 }
 
 /* =========================================================
+   NUVEM — login, usuários e sincronização entre máquinas
+
+   O sistema continua sendo offline-first: QUEM MANDA é o
+   localStorage. A nuvem é uma segunda cópia que recebe o que
+   mudou aqui e traz o que mudou lá. Internet caiu, a venda
+   continua; quando voltar, sobe sozinha.
+
+   Conflito é resolvido por registro, não pelo arquivo inteiro:
+   se ela mexeu no orçamento 50 e ele no 51, os dois sobrevivem.
+   Se os dois mexeram no MESMO registro, vale o último que subiu.
+   ========================================================= */
+
+const NUVEM = {
+  url:   'https://yxwunpjtynaxcihwcvay.supabase.co',
+  chave: 'sb_publishable_4SUcm22i5mcECjuCUdSEgA_ETBUM9P7'
+};
+
+const NUVEM_SESSAO  = 'mizu_sessao_v1';
+const NUVEM_ESPELHO = 'mizu_espelho_v1';  // impressão digital do que já subiu
+const NUVEM_MARCA   = 'mizu_marca_v1';    // até onde já baixei
+
+/* licitacoesGeocodeCache é cache de mapa, recriável — subir isso
+   só gastaria banco e banda. */
+const NUVEM_NAO_SINCRONIZA = ['licitacoesGeocodeCache'];
+
+let nuvemSessao   = null;   // { access_token, refresh_token, expira }
+let nuvemUsuario  = null;   // { id, nome, email, dono, ativo, permissoes }
+let nuvemPendentes = 0;
+let nuvemSincronizando = false;
+let nuvemUltimoErro = null;
+let nuvemAplicandoRemoto = false;
+let nuvemTimer = null;
+
+/* ---------------------------------------------------------
+   CONVERSA COM O SERVIDOR
+   --------------------------------------------------------- */
+function nuvemLerSessao(){
+  try { return JSON.parse(localStorage.getItem(NUVEM_SESSAO) || 'null'); }
+  catch(e){ return null; }
+}
+function nuvemGravarSessao(s){
+  if(s) localStorage.setItem(NUVEM_SESSAO, JSON.stringify(s));
+  else  localStorage.removeItem(NUVEM_SESSAO);
+  nuvemSessao = s;
+}
+
+async function nuvemFetch(caminho, opcoes, semToken){
+  const cab = Object.assign({
+    'apikey': NUVEM.chave,
+    'Content-Type': 'application/json'
+  }, (opcoes && opcoes.headers) || {});
+  if(!semToken && nuvemSessao && nuvemSessao.access_token){
+    cab['Authorization'] = 'Bearer ' + nuvemSessao.access_token;
+  }
+  const r = await fetch(NUVEM.url + caminho, Object.assign({}, opcoes, { headers: cab }));
+  if(r.status === 401 && !semToken && nuvemSessao && nuvemSessao.refresh_token){
+    const renovou = await nuvemRenovar();
+    if(renovou) return nuvemFetch(caminho, opcoes, semToken);
+  }
+  return r;
+}
+
+async function nuvemJson(caminho, opcoes, semToken){
+  const r = await nuvemFetch(caminho, opcoes, semToken);
+  const texto = await r.text();
+  let corpo = null;
+  try { corpo = texto ? JSON.parse(texto) : null; } catch(e){ corpo = { bruto: texto }; }
+  if(!r.ok){
+    const msg = (corpo && (corpo.msg || corpo.message || corpo.error_description || corpo.error)) || ('erro ' + r.status);
+    throw new Error(msg);
+  }
+  return corpo;
+}
+
+function nuvemGuardarToken(dados){
+  if(!dados || !dados.access_token) return false;
+  nuvemGravarSessao({
+    access_token: dados.access_token,
+    refresh_token: dados.refresh_token,
+    expira: Date.now() + ((dados.expires_in || 3600) * 1000) - 60000,
+    usuario: (nuvemSessao && nuvemSessao.usuario) || null
+  });
+  return true;
+}
+
+async function nuvemRenovar(){
+  try{
+    const d = await nuvemJson('/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      body: JSON.stringify({ refresh_token: nuvemSessao.refresh_token })
+    }, true);
+    return nuvemGuardarToken(d);
+  }catch(e){
+    return false;
+  }
+}
+
+async function nuvemEntrar(email, senha){
+  const d = await nuvemJson('/auth/v1/token?grant_type=password', {
+    method: 'POST',
+    body: JSON.stringify({ email: email, password: senha })
+  }, true);
+  nuvemGuardarToken(d);
+  return nuvemCarregarPerfil();
+}
+
+async function nuvemCriarConta(nome, email, senha){
+  await nuvemJson('/auth/v1/signup', {
+    method: 'POST',
+    body: JSON.stringify({ email: email, password: senha, data: { nome: nome } })
+  }, true);
+  /* Se a confirmação por e-mail estiver ligada no Supabase, o login
+     abaixo falha e a pessoa precisa confirmar antes. Por isso o
+     tratamento de erro de quem chama é que dá o recado. */
+  return nuvemEntrar(email, senha);
+}
+
+async function nuvemCarregarPerfil(){
+  const lista = await nuvemJson('/rest/v1/usuarios?select=*', { method: 'GET' });
+  const eu = (lista || [])[0] || null;
+  nuvemUsuario = eu;
+  if(nuvemSessao){
+    nuvemSessao.usuario = eu;
+    nuvemGravarSessao(nuvemSessao);
+  }
+  return eu;
+}
+
+function nuvemSair(){
+  nuvemGravarSessao(null);
+  nuvemUsuario = null;
+  if(nuvemTimer){ clearInterval(nuvemTimer); nuvemTimer = null; }
+  location.reload();
+}
+
+/* ---------------------------------------------------------
+   PERMISSÃO POR MENU
+   O dono vê tudo. Os outros veem o que ela marcou, um a um.
+   --------------------------------------------------------- */
+function nuvemMenus(){
+  /* "Usuários" fica de fora da lista: quem libera acesso é só o dono, e
+     marcar essa caixinha pra um funcionário daria a ele o poder de se
+     liberar sozinho. */
+  return [...document.querySelectorAll('.nav-item[data-page]')]
+    .filter(a => a.dataset.page !== 'usuarios')
+    .map(a => ({
+    pagina: a.dataset.page,
+    rotulo: (a.innerText || a.dataset.page).trim().replace(/\s+/g, ' ')
+  }));
+}
+
+function temAcesso(pagina){
+  if(!nuvemUsuario) return true;          // sistema sem nuvem ligada
+  if(nuvemUsuario.dono) return true;
+  const p = nuvemUsuario.permissoes || {};
+  return !!p[pagina];
+}
+
+function nuvemAplicarPermissoes(){
+  if(!nuvemUsuario || nuvemUsuario.dono) return;
+  document.querySelectorAll('.nav-item[data-page]').forEach(a => {
+    a.hidden = !temAcesso(a.dataset.page);
+  });
+  /* Título de seção sem nenhum menu embaixo vira sujeira na lateral:
+     "FINANCEIRO" sozinho, sem nada dentro. */
+  document.querySelectorAll('.sidebar .nav-section-label').forEach(rotulo => {
+    let temAlgum = false;
+    let n = rotulo.nextElementSibling;
+    while(n && !n.classList.contains('nav-section-label')){
+      if(n.classList.contains('nav-item') && !n.hidden) temAlgum = true;
+      n = n.nextElementSibling;
+    }
+    rotulo.hidden = !temAlgum;
+  });
+
+  const ativa = document.querySelector('.page.active');
+  const atual = ativa ? ativa.id.replace('page-', '') : '';
+  if(atual && !temAcesso(atual)){
+    const primeiro = [...document.querySelectorAll('.nav-item[data-page]')].find(a => !a.hidden);
+    if(primeiro) navigateTo(primeiro.dataset.page);
+  }
+}
+
+/* ---------------------------------------------------------
+   O QUE MUDOU AQUI DENTRO
+   Guardar uma cópia inteira do STATE só pra comparar dobraria
+   o armazenamento. Guardo uma impressão digital curta por
+   registro: tamanho + hash. Basta pra saber que mudou.
+   --------------------------------------------------------- */
+function nuvemDigital(texto){
+  let h = 5381;
+  for(let i = 0; i < texto.length; i++) h = ((h * 33) ^ texto.charCodeAt(i)) >>> 0;
+  return texto.length + ':' + h.toString(36);
+}
+
+function nuvemLerEspelho(){
+  try { return JSON.parse(localStorage.getItem(NUVEM_ESPELHO) || '{}'); }
+  catch(e){ return {}; }
+}
+function nuvemGravarEspelho(e){
+  try { localStorage.setItem(NUVEM_ESPELHO, JSON.stringify(e)); } catch(err){}
+}
+
+/* Varre o STATE e devolve { chave: {colecao, id, dados} }.
+   Lista de registros com id vira uma linha por registro; o resto
+   (config, contadores, mapas) vira uma linha só, inteira. */
+function nuvemInstantaneo(){
+  const saida = {};
+  Object.keys(STATE).forEach(colecao => {
+    if(NUVEM_NAO_SINCRONIZA.includes(colecao)) return;
+    const v = STATE[colecao];
+    if(Array.isArray(v) && v.every(x => x && typeof x === 'object' && x.id != null)){
+      v.forEach(reg => {
+        saida[colecao + '|' + reg.id] = { colecao: colecao, id: String(reg.id), dados: reg };
+      });
+    }else{
+      saida['_doc|' + colecao] = { colecao: '_doc', id: colecao, dados: { valor: v } };
+    }
+  });
+  return saida;
+}
+
+function nuvemMudancas(){
+  const agora = nuvemInstantaneo();
+  const espelho = nuvemLerEspelho();
+  const subir = [];
+  Object.keys(agora).forEach(chave => {
+    const texto = JSON.stringify(agora[chave].dados);
+    if(espelho[chave] !== nuvemDigital(texto)){
+      subir.push({
+        colecao: agora[chave].colecao,
+        id: agora[chave].id,
+        dados: agora[chave].dados,
+        excluido: false,
+        _chave: chave,
+        _digital: nuvemDigital(texto)
+      });
+    }
+  });
+  Object.keys(espelho).forEach(chave => {
+    if(agora[chave]) return;
+    const [colecao, ...resto] = chave.split('|');
+    if(colecao === '_doc') return;   // documento não some, só muda
+    subir.push({
+      colecao: colecao,
+      id: resto.join('|'),
+      dados: {},
+      excluido: true,
+      _chave: chave,
+      _digital: null
+    });
+  });
+  return subir;
+}
+
+/* ---------------------------------------------------------
+   SUBIR E BAIXAR
+   --------------------------------------------------------- */
+async function nuvemSubir(){
+  const fila = nuvemMudancas();
+  nuvemPendentes = fila.length;
+  if(fila.length === 0) return 0;
+
+  const espelho = nuvemLerEspelho();
+  const LOTE = 100;
+  for(let i = 0; i < fila.length; i += LOTE){
+    const lote = fila.slice(i, i + LOTE);
+    await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify(lote.map(r => ({
+        colecao: r.colecao, id: r.id, dados: r.dados, excluido: r.excluido
+      })))
+    });
+    lote.forEach(r => {
+      if(r._digital) espelho[r._chave] = r._digital;
+      else delete espelho[r._chave];
+    });
+    nuvemGravarEspelho(espelho);
+    nuvemPendentes = Math.max(0, nuvemPendentes - lote.length);
+    nuvemPintarStatus();
+  }
+  return fila.length;
+}
+
+async function nuvemBaixar(){
+  let marca = localStorage.getItem(NUVEM_MARCA) || '1970-01-01T00:00:00Z';
+  let aplicados = 0;
+  for(let volta = 0; volta < 50; volta++){
+    const linhas = await nuvemJson(
+      '/rest/v1/registros?select=colecao,id,dados,excluido,atualizado_em'
+      + '&atualizado_em=gt.' + encodeURIComponent(marca)
+      + '&order=atualizado_em.asc&limit=500', { method: 'GET' });
+    if(!linhas || linhas.length === 0) break;
+    aplicados += nuvemAplicar(linhas);
+    marca = linhas[linhas.length - 1].atualizado_em;
+    localStorage.setItem(NUVEM_MARCA, marca);
+    if(linhas.length < 500) break;
+  }
+  return aplicados;
+}
+
+/* Põe no STATE o que veio de fora. Um registro que está esperando
+   subir daqui NÃO é sobrescrito — senão a venda que ela acabou de
+   lançar sumiria da tela antes de chegar ao servidor. */
+function nuvemAplicar(linhas){
+  const espelho = nuvemLerEspelho();
+  const agora = nuvemInstantaneo();
+  let mudou = 0;
+
+  linhas.forEach(linha => {
+    const chave = linha.colecao + '|' + linha.id;
+    /* "Minha alteração ainda não subiu" só vale quando o registro JÁ está
+       no espelho e está diferente. Sem o `chave in espelho`, numa máquina
+       nova toda chave que existe por padrão (config, contadores) parecia
+       alterada e nunca recebia a versão da loja. Como o subir roda ANTES
+       do baixar, o que é realmente novo aqui já está no espelho a esta
+       altura — então não há risco de perder. */
+    const local = agora[chave];
+    if(local && (chave in espelho)){
+      const digitalLocal = nuvemDigital(JSON.stringify(local.dados));
+      if(espelho[chave] !== digitalLocal) return;
+    }
+
+    if(linha.colecao === '_doc'){
+      /* Chave que ainda não existe nesta máquina (um bloco criado depois,
+         como analiseST ou carrinhoCompra) também entra — senão a máquina
+         nova nasceria sem ela. */
+      if(!linha.dados || !('valor' in linha.dados)) return;
+      STATE[linha.id] = linha.dados.valor;
+      espelho[chave] = nuvemDigital(JSON.stringify({ valor: STATE[linha.id] }));
+      mudou++;
+      return;
+    }
+
+    if(!Array.isArray(STATE[linha.colecao])) STATE[linha.colecao] = [];
+    const lista = STATE[linha.colecao];
+    const idx = lista.findIndex(x => x && String(x.id) === String(linha.id));
+
+    if(linha.excluido){
+      if(idx >= 0){ lista.splice(idx, 1); mudou++; }
+      delete espelho[chave];
+      return;
+    }
+    if(idx >= 0) lista[idx] = linha.dados;
+    else lista.push(linha.dados);
+    espelho[chave] = nuvemDigital(JSON.stringify(linha.dados));
+    mudou++;
+  });
+
+  if(mudou){
+    nuvemGravarEspelho(espelho);
+    nuvemAplicandoRemoto = true;
+    try { saveState(); } finally { nuvemAplicandoRemoto = false; }
+  }
+  return mudou;
+}
+
+/* ---------------------------------------------------------
+   O CICLO
+   --------------------------------------------------------- */
+async function nuvemSincronizar(silencioso){
+  if(!nuvemUsuario || !nuvemUsuario.ativo) return;
+  if(nuvemSincronizando) return;
+  if(!navigator.onLine){ nuvemPintarStatus(); return; }
+  nuvemSincronizando = true;
+  nuvemPintarStatus();
+  try{
+    /* Primeira vez nesta máquina: BAIXA antes de subir.
+       Máquina nova abre com a configuração padrão de fábrica. Se ela
+       subisse primeiro, essa configuração em branco sobrescreveria a da
+       loja no servidor — e voltaria em branco pra todo mundo. Baixando
+       antes, a máquina aprende a verdade e só então oferece o que ela
+       tem de diferente. Na máquina da dona o servidor está vazio, então
+       baixar antes não muda nada. */
+    const primeiraVez = Object.keys(nuvemLerEspelho()).length === 0;
+    let baixados = 0;
+    if(primeiraVez) baixados += await nuvemBaixar();
+    await nuvemSubir();
+    baixados += await nuvemBaixar();
+    nuvemUltimoErro = null;
+    if(baixados > 0 && !silencioso){
+      const ativa = document.querySelector('.page.active');
+      const pagina = ativa ? ativa.id.replace('page-', '') : '';
+      if(pagina && RENDERERS[pagina]) RENDERERS[pagina]();
+      atualizarBadgesMenu();
+    }
+  }catch(e){
+    nuvemUltimoErro = e.message || String(e);
+    console.error('[nuvem]', e);
+  }finally{
+    nuvemSincronizando = false;
+    nuvemPendentes = nuvemMudancas().length;
+    nuvemPintarStatus();
+  }
+}
+
+function nuvemAoSalvar(){
+  if(nuvemAplicandoRemoto) return;
+  if(!nuvemUsuario) return;
+  clearTimeout(nuvemAoSalvar._t);
+  nuvemAoSalvar._t = setTimeout(() => nuvemSincronizar(true), 1500);
+}
+
+/* ---------------------------------------------------------
+   O AVISO NA TELA
+   --------------------------------------------------------- */
+function nuvemPintarStatus(){
+  const el = document.getElementById('nuvem-status');
+  if(!el) return;
+  let icone = '☁️', texto = 'sincronizado', cor = 'var(--positive)';
+  if(!navigator.onLine){
+    icone = '📴'; cor = 'var(--warning)';
+    texto = nuvemPendentes ? ('sem internet · ' + nuvemPendentes + ' a enviar') : 'sem internet';
+  }else if(nuvemSincronizando){
+    icone = '🔄'; texto = 'sincronizando...'; cor = 'var(--ink-soft)';
+  }else if(nuvemUltimoErro){
+    icone = '⚠️'; texto = 'erro ao sincronizar'; cor = 'var(--negative)';
+  }else if(nuvemPendentes > 0){
+    icone = '⏳'; cor = 'var(--warning)';
+    texto = nuvemPendentes + (nuvemPendentes === 1 ? ' a enviar' : ' a enviar');
+  }
+  el.innerHTML = `<span style="color:${cor};">${icone}</span> ${escapeHtml(texto)}`;
+  el.title = nuvemUltimoErro || (nuvemUsuario ? (nuvemUsuario.nome + (nuvemUsuario.dono ? ' (dono)' : '')) : '');
+}
+
+function nuvemMontarRodape(){
+  if(document.getElementById('nuvem-rodape')) return;
+  const rodapeBarra = document.querySelector('.sidebar-footer');
+  if(!rodapeBarra) return;
+  const div = document.createElement('div');
+  div.id = 'nuvem-rodape';
+  div.style.cssText = 'padding:9px 0 10px;margin-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08);'
+    + 'font-size:11.5px;color:#9BB0BC;display:flex;flex-direction:column;gap:5px;';
+  div.innerHTML = `
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="font-weight:700;color:#DCE7ED;" id="nuvem-quem"></span>
+    </div>
+    <div id="nuvem-status" style="cursor:default;"></div>
+    <div style="display:flex;gap:6px;">
+      <button type="button" id="nuvem-agora" style="font:inherit;font-size:11px;cursor:pointer;background:transparent;
+              border:1px solid rgba(255,255,255,.18);color:#C6D6DF;border-radius:6px;padding:3px 7px;">Sincronizar</button>
+      <button type="button" id="nuvem-sair" style="font:inherit;font-size:11px;cursor:pointer;background:transparent;
+              border:1px solid rgba(255,255,255,.18);color:#C6D6DF;border-radius:6px;padding:3px 7px;">Sair</button>
+    </div>`;
+  rodapeBarra.insertBefore(div, rodapeBarra.firstChild);
+  document.getElementById('nuvem-agora').addEventListener('click', () => nuvemSincronizar(false));
+  document.getElementById('nuvem-sair').addEventListener('click', () => {
+    confirmAction('Sair do sistema?',
+      nuvemPendentes ? ('Ainda tem ' + nuvemPendentes + ' coisa(s) pra enviar. Conecte antes de sair, ou elas ficam só nesta máquina.') : 'Você vai precisar entrar de novo.',
+      () => nuvemSair(), 'Sair');
+  });
+  const quem = document.getElementById('nuvem-quem');
+  if(quem && nuvemUsuario) quem.textContent = nuvemUsuario.nome + (nuvemUsuario.dono ? ' · dono' : '');
+  nuvemPintarStatus();
+}
+
+/* ---------------------------------------------------------
+   TELA DE LOGIN
+   --------------------------------------------------------- */
+function nuvemTelaLogin(recado){
+  document.getElementById('tela-login')?.remove();
+  const tela = document.createElement('div');
+  tela.id = 'tela-login';
+  tela.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg-sidebar);'
+    + 'display:flex;align-items:center;justify-content:center;padding:20px;';
+  tela.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:380px;width:100%;padding:26px 24px;">
+      <div style="text-align:center;margin-bottom:18px;">
+        <div style="font-size:18px;font-weight:700;">Mizu Materiais de Limpeza</div>
+        <div class="help-text" style="margin:2px 0 0;">Entre para acessar o sistema</div>
+      </div>
+      <div id="lg-recado" style="display:${recado ? '' : 'none'};margin-bottom:12px;padding:9px 11px;border-radius:7px;
+           background:#FDECEC;color:#A3291F;font-size:12.5px;">${escapeHtml(recado || '')}</div>
+
+      <div id="lg-campo-nome" class="field" style="display:none;">
+        <label>Seu nome</label>
+        <input type="text" id="lg-nome" autocomplete="name" placeholder="Como quer ser chamado">
+      </div>
+      <div class="field">
+        <label>E-mail</label>
+        <input type="email" id="lg-email" autocomplete="username" placeholder="voce@email.com">
+      </div>
+      <div class="field" style="margin-top:10px;">
+        <label>Senha</label>
+        <input type="password" id="lg-senha" autocomplete="current-password" placeholder="sua senha">
+      </div>
+
+      <button type="button" class="btn btn-forte" id="lg-entrar" style="width:100%;margin-top:16px;justify-content:center;">Entrar</button>
+      <button type="button" class="btn" id="lg-trocar" style="width:100%;margin-top:8px;justify-content:center;">Criar uma conta</button>
+
+      <p class="help-text" style="margin-top:14px;text-align:center;">
+        Conta nova entra desligada: a dona libera os menus depois.
+      </p>
+    </div>`;
+  document.body.appendChild(tela);
+
+  let modo = 'entrar';
+  const btn = tela.querySelector('#lg-entrar');
+  const trocar = tela.querySelector('#lg-trocar');
+  const recadoEl = tela.querySelector('#lg-recado');
+  const mostrarRecado = (t) => {
+    recadoEl.textContent = t || '';
+    recadoEl.style.display = t ? '' : 'none';
+  };
+
+  trocar.addEventListener('click', () => {
+    modo = (modo === 'entrar') ? 'criar' : 'entrar';
+    tela.querySelector('#lg-campo-nome').style.display = (modo === 'criar') ? '' : 'none';
+    btn.textContent = (modo === 'criar') ? 'Criar conta' : 'Entrar';
+    trocar.textContent = (modo === 'criar') ? 'Já tenho conta' : 'Criar uma conta';
+    tela.querySelector('#lg-senha').setAttribute('autocomplete', modo === 'criar' ? 'new-password' : 'current-password');
+    mostrarRecado('');
+  });
+
+  const enviar = async () => {
+    const email = tela.querySelector('#lg-email').value.trim();
+    const senha = tela.querySelector('#lg-senha').value;
+    const nome  = tela.querySelector('#lg-nome').value.trim();
+    if(!email || !senha){ mostrarRecado('Preencha e-mail e senha.'); return; }
+    if(modo === 'criar' && !nome){ mostrarRecado('Diga seu nome.'); return; }
+    if(modo === 'criar' && senha.length < 6){ mostrarRecado('A senha precisa de pelo menos 6 letras ou números.'); return; }
+    btn.disabled = true; btn.textContent = 'Aguarde...';
+    try{
+      if(modo === 'criar') await nuvemCriarConta(nome, email, senha);
+      else await nuvemEntrar(email, senha);
+      tela.remove();
+      await nuvemDepoisDeEntrar();
+    }catch(e){
+      const m = String(e.message || e);
+      mostrarRecado(
+        /Invalid login/i.test(m) ? 'E-mail ou senha não conferem.' :
+        /already registered/i.test(m) ? 'Esse e-mail já tem conta. Use "Já tenho conta".' :
+        /Email not confirmed/i.test(m) ? 'Confirme o e-mail que o Supabase enviou e tente de novo.' :
+        /Failed to fetch|NetworkError/i.test(m) ? 'Sem internet para entrar. Conecte e tente de novo.' :
+        m);
+      btn.disabled = false;
+      btn.textContent = (modo === 'criar') ? 'Criar conta' : 'Entrar';
+    }
+  };
+  btn.addEventListener('click', enviar);
+  tela.querySelector('#lg-senha').addEventListener('keydown', (e) => { if(e.key === 'Enter') enviar(); });
+  tela.querySelector('#lg-email').focus();
+}
+
+function nuvemTelaEspera(){
+  document.getElementById('tela-login')?.remove();
+  const tela = document.createElement('div');
+  tela.id = 'tela-login';
+  tela.style.cssText = 'position:fixed;inset:0;z-index:9999;background:var(--bg-sidebar);'
+    + 'display:flex;align-items:center;justify-content:center;padding:20px;';
+  tela.innerHTML = `
+    <div style="background:#fff;border-radius:12px;max-width:400px;width:100%;padding:26px 24px;text-align:center;">
+      <div style="font-size:30px;">🔒</div>
+      <h3 style="margin:10px 0 4px;">Conta criada, falta liberar</h3>
+      <p class="help-text" style="margin:0;">
+        Avise a dona para liberar seu acesso em <strong>Usuários</strong>.
+        Assim que ela marcar os menus, é só entrar de novo.
+      </p>
+      <button type="button" class="btn" id="esp-sair" style="margin-top:16px;">Sair</button>
+    </div>`;
+  document.body.appendChild(tela);
+  tela.querySelector('#esp-sair').addEventListener('click', () => nuvemSair());
+}
+
+/* ---------------------------------------------------------
+   TELA DE USUÁRIOS (só o dono vê)
+   --------------------------------------------------------- */
+function nuvemMontarMenuUsuarios(){
+  if(document.querySelector('.nav-item[data-page="usuarios"]')) return;
+  const barra = document.querySelector('.sidebar');
+  const rodapeBarra = document.querySelector('.sidebar-footer');
+  if(!barra || !rodapeBarra) return;
+
+  const rotulo = document.createElement('div');
+  rotulo.className = 'nav-section-label';
+  rotulo.textContent = 'Sistema';
+  barra.insertBefore(rotulo, rodapeBarra);
+
+  const a = document.createElement('a');
+  a.className = 'nav-item';
+  a.dataset.page = 'usuarios';
+  a.href = '#';
+  a.innerHTML = '<span class="ic">👥</span> Usuários';
+  a.addEventListener('click', (e) => { e.preventDefault(); navigateTo('usuarios'); });
+  barra.insertBefore(a, rodapeBarra);
+
+  const pagina = document.createElement('section');
+  pagina.id = 'page-usuarios';
+  pagina.className = 'page';
+  pagina.innerHTML = '<h1>Usuários</h1>'
+    + '<p class="sub">Quem entra no sistema e o que cada um enxerga</p>'
+    + '<div id="usuarios-content"></div>';
+  const main = document.querySelector('main.main') || document.body;
+  main.appendChild(pagina);
+
+  RENDERERS['usuarios'] = renderUsuarios;
+}
+
+async function renderUsuarios(){
+  const caixa = document.getElementById('usuarios-content');
+  if(!caixa) return;
+  caixa.innerHTML = '<div class="card"><p class="help-text" style="margin:0;">Carregando...</p></div>';
+  let lista = [];
+  try{
+    lista = await nuvemJson('/rest/v1/usuarios?select=*&order=criado_em.asc', { method: 'GET' });
+  }catch(e){
+    caixa.innerHTML = `<div class="card"><p style="margin:0;color:var(--negative);">Não consegui buscar os usuários: ${escapeHtml(e.message)}</p></div>`;
+    return;
+  }
+
+  const menus = nuvemMenus();
+  caixa.innerHTML = `
+    <div class="card">
+      <h3>Como liberar alguém</h3>
+      <p class="help-text" style="margin:0;">
+        A pessoa abre o sistema no computador dela, clica em <strong>Criar uma conta</strong> e escolhe a própria senha.
+        Ela aparece aqui desligada. Você liga e marca os menus que ela pode abrir — onde tem acesso, ela mexe à vontade.
+      </p>
+    </div>
+    ${lista.map(u => nuvemCardUsuario(u, menus)).join('')}`;
+
+  lista.forEach(u => {
+    const salvar = document.getElementById('us-salvar-' + u.id);
+    if(salvar) salvar.addEventListener('click', () => nuvemSalvarUsuario(u.id, menus));
+    const todos = document.getElementById('us-todos-' + u.id);
+    if(todos) todos.addEventListener('click', () => {
+      const marcar = menus.some(m => !document.getElementById('us-' + u.id + '-' + m.pagina).checked);
+      menus.forEach(m => { document.getElementById('us-' + u.id + '-' + m.pagina).checked = marcar; });
+    });
+  });
+}
+
+function nuvemCardUsuario(u, menus){
+  const souEu = nuvemUsuario && u.id === nuvemUsuario.id;
+  const perm = u.permissoes || {};
+  return `
+    <div class="card">
+      <h3>${escapeHtml(u.nome || '(sem nome)')}
+        ${u.dono ? '<span class="badge badge-positive">dono</span>' : ''}
+        ${souEu ? '<span class="badge badge-neutral">você</span>' : ''}
+      </h3>
+      <p class="help-text" style="margin:0 0 10px;">${escapeHtml(u.email || '')}</p>
+      ${u.dono ? `<p class="help-text" style="margin:0;">O dono enxerga tudo e é o único que libera acesso. Não dá pra tirar isso daqui.</p>` : `
+        <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;cursor:pointer;margin-bottom:12px;">
+          <input type="checkbox" id="us-ativo-${u.id}" ${u.ativo ? 'checked' : ''} style="width:auto;">
+          <span><strong>Pode entrar no sistema</strong> — desmarcar corta o acesso na hora, até no computador dele</span>
+        </label>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+          <strong style="font-size:13px;">Menus liberados</strong>
+          <button type="button" class="btn btn-sm" id="us-todos-${u.id}">Marcar / desmarcar todos</button>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px;">
+          ${menus.map(m => `
+            <label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;padding:5px 7px;
+                   border:1px solid var(--border);border-radius:6px;">
+              <input type="checkbox" id="us-${u.id}-${m.pagina}" ${perm[m.pagina] ? 'checked' : ''} style="width:auto;">
+              <span>${escapeHtml(m.rotulo)}</span>
+            </label>`).join('')}
+        </div>
+        <div class="barra-acoes" style="margin-top:12px;">
+          <div class="direita">
+            <button type="button" class="btn btn-forte" id="us-salvar-${u.id}">Salvar acesso</button>
+          </div>
+        </div>`}
+    </div>`;
+}
+
+async function nuvemSalvarUsuario(id, menus){
+  const ativo = document.getElementById('us-ativo-' + id).checked;
+  const permissoes = {};
+  menus.forEach(m => {
+    if(document.getElementById('us-' + id + '-' + m.pagina).checked) permissoes[m.pagina] = true;
+  });
+  try{
+    await nuvemJson('/rest/v1/usuarios?id=eq.' + encodeURIComponent(id), {
+      method: 'PATCH',
+      headers: { 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ ativo: ativo, permissoes: permissoes })
+    });
+    showToast('Acesso salvo.', 'success');
+    renderUsuarios();
+  }catch(e){
+    showToast('Não consegui salvar: ' + e.message, 'error');
+  }
+}
+
+/* ---------------------------------------------------------
+   ENTRADA
+   --------------------------------------------------------- */
+async function nuvemDepoisDeEntrar(){
+  if(!nuvemUsuario){ nuvemTelaLogin('Não consegui carregar seu perfil.'); return; }
+  if(!nuvemUsuario.ativo){ nuvemTelaEspera(); return; }
+
+  nuvemMontarRodape();
+  if(nuvemUsuario.dono) nuvemMontarMenuUsuarios();
+  nuvemAplicarPermissoes();
+
+  await nuvemSincronizar(false);
+
+  const ativa = document.querySelector('.page.active');
+  const pagina = ativa ? ativa.id.replace('page-', '') : 'dashboard';
+  if(RENDERERS[pagina]) RENDERERS[pagina]();
+  atualizarBadgesMenu();
+
+  if(nuvemTimer) clearInterval(nuvemTimer);
+  nuvemTimer = setInterval(() => nuvemSincronizar(false), 20000);
+  window.addEventListener('online',  () => { nuvemPintarStatus(); nuvemSincronizar(false); });
+  window.addEventListener('offline', () => nuvemPintarStatus());
+  window.addEventListener('focus',   () => nuvemSincronizar(false));
+}
+
+async function nuvemIniciar(){
+  nuvemSessao = nuvemLerSessao();
+  if(!nuvemSessao){ nuvemTelaLogin(); return; }
+
+  /* Offline com sessão guardada: entra com o que já sabia sobre a
+     pessoa. É o que permite vender com a internet caída. */
+  if(!navigator.onLine){
+    nuvemUsuario = nuvemSessao.usuario || null;
+    if(!nuvemUsuario){ nuvemTelaLogin('Sem internet para entrar pela primeira vez nesta máquina.'); return; }
+    nuvemMontarRodape();
+    if(nuvemUsuario.dono) nuvemMontarMenuUsuarios();
+    nuvemAplicarPermissoes();
+    nuvemPendentes = nuvemMudancas().length;
+    nuvemPintarStatus();
+    window.addEventListener('online', () => { nuvemPintarStatus(); nuvemSincronizar(false); });
+    return;
+  }
+
+  try{
+    if(nuvemSessao.expira && Date.now() > nuvemSessao.expira) await nuvemRenovar();
+    await nuvemCarregarPerfil();
+    if(!nuvemUsuario){ nuvemTelaLogin(); return; }
+    await nuvemDepoisDeEntrar();
+  }catch(e){
+    nuvemUsuario = nuvemSessao.usuario || null;
+    if(nuvemUsuario){
+      nuvemMontarRodape();
+      if(nuvemUsuario.dono) nuvemMontarMenuUsuarios();
+      nuvemAplicarPermissoes();
+      nuvemUltimoErro = e.message;
+      nuvemPintarStatus();
+    }else{
+      nuvemTelaLogin('Não consegui falar com o servidor: ' + (e.message || e));
+    }
+  }
+}
+
+
+/* =========================================================
    INICIALIZAÇÃO
    ========================================================= */
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -36827,6 +37585,7 @@ atualizarBadgesMenu();
 verificarBackupAoAbrirApp();
 verificarNovidadesAoAbrirApp();
 renderFaixaSimulacao();
+nuvemIniciar();
 </script>
 </body>
 </html>
