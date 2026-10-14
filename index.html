@@ -785,6 +785,9 @@ table.data-table{ width:100%; font-size:13px; }
 
 /* combobox de busca (produto/item) com filtro em tempo real */
 .combo-wrap{ position:relative; }
+/* Fora de um .field o input nao recebia largura e nascia pequeno — foi o
+   que aconteceu ao levar o combobox pra barra do balcao. */
+.combo-wrap input[type="text"]{ width:100%; }
 .combo-dropdown{
   display:none; position:absolute; top:calc(100% + 2px); left:0; right:0; z-index:50;
   background:#fff; border:1px solid var(--border); border-radius:var(--radius-sm);
@@ -9600,14 +9603,14 @@ function orcHtmlBalcao(){
           </span>
           <span class="help-text" style="display:block;margin:0;">${cli ? 'clique para trocar' : 'clique para escolher um cliente já cadastrado'}</span>
         </button>
-        <input type="text" id="orc-balcao-busca" style="flex:3 1 380px;min-width:260px;font-size:13.5px;"
-               placeholder="Bipe o código de barras, ou digite o código ou o nome do produto e tecle Enter">
-        <button type="button" class="btn" id="orc-balcao-pesquisar">🔎 Pesquisar</button>
+        <div style="flex:3 1 380px;min-width:260px;">
+          ${renderComboboxProduto('orc-balcao-busca', 'orc-balcao-produto', opcoesProdutosCombobox(), null,
+              'Bipe o código de barras, ou digite o nome do produto', true)}
+        </div>
         <button type="button" class="btn" id="orc-balcao-historico" hidden title="Produtos que este cliente já comprou antes">🧾 Histórico</button>
-        <button type="button" class="btn" id="orc-balcao-menu" title="Orçamentos em aberto, aprovados e vendas feitas">≡ Pedidos</button>
       </div>
 
-      <div id="orc-balcao-resultados" style="display:none;padding:10px 14px;border-bottom:1px solid var(--border);background:var(--bg-app);"></div>
+      <div id="orc-balcao-resultados" hidden></div>
 
       <div id="orc-balcao-carrinho"></div>
 
@@ -9695,6 +9698,8 @@ function orcRenderCarrinhoBalcao(){
           <span class="badge" style="background:transparent;color:${corMargem};border:1px solid ${corMargem};">${margem.toFixed(0)}%</span>
         </div>
         <div style="text-align:right;min-width:92px;font-weight:700;font-size:14px;">${fmtMoney(it.qtd * it.precoUnit)}</div>
+        <button type="button" class="btn btn-sm" onclick="abrirEditarItemCarrinhoOrcamento(${idx})"
+                title="Mudar o nome, a marca, a unidade, o custo ou dar desconto neste item">✏️</button>
         <button type="button" class="btn btn-sm btn-danger" onclick="removerItemOrcamento(${idx})" title="Tirar do carrinho">✕</button>
       </div>`;
   }).join('');
@@ -9776,10 +9781,11 @@ function orcAtualizarRodapeBalcao(){
 /* Bipar ou buscar. Uma leitura exata de código de barras entra direto no
    carrinho; o resto mostra a lista pra escolher. */
 function orcBalcaoBuscar(termo){
-  const caixa = document.getElementById('orc-balcao-resultados');
-  if(!caixa) return;
+  /* Continua existindo pro código de barras e pra quem chama de fora. A
+     lista em si quem desenha agora é o combobox, enquanto ela digita. */
+  const input = document.getElementById('orc-balcao-busca');
   const t = (termo || '').trim();
-  if(!t){ caixa.style.display = 'none'; caixa.innerHTML = ''; return; }
+  if(!t) return;
 
   const digitos = t.replace(/\D/g, '');
   const exato = digitos.length >= 8
@@ -9787,23 +9793,16 @@ function orcBalcaoBuscar(termo){
     : null;
   if(exato){
     orcBalcaoAdicionar(exato.id);
-    caixa.style.display = 'none'; caixa.innerHTML = '';
+    if(input) input.value = '';
     showToast('Item adicionado: ' + exato.nome, 'success');
     return;
   }
 
-  const achados = filtrarProdutosPorTexto(STATE.produtos, t).slice(0, 8);
-  caixa.style.display = '';
-  caixa.innerHTML = achados.length === 0
-    ? `<div class="help-text" style="margin:0;">Nenhum produto com "${escapeHtml(t)}". Confira o nome ou cadastre o produto.</div>`
-    : achados.map(p => `
-        <div onclick="orcBalcaoAdicionar('${p.id}')" style="cursor:pointer;padding:7px 10px;border:1px solid var(--border);
-             border-radius:6px;margin-bottom:4px;background:#fff;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
-          <strong style="flex:1 1 220px;min-width:0;">${escapeHtml(p.nome)}</strong>
-          <span class="help-text" style="margin:0;">${escapeHtml(p.marca || 'sem marca')}${p.codigoBarras ? ' · ' + escapeHtml(p.codigoBarras) : ''}</span>
-          <span class="help-text" style="margin:0;">estoque ${fmtNum(p.estoqueAtual || 0)}</span>
-          <strong>${fmtMoney(p.precoVenda || 0)}</strong>
-        </div>`).join('');
+  if(input){
+    input.value = t;
+    input.focus();
+    input.dispatchEvent(new Event('input'));
+  }
 }
 
 /* Põe no carrinho usando o MESMO caminho do clássico: preenche os campos
@@ -9827,8 +9826,10 @@ function orcBalcaoAdicionar(produtoId){
 
   const busca = document.getElementById('orc-balcao-busca');
   if(busca){ busca.value = ''; busca.focus(); }
-  const caixa = document.getElementById('orc-balcao-resultados');
-  if(caixa){ caixa.style.display = 'none'; caixa.innerHTML = ''; }
+  const oculto = document.getElementById('orc-balcao-produto');
+  if(oculto) oculto.value = '';
+  const dd = document.getElementById('orc-balcao-busca-dropdown');
+  if(dd) dd.classList.remove('open');
 }
 
 /* Escolher um cliente já cadastrado, ou voltar pra consumidor final. */
@@ -10220,14 +10221,8 @@ function orcAplicarBalcao(box){
   [c1, c2, c3, c4].forEach(c => guardados.appendChild(c));
   pai.removeChild(marca);
 
-  const busca = document.getElementById('orc-balcao-busca');
-  if(busca){
-    busca.addEventListener('keydown', (e) => {
-      if(e.key === 'Enter'){ e.preventDefault(); orcBalcaoBuscar(busca.value); }
-    });
-    busca.focus();
-  }
-  document.getElementById('orc-balcao-pesquisar').addEventListener('click', () => orcBalcaoBuscar(busca ? busca.value : ''));
+  orcBalcaoLigarBusca();
+
   document.getElementById('orc-balcao-cliente').addEventListener('click', orcBalcaoEscolherCliente);
   document.getElementById('orc-balcao-dados').addEventListener('click', () => {
     orcBalcaoDadosAbertos = !orcBalcaoDadosAbertos;
@@ -10247,13 +10242,70 @@ function orcAplicarBalcao(box){
   });
   document.getElementById('orc-balcao-pagamento-btn').addEventListener('click', () => orcBalcaoFinalizar('pagamento'));
 
-  document.getElementById('orc-balcao-menu').addEventListener('click', () => orcBalcaoAbrirPainel());
   document.getElementById('orc-balcao-historico').addEventListener('click', () => {
     const sel = document.getElementById('orc-cliente');
     abrirHistoricoComprasCliente(sel ? sel.value : '', 'orcamento');
   });
 
+  /* O "≡ Pedidos" sai da barra de venda e vira um atalho fixo no alto,
+     à direita — do mesmo lado de onde a gaveta abre. Mora dentro do
+     container da página de Orçamentos de propósito: quando ela navega pra
+     outro menu, a página some e o botão some junto, sem precisar de limpeza. */
+  const fab = document.createElement('button');
+  fab.type = 'button';
+  fab.id = 'orc-balcao-menu';
+  fab.className = 'btn';
+  fab.title = 'Orçamentos em aberto, aprovados e vendas feitas';
+  fab.textContent = '≡ Pedidos';
+  fab.style.cssText = 'position:fixed;top:96px;right:24px;z-index:40;background:#fff;'
+    + 'box-shadow:0 1px 4px rgba(16,34,45,.14);';
+  fab.addEventListener('click', () => orcBalcaoAbrirPainel());
+  box.appendChild(fab);
+
   orcRenderCarrinhoBalcao();
+}
+
+/* A busca do balcão é o MESMO combobox do formulário clássico: sugere
+   enquanto ela digita, aceita palavra fora de ordem, o "@" de compra local,
+   as setas do teclado e o "➕ Criar produto novo" (o produto rápido) quando
+   o que ela digitou não existe. Bipar continua entrando direto no carrinho. */
+function orcBalcaoLigarBusca(){
+  const input = document.getElementById('orc-balcao-busca');
+  if(!input) return;
+
+  ativarComboboxProduto('orc-balcao-busca', 'orc-balcao-produto', opcoesProdutosCombobox(), (opt) => {
+    orcBalcaoAdicionar(opt.id);
+    const campo = document.getElementById('orc-balcao-busca');
+    const oculto = document.getElementById('orc-balcao-produto');
+    if(campo){ campo.value = ''; campo.focus(); }
+    if(oculto) oculto.value = '';
+  }, {
+    permitirCriar: true,
+    comLeitorCodigoBarras: true,
+    /* o produto recém-criado precisa entrar na lista do combobox, senão a
+       próxima busca não acha ele */
+    aoCriarProduto: orcBalcaoLigarBusca
+  });
+
+  /* Fase de captura: roda ANTES do Enter do combobox. Um código de barras
+     lido pelo leitor chega inteiro e termina em Enter — nesse caso o item
+     entra direto, sem passar pela lista. */
+  input.addEventListener('keydown', (e) => {
+    if(e.key !== 'Enter') return;
+    const digitos = (input.value || '').replace(/\D/g, '');
+    if(digitos.length < 8) return;
+    const exato = STATE.produtos.find(p => (p.codigoBarras || '').replace(/\D/g, '') === digitos);
+    if(!exato) return;
+    e.preventDefault();
+    e.stopPropagation();
+    orcBalcaoAdicionar(exato.id);
+    showToast('Item adicionado: ' + exato.nome, 'success');
+    input.value = '';
+    const dd = document.getElementById('orc-balcao-busca-dropdown');
+    if(dd) dd.classList.remove('open');
+  }, true);
+
+  input.focus();
 }
 
 /* ---------- O PASSO DO PAGAMENTO ----------
