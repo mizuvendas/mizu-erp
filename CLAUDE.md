@@ -190,3 +190,77 @@ hospedado no Render. `src/EmissorNfe.php` emite e cancela;
 - `tpAmb`: 1 = produção, 2 = homologação.
 - DistDFe: cStat 138 = documento encontrado, 137 = nenhum,
   **656 = consumo indevido, bloqueia por 1 hora**. Respeite o `ultNSU`.
+
+---
+
+## O novo desenho da Entrada de Nota (aprovado 13/10/2026, ainda não construído)
+
+A dona percorreu o Linx Microvix tela por tela e mandou 17 prints. O desenho
+foi aprovado; a construção ficou parada a pedido dela. **Não comece sem ela
+pedir.** O desenho clicável está num canvas de Design no claude.ai —
+peça o link a ela se precisar ver.
+
+**A decisão central:** o caminho é o do Microvix — telas separadas, uma
+pergunta por tela, modais por cima, menu escuro à esquerda. Não é uma tela
+só. A tela de hoje (tabela única com detalhe que abre) **sai do menu**, mas
+só quando a nova estiver inteira e testada: nota de fornecedor não espera.
+
+O motor fica: rateio do frete, fator de conversão, leitura das duplicatas,
+sinais de ST. Só o desenho muda.
+
+**As seis telas:**
+
+1. **Entrada NF-e** — lista das notas emitidas contra o CNPJ, chegando
+   sozinhas da Receita (o leitor DistDFe já existe, falta ligar). Filtro de
+   período, busca, situação. Rejeitar, porque cai remessa e devolução ali
+   também, não só compra. Importar por arquivo **ou pela chave de 44
+   dígitos**. Mostrar a hora da última leitura: lista vazia sem data é
+   ambígua.
+2. **Associar e cadastrar produtos** — abas com contador (não associados ×
+   associados). "Associar automaticamente" abre modal: escolhe o par de
+   campos (XML → cadastro), depois mostra a comparação **nome deles × nome
+   seu, lado a lado, com caixinha para desfazer**. Repete com outro par até
+   esvaziar.
+3. **Cadastrar novos produtos** — grade, com ⧉ no cabeçalho para copiar a
+   primeira linha para as outras. **Só identificação: sem valor e sem
+   fator.** Foi ela quem corrigiu isso, e está certa — no Microvix o preço
+   é definido aqui, antes de o fator existir, e foi assim que a vassoura
+   virou R$ 70,69 de custo e R$ 141,38 de venda quando custa R$ 5,89.
+4. **Fator de conversão** — código de barras, código interno, descrição,
+   fator. Sugerir o número lido do nome ("c/8", "c/24", "fardo c/50"), **sem
+   agarrar qualquer número**: "c/1000fls" é folha, não unidade. Avisar
+   quando compra em CX/FD e vende em UN com fator 1.
+5. **Por quanto vender** — margem em todos de uma vez ou um a um, preço e
+   margem ligados nos dois sentidos, e o campo sempre digitável (a sugestão
+   é sugestão). Mostrar **preço de hoje ao lado do custo novo** e avisar
+   quando o custo subiu e o preço não: é o erro que não dá sintoma.
+6. **Finalizar** — operação (com o CFOP à vista), data, comprador,
+   depósito, transportadora, frete; e o pagamento com a barra
+   TOTAL / A PAGAR / LANÇADO / RESTANTE, com as parcelas já lidas do boleto.
+
+**A nota de todo dia:** quando tudo já está cadastrado, as telas sem
+trabalho se encolhem. A 3 nem aparece, a 4 vem preenchida do cadastro, a 5
+mostra só o que mudou de custo. Cinco cliques. As seis etapas só acontecem
+na primeira compra de um fornecedor.
+
+**Campos:** "Linha" vira **Setor**, com Entrada / Intermediário / Premium —
+é como ela chama. Categoria continua sendo o que o produto é.
+
+**Regras de interface que vieram da visita:**
+
+- Contador em toda tela; o trabalho tem tamanho e encolhe à vista.
+- O que veio da nota fica cinza e não se edita; o que é decisão dela, branco.
+- **Confirmação só onde é destrutivo.** O Microvix pergunta igual para
+  copiar "Setor" e para copiar a tributação — e na terceira vez a pessoa
+  clica "Sim" sem ler. Copiar campo comum não pergunta (é reversível);
+  copiar tributação confere o NCM antes e avisa se diferem.
+- **Dado fiscal viaja junto do item em todas as telas.** O Microvix pede a
+  configuração tributária sem mostrar NCM/CEST/CFOP/CST ao lado, e por isso
+  ela tem de sair da tela para conferir. Essa é a nossa maior vantagem.
+- A tela vazia é recompensa: "Esta nota está pronta para ser lançada".
+- Lista fechada, mas com "criar novo" ali mesmo.
+- Produto sem GTIN ganha código de barras interno, para poder ser bipado.
+
+**Ordem de construção combinada:** 2 → 3 → 4 → 5 → 6 → 1. A caixa de
+entrada fica por último porque depende do servidor e do DistDFe (cStat 656
+bloqueia por uma hora).
