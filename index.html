@@ -36896,6 +36896,9 @@ function nuvemGuardarToken(dados){
   nuvemGravarSessao({
     access_token: dados.access_token,
     refresh_token: dados.refresh_token,
+    /* O id de quem entrou. Sem ele o sistema não tem como saber qual linha
+       da tabela é a sua — e quem está liberado enxerga a equipe inteira. */
+    uid: (dados.user && dados.user.id) || (nuvemSessao && nuvemSessao.uid) || null,
     expira: Date.now() + ((dados.expires_in || 3600) * 1000) - 60000,
     usuario: (nuvemSessao && nuvemSessao.usuario) || null
   });
@@ -36935,8 +36938,21 @@ async function nuvemCriarConta(nome, email, senha){
 }
 
 async function nuvemCarregarPerfil(){
-  const lista = await nuvemJson('/rest/v1/usuarios?select=*', { method: 'GET' });
-  const eu = (lista || [])[0] || null;
+  /* PEGA A LINHA CERTA, pelo id de quem entrou.
+     Já quebrou feio: quem está liberado enxerga a equipe inteira, então
+     pegar "a primeira da lista" devolvia a linha da dona para o
+     funcionário — e ele entrava com acesso total. Nunca voltar a confiar
+     na ordem da lista. */
+  let uid = nuvemSessao && nuvemSessao.uid;
+  if(!uid){
+    const quem = await nuvemJson('/auth/v1/user', { method: 'GET' });
+    uid = quem && quem.id;
+    if(uid && nuvemSessao){ nuvemSessao.uid = uid; nuvemGravarSessao(nuvemSessao); }
+  }
+  if(!uid) throw new Error('não consegui identificar quem está logado');
+
+  const lista = await nuvemJson('/rest/v1/usuarios?select=*&id=eq.' + encodeURIComponent(uid), { method: 'GET' });
+  const eu = (lista || []).find(u => u.id === uid) || null;
   nuvemUsuario = eu;
   if(nuvemSessao){
     nuvemSessao.usuario = eu;
