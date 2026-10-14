@@ -762,6 +762,41 @@ table.data-table{ width:100%; font-size:13px; }
   border-top:1px solid #F0F1F3; text-align:right;
 }
 
+/* ===== TELA MENOR — a tabela se ajusta em vez de empurrar pro zoom =====
+   `white-space:nowrap` em toda célula é o que fazia uma tabela nascer com
+   1600px de largura num monitor de 1093: o nome comprido do produto
+   esticava a coluna e não tinha onde quebrar. Resultado prático: a pessoa
+   diminuía o zoom do navegador pra conseguir ver e clicar.
+   Em tela estreita o texto passa a quebrar; número, data e a coluna de
+   botões continuam inteiros, que é onde quebrar atrapalha. */
+@media (max-width:1400px){
+  .main{ padding:20px 18px 50px; }
+  .data-table thead th{ padding:8px 9px; font-size:10.5px; letter-spacing:.3px; white-space:normal; }
+  .data-table tbody td{ padding:8px 9px; font-size:12.5px; white-space:normal; }
+  .data-table thead th.num, .data-table tbody td.num{ white-space:nowrap; }
+  .data-table tbody td:last-child, .data-table thead th:last-child{ white-space:nowrap; }
+  .btn-sm{ padding:4px 8px; font-size:11.5px; }
+}
+@media (max-width:1250px){
+  .app{ grid-template-columns:198px minmax(0, 1fr); }
+  .nav-item{ font-size:12.5px; padding:6px 10px; margin:1px 6px; gap:7px; }
+  .nav-section-label{ font-size:9.5px; }
+  .main{ padding:16px 14px 46px; }
+  .form-grid{ grid-template-columns:repeat(auto-fit,minmax(185px,1fr)); gap:11px; }
+  .busca-global-wrap{ max-width:320px; }
+}
+
+/* Quando mesmo assim a tabela não couber, ela rola dentro do próprio
+   quadro — e precisa DIZER isso. A sombra na borda direita some quando
+   chega ao fim. */
+.table-wrap{ position:relative; }
+.table-wrap.tem-rolagem{ box-shadow: inset -20px 0 16px -16px rgba(16,34,45,.30); }
+.table-wrap.tem-rolagem.chegou-no-fim{ box-shadow:none; }
+.aviso-rolagem{
+  font-size:11.5px; color:var(--ink-soft); margin:5px 2px 0;
+  display:flex; align-items:center; gap:5px;
+}
+
 @media (max-width:900px){
   .app{ grid-template-columns:1fr; }
   .sidebar{ position:relative; height:auto; }
@@ -2029,6 +2064,7 @@ function navigateTo(page){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
   RENDERERS[page] && RENDERERS[page]();
+  if(typeof revisarTabelasDaTela === 'function') setTimeout(revisarTabelasDaTela, 60);
 }
 
 const RENDERERS = {}; // preenchido nas próximas partes
@@ -2091,6 +2127,72 @@ document.addEventListener('DOMContentLoaded', ()=>{
 (function(){
   const main = document.querySelector('.main');
   if(main) observerColapsoCards.observe(main, {childList:true, subtree:true});
+})();
+
+/* =========================================================
+   TABELA QUE NÃO CABE NA TELA
+   Duas coisas: toda tabela ganha o quadro que rola sozinho (algumas
+   nasciam soltas e empurravam a página inteira pro lado), e quando sobra
+   coluna escondida o sistema avisa em vez de deixar a pessoa descobrir
+   diminuindo o zoom do navegador.
+   ========================================================= */
+function ajustarTabelasLargas(raiz){
+  const base = raiz && raiz.querySelectorAll ? raiz : document;
+  base.querySelectorAll('table.data-table').forEach(tabela => {
+    let quadro = tabela.closest('.table-wrap');
+    if(!quadro){
+      quadro = document.createElement('div');
+      quadro.className = 'table-wrap';
+      tabela.parentNode.insertBefore(quadro, tabela);
+      quadro.appendChild(tabela);
+    }
+    marcarRolagemTabela(quadro);
+  });
+}
+
+function marcarRolagemTabela(quadro){
+  const sobra = quadro.scrollWidth - quadro.clientWidth;
+  const rola = sobra > 4;
+  quadro.classList.toggle('tem-rolagem', rola);
+  quadro.classList.toggle('chegou-no-fim', rola && (quadro.scrollLeft + quadro.clientWidth >= quadro.scrollWidth - 4));
+
+  if(rola && !quadro.dataset.rolagemLigada){
+    quadro.dataset.rolagemLigada = '1';
+    quadro.addEventListener('scroll', () => marcarRolagemTabela(quadro));
+  }
+
+  let aviso = quadro.nextElementSibling;
+  const ehAviso = aviso && aviso.classList && aviso.classList.contains('aviso-rolagem');
+  if(rola && !ehAviso){
+    const novo = document.createElement('div');
+    novo.className = 'aviso-rolagem';
+    novo.innerHTML = '\u2194\uFE0F Tem mais coluna à direita — arraste a tabela para o lado (ou use Shift + roda do mouse).';
+    quadro.parentNode.insertBefore(novo, quadro.nextSibling);
+  }else if(!rola && ehAviso){
+    aviso.remove();
+  }
+}
+
+function revisarTabelasDaTela(){
+  const ativa = document.querySelector('.page.active');
+  if(ativa) ajustarTabelasLargas(ativa);
+}
+
+window.addEventListener('resize', () => {
+  clearTimeout(revisarTabelasDaTela._t);
+  revisarTabelasDaTela._t = setTimeout(revisarTabelasDaTela, 150);
+});
+
+/* Mesmo caminho do colapso de cards: a tela é redesenhada o tempo todo,
+   então não dá pra fazer isso uma vez só na abertura. */
+const observerTabelas = new MutationObserver(() => {
+  clearTimeout(observerTabelas._t);
+  observerTabelas._t = setTimeout(revisarTabelasDaTela, 60);
+});
+(function(){
+  const main = document.querySelector('.main');
+  if(main) observerTabelas.observe(main, {childList:true, subtree:true});
+  setTimeout(revisarTabelasDaTela, 300);
 })();
 
 /* =========================================================
