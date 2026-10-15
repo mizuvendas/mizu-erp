@@ -11330,8 +11330,15 @@ function renderOrcamentos(){
         </div>
         <div class="field">
           <label>Prazo de entrega</label>
-          <input type="text" id="orc-prazo-entrega" placeholder="ex.: 5 dias úteis após a confirmação"
-                 value="${escapeAttr(prazoEntregaPadrao())}">
+          <!-- Dois jeitos de dizer a mesma coisa: um prazo em palavras
+               ("5 dias úteis") ou um DIA certo. Escolher a data preenche
+               o texto sozinho; quem quiser escrever à mão continua podendo. -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="orc-prazo-entrega" placeholder="ex.: 5 dias úteis após a confirmação"
+                   value="${escapeAttr(prazoEntregaPadrao())}" style="flex:2 1 160px;min-width:140px;">
+            <input type="date" id="orc-prazo-entrega-dia" title="Escolher o dia da entrega"
+                   style="flex:1 1 130px;min-width:130px;">
+          </div>
         </div>
         <!-- Só aparece quando o cliente está cadastrado como Escola: é o
              cabeçalho que a escola exige no orçamento. -->
@@ -11598,6 +11605,14 @@ function renderOrcamentos(){
     document.getElementById('orc-btn-editar-cliente').style.display = clienteId ? '' : 'none';
   }
   ligarSugestaoCliente('orc-cliente', 'Digite o nome do cliente...');
+
+  /* Escolheu o dia → escreve o prazo por extenso no campo de texto, que é
+     o que sai no orçamento. Limpar a data não apaga o que ela escreveu. */
+  const prazoDia = document.getElementById('orc-prazo-entrega-dia');
+  if(prazoDia) prazoDia.addEventListener('change', ()=>{
+    const campo = document.getElementById('orc-prazo-entrega');
+    if(campo && prazoDia.value) campo.value = 'Entrega até ' + fmtDate(prazoDia.value);
+  });
   document.getElementById('orc-cliente').addEventListener('change', atualizarBlocoEscolaOrcamento);
   atualizarBlocoEscolaOrcamento();
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
@@ -13236,13 +13251,22 @@ function gerarPdfOrcamento(id){
     return v ? `<div><span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}</div>` : '';
   };
 
+  /* CEP com a cara de CEP: 75901391 vira 75.901-391. Veio sem os 8
+     dígitos? Sai como está — melhor o que ela digitou do que um remendo. */
+  const fmtCep = (valor) => {
+    const d = String(valor || '').replace(/\D/g, '');
+    return d.length === 8 ? d.slice(0,2)+'.'+d.slice(2,5)+'-'+d.slice(5) : String(valor || '');
+  };
+
   /* Dois ou mais campos na MESMA linha (Município e UF, Responsável e
      Cargo). Campo vazio não entra — e se nenhum do par tem valor, a linha
      inteira some, sem traço nem separador solto. */
   const linhaJunta = (...pares) => {
     const partes = pares.map(([rotulo, valor]) => {
       const v = (valor == null ? '' : String(valor)).trim();
-      return v ? `<span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}` : '';
+      /* nobr: "Rio Verde" não pode quebrar no meio e virar "Rio" numa
+         linha e "Verde" na outra, que foi o que ela viu cortado. */
+      return v ? `<span class="par"><span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}</span>` : '';
     }).filter(Boolean);
     return partes.length ? `<div>${partes.join('<span class="sep">&nbsp;&nbsp;·&nbsp;&nbsp;</span>')}</div>` : '';
   };
@@ -13259,8 +13283,8 @@ function gerarPdfOrcamento(id){
         ${linhaJunta(
             [(String(cliente.documento||'').replace(/\D/g,'').length === 11 ? 'CPF' : 'CNPJ'), cliente.documento],
             ['INSCRIÇÃO ESTADUAL', cliente.inscricaoEstadual])}
-        ${linhaJunta(['ENDEREÇO', cliente.endereco], ['CEP', cliente.cep],
-                     ['MUNICÍPIO', cliente.cidadeEstruturada || cliente.cidade], ['UF', cliente.uf])}
+        ${linhaJunta(['ENDEREÇO', cliente.endereco], ['CEP', fmtCep(cliente.cep)])}
+        ${linhaJunta(['MUNICÍPIO', cliente.cidadeEstruturada || cliente.cidade], ['UF', cliente.uf])}
         ${linhaJunta(['RESPONSÁVEL', orcamento.responsavel], ['CARGO', orcamento.cargoResponsavel])}
         ${linhaSeTiver('Nº DE PESQUISA', orcamento.numeroPesquisa)}
       </div>`;
@@ -13279,6 +13303,10 @@ function gerarPdfOrcamento(id){
       <meta charset="utf-8">
       <title>Orçamento${orcamento.numero!=null ? ' Nº '+orcamento.numero : ''} - ${escapeHtml(cliente?cliente.nome:'')}</title>
       <style>
+        /* Sem isto o navegador IMPRIME sem os fundos: a tarja azul do
+           cabeçalho da tabela some no PDF e o papel sai branco e sem
+           divisão. Vale pra PDF salvo e pra impressora. */
+        *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; }
         body{ font-family: Arial, sans-serif; color:#1a1a1a; padding:30px; }
         .cabecalho{ display:flex; align-items:center; gap:16px; border-bottom:3px solid #1B4B5A; padding-bottom:14px; margin-bottom:16px; }
         .cabecalho img{ width:64px; height:64px; object-fit:contain; border-radius:8px; }
@@ -13298,6 +13326,8 @@ function gerarPdfOrcamento(id){
         .bloco-escola{ margin:10px 0 4px; font-size:12px; line-height:1.45; }
         .bloco-escola .rot{ font-weight:bold; color:#1B4B5A; }
         .bloco-escola .sep{ color:#aaa; }
+        .bloco-escola .par{ white-space:nowrap; }
+        .bloco-escola div{ overflow-wrap:anywhere; }
         .titulo-tabela{ background:#1B4B5A; color:#fff; font-weight:bold; font-size:12.5px;
                         letter-spacing:1px; padding:6px 8px; margin-top:14px; }
         .rodape-interno{ margin-top:22px; font-size:10.5px; color:#888; }
