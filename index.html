@@ -2580,14 +2580,16 @@ function renderTabelaClientes(){
     padrao: analisarPadraoCliente(c.id)
   }));
 
-  const alvoBusca = normalizarBusca(clientesBuscaTexto).trim();
-  if(alvoBusca){
-    clientes = clientes.filter(c=>
-      normalizarBusca(c.nome).includes(alvoBusca) ||
-      normalizarBusca(c.documento).includes(alvoBusca) ||
-      normalizarBusca(c.contato).includes(alvoBusca) ||
-      normalizarBusca(c.cidade).includes(alvoBusca)
-    );
+  /* Por PALAVRA, não pela frase inteira: "ribeiro oscar" e "oscar ribeiro"
+     acham o mesmo cliente, e cada palavra pode estar num campo diferente
+     (nome numa, cidade noutra). */
+  const palavrasBusca = normalizarBusca(clientesBuscaTexto).split(/[\s#\-\/]+/).filter(Boolean);
+  if(palavrasBusca.length){
+    clientes = clientes.filter(c=>{
+      const alvo = [c.nome, c.nomeFantasia, c.documento, c.contato, c.pessoaContato, c.cidade, c.cidadeEstruturada]
+        .map(normalizarBusca).join(' ');
+      return palavrasBusca.every(pal => alvo.includes(pal));
+    });
   }
 
   const {key, dir} = clientesSort;
@@ -2677,6 +2679,143 @@ function renderPerfilClienteResumo(cliente){
     </div>`;
 }
 
+/* Tipo de cliente — é daqui que sai se é PF ou PJ pro resto do sistema.
+   Os dois primeiros valores são os antigos ("Público", "Privado"), mantidos
+   de propósito: trocar o texto renomearia o tipo de todo mundo que já está
+   cadastrado. */
+const TIPOS_CLIENTE = [
+  { valor: 'Pessoa Física', rotulo: 'Cliente pessoa física', pessoa: 'PF' },
+  { valor: 'Privado',       rotulo: 'Empresa',               pessoa: 'PJ' },
+  { valor: 'Público',       rotulo: 'Órgão Público',         pessoa: 'PJ' },
+  { valor: 'Escola',        rotulo: 'Escola',                pessoa: 'PJ' }
+];
+
+function tipoClienteDe(cliente){
+  if(!cliente) return 'Privado';
+  if(TIPOS_CLIENTE.some(t => t.valor === cliente.tipo)) return cliente.tipo;
+  /* Cadastro antigo sem tipo: o documento decide melhor que um chute. */
+  const doc = String(cliente.documento || '').replace(/\D/g, '');
+  if(doc.length === 11 || cliente.tipoPessoa === 'PF') return 'Pessoa Física';
+  return 'Privado';
+}
+
+function tipoPessoaDoTipoCliente(valor){
+  const t = TIPOS_CLIENTE.find(x => x.valor === valor);
+  return t ? t.pessoa : 'PJ';
+}
+
+/* =========================================================
+   CONSULTA DE CNPJ — com mais de uma fonte
+   Depender de um serviço só já deixou a dona na mão: a BrasilAPI
+   devolveu 503 (o servidor DELES fora do ar) e a tela só dizia
+   "não foi possível", sem diferenciar internet caída, CNPJ errado
+   ou serviço fora. Agora tenta uma a uma e, se todas falharem,
+   diz o motivo de cada uma.
+   ========================================================= */
+const CNPJ_FONTES = [
+  {
+    nome: 'BrasilAPI',
+    url: d => `https://brasilapi.com.br/api/cnpj/v1/${d}`,
+    traduz: r => ({
+      razaoSocial: r.razao_social,
+      fantasia: r.nome_fantasia,
+      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
+      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
+    })
+  },
+  {
+    nome: 'Minha Receita',
+    url: d => `https://minhareceita.org/${d}`,
+    traduz: r => ({
+      razaoSocial: r.razao_social,
+      fantasia: r.nome_fantasia,
+      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
+      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
+    })
+  },
+  {
+    nome: 'CNPJ.ws',
+    url: d => `https://publica.cnpj.ws/cnpj/${d}`,
+    traduz: r => {
+      const e = r.estabelecimento || {};
+      /* Só a CNPJ.ws devolve inscrição estadual. Quando tem mais de uma
+         (filiais em estados diferentes), vale a ATIVA do estado do
+         estabelecimento — é essa que entra na nota. */
+      const ies = e.inscricoes_estaduais || [];
+      const uf = e.estado && e.estado.sigla;
+      const ieEscolhida = ies.find(x => x.ativo && x.estado && x.estado.sigla === uf)
+        || ies.find(x => x.ativo) || ies[0];
+      return {
+        razaoSocial: r.razao_social,
+        fantasia: e.nome_fantasia,
+        inscricaoEstadual: ieEscolhida && ieEscolhida.inscricao_estadual,
+        logradouro: [e.tipo_logradouro, e.logradouro].filter(Boolean).join(' ').trim(),
+        numero: e.numero, bairro: e.bairro,
+        municipio: e.cidade && e.cidade.nome, uf: e.estado && e.estado.sigla, cep: e.cep,
+        telefone: [e.ddd1, e.telefone1].filter(Boolean).join(' '), email: e.email,
+        situacao: e.situacao_cadastral
+      };
+    }
+  },
+  {
+    nome: 'ReceitaWS',
+    url: d => `https://www.receitaws.com.br/v1/cnpj/${d}`,
+    traduz: r => {
+      if(r.status === 'ERROR') throw new Error(r.message || 'CNPJ não encontrado');
+      return {
+        razaoSocial: r.nome, fantasia: r.fantasia, logradouro: r.logradouro,
+        numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+        telefone: r.telefone, email: r.email, situacao: r.situacao
+      };
+    }
+  }
+];
+
+/* Consulta separada, só pra inscrição estadual, na única fonte que tem.
+   É de melhor esforço: falhou, o campo fica vazio e ela preenche à mão. */
+async function buscarInscricaoEstadual(digitos){
+  try{
+    const r = await fetch(`https://publica.cnpj.ws/cnpj/${digitos}`, { headers: { 'Accept': 'application/json' } });
+    if(!r.ok) return null;
+    const bruto = await r.json();
+    const e = (bruto && bruto.estabelecimento) || {};
+    const ies = e.inscricoes_estaduais || [];
+    const uf = e.estado && e.estado.sigla;
+    const escolhida = ies.find(x => x.ativo && x.estado && x.estado.sigla === uf)
+      || ies.find(x => x.ativo) || ies[0];
+    return (escolhida && escolhida.inscricao_estadual) || null;
+  }catch(e){
+    return null;
+  }
+}
+
+function cnpjDigitosValidos(texto){
+  const d = String(texto || '').replace(/\D/g, '');
+  return d.length === 14 ? d : null;
+}
+
+async function consultarCnpj(digitos){
+  const motivos = [];
+  for(const fonte of CNPJ_FONTES){
+    try{
+      const r = await fetch(fonte.url(digitos), { headers: { 'Accept': 'application/json' } });
+      if(r.status === 404){ throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true }); }
+      if(r.status === 429){ motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
+      if(!r.ok){ motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
+      const bruto = await r.json();
+      const dados = fonte.traduz(bruto);
+      if(!dados || !dados.razaoSocial){ motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
+      return { dados, fonte: fonte.nome };
+    }catch(e){
+      if(e && e.definitivo) throw e;
+      motivos.push(fonte.nome + ': ' + ((e && e.message) || 'não respondeu'));
+    }
+  }
+  throw Object.assign(new Error('nenhuma fonte respondeu'), { motivos });
+}
+
 function abrirFormCliente(id, onCriado){
   const cliente = id ? STATE.clientes.find(c=>c.id===id) : null;
 
@@ -2713,11 +2852,9 @@ function abrirFormCliente(id, onCriado){
               <div id="f-cnpj-status" style="margin-top:4px;"></div>
             </div>
             <div class="field">
-              <label>Tipo de Pessoa</label>
-              <select id="f-tipo-pessoa">
-                <option value="PJ" ${cliente&&cliente.tipoPessoa==='PF'?'':'selected'}>Jurídica (PJ)</option>
-                <option value="PF" ${cliente&&cliente.tipoPessoa==='PF'?'selected':''}>Física (PF)</option>
-              </select>
+              <label>Inscrição Estadual</label>
+              <input type="text" id="f-inscricao-estadual" placeholder="ISENTO, se não tiver"
+                     value="${cliente?escapeAttr(cliente.inscricaoEstadual||''):''}">
             </div>
             <div class="field">
               <label>Nacionalidade</label>
@@ -2741,9 +2878,7 @@ function abrirFormCliente(id, onCriado){
             <div class="field">
               <label>Tipo de cliente</label>
               <select id="f-tipo">
-                <option value="Público" ${cliente&&cliente.tipo==='Público'?'selected':''}>Órgão Público</option>
-                <option value="Privado" ${cliente&&cliente.tipo==='Privado'?'selected':''}>Empresa Privada</option>
-                <option value="Pessoa Física" ${cliente&&cliente.tipo==='Pessoa Física'?'selected':''}>Pessoa Física</option>
+                ${TIPOS_CLIENTE.map(t=>`<option value="${escapeAttr(t.valor)}" ${tipoClienteDe(cliente)===t.valor?'selected':''}>${escapeHtml(t.rotulo)}</option>`).join('')}
               </select>
             </div>
             <div class="field field-full">
@@ -2825,92 +2960,6 @@ function abrirFormCliente(id, onCriado){
     }
   );
 
-/* =========================================================
-   CONSULTA DE CNPJ — com mais de uma fonte
-   Depender de um serviço só já deixou a dona na mão: a BrasilAPI
-   devolveu 503 (o servidor DELES fora do ar) e a tela só dizia
-   "não foi possível", sem diferenciar internet caída, CNPJ errado
-   ou serviço fora. Agora tenta uma a uma e, se todas falharem,
-   diz o motivo de cada uma.
-   ========================================================= */
-const CNPJ_FONTES = [
-  {
-    nome: 'BrasilAPI',
-    url: d => `https://brasilapi.com.br/api/cnpj/v1/${d}`,
-    traduz: r => ({
-      razaoSocial: r.razao_social,
-      fantasia: r.nome_fantasia,
-      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
-      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
-      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
-    })
-  },
-  {
-    nome: 'Minha Receita',
-    url: d => `https://minhareceita.org/${d}`,
-    traduz: r => ({
-      razaoSocial: r.razao_social,
-      fantasia: r.nome_fantasia,
-      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
-      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
-      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
-    })
-  },
-  {
-    nome: 'CNPJ.ws',
-    url: d => `https://publica.cnpj.ws/cnpj/${d}`,
-    traduz: r => {
-      const e = r.estabelecimento || {};
-      return {
-        razaoSocial: r.razao_social,
-        fantasia: e.nome_fantasia,
-        logradouro: [e.tipo_logradouro, e.logradouro].filter(Boolean).join(' ').trim(),
-        numero: e.numero, bairro: e.bairro,
-        municipio: e.cidade && e.cidade.nome, uf: e.estado && e.estado.sigla, cep: e.cep,
-        telefone: [e.ddd1, e.telefone1].filter(Boolean).join(' '), email: e.email,
-        situacao: e.situacao_cadastral
-      };
-    }
-  },
-  {
-    nome: 'ReceitaWS',
-    url: d => `https://www.receitaws.com.br/v1/cnpj/${d}`,
-    traduz: r => {
-      if(r.status === 'ERROR') throw new Error(r.message || 'CNPJ não encontrado');
-      return {
-        razaoSocial: r.nome, fantasia: r.fantasia, logradouro: r.logradouro,
-        numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
-        telefone: r.telefone, email: r.email, situacao: r.situacao
-      };
-    }
-  }
-];
-
-function cnpjDigitosValidos(texto){
-  const d = String(texto || '').replace(/\D/g, '');
-  return d.length === 14 ? d : null;
-}
-
-async function consultarCnpj(digitos){
-  const motivos = [];
-  for(const fonte of CNPJ_FONTES){
-    try{
-      const r = await fetch(fonte.url(digitos), { headers: { 'Accept': 'application/json' } });
-      if(r.status === 404){ throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true }); }
-      if(r.status === 429){ motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
-      if(!r.ok){ motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
-      const bruto = await r.json();
-      const dados = fonte.traduz(bruto);
-      if(!dados || !dados.razaoSocial){ motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
-      return { dados, fonte: fonte.nome };
-    }catch(e){
-      if(e && e.definitivo) throw e;
-      motivos.push(fonte.nome + ': ' + ((e && e.message) || 'não respondeu'));
-    }
-  }
-  throw Object.assign(new Error('nenhuma fonte respondeu'), { motivos });
-}
-
   // Busca automática por CNPJ (BrasilAPI) — preenche Razão Social, Nome
   // Fantasia, Endereço (texto livre) e o endereço estruturado (CEP, Cidade,
   // UF, Bairro, Número). Diferente da busca de NCM, aqui o preenchimento é
@@ -2949,6 +2998,24 @@ async function consultarCnpj(digitos){
       const contato = document.getElementById('f-contato');
       if(contato && !contato.value.trim() && (dados.telefone || dados.email)){
         contato.value = dados.telefone || dados.email;
+      }
+
+      /* Inscrição estadual: das quatro fontes, só a CNPJ.ws traz. Se quem
+         respondeu primeiro não trouxe, vale uma consulta extra só pra isso —
+         órgão público e escola costumam ser isentos, e deixar em branco faz
+         a nota sair errada. */
+      const campoIE = document.getElementById('f-inscricao-estadual');
+      if(campoIE && !campoIE.value.trim()){
+        if(dados.inscricaoEstadual){
+          campoIE.value = dados.inscricaoEstadual;
+        }else if(fonte === 'CNPJ.ws'){
+          /* Já foi ela que respondeu e não veio IE: a empresa é isenta ou
+             não tem. Consultar de novo só gastaria a cota. */
+        }else{
+          buscarInscricaoEstadual(digitos).then(ie => {
+            if(ie && campoIE && !campoIE.value.trim()) campoIE.value = ie;
+          });
+        }
       }
       const detalhes = document.querySelector('#modal-form-cliente details');
       if(detalhes) detalhes.open = true;
@@ -2995,12 +3062,16 @@ async function consultarCnpj(digitos){
       nome,
       nomeFantasia: document.getElementById('f-nome-fantasia').value.trim(),
       documento: document.getElementById('f-documento').value.trim(),
-      tipoPessoa: document.getElementById('f-tipo-pessoa').value,
+      /* O campo "Tipo de Pessoa" saiu da tela — quem diz isso agora é o
+         tipo de cliente. tipoPessoa continua sendo gravado porque o resto
+         do sistema (e a nota) contam com ele. */
+      tipoPessoa: tipoPessoaDoTipoCliente(document.getElementById('f-tipo').value),
       nacionalidade: document.getElementById('f-nacionalidade').value,
       contato: document.getElementById('f-contato').value.trim(),
       pessoaContato: document.getElementById('f-pessoa-contato').value.trim(),
       cidade: document.getElementById('f-cidade').value.trim(),
       tipo: document.getElementById('f-tipo').value,
+      inscricaoEstadual: document.getElementById('f-inscricao-estadual').value.trim().toUpperCase(),
       endereco: document.getElementById('f-endereco').value.trim(),
       cep: document.getElementById('f-cep').value.trim(),
       uf: document.getElementById('f-uf').value,
@@ -3332,7 +3403,16 @@ function abrirSeletorMapaEndereco(config){
   document.getElementById('mapa-cancelar').addEventListener('click', fecharModal);
 
   async function buscarEndereco(){
-    const termo = document.getElementById('mapa-busca-input').value.trim();
+    /* "SN" / "S/N" é o "sem número" que vem do cadastro da Receita. Pro
+       serviço de mapa isso vira ruído e empurra o resultado pro centro da
+       cidade; tirar o pedaço melhora a pontaria sem mudar o que ela vê. */
+    const termo = document.getElementById('mapa-busca-input').value
+      .replace(/(^|,)\s*S\s*\/?\s*N\s*(?=,|$)/gi, '$1')
+      .replace(/,\s*,/g, ',')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/^,|,$/g, '')
+      .trim();
     const cidade = document.getElementById('mapa-busca-cidade').value.trim();
     if(!termo){ showToast('Digite um nome ou endereço para buscar.', 'error'); return; }
     const statusEl = document.getElementById('mapa-busca-status');
@@ -3340,23 +3420,63 @@ function abrirSeletorMapaEndereco(config){
     statusEl.textContent = 'Buscando...';
     resultadosEl.innerHTML = '';
 
+    /* O pino vai pro primeiro resultado SOZINHO. Antes a busca achava a
+       rua certa, listava as opções e deixava o pino parado no meio da
+       cidade até alguém clicar numa delas — parecia que a busca tinha
+       errado. A lista continua ali pra trocar, com a escolhida em destaque.
+
+       Quando o CEP já veio do CNPJ, ele é o critério de desempate: entre
+       três "Rua Augusta Bastos", a que bate o CEP é a certa. */
+    function cepSoDigitos(v){ return String(v || '').replace(/\D/g, ''); }
+
+    function escolherMelhor(dados){
+      const campoCep = document.getElementById('f-cep');
+      const cep = campoCep ? cepSoDigitos(campoCep.value) : '';
+      if(cep.length === 8){
+        const certa = dados.findIndex(r => cepSoDigitos(r.display_name).includes(cep)
+          || (r.address && cepSoDigitos(r.address.postcode) === cep));
+        if(certa >= 0) return certa;
+      }
+      return 0;
+    }
+
+    function aplicarResultado(dados, idx, comAviso){
+      const r = dados[idx];
+      if(!r) return;
+      const lat = parseFloat(r.lat), lng = parseFloat(r.lon);
+      /* O mapa pode não ter carregado (internet ruim, CDN fora). O endereço
+         escolhido continua valendo — não é motivo pra derrubar a busca. */
+      if(__mapaEnderecoInstancia) __mapaEnderecoInstancia.setView([lat, lng], 17);
+      if(__mapaEnderecoMarker) __mapaEnderecoMarker.setLatLng([lat, lng]);
+      document.getElementById('mapa-endereco-final').value = r.display_name;
+      resultadosEl.querySelectorAll('.mapa-resultado-item').forEach(el => {
+        const escolhido = parseInt(el.dataset.idx) === idx;
+        el.style.borderColor = escolhido ? 'var(--primary)' : 'var(--border)';
+        el.style.background = escolhido ? 'var(--primary-soft)' : '#fff';
+        el.style.fontWeight = escolhido ? '600' : '400';
+      });
+      if(comAviso){
+        statusEl.textContent = dados.length > 1
+          ? 'Pino colocado no 1º resultado. Se não for esse, clique em outro da lista ou arraste o pino.'
+          : 'Local encontrado — arraste o pino se precisar refinar a posição.';
+      }else{
+        statusEl.textContent = 'Local encontrado — arraste o pino se precisar refinar a posição.';
+      }
+    }
+
     function mostrarResultados(dados, mensagem){
       statusEl.textContent = mensagem;
       resultadosEl.innerHTML = dados.map((r,i)=>`
-        <div class="mapa-resultado-item" data-idx="${i}" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;">
+        <div class="mapa-resultado-item" data-idx="${i}" style="padding:8px 10px;border:1px solid var(--border);border-radius:6px;margin-bottom:6px;cursor:pointer;font-size:13px;background:#fff;">
           ${escapeHtml(r.display_name)}
         </div>
       `).join('');
       resultadosEl.querySelectorAll('.mapa-resultado-item').forEach(el=>{
         el.addEventListener('click', ()=>{
-          const r = dados[parseInt(el.dataset.idx)];
-          const lat = parseFloat(r.lat), lng = parseFloat(r.lon);
-          __mapaEnderecoInstancia.setView([lat,lng], 17);
-          __mapaEnderecoMarker.setLatLng([lat,lng]);
-          document.getElementById('mapa-endereco-final').value = r.display_name;
-          statusEl.textContent = 'Local encontrado — arraste o pino se precisar refinar a posição.';
+          aplicarResultado(dados, parseInt(el.dataset.idx), false);
         });
       });
+      if(dados.length) aplicarResultado(dados, escolherMelhor(dados), true);
     }
 
     async function buscarNominatim(q, viewboxParams){
@@ -4267,6 +4387,56 @@ let produtosBuscaTexto = '';
 
 function normalizarBusca(t){
   return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+}
+
+/* Busca dentro de um <select> de clientes.
+   A lista continua sendo um select de verdade (o resto do sistema lê o
+   .value e remonta as opções em vários lugares), mas ganha um campo em
+   cima que esconde quem não casa. Digitar no select nativo só acha pelo
+   COMEÇO do nome — "RIBEIRO" nunca achava "OSCAR RIBEIRO". Aqui vale
+   qualquer palavra, em qualquer ordem, sem acento e sem ligar pra
+   maiúscula: "ribeiro oscar", "osc rib" e "12345678" (documento) acham. */
+function ligarBuscaDeSelect(inputId, selectId){
+  const campo = document.getElementById(inputId);
+  const select = document.getElementById(selectId);
+  if(!campo || !select) return;
+
+  const textoDaOpcao = (op) => {
+    const cli = STATE.clientes.find(c => c.id === op.value);
+    return normalizarBusca([
+      op.textContent,
+      cli && cli.nomeFantasia,
+      cli && cli.documento,
+      cli && cli.cidade
+    ].filter(Boolean).join(' '));
+  };
+
+  const filtrar = () => {
+    const palavras = normalizarBusca(campo.value).split(/[\s#\-\/]+/).filter(Boolean);
+    let visiveis = 0;
+    [...select.options].forEach(op => {
+      if(!op.value || op.value === select.value){ op.hidden = false; return; }
+      const alvo = textoDaOpcao(op);
+      const casa = palavras.every(pal => alvo.includes(pal));
+      op.hidden = !casa;
+      if(casa) visiveis++;
+    });
+    /* Uma só sobrou? Já escolhe — é o caso de digitar o nome quase inteiro. */
+    if(palavras.length && visiveis === 1){
+      const unica = [...select.options].find(op => op.value && !op.hidden && op.value !== select.value);
+      if(unica){ select.value = unica.value; select.dispatchEvent(new Event('change')); }
+    }
+    campo.title = palavras.length ? (visiveis + ' cliente(s) com esse texto') : '';
+  };
+
+  campo.addEventListener('input', filtrar);
+  campo.addEventListener('keydown', (e) => {
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      const primeira = [...select.options].find(op => op.value && !op.hidden);
+      if(primeira){ select.value = primeira.value; select.dispatchEvent(new Event('change')); }
+    }
+  });
 }
 
 function filtrarProdutosPorTexto(lista, texto){
@@ -6681,7 +6851,27 @@ function getFornecedoresUnicos(){ return [...new Set(STATE.produtos.map(p=>p.for
 // "Onde foi comprado" — locais de compra já usados em produtos de Compra Local
 function getLocaisCompraUnicos(){ return [...new Set(STATE.produtos.map(p=>p.ondeComprado).filter(Boolean))]; }
 // Vendedores já usados em vendas anteriores (campo "Vendedor / Comissionado")
-function getVendedoresUnicos(){ return [...new Set(STATE.vendas.map(v=>v.vendedor).filter(Boolean))]; }
+/* Os vendedores da casa aparecem sempre na listinha do campo, mesmo
+   antes de existir venda deles. Nome novo continua podendo ser digitado
+   à mão — é um datalist, não um select travado. */
+const VENDEDORES_PADRAO = ['NETO', 'GILBERTO', 'GERALDO'];
+
+function getVendedoresUnicos(){
+  const usados = [
+    ...(STATE.vendas || []).map(v => v.vendedor),
+    ...(STATE.orcamentos || []).map(o => o.vendedor)
+  ].filter(Boolean).map(v => String(v).trim()).filter(Boolean);
+
+  const vistos = new Set();
+  const saida = [];
+  [...VENDEDORES_PADRAO, ...usados].forEach(nome => {
+    const chave = nome.toUpperCase();
+    if(vistos.has(chave)) return;
+    vistos.add(chave);
+    saida.push(nome);
+  });
+  return saida;
+}
 
 document.getElementById('btn-novo-produto').addEventListener('click', ()=>abrirFormProduto(null));
 document.getElementById('btn-apagar-todos-produtos').addEventListener('click', apagarTodosProdutos);
@@ -8527,6 +8717,8 @@ function renderVenda(){
         <div class="field">
           <label>Cliente <span class="req">*</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="v-cliente-busca" placeholder="🔎 Filtrar (qualquer parte do nome)"
+                   style="flex:1 1 150px;min-width:120px;font-size:12.5px;">
             <select id="v-cliente" style="flex:1;min-width:120px;">
               <option value="">Selecione...</option>
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
@@ -8798,6 +8990,7 @@ function renderVenda(){
     const temCompras = clienteId && STATE.vendas.some(v=>v.clienteId===clienteId && v.status!=='cancelada');
     btnHist.style.display = temCompras ? '' : 'none';
   }
+  ligarBuscaDeSelect('v-cliente-busca', 'v-cliente');
   document.getElementById('v-cliente').addEventListener('change', atualizarBotaoHistoricoCompras);
   atualizarBotaoHistoricoCompras();
   document.getElementById('v-btn-historico-compras').addEventListener('click', ()=>{
@@ -9618,6 +9811,27 @@ window.addEventListener('beforeunload', (e)=>{
 // um número de um orçamento excluído). O campo no formulário vem pré-
 // preenchido com isso, mas o usuário pode digitar outro número por cima se
 // quiser (ex: pra manter uma numeração antiga, ou pular um número riscado).
+/* Prazo de entrega: campo livre, mas já vem com o que ela mais usa —
+   digitar a mesma frase em todo orçamento é trabalho à toa. O padrão é
+   editável em Configurações. */
+function prazoEntregaPadrao(){
+  return (STATE.config && STATE.config.prazoEntregaPadrao) || '5 dias úteis após a confirmação';
+}
+
+function clienteEhEscola(clienteId){
+  const c = STATE.clientes.find(x => x.id === clienteId);
+  return !!c && tipoClienteDe(c) === 'Escola';
+}
+
+/* O cabeçalho especial é exigência de escola. Para os outros clientes ele
+   só atrapalharia a tela, então nem aparece. */
+function atualizarBlocoEscolaOrcamento(){
+  const bloco = document.getElementById('orc-bloco-escola');
+  const sel = document.getElementById('orc-cliente');
+  if(!bloco || !sel) return;
+  bloco.style.display = clienteEhEscola(sel.value) ? '' : 'none';
+}
+
 function proximoNumeroOrcamento(){
   const maior = STATE.orcamentos.reduce((max,o)=>Math.max(max, parseInt(o.numero)||0), 0);
   return maior + 1;
@@ -10987,6 +11201,8 @@ function renderOrcamentos(){
         <div class="field">
           <label>Cliente <span class="req">*</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            <input type="text" id="orc-cliente-busca" placeholder="🔎 Filtrar (qualquer parte do nome)"
+                   style="flex:1 1 150px;min-width:120px;font-size:12.5px;">
             <select id="orc-cliente" style="flex:1;min-width:120px;">
               <option value="">Selecione...</option>
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
@@ -11007,7 +11223,36 @@ function renderOrcamentos(){
         </div>
         <div class="field">
           <label>Vendedor / Comissionado</label>
-          <input type="text" id="orc-vendedor" list="dl-vendedores" placeholder="Opcional, nome de quem atende">
+          <input type="text" id="orc-vendedor" list="dl-vendedores-orc" placeholder="Quem está atendendo">
+          <datalist id="dl-vendedores-orc">${getVendedoresUnicos().map(v=>`<option value="${escapeAttr(v)}">`).join('')}</datalist>
+        </div>
+        <div class="field">
+          <label>Prazo de entrega</label>
+          <input type="text" id="orc-prazo-entrega" placeholder="ex.: 5 dias úteis após a confirmação"
+                 value="${escapeAttr(prazoEntregaPadrao())}">
+        </div>
+        <!-- Só aparece quando o cliente está cadastrado como Escola: é o
+             cabeçalho que a escola exige no orçamento. -->
+        <div class="field field-full" id="orc-bloco-escola" style="display:none;">
+          <div style="border:1px solid var(--border);border-left:3px solid var(--primary);
+                      border-radius:var(--radius-sm);padding:11px 13px;background:var(--bg-app);">
+            <strong style="font-size:13px;">🏫 Dados que a escola exige no orçamento</strong>
+            <p class="help-text" style="margin:2px 0 10px;">Entram no cabeçalho do PDF. O número da pesquisa é opcional — preencha quando a escola mandar.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;">
+              <div class="field" style="margin:0;">
+                <label>Nº da pesquisa</label>
+                <input type="text" id="orc-num-pesquisa" placeholder="opcional">
+              </div>
+              <div class="field" style="margin:0;">
+                <label>Responsável da escola</label>
+                <input type="text" id="orc-responsavel" placeholder="nome de quem assina">
+              </div>
+              <div class="field" style="margin:0;">
+                <label>Cargo</label>
+                <input type="text" id="orc-cargo" placeholder="ex.: Diretora">
+              </div>
+            </div>
+          </div>
         </div>
         <div class="field" id="orc-wrap-pagador" style="display:none;">
           <label>Pagador do Repasse <span class="req">*</span></label>
@@ -11217,7 +11462,7 @@ function renderOrcamentos(){
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Nº</th><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr><th>Nº</th><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Vendedor</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
       </div>
@@ -11250,6 +11495,9 @@ function renderOrcamentos(){
     btnHist.style.display = temCompras ? '' : 'none';
     document.getElementById('orc-btn-editar-cliente').style.display = clienteId ? '' : 'none';
   }
+  ligarBuscaDeSelect('orc-cliente-busca', 'orc-cliente');
+  document.getElementById('orc-cliente').addEventListener('change', atualizarBlocoEscolaOrcamento);
+  atualizarBlocoEscolaOrcamento();
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
   atualizarBotaoHistoricoComprasOrcamento();
   document.getElementById('orc-btn-historico-compras').addEventListener('click', ()=>{
@@ -12095,6 +12343,10 @@ function coletarDadosOrcamentoEmAndamento(){
     validadeDias: parseInt(document.getElementById('orc-validade').value)||7,
     observacoes: document.getElementById('orc-obs').value.trim(),
     vendedor: document.getElementById('orc-vendedor').value.trim(),
+    prazoEntrega: (document.getElementById('orc-prazo-entrega').value || '').trim(),
+    numeroPesquisa: (document.getElementById('orc-num-pesquisa') || {}).value || '',
+    responsavel: (document.getElementById('orc-responsavel') || {}).value || '',
+    cargoResponsavel: (document.getElementById('orc-cargo') || {}).value || '',
     temComissao: document.getElementById('orc-tem-comissao').checked,
     pagadorId: temRepasse ? (document.getElementById('orc-pagador').value || null) : null,
     repassePct: temRepasse ? (parseFloat(document.getElementById('orc-repasse-pct').value)||null) : null,
@@ -12218,6 +12470,10 @@ function salvarOrcamento(){
   const validadeDias = parseInt(document.getElementById('orc-validade').value)||7;
   const observacoes = document.getElementById('orc-obs').value.trim();
   const vendedor = document.getElementById('orc-vendedor').value.trim();
+  const prazoEntrega = (document.getElementById('orc-prazo-entrega').value || '').trim();
+  const numeroPesquisa = ((document.getElementById('orc-num-pesquisa') || {}).value || '').trim();
+  const responsavel = ((document.getElementById('orc-responsavel') || {}).value || '').trim();
+  const cargoResponsavel = ((document.getElementById('orc-cargo') || {}).value || '').trim();
   const temComissao = document.getElementById('orc-tem-comissao').checked;
   const temRepasse = document.getElementById('orc-tem-repasse').checked;
   const pagadorId = temRepasse ? (document.getElementById('orc-pagador').value || null) : null;
@@ -12239,7 +12495,9 @@ function salvarOrcamento(){
 
   // Dados comuns tanto pra criar quanto pra atualizar um orçamento existente
   const dadosBase = {
-    numero, clienteId, data, validadeDias, observacoes, vendedor, temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
+    numero, clienteId, data, validadeDias, observacoes, vendedor,
+    prazoEntrega, numeroPesquisa, responsavel, cargoResponsavel,
+    temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
     condicaoPagamento, vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
     prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
@@ -12319,6 +12577,12 @@ function editarOrcamento(id){
   document.getElementById('orc-validade').value = orcamento.validadeDias;
   document.getElementById('orc-obs').value = orcamento.observacoes||'';
   document.getElementById('orc-vendedor').value = orcamento.vendedor||'';
+  document.getElementById('orc-prazo-entrega').value = orcamento.prazoEntrega || prazoEntregaPadrao();
+  atualizarBlocoEscolaOrcamento();
+  const poeEscola = (id, v) => { const el = document.getElementById(id); if(el) el.value = v || ''; };
+  poeEscola('orc-num-pesquisa', orcamento.numeroPesquisa);
+  poeEscola('orc-responsavel', orcamento.responsavel);
+  poeEscola('orc-cargo', orcamento.cargoResponsavel);
   document.getElementById('orc-tem-comissao').checked = !!orcamento.temComissao;
 
   const temRepasse = !!orcamento.pagadorId;
@@ -12601,7 +12865,7 @@ function renderListaOrcamentos(){
   });
 
   if(orcamentosOrdenados.length===0){
-    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
     return;
   }
   tbody.innerHTML = orcamentosOrdenados.map(o=>{
@@ -12625,6 +12889,7 @@ function renderListaOrcamentos(){
         <td>${o.numero!=null ? '#'+escapeHtml(String(o.numero)) : '—'}</td>
         <td>${fmtDate(o.data)}</td>
         <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
+        <td>${o.vendedor ? escapeHtml(o.vendedor) : '<span style="color:var(--ink-faint);">—</span>'}</td>
         <td>${fmtDate(validadeAte)}</td>
         <td class="num">${fmtMoney(c.brutoOriginal+acrescimo)}</td>
         <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
@@ -12861,6 +13126,36 @@ function gerarPdfOrcamento(id){
     </tr>
   `).join('');
 
+  /* Linha que SOME quando não tem o quê mostrar. Campo em branco não deve
+     deixar rótulo órfão no papel: um "RESPONSÁVEL:" sozinho, sem nome, fica
+     com cara de documento mal preenchido na mão de quem recebe. */
+  const linhaSeTiver = (rotulo, valor) => {
+    const v = (valor == null ? '' : String(valor)).trim();
+    return v ? `<div><span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}</div>` : '';
+  };
+
+  /* O cabeçalho que a escola exige. Só sai em orçamento de cliente
+     cadastrado como Escola. */
+  const ehEscola = cliente && tipoClienteDe(cliente) === 'Escola';
+  const blocoEscola = !ehEscola ? '' : `
+      <div class="bloco-escola">
+        ${linhaSeTiver('CLIENTE', cliente.nome)}
+        ${linhaSeTiver((String(cliente.documento||'').replace(/\D/g,'').length === 11 ? 'CPF' : 'CNPJ'), cliente.documento)}
+        ${linhaSeTiver('INSCRIÇÃO ESTADUAL', cliente.inscricaoEstadual)}
+        ${linhaSeTiver('UF', cliente.uf)}
+        ${linhaSeTiver('MUNICÍPIO', cliente.cidadeEstruturada || cliente.cidade)}
+        ${linhaSeTiver('Nº DE PESQUISA', orcamento.numeroPesquisa)}
+        ${linhaSeTiver('NOME DA ESCOLA', cliente.nomeFantasia || cliente.nome)}
+        ${linhaSeTiver('ENDEREÇO', cliente.endereco)}
+        ${linhaSeTiver('RESPONSÁVEL', orcamento.responsavel)}
+        ${linhaSeTiver('CARGO', orcamento.cargoResponsavel)}
+      </div>`;
+
+  const prazos = [
+    linhaSeTiver('Validade do orçamento', fmtDate(validadeAte)),
+    linhaSeTiver('Prazo de entrega', orcamento.prazoEntrega)
+  ].filter(Boolean).join('');
+
   const janela = window.open('', '_blank');
   janela.document.write(`
     <!DOCTYPE html>
@@ -12885,6 +13180,14 @@ function gerarPdfOrcamento(id){
         tfoot td{ font-weight:bold; border-top:2px solid #1B4B5A; font-size:13px; }
         .obs{ margin-top:14px; font-size:11.5px; color:#555; }
         .validade{ margin-top:6px; font-size:11.5px; color:#993C1D; font-weight:bold; }
+        .bloco-escola{ border:1px solid #1B4B5A; border-radius:4px; padding:10px 12px; margin:12px 0 6px;
+                       font-size:12px; line-height:1.75; }
+        .bloco-escola .rot{ font-weight:bold; color:#1B4B5A; }
+        .prazos{ margin-top:14px; border-top:1px solid #ccc; padding-top:9px; font-size:12px; line-height:1.7; }
+        .prazos .rot{ font-weight:bold; color:#1B4B5A; }
+        .rodape-assinatura{ margin-top:38px; padding-top:10px; font-size:11.5px; text-align:center; }
+        .rodape-assinatura .linha{ border-top:1px solid #333; width:300px; margin:34px auto 5px; }
+        .rodape-assinatura .emp{ font-weight:bold; }
         @media print{ body{ padding:12px; } }
       </style>
     </head>
@@ -12907,7 +13210,8 @@ function gerarPdfOrcamento(id){
         Cliente: <strong>${escapeHtml(cliente?cliente.nome:'')}</strong><br>
         Data: ${fmtDate(orcamento.data)}
       </div>
-      <div class="validade">Válido até: ${fmtDate(validadeAte)}</div>
+      ${ehEscola ? '' : `<div class="validade">Válido até: ${fmtDate(validadeAte)}</div>`}
+      ${blocoEscola}
 
       <table>
         <thead><tr><th style="text-align:center;">Item</th><th>Produto</th><th style="text-align:center;">Und.</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Valor Total</th></tr></thead>
@@ -12917,7 +13221,14 @@ function gerarPdfOrcamento(id){
         <tfoot><tr><td colspan="5" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto+acrescimo)}</td></tr></tfoot>
       </table>
 
+      ${prazos ? `<div class="prazos">${prazos}</div>` : ''}
       ${orcamento.observacoes ? `<div class="obs"><strong>Observações:</strong> ${escapeHtml(orcamento.observacoes)}</div>` : ''}
+
+      <div class="rodape-assinatura">
+        <div class="linha"></div>
+        <div class="emp">${escapeHtml(DADOS_EMPRESA.razaoSocial)}</div>
+        <div>CNPJ: ${escapeHtml(DADOS_EMPRESA.cnpj)}</div>
+      </div>
       <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
     </body>
     </html>
