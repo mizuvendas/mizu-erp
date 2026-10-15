@@ -2825,36 +2825,166 @@ function abrirFormCliente(id, onCriado){
     }
   );
 
+/* =========================================================
+   CONSULTA DE CNPJ — com mais de uma fonte
+   Depender de um serviço só já deixou a dona na mão: a BrasilAPI
+   devolveu 503 (o servidor DELES fora do ar) e a tela só dizia
+   "não foi possível", sem diferenciar internet caída, CNPJ errado
+   ou serviço fora. Agora tenta uma a uma e, se todas falharem,
+   diz o motivo de cada uma.
+   ========================================================= */
+const CNPJ_FONTES = [
+  {
+    nome: 'BrasilAPI',
+    url: d => `https://brasilapi.com.br/api/cnpj/v1/${d}`,
+    traduz: r => ({
+      razaoSocial: r.razao_social,
+      fantasia: r.nome_fantasia,
+      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
+      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
+    })
+  },
+  {
+    nome: 'Minha Receita',
+    url: d => `https://minhareceita.org/${d}`,
+    traduz: r => ({
+      razaoSocial: r.razao_social,
+      fantasia: r.nome_fantasia,
+      logradouro: [r.descricao_tipo_de_logradouro, r.logradouro].filter(Boolean).join(' ').trim() || r.logradouro,
+      numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+      telefone: r.ddd_telefone_1, email: r.email, situacao: r.descricao_situacao_cadastral
+    })
+  },
+  {
+    nome: 'CNPJ.ws',
+    url: d => `https://publica.cnpj.ws/cnpj/${d}`,
+    traduz: r => {
+      const e = r.estabelecimento || {};
+      return {
+        razaoSocial: r.razao_social,
+        fantasia: e.nome_fantasia,
+        logradouro: [e.tipo_logradouro, e.logradouro].filter(Boolean).join(' ').trim(),
+        numero: e.numero, bairro: e.bairro,
+        municipio: e.cidade && e.cidade.nome, uf: e.estado && e.estado.sigla, cep: e.cep,
+        telefone: [e.ddd1, e.telefone1].filter(Boolean).join(' '), email: e.email,
+        situacao: e.situacao_cadastral
+      };
+    }
+  },
+  {
+    nome: 'ReceitaWS',
+    url: d => `https://www.receitaws.com.br/v1/cnpj/${d}`,
+    traduz: r => {
+      if(r.status === 'ERROR') throw new Error(r.message || 'CNPJ não encontrado');
+      return {
+        razaoSocial: r.nome, fantasia: r.fantasia, logradouro: r.logradouro,
+        numero: r.numero, bairro: r.bairro, municipio: r.municipio, uf: r.uf, cep: r.cep,
+        telefone: r.telefone, email: r.email, situacao: r.situacao
+      };
+    }
+  }
+];
+
+function cnpjDigitosValidos(texto){
+  const d = String(texto || '').replace(/\D/g, '');
+  return d.length === 14 ? d : null;
+}
+
+async function consultarCnpj(digitos){
+  const motivos = [];
+  for(const fonte of CNPJ_FONTES){
+    try{
+      const r = await fetch(fonte.url(digitos), { headers: { 'Accept': 'application/json' } });
+      if(r.status === 404){ throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true }); }
+      if(r.status === 429){ motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
+      if(!r.ok){ motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
+      const bruto = await r.json();
+      const dados = fonte.traduz(bruto);
+      if(!dados || !dados.razaoSocial){ motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
+      return { dados, fonte: fonte.nome };
+    }catch(e){
+      if(e && e.definitivo) throw e;
+      motivos.push(fonte.nome + ': ' + ((e && e.message) || 'não respondeu'));
+    }
+  }
+  throw Object.assign(new Error('nenhuma fonte respondeu'), { motivos });
+}
+
   // Busca automática por CNPJ (BrasilAPI) — preenche Razão Social, Nome
   // Fantasia, Endereço (texto livre) e o endereço estruturado (CEP, Cidade,
   // UF, Bairro, Número). Diferente da busca de NCM, aqui o preenchimento é
   // direto (não é uma sugestão) porque é um dado oficial de cadastro (Receita).
-  document.getElementById('f-btn-buscar-cnpj').addEventListener('click', async ()=>{
-    const cnpjDigitos = document.getElementById('f-documento').value.replace(/\D/g,'');
-    const statusEl = document.getElementById('f-cnpj-status');
-    if(cnpjDigitos.length!==14){
-      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Informe um CNPJ válido (14 dígitos) para buscar.</span>`;
+  const campoDoc = document.getElementById('f-documento');
+  const statusCnpj = document.getElementById('f-cnpj-status');
+  let ultimoCnpjBuscado = '';
+  let buscandoCnpj = false;
+
+  async function buscarCnpjEPreencher(automatico){
+    const digitos = cnpjDigitosValidos(campoDoc.value);
+    if(!digitos){
+      if(!automatico){
+        statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Informe um CNPJ com 14 dígitos para buscar.</span>`;
+      }
       return;
     }
-    statusEl.innerHTML = `<span class="help-text">Buscando dados do CNPJ...</span>`;
+    if(buscandoCnpj) return;
+    buscandoCnpj = true;
+    ultimoCnpjBuscado = digitos;
+    statusCnpj.innerHTML = `<span class="help-text">Buscando os dados na Receita...</span>`;
     try{
-      const resp = await fetch(`https://brasilapi.com.br/api/cnpj/v1/${cnpjDigitos}`);
-      if(!resp.ok) throw new Error('CNPJ não encontrado');
-      const d = await resp.json();
-      if(d.razao_social) document.getElementById('f-nome').value = d.razao_social;
-      if(d.nome_fantasia) document.getElementById('f-nome-fantasia').value = d.nome_fantasia;
-      const enderecoMontado = [d.logradouro, d.numero, d.bairro].filter(Boolean).join(', ');
-      if(enderecoMontado) document.getElementById('f-endereco').value = `${enderecoMontado}${d.municipio?` - ${d.municipio}`:''}${d.uf?`/${d.uf}`:''}`;
-      if(d.cep) document.getElementById('f-cep').value = d.cep;
-      if(d.uf) document.getElementById('f-uf').value = d.uf;
-      if(d.municipio) document.getElementById('f-cidade-estruturada').value = d.municipio;
-      if(d.bairro) document.getElementById('f-bairro').value = d.bairro;
-      if(d.numero) document.getElementById('f-numero').value = d.numero;
-      document.querySelector('#modal-form-cliente details').open = true;
-      statusEl.innerHTML = `<span class="help-text" style="color:var(--positive);">Dados preenchidos automaticamente. Confira antes de salvar.</span>`;
-    }catch(err){
-      statusEl.innerHTML = `<span class="help-text" style="color:var(--negative);">Não foi possível buscar esse CNPJ agora (sem internet, CNPJ inválido ou serviço fora do ar). Preencha manualmente.</span>`;
+      const { dados, fonte } = await consultarCnpj(digitos);
+      const põe = (id, valor) => { const el = document.getElementById(id); if(el && valor) el.value = valor; };
+      põe('f-nome', dados.razaoSocial);
+      põe('f-nome-fantasia', dados.fantasia);
+      const rua = [dados.logradouro, dados.numero, dados.bairro].filter(Boolean).join(', ');
+      if(rua){
+        põe('f-endereco', rua + (dados.municipio ? ' - ' + dados.municipio : '') + (dados.uf ? '/' + dados.uf : ''));
+      }
+      põe('f-cep', dados.cep);
+      põe('f-uf', dados.uf);
+      põe('f-cidade-estruturada', dados.municipio);
+      põe('f-bairro', dados.bairro);
+      põe('f-numero', dados.numero);
+      const contato = document.getElementById('f-contato');
+      if(contato && !contato.value.trim() && (dados.telefone || dados.email)){
+        contato.value = dados.telefone || dados.email;
+      }
+      const detalhes = document.querySelector('#modal-form-cliente details');
+      if(detalhes) detalhes.open = true;
+
+      const baixada = dados.situacao && !/ativa/i.test(String(dados.situacao));
+      statusCnpj.innerHTML =
+        `<span class="help-text" style="color:var(--positive);">Preenchido por ${escapeHtml(fonte)}. Confira antes de salvar.</span>`
+        + (baixada ? `<div class="help-text" style="color:var(--negative);">⚠️ A Receita diz que este CNPJ está "${escapeHtml(String(dados.situacao))}". Confirme com o cliente antes de faturar.</div>` : '');
+    }catch(e){
+      /* Dizer O QUE houve, e não só "não deu". Serviço fora do ar e CNPJ
+         inexistente pedem reações diferentes de quem está no balcão. */
+      if(e && e.definitivo){
+        statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Esse CNPJ não existe na base da Receita. Confira os números.</span>`;
+      }else if(!navigator.onLine){
+        statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Sem internet agora — preencha à mão e siga normalmente.</span>`;
+      }else{
+        const lista = (e && e.motivos) ? e.motivos.join(' · ') : '';
+        statusCnpj.innerHTML =
+          `<span class="help-text" style="color:var(--negative);">Nenhum serviço de consulta respondeu agora. Preencha à mão — o cadastro funciona igual.</span>`
+          + (lista ? `<div class="help-text" style="font-size:10.5px;">${escapeHtml(lista)}</div>` : '');
+      }
+    }finally{
+      buscandoCnpj = false;
     }
+  }
+
+  document.getElementById('f-btn-buscar-cnpj').addEventListener('click', ()=>buscarCnpjEPreencher(false));
+
+  /* Digitou (ou colou) os 14 dígitos: busca sozinho, sem precisar clicar.
+     Só uma vez por CNPJ — esses serviços têm limite por minuto, e
+     redisparar a cada tecla queimaria a cota à toa. */
+  campoDoc.addEventListener('input', ()=>{
+    const digitos = cnpjDigitosValidos(campoDoc.value);
+    if(!digitos || digitos === ultimoCnpjBuscado) return;
+    clearTimeout(buscarCnpjEPreencher._t);
+    buscarCnpjEPreencher._t = setTimeout(()=>buscarCnpjEPreencher(true), 600);
   });
 
   document.getElementById('form-cliente').addEventListener('submit', (e)=>{
