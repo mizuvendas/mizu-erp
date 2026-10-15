@@ -4396,47 +4396,126 @@ function normalizarBusca(t){
    COMEÇO do nome — "RIBEIRO" nunca achava "OSCAR RIBEIRO". Aqui vale
    qualquer palavra, em qualquer ordem, sem acento e sem ligar pra
    maiúscula: "ribeiro oscar", "osc rib" e "12345678" (documento) acham. */
-function ligarBuscaDeSelect(inputId, selectId){
-  const campo = document.getElementById(inputId);
+/* CAMPO DE CLIENTE COM SUGESTÃO
+   Ela digita "OSCAR" ou "CONSELHO" e a lista cai embaixo do campo com só
+   os clientes que têm essa palavra — igual ao campo de produto. Não é
+   filtro em cima de um select: o select some da tela.
+
+   Por dentro, o <select> continua existindo (escondido) e continua sendo
+   a verdade: as dezenas de lugares que leem/escrevem `orc-cliente.value`,
+   trocam o innerHTML dele ou disparam 'change' seguem funcionando sem
+   saber que o campo mudou de cara. */
+function ligarSugestaoCliente(selectId, placeholder){
   const select = document.getElementById(selectId);
-  if(!campo || !select) return;
+  if(!select || select.dataset.sugestaoLigada === '1') return;
+  select.dataset.sugestaoLigada = '1';
 
-  const textoDaOpcao = (op) => {
+  const inputId = selectId + '-sug';
+  const caixa = document.createElement('div');
+  caixa.className = 'combo-wrap';
+  caixa.style.cssText = 'flex:2 1 200px;min-width:160px;position:relative;';
+  caixa.innerHTML =
+    `<input type="text" id="${inputId}" autocomplete="off" placeholder="${escapeAttr(placeholder||'Digite o nome do cliente...')}">` +
+    /* a lista é mais larga que o campo de propósito: nome de escola é
+       comprido e quebrado em três linhas ninguém lê de relance */
+    `<div class="combo-dropdown" id="${inputId}-dropdown" style="min-width:340px;"></div>`;
+  select.parentNode.insertBefore(caixa, select);
+  select.style.display = 'none';
+
+  const input = document.getElementById(inputId);
+  const dropdown = document.getElementById(inputId + '-dropdown');
+  let ativoIdx = -1, listaAtual = [];
+
+  /* Além do nome, procura por nome fantasia, CNPJ/CPF e cidade — é como
+     ela acha "CONSELHO ESCOLAR" sabendo só o bairro. */
+  function dadosDaOpcao(op){
     const cli = STATE.clientes.find(c => c.id === op.value);
-    return normalizarBusca([
-      op.textContent,
-      cli && cli.nomeFantasia,
-      cli && cli.documento,
-      cli && cli.cidade
-    ].filter(Boolean).join(' '));
-  };
+    return {
+      id: op.value,
+      label: op.textContent,
+      sub: cli ? [cli.nomeFantasia, cli.documento, cli.cidadeEstruturada || cli.cidade].filter(Boolean).join(' · ') : '',
+      busca: normalizarBusca([op.textContent, cli && cli.nomeFantasia, cli && cli.documento,
+                              cli && cli.cidade, cli && cli.cidadeEstruturada].filter(Boolean).join(' '))
+    };
+  }
 
-  const filtrar = () => {
-    const palavras = normalizarBusca(campo.value).split(/[\s#\-\/]+/).filter(Boolean);
-    let visiveis = 0;
-    [...select.options].forEach(op => {
-      if(!op.value || op.value === select.value){ op.hidden = false; return; }
-      const alvo = textoDaOpcao(op);
-      const casa = palavras.every(pal => alvo.includes(pal));
-      op.hidden = !casa;
-      if(casa) visiveis++;
-    });
-    /* Uma só sobrou? Já escolhe — é o caso de digitar o nome quase inteiro. */
-    if(palavras.length && visiveis === 1){
-      const unica = [...select.options].find(op => op.value && !op.hidden && op.value !== select.value);
-      if(unica){ select.value = unica.value; select.dispatchEvent(new Event('change')); }
-    }
-    campo.title = palavras.length ? (visiveis + ' cliente(s) com esse texto') : '';
-  };
+  function filtrar(termo){
+    const palavras = normalizarBusca(termo).split(/[\s#\-\/]+/).filter(Boolean);
+    const todas = [...select.options].filter(op => op.value).map(dadosDaOpcao);
+    if(!palavras.length) return todas.slice(0, 50);
+    return todas.filter(o => palavras.every(p => o.busca.includes(p))).slice(0, 50);
+  }
 
-  campo.addEventListener('input', filtrar);
-  campo.addEventListener('keydown', (e) => {
-    if(e.key === 'Enter'){
-      e.preventDefault();
-      const primeira = [...select.options].find(op => op.value && !op.hidden);
-      if(primeira){ select.value = primeira.value; select.dispatchEvent(new Event('change')); }
+  function escolher(item){
+    if(!item) return;
+    select.value = item.id;
+    input.value = item.label;
+    dropdown.classList.remove('open');
+    select.dispatchEvent(new Event('change'));
+  }
+
+  function renderDropdown(lista){
+    listaAtual = lista;
+    ativoIdx = -1;
+    if(!lista.length){
+      dropdown.innerHTML = `<div class="combo-empty">Nenhum cliente com esse texto.</div>`;
+    }else{
+      dropdown.innerHTML = lista.map((o, i) =>
+        `<div class="combo-option" data-idx="${i}">${escapeHtml(o.label)}` +
+        (o.sub ? `<div class="combo-sub">${escapeHtml(o.sub)}</div>` : '') + `</div>`
+      ).join('');
+      dropdown.querySelectorAll('.combo-option').forEach(el => {
+        el.addEventListener('mousedown', (e) => {   // mousedown: antes do blur
+          e.preventDefault();
+          escolher(listaAtual[Number(el.dataset.idx)]);
+        });
+      });
     }
+    dropdown.classList.add('open');
+  }
+
+  /* O select mudou por fora (botão Balcão, +Novo, editar orçamento,
+     rascunho): o texto do campo acompanha. */
+  function sincronizar(){
+    const op = select.options[select.selectedIndex];
+    input.value = (op && op.value) ? op.textContent : '';
+  }
+  select.addEventListener('change', sincronizar);
+  new MutationObserver(sincronizar).observe(select, {childList:true, subtree:true});
+  sincronizar();
+
+  input.addEventListener('focus', () => renderDropdown(filtrar(input.value)));
+  input.addEventListener('input', () => renderDropdown(filtrar(input.value)));
+  input.addEventListener('blur', () => {
+    setTimeout(() => {
+      dropdown.classList.remove('open');
+      sincronizar();   // digitou e não escolheu? volta pro que está escolhido
+    }, 150);
   });
+  input.addEventListener('keydown', (e) => {
+    const itens = dropdown.querySelectorAll('.combo-option');
+    if(e.key === 'ArrowDown'){
+      e.preventDefault();
+      if(!dropdown.classList.contains('open')) return renderDropdown(filtrar(input.value));
+      ativoIdx = Math.min(itens.length - 1, ativoIdx + 1);
+    }else if(e.key === 'ArrowUp'){
+      e.preventDefault();
+      ativoIdx = Math.max(0, ativoIdx - 1);
+    }else if(e.key === 'Enter'){
+      e.preventDefault();
+      escolher(listaAtual[ativoIdx >= 0 ? ativoIdx : 0]);
+      return;
+    }else if(e.key === 'Escape'){
+      dropdown.classList.remove('open');
+      return;
+    }else{
+      return;
+    }
+    itens.forEach((el, i) => el.classList.toggle('combo-active', i === ativoIdx));
+    if(itens[ativoIdx]) itens[ativoIdx].scrollIntoView({block:'nearest'});
+  });
+
+  return { sincronizar };
 }
 
 function filtrarProdutosPorTexto(lista, texto){
@@ -6851,26 +6930,53 @@ function getFornecedoresUnicos(){ return [...new Set(STATE.produtos.map(p=>p.for
 // "Onde foi comprado" — locais de compra já usados em produtos de Compra Local
 function getLocaisCompraUnicos(){ return [...new Set(STATE.produtos.map(p=>p.ondeComprado).filter(Boolean))]; }
 // Vendedores já usados em vendas anteriores (campo "Vendedor / Comissionado")
-/* Os vendedores da casa aparecem sempre na listinha do campo, mesmo
-   antes de existir venda deles. Nome novo continua podendo ser digitado
-   à mão — é um datalist, não um select travado. */
+/* Lista FECHADA de vendedores: só a casa aparece, e não dá pra digitar
+   outro nome. Antes era datalist e entrava qualquer coisa — foi assim que
+   nasceram "GIBLERTO" e nomes de quem nem vende mais. Quem precisar de um
+   vendedor novo muda aqui (ou grava em STATE.config.vendedores). */
 const VENDEDORES_PADRAO = ['NETO', 'GILBERTO', 'GERALDO'];
 
 function getVendedoresUnicos(){
-  const usados = [
-    ...(STATE.vendas || []).map(v => v.vendedor),
-    ...(STATE.orcamentos || []).map(o => o.vendedor)
-  ].filter(Boolean).map(v => String(v).trim()).filter(Boolean);
-
+  const daConfig = (STATE.config && Array.isArray(STATE.config.vendedores) && STATE.config.vendedores.length)
+    ? STATE.config.vendedores : VENDEDORES_PADRAO;
   const vistos = new Set();
   const saida = [];
-  [...VENDEDORES_PADRAO, ...usados].forEach(nome => {
+  daConfig.map(n => String(n||'').trim()).filter(Boolean).forEach(nome => {
     const chave = nome.toUpperCase();
     if(vistos.has(chave)) return;
     vistos.add(chave);
     saida.push(nome);
   });
   return saida;
+}
+
+/* O <option>s do select. `valorAtual` entra na lista mesmo fora dos três:
+   orçamento antigo gravado com outro nome não pode perder o vendedor só
+   porque a lista encolheu — mas esse nome aparece marcado como antigo e
+   não volta a ser oferecido em lançamento novo. */
+function opcoesVendedorHtml(valorAtual){
+  const lista = getVendedoresUnicos();
+  const atual = String(valorAtual||'').trim();
+  const temAtual = atual && lista.some(n => n.toUpperCase() === atual.toUpperCase());
+  let html = '<option value="">— selecione —</option>';
+  html += lista.map(n => `<option value="${escapeAttr(n)}"${(atual && n.toUpperCase()===atual.toUpperCase())?' selected':''}>${escapeHtml(n)}</option>`).join('');
+  if(atual && !temAtual) html += `<option value="${escapeAttr(atual)}" selected>${escapeHtml(atual)} (antigo)</option>`;
+  return html;
+}
+
+/* Põe um valor num select de vendedor sem apagá-lo quando ele não está na
+   lista (rascunho, orçamento antigo, nome vindo de PDF). */
+function definirVendedor(selectId, valor){
+  const sel = document.getElementById(selectId);
+  if(!sel) return;
+  const v = String(valor||'').trim();
+  if(!v){ sel.value = ''; return; }
+  const achou = [...sel.options].find(o => o.value.toUpperCase() === v.toUpperCase());
+  if(achou){ sel.value = achou.value; return; }
+  const opt = document.createElement('option');
+  opt.value = v; opt.textContent = v + ' (antigo)';
+  sel.appendChild(opt);
+  sel.value = v;
 }
 
 document.getElementById('btn-novo-produto').addEventListener('click', ()=>abrirFormProduto(null));
@@ -8717,8 +8823,6 @@ function renderVenda(){
         <div class="field">
           <label>Cliente <span class="req">*</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <input type="text" id="v-cliente-busca" placeholder="🔎 Filtrar (qualquer parte do nome)"
-                   style="flex:1 1 150px;min-width:120px;font-size:12.5px;">
             <select id="v-cliente" style="flex:1;min-width:120px;">
               <option value="">Selecione...</option>
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
@@ -8729,8 +8833,7 @@ function renderVenda(){
         </div>
         <div class="field">
           <label>Vendedor / Comissionado</label>
-          <input type="text" id="v-vendedor" list="dl-vendedores" placeholder="Opcional, nome de quem atendeu">
-          <datalist id="dl-vendedores">${getVendedoresUnicos().map(v=>`<option value="${escapeAttr(v)}">`).join('')}</datalist>
+          <select id="v-vendedor">${opcoesVendedorHtml('')}</select>
         </div>
         <div class="field">
           <label>Referência (nº pedido, NF, licitação)</label>
@@ -8990,7 +9093,7 @@ function renderVenda(){
     const temCompras = clienteId && STATE.vendas.some(v=>v.clienteId===clienteId && v.status!=='cancelada');
     btnHist.style.display = temCompras ? '' : 'none';
   }
-  ligarBuscaDeSelect('v-cliente-busca', 'v-cliente');
+  ligarSugestaoCliente('v-cliente', 'Digite o nome do cliente...');
   document.getElementById('v-cliente').addEventListener('change', atualizarBotaoHistoricoCompras);
   atualizarBotaoHistoricoCompras();
   document.getElementById('v-btn-historico-compras').addEventListener('click', ()=>{
@@ -9320,6 +9423,7 @@ document.addEventListener('input', (e)=>{
   if(['v-acrescimo-valor','v-desconto-pct','v-desconto-valor'].includes(e.target.id)) atualizarResumoVenda();
 });
 document.addEventListener('change', (e)=>{
+  if(e.target.id==='v-vendedor') atualizarResumoVenda();
   if(e.target.id==='v-tem-comissao') atualizarResumoVenda();
   if(e.target.id==='v-desconto-tipo'){
     const tipo = e.target.value;
@@ -9811,11 +9915,12 @@ window.addEventListener('beforeunload', (e)=>{
 // um número de um orçamento excluído). O campo no formulário vem pré-
 // preenchido com isso, mas o usuário pode digitar outro número por cima se
 // quiser (ex: pra manter uma numeração antiga, ou pular um número riscado).
-/* Prazo de entrega: campo livre, mas já vem com o que ela mais usa —
-   digitar a mesma frase em todo orçamento é trabalho à toa. O padrão é
-   editável em Configurações. */
+/* Prazo de entrega: nasce VAZIO de propósito. Em branco, a linha nem
+   aparece no PDF — prometer prazo sem ter combinado é pior do que não
+   falar nada. Quem quiser um texto padrão pode gravar em
+   STATE.config.prazoEntregaPadrao. */
 function prazoEntregaPadrao(){
-  return (STATE.config && STATE.config.prazoEntregaPadrao) || '5 dias úteis após a confirmação';
+  return (STATE.config && STATE.config.prazoEntregaPadrao) || '';
 }
 
 function clienteEhEscola(clienteId){
@@ -11201,8 +11306,6 @@ function renderOrcamentos(){
         <div class="field">
           <label>Cliente <span class="req">*</span></label>
           <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            <input type="text" id="orc-cliente-busca" placeholder="🔎 Filtrar (qualquer parte do nome)"
-                   style="flex:1 1 150px;min-width:120px;font-size:12.5px;">
             <select id="orc-cliente" style="flex:1;min-width:120px;">
               <option value="">Selecione...</option>
               ${STATE.clientes.map(c=>`<option value="${c.id}">${escapeHtml(c.nome)}</option>`).join('')}
@@ -11223,8 +11326,7 @@ function renderOrcamentos(){
         </div>
         <div class="field">
           <label>Vendedor / Comissionado</label>
-          <input type="text" id="orc-vendedor" list="dl-vendedores-orc" placeholder="Quem está atendendo">
-          <datalist id="dl-vendedores-orc">${getVendedoresUnicos().map(v=>`<option value="${escapeAttr(v)}">`).join('')}</datalist>
+          <select id="orc-vendedor">${opcoesVendedorHtml('')}</select>
         </div>
         <div class="field">
           <label>Prazo de entrega</label>
@@ -11495,7 +11597,7 @@ function renderOrcamentos(){
     btnHist.style.display = temCompras ? '' : 'none';
     document.getElementById('orc-btn-editar-cliente').style.display = clienteId ? '' : 'none';
   }
-  ligarBuscaDeSelect('orc-cliente-busca', 'orc-cliente');
+  ligarSugestaoCliente('orc-cliente', 'Digite o nome do cliente...');
   document.getElementById('orc-cliente').addEventListener('change', atualizarBlocoEscolaOrcamento);
   atualizarBlocoEscolaOrcamento();
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
@@ -11570,7 +11672,7 @@ function renderOrcamentos(){
             document.getElementById('orc-cliente').value = rascunho.clienteId||'';
             document.getElementById('orc-data').value = rascunho.data||todayISO();
             document.getElementById('orc-validade').value = rascunho.validadeDias||7;
-            document.getElementById('orc-vendedor').value = rascunho.vendedor||'';
+            definirVendedor('orc-vendedor', rascunho.vendedor||'');
             document.getElementById('orc-obs').value = rascunho.observacoes||'';
             carrinhoOrcamentoAtual = rascunho.itens||[];
             atualizarBotaoHistoricoComprasOrcamento();
@@ -12576,7 +12678,7 @@ function editarOrcamento(id){
   document.getElementById('orc-data').value = orcamento.data;
   document.getElementById('orc-validade').value = orcamento.validadeDias;
   document.getElementById('orc-obs').value = orcamento.observacoes||'';
-  document.getElementById('orc-vendedor').value = orcamento.vendedor||'';
+  definirVendedor('orc-vendedor', orcamento.vendedor||'');
   document.getElementById('orc-prazo-entrega').value = orcamento.prazoEntrega || prazoEntregaPadrao();
   atualizarBlocoEscolaOrcamento();
   const poeEscola = (id, v) => { const el = document.getElementById(id); if(el) el.value = v || ''; };
@@ -13134,24 +13236,37 @@ function gerarPdfOrcamento(id){
     return v ? `<div><span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}</div>` : '';
   };
 
+  /* Dois ou mais campos na MESMA linha (Município e UF, Responsável e
+     Cargo). Campo vazio não entra — e se nenhum do par tem valor, a linha
+     inteira some, sem traço nem separador solto. */
+  const linhaJunta = (...pares) => {
+    const partes = pares.map(([rotulo, valor]) => {
+      const v = (valor == null ? '' : String(valor)).trim();
+      return v ? `<span class="rot">${escapeHtml(rotulo)}:</span> ${escapeHtml(v)}` : '';
+    }).filter(Boolean);
+    return partes.length ? `<div>${partes.join('<span class="sep">&nbsp;&nbsp;·&nbsp;&nbsp;</span>')}</div>` : '';
+  };
+
   /* O cabeçalho que a escola exige. Só sai em orçamento de cliente
-     cadastrado como Escola. */
+     cadastrado como Escola.
+     Sem moldura e com as linhas juntas: o quadrado deixava o papel sujo.
+     NOME DA ESCOLA saiu — o nome já está em CLIENTE, e o nome fantasia
+     (a sigla) não diz nada pra quem recebe. */
   const ehEscola = cliente && tipoClienteDe(cliente) === 'Escola';
   const blocoEscola = !ehEscola ? '' : `
       <div class="bloco-escola">
         ${linhaSeTiver('CLIENTE', cliente.nome)}
-        ${linhaSeTiver((String(cliente.documento||'').replace(/\D/g,'').length === 11 ? 'CPF' : 'CNPJ'), cliente.documento)}
-        ${linhaSeTiver('INSCRIÇÃO ESTADUAL', cliente.inscricaoEstadual)}
-        ${linhaSeTiver('UF', cliente.uf)}
-        ${linhaSeTiver('MUNICÍPIO', cliente.cidadeEstruturada || cliente.cidade)}
+        ${linhaJunta(
+            [(String(cliente.documento||'').replace(/\D/g,'').length === 11 ? 'CPF' : 'CNPJ'), cliente.documento],
+            ['INSCRIÇÃO ESTADUAL', cliente.inscricaoEstadual])}
+        ${linhaJunta(['ENDEREÇO', cliente.endereco], ['CEP', cliente.cep],
+                     ['MUNICÍPIO', cliente.cidadeEstruturada || cliente.cidade], ['UF', cliente.uf])}
+        ${linhaJunta(['RESPONSÁVEL', orcamento.responsavel], ['CARGO', orcamento.cargoResponsavel])}
         ${linhaSeTiver('Nº DE PESQUISA', orcamento.numeroPesquisa)}
-        ${linhaSeTiver('NOME DA ESCOLA', cliente.nomeFantasia || cliente.nome)}
-        ${linhaSeTiver('ENDEREÇO', cliente.endereco)}
-        ${linhaSeTiver('RESPONSÁVEL', orcamento.responsavel)}
-        ${linhaSeTiver('CARGO', orcamento.cargoResponsavel)}
       </div>`;
 
   const prazos = [
+    ehEscola ? linhaSeTiver('Data do orçamento', fmtDate(orcamento.data)) : '',
     linhaSeTiver('Validade do orçamento', fmtDate(validadeAte)),
     linhaSeTiver('Prazo de entrega', orcamento.prazoEntrega)
   ].filter(Boolean).join('');
@@ -13180,9 +13295,12 @@ function gerarPdfOrcamento(id){
         tfoot td{ font-weight:bold; border-top:2px solid #1B4B5A; font-size:13px; }
         .obs{ margin-top:14px; font-size:11.5px; color:#555; }
         .validade{ margin-top:6px; font-size:11.5px; color:#993C1D; font-weight:bold; }
-        .bloco-escola{ border:1px solid #1B4B5A; border-radius:4px; padding:10px 12px; margin:12px 0 6px;
-                       font-size:12px; line-height:1.75; }
+        .bloco-escola{ margin:10px 0 4px; font-size:12px; line-height:1.45; }
         .bloco-escola .rot{ font-weight:bold; color:#1B4B5A; }
+        .bloco-escola .sep{ color:#aaa; }
+        .titulo-tabela{ background:#1B4B5A; color:#fff; font-weight:bold; font-size:12.5px;
+                        letter-spacing:1px; padding:6px 8px; margin-top:14px; }
+        .rodape-interno{ margin-top:22px; font-size:10.5px; color:#888; }
         .prazos{ margin-top:14px; border-top:1px solid #ccc; padding-top:9px; font-size:12px; line-height:1.7; }
         .prazos .rot{ font-weight:bold; color:#1B4B5A; }
         .rodape-assinatura{ margin-top:38px; padding-top:10px; font-size:11.5px; text-align:center; }
@@ -13199,19 +13317,19 @@ function gerarPdfOrcamento(id){
           <div class="fantasia">${DADOS_EMPRESA.razaoSocial}</div>
           <div class="dados-empresa">
             CNPJ: ${DADOS_EMPRESA.cnpj}<br>
-            ${DADOS_EMPRESA.endereco}<br>
-            Telefone: ${DADOS_EMPRESA.telefone}
+            ${DADOS_EMPRESA.endereco}
           </div>
         </div>
       </div>
 
-      <h2>Orçamento${orcamento.numero!=null ? ' Nº '+escapeHtml(String(orcamento.numero)) : ''}</h2>
+      ${ehEscola ? '' : `<h2>Orçamento${orcamento.numero!=null ? ' Nº '+escapeHtml(String(orcamento.numero)) : ''}</h2>
       <div class="meta">
         Cliente: <strong>${escapeHtml(cliente?cliente.nome:'')}</strong><br>
         Data: ${fmtDate(orcamento.data)}
       </div>
-      ${ehEscola ? '' : `<div class="validade">Válido até: ${fmtDate(validadeAte)}</div>`}
+      <div class="validade">Válido até: ${fmtDate(validadeAte)}</div>`}
       ${blocoEscola}
+      ${ehEscola ? `<div class="titulo-tabela">ORÇAMENTO</div>` : ''}
 
       <table>
         <thead><tr><th style="text-align:center;">Item</th><th>Produto</th><th style="text-align:center;">Und.</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Valor Total</th></tr></thead>
@@ -13229,6 +13347,7 @@ function gerarPdfOrcamento(id){
         <div class="emp">${escapeHtml(DADOS_EMPRESA.razaoSocial)}</div>
         <div>CNPJ: ${escapeHtml(DADOS_EMPRESA.cnpj)}</div>
       </div>
+      ${(ehEscola && orcamento.numero!=null) ? `<div class="rodape-interno">Orçamento interno nº ${escapeHtml(String(orcamento.numero))}</div>` : ''}
       <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
     </body>
     </html>
@@ -15882,7 +16001,7 @@ function renderPreviewPDF(dados){
       </div>
       <div class="field">
         <label>Vendedor / Comissionado</label>
-        <input type="text" id="pdf-vendedor" value="${escapeAttr(dados.vendedor||'')}">
+        <select id="pdf-vendedor">${opcoesVendedorHtml(dados.vendedor||'')}</select>
       </div>
       <div class="field field-full">
         <label>Cliente identificado no PDF</label>
@@ -16079,7 +16198,7 @@ function confirmarImportacaoPDF(dados){
     const pdfTemComissaoEl = document.getElementById('pdf-tem-comissao');
     if(dataEl) dataEl.value = pdfDataEl ? pdfDataEl.value : dados.dataOrcamento;
     if(clienteEl) clienteEl.value = pdfClienteEscolhido;
-    if(vendedorEl) vendedorEl.value = pdfVendedorEl ? pdfVendedorEl.value : (dados.vendedor||'');
+    if(vendedorEl) definirVendedor('v-vendedor', pdfVendedorEl ? pdfVendedorEl.value : (dados.vendedor||''));
     if(temComissaoEl) temComissaoEl.checked = pdfTemComissaoEl ? pdfTemComissaoEl.checked : false;
 
     carrinhoAtual = dados.itens.map(it=>{
