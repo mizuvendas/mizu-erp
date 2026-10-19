@@ -8409,10 +8409,24 @@ function getHistoricoPrecoItem(clienteId, produtoId){
   });
   const maisCaro = todosPrecos.length>0 ? Math.max(...todosPrecos) : null;
 
+  /* O preço que ESTE cliente recusou. Vale tanto quanto o que ele pagou:
+     é o teto que ele já disse que não aceita. Vem dos orçamentos marcados
+     como "recusado" — o mais recente deles. */
+  const recusados = [];
+  (STATE.orcamentos || [])
+    .filter(o => o.clienteId === clienteId && o.status === 'recusado')
+    .sort((a,b) => b.data < a.data ? -1 : 1)   // mais recente primeiro
+    .forEach(o => {
+      (o.itens || []).forEach(it => {
+        if(equivalentes.has(it.produtoId)) recusados.push({ data: o.data, precoUnit: it.precoUnit, numero: o.numero });
+      });
+    });
+
   return {
     ultima: precosCliente[0] || null,
     penultima: precosCliente[1] || null,
-    maisCaro
+    maisCaro,
+    recusado: recusados[0] || null
   };
 }
 
@@ -8487,6 +8501,19 @@ function getHistoricoComprasCliente(clienteId){
       });
     });
 
+  /* Item que ela ORÇOU pra este cliente e ele RECUSOU entra aqui também,
+     mesmo que ele nunca tenha comprado. Saber o preço que ele recusou é
+     metade da informação na hora de orçar de novo pra ele. */
+  (STATE.orcamentos || [])
+    .filter(o => o.clienteId === clienteId && o.status === 'recusado')
+    .sort((a,b) => b.data < a.data ? -1 : 1)
+    .forEach(o => {
+      (o.itens || []).forEach(it => {
+        if(!it.produtoId) return;
+        if(!porProduto[it.produtoId]) porProduto[it.produtoId] = { produtoId: it.produtoId, nome: it.nome, vendas: [] };
+      });
+    });
+
   return Object.values(porProduto).map(grupo=>{
     const hist = getHistoricoPrecoItem(clienteId, grupo.produtoId);
     const original = STATE.produtos.find(p=>p.id===grupo.produtoId);
@@ -8508,7 +8535,9 @@ function getHistoricoComprasCliente(clienteId){
       ultima: hist.ultima,
       penultima: hist.penultima,
       maisCaro: hist.maisCaro,
+      recusado: hist.recusado,
       custo: produto ? produto.custo : null,
+      precoVenda: produto ? produto.precoVenda : null,
       ondeComprado: produto ? (produto.ondeComprado||'') : '',
       localCompraId: produto ? (produto.localCompraId||null) : null
     };
@@ -8543,7 +8572,7 @@ function abrirHistoricoComprasCliente(clienteId, destino){
   const cliente = STATE.clientes.find(c=>c.id===clienteId);
   if(!cliente){ showToast('Selecione um cliente primeiro.', 'error'); return; }
   const historico = getHistoricoComprasCliente(clienteId);
-  if(historico.length===0){ showToast('Este cliente ainda não tem nenhuma compra registrada.', 'error'); return; }
+  if(historico.length===0){ showToast('Este cliente ainda não tem compra nem orçamento recusado registrado.', 'error'); return; }
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -8568,6 +8597,7 @@ function abrirHistoricoComprasCliente(clienteId, destino){
                 <th style="width:26px;"></th>
                 <th>Produto</th>
                 <th style="font-size:11px;">Preços (últ. · penúlt. · máx.)</th>
+                <th style="font-size:11px;">Recusado</th>
                 <th>Origem de coleta</th>
                 <th class="num" style="width:80px;">Qtd</th>
                 <th class="num" style="width:100px;">Preço unit.</th>
@@ -8598,7 +8628,12 @@ function abrirHistoricoComprasCliente(clienteId, destino){
       checked: false,
       nome: h.nome,
       qtd: 1,
-      preco: h.ultima ? h.ultima.precoUnit : (h.maisCaro!=null ? h.maisCaro : 0),
+      /* NUNCA o preço recusado: ele é o valor que o cliente já disse que
+         não aceita, então não serve de sugestão. Sem venda anterior, cai
+         pro preço do cadastro. */
+      preco: h.ultima ? h.ultima.precoUnit
+             : (h.maisCaro!=null ? h.maisCaro
+             : (h.precoVenda!=null ? h.precoVenda : 0)),
       origemId: h.localCompraId || ''
     };
   });
@@ -8700,6 +8735,12 @@ function abrirHistoricoComprasCliente(clienteId, destino){
           ${orfao ? `<div class="help-text" style="margin:3px 0 0;">${h.temporarioOculto?'produto temporário — escondido pela simulação':'produto excluído'} · <button type="button" class="btn btn-sm" data-substituir="${idx}" style="padding:1px 6px;">🔁 Substituir por um real</button></div>` : ''}
         </td>
         <td style="font-size:11.5px;color:var(--ink-soft);white-space:nowrap;">${precosTexto}</td>
+        <td style="font-size:11.5px;white-space:nowrap;">${
+          h.recusado
+            ? `<span style="color:#C4483D;font-weight:600;">${fmtMoney(h.recusado.precoUnit)}</span>` +
+              `<div class="help-text" style="margin:2px 0 0;">${fmtDate(h.recusado.data)}${h.recusado.numero!=null?' · orç. #'+escapeHtml(String(h.recusado.numero)):''}</div>`
+            : '<span style="color:var(--ink-faint);">—</span>'
+        }</td>
         <td>
           ${h.produtoExiste ? `
           <select class="hcc-origem" data-idx="${idx}" data-produto-id="${h.produtoIdUsar}" style="font-size:12px;padding:4px 6px;">
@@ -9012,12 +9053,15 @@ function renderVenda(){
     const clienteId = document.getElementById('v-cliente').value;
     if(!clienteId || !produtoId){ box.style.display='none'; return; }
     const hist = getHistoricoPrecoItem(clienteId, produtoId);
-    if(!hist.ultima && hist.maisCaro==null){ box.style.display='none'; return; }
+    if(!hist.ultima && hist.maisCaro==null && !hist.recusado){ box.style.display='none'; return; }
 
     const partes = [];
     if(hist.ultima) partes.push(`Última venda p/ este cliente: <strong>${fmtMoney(hist.ultima.precoUnit)}</strong> (${fmtDate(hist.ultima.data)})`);
     if(hist.penultima) partes.push(`Penúltima: <strong>${fmtMoney(hist.penultima.precoUnit)}</strong> (${fmtDate(hist.penultima.data)})`);
     if(hist.maisCaro!=null) partes.push(`Mais caro já vendido: <strong>${fmtMoney(hist.maisCaro)}</strong>`);
+    /* O que ele JÁ RECUSOU fecha a conta: é o teto que esse cliente
+       disse que não paga. Em vermelho pra não passar batido. */
+    if(hist.recusado) partes.push(`<span style="color:#C4483D;">Recusou por <strong>${fmtMoney(hist.recusado.precoUnit)}</strong> (${fmtDate(hist.recusado.data)}${hist.recusado.numero!=null?' · orç. #'+escapeHtml(String(hist.recusado.numero)):''})</span>`);
 
     box.innerHTML = '💡 ' + partes.join(' &nbsp;·&nbsp; ');
     box.style.display = '';
@@ -11868,12 +11912,13 @@ function mostrarHistoricoPrecoItemOrcamento(produtoId){
   const clienteId = document.getElementById('orc-cliente').value;
   if(!clienteId || !produtoId){ box.style.display='none'; return; }
   const hist = getHistoricoPrecoItem(clienteId, produtoId);
-  if(!hist.ultima && hist.maisCaro==null){ box.style.display='none'; return; }
+  if(!hist.ultima && hist.maisCaro==null && !hist.recusado){ box.style.display='none'; return; }
 
   const partes = [];
   if(hist.ultima) partes.push(`Última venda p/ este cliente: <strong>${fmtMoney(hist.ultima.precoUnit)}</strong> (${fmtDate(hist.ultima.data)})`);
   if(hist.penultima) partes.push(`Penúltima: <strong>${fmtMoney(hist.penultima.precoUnit)}</strong> (${fmtDate(hist.penultima.data)})`);
   if(hist.maisCaro!=null) partes.push(`Mais caro já vendido: <strong>${fmtMoney(hist.maisCaro)}</strong>`);
+  if(hist.recusado) partes.push(`<span style="color:#C4483D;">Recusou por <strong>${fmtMoney(hist.recusado.precoUnit)}</strong> (${fmtDate(hist.recusado.data)}${hist.recusado.numero!=null?' · orç. #'+escapeHtml(String(hist.recusado.numero)):''})</span>`);
 
   box.innerHTML = '💡 ' + partes.join(' &nbsp;·&nbsp; ');
   box.style.display = '';
