@@ -1629,6 +1629,131 @@ const DADOS_EMPRESA = {
   endereco: 'R Augusta Bastos, S/N, Quadra 0032 Lote 15 - Jardim Goiás, Rio Verde/GO - CEP 75.903-370',
   telefone: '(62) 9239-2805 / (62) 9358-9881'
 };
+/* =========================================================
+   PROPOSTA PARA ÓRGÃO PÚBLICO
+   Licitação pede um documento com cara própria: nº do processo,
+   modalidade, objeto, declarações e dados que nenhum outro orçamento usa.
+   ========================================================= */
+const MODALIDADES_LICITACAO = [
+  'DISPENSA', 'PREGÃO ELETRÔNICO', 'PREGÃO PRESENCIAL', 'INEXIGIBILIDADE',
+  'TOMADA DE PREÇOS', 'CONVITE', 'CONCORRÊNCIA', 'CHAMAMENTO PÚBLICO',
+  'COTAÇÃO / PESQUISA DE PREÇOS', 'ADESÃO A ATA'
+];
+const VALIDADES_PROPOSTA = [
+  '30 (TRINTA) DIAS, CONTADOS A PARTIR DA DATA DE SUA EMISSÃO',
+  '60 (SESSENTA) DIAS, CONTADOS A PARTIR DA DATA DE SUA EMISSÃO',
+  '90 (NOVENTA) DIAS, CONTADOS A PARTIR DA DATA DE SUA EMISSÃO'
+];
+const PAGAMENTOS_PROPOSTA = [
+  'até 30 dias após o Atesto de Recebimento do objeto',
+  'até 30 dias após a entrega',
+  'conforme o estabelecido no edital'
+];
+
+/* Telefone e e-mail aqui são SÓ desta proposta — ela pediu assim. Os
+   outros documentos seguem DADOS_EMPRESA. O que ela quiser trocar depois
+   sem mexer no código vai em STATE.config.proposta. */
+const PROPOSTA_PUBLICA_PADRAO = {
+  telefone: '(64) 99336-2906',
+  email: 'mizuvendas01@gmail.com',
+  nomeFantasia: 'MIZU COMERCIO',
+  classificacao: 'DEMAIS',
+  porte: 'ME',
+  inscricaoEstadual: '109402448',
+  inscricaoMunicipal: '72728',
+  endereco: 'Rua Augusta Bastos, Qd. 32 Lt. 15',
+  bairro: 'Jardim Goiás',
+  cidade: 'Rio Verde',
+  estado: 'GO',
+  cep: '75.903-370',
+  banco: 'Banco BMP 0274',
+  agencia: '0001',
+  conta: '0985544-6'
+};
+function dadosProposta(){
+  return Object.assign({}, PROPOSTA_PUBLICA_PADRAO, (STATE.config && STATE.config.proposta) || {});
+}
+
+/* Valor por extenso. A proposta precisa do número escrito — é exigência
+   de praxe em licitação, e conferir à mão toda vez é onde erro entra. */
+const EXT_UNIDADES = ['zero','um','dois','três','quatro','cinco','seis','sete','oito','nove','dez',
+  'onze','doze','treze','quatorze','quinze','dezesseis','dezessete','dezoito','dezenove'];
+const EXT_DEZENAS = ['','','vinte','trinta','quarenta','cinquenta','sessenta','setenta','oitenta','noventa'];
+const EXT_CENTENAS = ['','cento','duzentos','trezentos','quatrocentos','quinhentos','seiscentos',
+  'setecentos','oitocentos','novecentos'];
+
+function extensoAte999(n){
+  if(n === 0) return '';
+  if(n === 100) return 'cem';
+  const partes = [];
+  const c = Math.floor(n / 100), d = Math.floor((n % 100) / 10), u = n % 10;
+  if(c) partes.push(EXT_CENTENAS[c]);
+  const resto = n % 100;
+  if(resto < 20 && resto > 0){ partes.push(EXT_UNIDADES[resto]); }
+  else{
+    if(d) partes.push(EXT_DEZENAS[d]);
+    if(u) partes.push(EXT_UNIDADES[u]);
+  }
+  return partes.join(' e ');
+}
+
+function extensoInteiro(n){
+  n = Math.floor(Math.abs(n));
+  if(n === 0) return 'zero';
+  const grupos = [];   // [{valor, singular, plural}] do maior pro menor
+  const escalas = [
+    { div: 1000000000, sing: 'bilhão',  plur: 'bilhões' },
+    { div: 1000000,    sing: 'milhão',  plur: 'milhões' },
+    { div: 1000,       sing: 'mil',     plur: 'mil' }
+  ];
+  let resto = n;
+  escalas.forEach(e => {
+    const q = Math.floor(resto / e.div);
+    resto = resto % e.div;
+    if(q > 0){
+      const nome = e.div === 1000 ? 'mil' : (q === 1 ? e.sing : e.plur);
+      grupos.push(e.div === 1000 && q === 1 ? 'mil' : extensoAte999(q) + ' ' + nome);
+    }
+  });
+  if(resto > 0) grupos.push(extensoAte999(resto));
+  if(grupos.length === 1) return grupos[0];
+  /* "e" antes do último grupo só quando ele é pequeno ou redondo — é a
+     regra que faz soar "mil e duzentos" e não "mil, duzentos". */
+  const ultimo = grupos[grupos.length - 1];
+  const anteriores = grupos.slice(0, -1).join(', ');
+  const valorUltimo = resto > 0 ? resto : null;
+  const ligaComE = valorUltimo === null || valorUltimo < 100 || valorUltimo % 100 === 0;
+  return anteriores + (ligaComE ? ' e ' : ', ') + ultimo;
+}
+
+function valorPorExtenso(valor){
+  const v = Math.round((Number(valor) || 0) * 100) / 100;
+  const reais = Math.floor(v);
+  const centavos = Math.round((v - reais) * 100);
+  const partes = [];
+  if(reais > 0){
+    const texto = extensoInteiro(reais);
+    /* "um milhão DE reais", não "um milhão reais". Vale só quando o valor
+       fecha redondo na escala — 1.500.000 é "um milhão e quinhentos mil
+       reais", sem o "de". */
+    const de = /(milhão|milhões|bilhão|bilhões)$/.test(texto) ? 'de ' : '';
+    partes.push(texto + ' ' + de + (reais === 1 ? 'real' : 'reais'));
+  }
+  if(centavos > 0) partes.push(extensoInteiro(centavos) + (centavos === 1 ? ' centavo' : ' centavos'));
+  if(partes.length === 0) return 'zero real';
+  return partes.join(' e ');
+}
+
+const MESES_EXTENSO = ['janeiro','fevereiro','março','abril','maio','junho','julho','agosto',
+  'setembro','outubro','novembro','dezembro'];
+function dataPorExtenso(iso){
+  const p = String(iso || '').split('-');
+  if(p.length !== 3) return '';
+  const dia = Number(p[2]), mes = Number(p[1]) - 1, ano = p[0];
+  if(isNaN(dia) || !MESES_EXTENSO[mes]) return '';
+  return dia + ' de ' + MESES_EXTENSO[mes] + ' de ' + ano;
+}
+
 function getLogoMizuBase64(){
   const img = document.querySelector('.logo-mark img');
   return img ? img.src : '';
@@ -2796,20 +2921,65 @@ function cnpjDigitosValidos(texto){
   return d.length === 14 ? d : null;
 }
 
+/* O CNPJ carrega dois dígitos no fim que conferem os outros doze. Dá pra
+   checar aqui mesmo, sem internet — e isso evita o pior erro de leitura
+   que a gente teve: a Receita devolvia 400 ("esse número não serve") e a
+   tela dizia "serviço fora do ar", mandando ela esperar por um problema
+   que estava no papel, não no servidor. */
+function cnpjDigitoConfere(digitos){
+  const c = String(digitos || '').replace(/\D/g, '');
+  if(c.length !== 14) return false;
+  if(/^(\d)\1{13}$/.test(c)) return false;   // 00000000000000 e companhia
+  const calcula = (base, pesos) => {
+    const soma = base.split('').reduce((t, n, i) => t + Number(n) * pesos[i], 0);
+    const resto = soma % 11;
+    return resto < 2 ? 0 : 11 - resto;
+  };
+  const d1 = calcula(c.slice(0, 12), [5,4,3,2,9,8,7,6,5,4,3,2]);
+  const d2 = calcula(c.slice(0, 13), [6,5,4,3,2,9,8,7,6,5,4,3,2]);
+  return c[12] === String(d1) && c[13] === String(d2);
+}
+
+/* Mesma ideia pro CPF. */
+function cpfDigitoConfere(digitos){
+  const c = String(digitos || '').replace(/\D/g, '');
+  if(c.length !== 11) return false;
+  if(/^(\d)\1{10}$/.test(c)) return false;
+  const calcula = (qtd) => {
+    let soma = 0;
+    for(let i = 0; i < qtd; i++) soma += Number(c[i]) * (qtd + 1 - i);
+    const resto = (soma * 10) % 11;
+    return resto === 10 ? 0 : resto;
+  };
+  return Number(c[9]) === calcula(9) && Number(c[10]) === calcula(10);
+}
+
 async function consultarCnpj(digitos){
+  /* Checa antes de sair perguntando: se o dígito não bate, nenhum serviço
+     vai achar mesmo, e gastar quatro consultas só pra ouvir "não" queima
+     a cota por minuto que esses serviços têm. */
+  if(!cnpjDigitoConfere(digitos)){
+    throw Object.assign(new Error('dígito verificador não confere'), { digitoErrado: true });
+  }
   const motivos = [];
   for(const fonte of CNPJ_FONTES){
     try{
       const r = await fetch(fonte.url(digitos), { headers: { 'Accept': 'application/json' } });
       if(r.status === 404){ throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true }); }
       if(r.status === 429){ motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
+      /* 400 é o serviço dizendo "esse número não serve", não "eu caí".
+         Chamar isso de "fora do ar" fazia ela esperar passar um problema
+         que estava no número. */
+      if(r.status === 400 || r.status === 422){
+        throw Object.assign(new Error('CNPJ recusado'), { recusado: true });
+      }
       if(!r.ok){ motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
       const bruto = await r.json();
       const dados = fonte.traduz(bruto);
       if(!dados || !dados.razaoSocial){ motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
       return { dados, fonte: fonte.nome };
     }catch(e){
-      if(e && e.definitivo) throw e;
+      if(e && (e.definitivo || e.recusado)) throw e;
       motivos.push(fonte.nome + ': ' + ((e && e.message) || 'não respondeu'));
     }
   }
@@ -3027,7 +3197,11 @@ function abrirFormCliente(id, onCriado){
     }catch(e){
       /* Dizer O QUE houve, e não só "não deu". Serviço fora do ar e CNPJ
          inexistente pedem reações diferentes de quem está no balcão. */
-      if(e && e.definitivo){
+      if(e && e.digitoErrado){
+        statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Esse CNPJ não é válido — os dois últimos dígitos não batem com os outros. Nem cheguei a consultar: confira os números no documento.</span>`;
+      }else if(e && e.recusado){
+        statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">A Receita recusou esse número. Não é o serviço que caiu — é o CNPJ. Confira os dígitos.</span>`;
+      }else if(e && e.definitivo){
         statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Esse CNPJ não existe na base da Receita. Confira os números.</span>`;
       }else if(!navigator.onLine){
         statusCnpj.innerHTML = `<span class="help-text" style="color:var(--negative);">Sem internet agora — preencha à mão e siga normalmente.</span>`;
@@ -9967,6 +10141,33 @@ function prazoEntregaPadrao(){
   return (STATE.config && STATE.config.prazoEntregaPadrao) || '';
 }
 
+/* Os campos da proposta pública, lidos num lugar só — foi esquecer de
+   repetir a leitura nos DOIS caminhos de salvar que fez os campos da
+   escola sumirem da primeira vez. */
+function lerCamposPropostaPublica(){
+  const v = (id) => ((document.getElementById(id) || {}).value || '').trim();
+  return {
+    modalidade: v('orc-pub-modalidade'),
+    numero: v('orc-pub-numero'),
+    tipo: v('orc-pub-tipo'),
+    objeto: v('orc-pub-objeto'),
+    validade: v('orc-pub-validade'),
+    prazoPagamento: v('orc-pub-pagamento')
+  };
+}
+
+function clienteEhOrgaoPublico(clienteId){
+  const c = STATE.clientes.find(x => x.id === clienteId);
+  return !!c && tipoClienteDe(c) === 'Público';
+}
+
+function atualizarBlocoPublicoOrcamento(){
+  const bloco = document.getElementById('orc-bloco-publico');
+  const sel = document.getElementById('orc-cliente');
+  if(!bloco || !sel) return;
+  bloco.style.display = clienteEhOrgaoPublico(sel.value) ? '' : 'none';
+}
+
 function clienteEhEscola(clienteId){
   const c = STATE.clientes.find(x => x.id === clienteId);
   return !!c && tipoClienteDe(c) === 'Escola';
@@ -11407,6 +11608,57 @@ function renderOrcamentos(){
             </div>
           </div>
         </div>
+        <!-- Só aparece quando o cliente está cadastrado como Órgão Público:
+             a proposta de licitação pede coisas que nenhum outro orçamento
+             pede, e misturar esses campos na tela de todo mundo só atrapalha. -->
+        <div class="field field-full" id="orc-bloco-publico" style="display:none;">
+          <div style="border:1px solid var(--border);border-left:3px solid var(--primary);
+                      border-radius:var(--radius-sm);padding:11px 13px;background:var(--bg-app);">
+            <strong style="font-size:13px;">🏛️ Dados da proposta para órgão público</strong>
+            <p class="help-text" style="margin:2px 0 10px;">Entram na proposta de preços. Campo em branco não aparece no papel.</p>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;">
+              <div class="field" style="margin:0;">
+                <label>Modalidade</label>
+                <select id="orc-pub-modalidade">
+                  ${MODALIDADES_LICITACAO.map(m=>`<option value="${escapeAttr(m)}">${escapeHtml(m)}</option>`).join('')}
+                </select>
+              </div>
+              <div class="field" style="margin:0;">
+                <label>Nº do processo</label>
+                <input type="text" id="orc-pub-numero" placeholder="ex.: 10268/2026">
+              </div>
+              <div class="field" style="margin:0;">
+                <label>Tipo</label>
+                <select id="orc-pub-tipo">
+                  <option value="Menor preço global">Menor preço global</option>
+                  <option value="Menor preço por item">Menor preço por item</option>
+                </select>
+              </div>
+            </div>
+            <div class="field" style="margin:10px 0 0;">
+              <label>Objeto</label>
+              <textarea id="orc-pub-objeto" rows="3" placeholder="O que está sendo adquirido, como o edital descreve."></textarea>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:10px;margin-top:10px;">
+              <div class="field" style="margin:0;">
+                <label>Validade da proposta</label>
+                <input type="text" id="orc-pub-validade" list="dl-validade-proposta"
+                       placeholder="ex.: 60 (SESSENTA) DIAS, CONTADOS A PARTIR DA DATA DE SUA EMISSÃO">
+                <datalist id="dl-validade-proposta">
+                  ${VALIDADES_PROPOSTA.map(v=>`<option value="${escapeAttr(v)}">`).join('')}
+                </datalist>
+              </div>
+              <div class="field" style="margin:0;">
+                <label>Prazo de pagamento</label>
+                <input type="text" id="orc-pub-pagamento" list="dl-pagamento-proposta"
+                       placeholder="ex.: até 30 dias após o Atesto de Recebimento do objeto">
+                <datalist id="dl-pagamento-proposta">
+                  ${PAGAMENTOS_PROPOSTA.map(v=>`<option value="${escapeAttr(v)}">`).join('')}
+                </datalist>
+              </div>
+            </div>
+          </div>
+        </div>
         <div class="field" id="orc-wrap-pagador" style="display:none;">
           <label>Pagador do Repasse <span class="req">*</span></label>
           <select id="orc-pagador">
@@ -11659,6 +11911,8 @@ function renderOrcamentos(){
   });
   document.getElementById('orc-cliente').addEventListener('change', atualizarBlocoEscolaOrcamento);
   atualizarBlocoEscolaOrcamento();
+  document.getElementById('orc-cliente').addEventListener('change', atualizarBlocoPublicoOrcamento);
+  atualizarBlocoPublicoOrcamento();
   document.getElementById('orc-cliente').addEventListener('change', atualizarBotaoHistoricoComprasOrcamento);
   atualizarBotaoHistoricoComprasOrcamento();
   document.getElementById('orc-btn-historico-compras').addEventListener('click', ()=>{
@@ -12514,6 +12768,7 @@ function coletarDadosOrcamentoEmAndamento(){
     numeroPesquisa: (document.getElementById('orc-num-pesquisa') || {}).value || '',
     responsavel: (document.getElementById('orc-responsavel') || {}).value || '',
     cargoResponsavel: (document.getElementById('orc-cargo') || {}).value || '',
+    publico: lerCamposPropostaPublica(),
     temComissao: document.getElementById('orc-tem-comissao').checked,
     pagadorId: temRepasse ? (document.getElementById('orc-pagador').value || null) : null,
     repassePct: temRepasse ? (parseFloat(document.getElementById('orc-repasse-pct').value)||null) : null,
@@ -12664,6 +12919,7 @@ function salvarOrcamento(){
   const dadosBase = {
     numero, clienteId, data, validadeDias, observacoes, vendedor,
     prazoEntrega, numeroPesquisa, responsavel, cargoResponsavel,
+    publico: lerCamposPropostaPublica(),
     temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
     condicaoPagamento, vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
     prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
@@ -12750,6 +13006,14 @@ function editarOrcamento(id){
   poeEscola('orc-num-pesquisa', orcamento.numeroPesquisa);
   poeEscola('orc-responsavel', orcamento.responsavel);
   poeEscola('orc-cargo', orcamento.cargoResponsavel);
+  atualizarBlocoPublicoOrcamento();
+  const pub = orcamento.publico || {};
+  poeEscola('orc-pub-modalidade', pub.modalidade);
+  poeEscola('orc-pub-numero', pub.numero);
+  poeEscola('orc-pub-tipo', pub.tipo);
+  poeEscola('orc-pub-objeto', pub.objeto);
+  poeEscola('orc-pub-validade', pub.validade);
+  poeEscola('orc-pub-pagamento', pub.prazoPagamento);
   document.getElementById('orc-tem-comissao').checked = !!orcamento.temComissao;
 
   const temRepasse = !!orcamento.pagadorId;
@@ -13274,10 +13538,183 @@ function converterOrcamentoEmVenda(id){
 // empresa (CNPJ, endereço, telefone), tabela de itens (qtd, produto, valor
 // unit., valor total) e total geral. Não mostra custo, imposto, comissão
 // nem repasse (dados internos), só o que o cliente precisa ver e aprovar.
+/* A marca do item: a proposta pública exige dizer qual marca está sendo
+   ofertada. Vem do cadastro do produto; se o lançamento guardou uma marca
+   própria, ela ganha. */
+function itemMarcaExibicao(it){
+  if(it && it.marca) return it.marca;
+  const p = it && it.produtoId ? STATE.produtos.find(x=>x.id===it.produtoId) : null;
+  return (p && p.marca) || '';
+}
+
+/* =========================================================
+   PROPOSTA DE PREÇOS — ÓRGÃO PÚBLICO
+   Documento à parte do orçamento comum: tudo preto, declarações de praxe,
+   valor por extenso e os dados do proponente que o edital pede.
+   ========================================================= */
+function gerarPdfPropostaPublica(orcamento, cliente){
+  const E = dadosProposta();
+  const c = calcularVenda(orcamento);
+  const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
+  const total = c.bruto + acrescimo;
+  const p = orcamento.publico || {};
+
+  const linhaSeTiver = (rotulo, valor) => {
+    const v = (valor == null ? '' : String(valor)).trim();
+    return v ? `<div><span class="cp"><b>${escapeHtml(rotulo)}:</b> ${escapeHtml(v)}</span></div>` : '';
+  };
+  const campo = (rotulo, valor) => {
+    const v = (valor == null ? '' : String(valor)).trim();
+    return v ? `<span class="cp"><b>${escapeHtml(rotulo)}:</b> ${escapeHtml(v)}</span>` : '';
+  };
+
+  const linhasItens = orcamento.itens.map((it, idx) => `
+    <tr>
+      <td class="c">${idx+1}</td>
+      <td class="desc">${escapeHtml(it.nome)}</td>
+      <td class="c">${escapeHtml(itemUnidadeExibicao(it))}</td>
+      <td class="c">${escapeHtml(itemMarcaExibicao(it)) || '—'}</td>
+      <td class="c">${fmtNum(itemQtdExibicao(it))}</td>
+      <td class="r">${fmtMoney(itemPrecoUnitExibicao(it))}</td>
+      <td class="r">${fmtMoney(it.qtd*it.precoUnit)}</td>
+    </tr>`).join('');
+
+  const subtitulo = [p.modalidade, p.numero ? 'nº ' + p.numero : ''].filter(Boolean).join(' ');
+
+  const janela = window.open('', '_blank');
+  janela.document.write(`
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8">
+    <title>Proposta de Preços${p.numero ? ' - ' + escapeHtml(String(p.numero)) : ''}</title>
+    <style>
+      @page{ size:A4; margin:0; }
+      *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important;
+         box-sizing:border-box; }
+      body{ font-family:"Times New Roman", Georgia, serif; font-size:10.5pt; color:#000;
+            margin:0; padding:16mm 15mm; line-height:1.4; }
+      .topo{ display:flex; align-items:center; gap:16px; padding-bottom:10px; border-bottom:2.5px solid #000; }
+      .topo img{ height:66px; }
+      .topo .emp{ flex:1; text-align:right; line-height:1.35; }
+      .topo .emp .rs{ font-size:13.5pt; font-weight:bold; letter-spacing:.4px; }
+      .topo .emp .l{ font-size:9pt; }
+      .doc-titulo{ text-align:center; font-size:12.5pt; font-weight:bold; letter-spacing:1.2px;
+                   margin:14px 0 2px; text-transform:uppercase; }
+      .doc-sub{ text-align:center; font-size:10pt; margin-bottom:12px; }
+      .cp{ display:inline-block; margin-right:22px; white-space:nowrap; }
+      .lin{ margin:1.5px 0; }
+      p.just{ text-align:justify; margin:9px 0; }
+      .secao{ font-size:9pt; font-weight:bold; letter-spacing:1.3px; text-transform:uppercase;
+              border-bottom:1px solid #000; padding-bottom:2px; margin:14px 0 7px; }
+      .objeto{ text-align:justify; margin:4px 0 2px; }
+      table{ width:100%; border-collapse:collapse; font-size:9pt; }
+      thead th{ background:#E8E8E8; border:1px solid #000; padding:5px 4px; font-size:8.5pt;
+                letter-spacing:.4px; text-transform:uppercase; }
+      tbody td{ border:1px solid #000; padding:5px; vertical-align:top; }
+      td.c{ text-align:center; vertical-align:middle; }
+      td.r{ text-align:right; vertical-align:middle; white-space:nowrap; }
+      td.desc{ text-align:justify; line-height:1.35; }
+      tr.total td{ border:1px solid #000; background:#E8E8E8; font-weight:bold; }
+      .extenso{ margin-top:5px; font-size:9.5pt; font-style:italic; }
+      /* Data + assinatura andam juntas e NUNCA partidas no meio: assinatura
+         cortada na virada da página é proposta que volta do protocolo. */
+      .fecho{ page-break-inside:avoid; break-inside:avoid; margin-top:30px; }
+      .assin{ text-align:center; margin-top:40px; }
+      .assin .risco{ border-top:1px solid #000; width:300px; margin:0 auto 4px; }
+      .data{ text-align:center; }
+      @media print{ body{ padding:10mm 12mm; } }
+    </style></head>
+    <body>
+      <div class="topo">
+        <img src="${getLogoMizuBase64()}" alt="">
+        <div class="emp">
+          <div class="rs">${escapeHtml(DADOS_EMPRESA.razaoSocial)}</div>
+          <div class="l">${escapeHtml(E.endereco)} — ${escapeHtml(E.bairro)}</div>
+          <div class="l">${escapeHtml(E.cidade)}/${escapeHtml(E.estado)} — CEP ${escapeHtml(E.cep)}</div>
+          <div class="l">CNPJ ${escapeHtml(DADOS_EMPRESA.cnpj)} &nbsp;·&nbsp; ${escapeHtml(E.telefone)} &nbsp;·&nbsp; ${escapeHtml(E.email)}</div>
+        </div>
+      </div>
+
+      <div class="doc-titulo">Proposta de Preços</div>
+      ${subtitulo ? `<div class="doc-sub">${escapeHtml(subtitulo)}</div>` : '<div style="margin-bottom:12px;"></div>'}
+
+      ${linhaSeTiver('Interessado', cliente ? cliente.nome : '')}
+      ${linhaSeTiver('Tipo', p.tipo)}
+      <div class="lin"><b>À Comissão de Licitação / Sr. Pregoeiro</b></div>
+
+      <p class="just">A empresa ${escapeHtml(DADOS_EMPRESA.razaoSocial)}, com sede na cidade de
+      Rio Verde, Goiás, inscrita no CNPJ sob o nº ${escapeHtml(DADOS_EMPRESA.cnpj)}, abaixo
+      assinada por seu representante legal, interessada na participação do presente pregão,
+      propõe a esse Fundo Municipal o fornecimento do objeto deste ato convocatório, de acordo
+      com a presente proposta comercial, nas seguintes condições.</p>
+
+      ${p.objeto ? `<div class="secao">Objeto</div><div class="objeto">${escapeHtml(p.objeto)}</div>` : ''}
+
+      <div class="secao">Dados do proponente</div>
+      <div class="lin">${campo('Nome fantasia', E.nomeFantasia)}${campo('Classificação empresarial', E.classificacao)}${campo('Porte', E.porte)}</div>
+      <div class="lin">${campo('CNPJ', DADOS_EMPRESA.cnpj)}${campo('Inscrição estadual', E.inscricaoEstadual)}${campo('Inscrição municipal', E.inscricaoMunicipal)}</div>
+      <div class="lin">${campo('Endereço', E.endereco)}${campo('Bairro', E.bairro)}</div>
+      <div class="lin">${campo('Cidade', E.cidade)}${campo('Estado', E.estado)}${campo('CEP', E.cep)}</div>
+      <div class="lin">${campo('Telefone', E.telefone)}${campo('E-mail', E.email)}</div>
+
+      <div class="secao">Itens ofertados</div>
+      <table>
+        <thead><tr>
+          <th style="width:30px;">Item</th><th>Produto</th><th style="width:48px;">Und.</th>
+          <th style="width:70px;">Marca</th><th style="width:48px;">Qtd.</th>
+          <th style="width:74px;">Valor unit.</th><th style="width:78px;">Valor total</th>
+        </tr></thead>
+        <tbody>
+          ${linhasItens}
+          ${acrescimo>0 ? `<tr><td colspan="6" style="text-align:right;">Acréscimo</td><td class="r">${fmtMoney(acrescimo)}</td></tr>` : ''}
+          ${c.temDesconto ? `<tr><td colspan="6" style="text-align:right;">Desconto</td><td class="r">-${fmtMoney(c.brutoOriginal-c.bruto)}</td></tr>` : ''}
+          <tr class="total"><td colspan="6" style="text-align:right;">Total da proposta</td>
+              <td class="r">${fmtMoney(total)}</td></tr>
+        </tbody>
+      </table>
+      <div class="extenso">Valor total por extenso: ${escapeHtml(valorPorExtenso(total))}.</div>
+
+      <div class="secao">Condições</div>
+      ${linhaSeTiver('Validade da proposta', p.validade)}
+      ${linhaSeTiver('Prazo de entrega', orcamento.prazoEntrega)}
+      ${linhaSeTiver('Prazo de pagamento', p.prazoPagamento)}
+      ${linhaSeTiver('Dados bancários', [E.banco, E.agencia ? 'Agência ' + E.agencia : '',
+        E.conta ? 'Conta corrente ' + E.conta : ''].filter(Boolean).join(' · '))}
+
+      <p class="just"><b>Declaramos que nos valores de preços ofertados estão inclusos</b> todas as
+      despesas e custos diretos e indiretos relacionados à execução do Contrato, inclusive aquelas
+      decorrentes de impostos, seguros e encargos sociais, trabalhistas, treinamento, lucros e
+      dividendos e demais despesas necessárias para o fornecimento do objeto desta licitação, caso
+      venhamos a ser declarados vencedores.</p>
+
+      <p class="just">Declaramos estar cientes de todas as informações para elaboração da presente
+      proposta e em pleno acordo com todos os termos estabelecidos no edital.</p>
+
+      <p class="just"><b>Declaração:</b> declaramos que o produto ofertado é de boa qualidade e
+      atende às especificações do edital, e que a entrega será feita respeitando o nele
+      estabelecido.</p>
+
+      <div class="fecho">
+        <div class="data">Rio Verde/GO, ${escapeHtml(dataPorExtenso(orcamento.data))}.</div>
+        <div class="assin"><div class="risco"></div>
+          <div><b>${escapeHtml(DADOS_EMPRESA.razaoSocial)}</b></div>
+          <div>CNPJ ${escapeHtml(DADOS_EMPRESA.cnpj)}</div></div>
+      </div>
+      <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
+    </body></html>
+  `);
+  janela.document.close();
+}
+
 function gerarPdfOrcamento(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+
+  /* Órgão público tem documento próprio. */
+  if(cliente && tipoClienteDe(cliente) === 'Público'){
+    return gerarPdfPropostaPublica(orcamento, cliente);
+  }
+
   const c = calcularVenda(orcamento);
   const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
   const validadeAte = addDays(orcamento.data, orcamento.validadeDias);
