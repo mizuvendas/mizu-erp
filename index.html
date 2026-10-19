@@ -12410,6 +12410,11 @@ function itemPrecoUnitExibicao(it){
 function renderCarrinhoOrcamento(){
   // o balcão desenha o mesmo carrinho do seu jeito — mesma fonte de verdade
   if(typeof orcRenderCarrinhoBalcao === 'function') orcRenderCarrinhoBalcao();
+  /* Toda mexida no carrinho (preço, quantidade, remover, item novo) passa
+     por aqui — então é aqui que o rascunho tem de ser gravado. Antes ele
+     dependia do evento 'change' subir até o formulário, com 300ms de
+     atraso: uma alteração de preço feita no segundo errado se perdia. */
+  try{ if(typeof salvarRascunhoOrcamento === 'function') salvarRascunhoOrcamento(); }catch(e){}
   const tbody = document.getElementById('orc-carrinho-body');
   if(!tbody) return;
   if(carrinhoOrcamentoAtual.length===0){
@@ -37929,6 +37934,61 @@ function nuvemAplicar(linhas){
 }
 
 /* ---------------------------------------------------------
+   NÃO PUXAR O TAPETE DE QUEM ESTÁ TRABALHANDO
+   Redesenhar a tela remonta o formulário inteiro: carrinho, cliente,
+   campos, tudo volta ao zero. Isso só pode acontecer quando ela NÃO está
+   no meio de nada.
+   --------------------------------------------------------- */
+function nuvemTrabalhoEmAndamento(){
+  try{
+    // carrinho com item — vale pro clássico, pro balcão e pra esteira
+    if(typeof carrinhoAtual !== 'undefined' && carrinhoAtual && carrinhoAtual.length) return true;
+    if(typeof carrinhoOrcamentoAtual !== 'undefined' && carrinhoOrcamentoAtual && carrinhoOrcamentoAtual.length) return true;
+    // qualquer janela aberta por cima (histórico, cadastro rápido, confirmação)
+    if(document.querySelector('.modal-overlay.open')) return true;
+    // o cursor está dentro de um campo: ela está digitando AGORA
+    const foco = document.activeElement;
+    if(foco && ['INPUT','SELECT','TEXTAREA'].includes(foco.tagName)) return true;
+    // cliente já escolhido num formulário aberto, mesmo sem item ainda
+    const orcCli = document.getElementById('orc-cliente');
+    if(orcCli && orcCli.value) return true;
+    const vCli = document.getElementById('v-cliente');
+    if(vCli && vCli.value) return true;
+  }catch(e){ /* na dúvida, não redesenha */ return true; }
+  return false;
+}
+
+function nuvemRedesenharTelaAtual(){
+  const ativa = document.querySelector('.page.active');
+  const pagina = ativa ? ativa.id.replace('page-', '') : '';
+  if(pagina && RENDERERS[pagina]) RENDERERS[pagina]();
+  atualizarBadgesMenu();
+  const aviso = document.getElementById('nuvem-novidades');
+  if(aviso) aviso.remove();
+}
+
+/* A tarja discreta no rodapé. Não rouba o foco, não fecha nada: fica ali
+   até ela querer. Some sozinha quando a tela é redesenhada por outro
+   motivo (salvar o orçamento, trocar de menu). */
+function nuvemAvisarNovidades(){
+  atualizarBadgesMenu();
+  if(document.getElementById('nuvem-novidades')) return;
+  const barra = document.createElement('div');
+  barra.id = 'nuvem-novidades';
+  barra.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9000;background:var(--primary-escuro,#1B4B5A);'
+    + 'color:#fff;padding:10px 14px;border-radius:8px;font-size:12.5px;box-shadow:0 4px 16px rgba(0,0,0,.25);'
+    + 'display:flex;align-items:center;gap:10px;max-width:min(420px,88vw);';
+  barra.innerHTML = '<span>☁️ Chegou coisa nova do outro computador. Não atualizei a tela pra não atrapalhar o que você está fazendo.</span>'
+    + '<button type="button" id="nuvem-novidades-ok" style="background:#fff;color:#1B4B5A;border:0;border-radius:6px;'
+    + 'padding:6px 10px;font-weight:600;cursor:pointer;white-space:nowrap;">Atualizar</button>'
+    + '<button type="button" id="nuvem-novidades-x" title="Fechar" style="background:transparent;color:#fff;border:0;'
+    + 'font-size:16px;cursor:pointer;line-height:1;">×</button>';
+  document.body.appendChild(barra);
+  document.getElementById('nuvem-novidades-ok').addEventListener('click', nuvemRedesenharTelaAtual);
+  document.getElementById('nuvem-novidades-x').addEventListener('click', ()=>barra.remove());
+}
+
+/* ---------------------------------------------------------
    O CICLO
    --------------------------------------------------------- */
 async function nuvemSincronizar(silencioso){
@@ -37951,11 +38011,19 @@ async function nuvemSincronizar(silencioso){
     await nuvemSubir();
     baixados += await nuvemBaixar();
     nuvemUltimoErro = null;
-    if(baixados > 0 && !silencioso){
-      const ativa = document.querySelector('.page.active');
-      const pagina = ativa ? ativa.id.replace('page-', '') : '';
-      if(pagina && RENDERERS[pagina]) RENDERERS[pagina]();
-      atualizarBadgesMenu();
+    if(baixados > 0){
+      /* CHEGOU COISA NOVA DO OUTRO COMPUTADOR.
+         Antes, redesenhávamos a tela na hora — e quem estava no meio de um
+         orçamento via o formulário sumir sozinho a cada 20 segundos, sempre
+         que o outro funcionário salvava qualquer coisa. O dado não se
+         perdia (fica no rascunho), mas o trabalho ia pro chão.
+         Agora: se ela está mexendo em alguma coisa, NÃO redesenha — avisa
+         com um botão e ela atualiza quando terminar. */
+      if(nuvemTrabalhoEmAndamento()){
+        nuvemAvisarNovidades();
+      }else if(!silencioso){
+        nuvemRedesenharTelaAtual();
+      }
     }
   }catch(e){
     nuvemUltimoErro = e.message || String(e);
