@@ -11871,6 +11871,11 @@ function renderOrcamentos(){
       <div id="orc-relatorio-separacao"></div>
     </div>
 
+    <div class="card" id="card-orc-licitacao" style="display:none;">
+      <h3>⚖️ Propostas de licitação <span class="hint">dispensa, pregão e cotação escolar — marque aqui se ganhou ou perdeu</span></h3>
+      <div id="orc-licitacao-conteudo"></div>
+    </div>
+
     <div class="card">
       <h3>Orçamentos Lançados</h3>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
@@ -13283,6 +13288,125 @@ function renderRelatorioSeparacaoEntrega(){
   `;
 }
 
+/* =========================================================
+   QUADRO DAS PROPOSTAS DE LICITAÇÃO
+   Orçamento de licitação não se resolve com "aprovado / entregue" —
+   se resolve com GANHOU ou PERDEU, semanas depois. Misturado na lista
+   normal ele só atrapalhava: ficava "Enviado" para sempre e empurrava
+   os orçamentos de balcão para baixo.
+   ========================================================= */
+function licDoOrcamento(orc){
+  if(!orc) return null;
+  if(orc.licitacaoId) return (STATE.licitacoes||[]).find(l=>l.id===orc.licitacaoId) || null;
+  return (STATE.licitacoes||[]).find(l=>l.orcamentoId===orc.id) || null;
+}
+
+const ORC_LIC_SITUACAO = {
+  proposta: { t:'Montando',   cor:'var(--ink-soft)',   fundo:'#F2F5F7' },
+  enviada:  { t:'Aguardando', cor:'var(--warning)',    fundo:'var(--warning-soft)' },
+  ganhou:   { t:'🏆 Ganhamos', cor:'var(--positive)',  fundo:'var(--positive-soft)' },
+  entregue: { t:'🏆 Entregue', cor:'var(--positive)',  fundo:'var(--positive-soft)' },
+  perdeu:   { t:'Perdemos',   cor:'var(--negative)',   fundo:'var(--negative-soft)' }
+};
+
+function renderOrcamentosLicitacao(){
+  const card = document.getElementById('card-orc-licitacao');
+  const box = document.getElementById('orc-licitacao-conteudo');
+  if(!card || !box) return;
+
+  const lista = (STATE.orcamentos||[])
+    .filter(o=>o.origemLicitacao && o.status!=='pre_venda' && o.status!=='rascunho')
+    .sort((a,b)=> (a.data===b.data) ? String(b.criadoEm||'').localeCompare(String(a.criadoEm||''))
+                                    : String(b.data).localeCompare(String(a.data)));
+
+  if(lista.length===0){ card.style.display='none'; box.innerHTML=''; return; }
+  card.style.display = '';
+
+  const porSituacao = {};
+  lista.forEach(o=>{
+    const l = licDoOrcamento(o);
+    const e = l ? l.etapa : 'proposta';
+    porSituacao[e] = (porSituacao[e]||0) + 1;
+  });
+  const aguardando = porSituacao.enviada || 0;
+  const ganhas = (porSituacao.ganhou||0) + (porSituacao.entregue||0);
+  const perdidas = porSituacao.perdeu || 0;
+  const decididas = ganhas + perdidas;
+
+  box.innerHTML = `
+    <div class="kpi-row" style="margin-bottom:12px;">
+      <div class="kpi-card"><div class="kpi-label">Aguardando resultado</div>
+        <div class="kpi-value ${aguardando?'':''}">${aguardando}</div>
+        <div class="kpi-sub">enviadas, sem retorno</div></div>
+      <div class="kpi-card"><div class="kpi-label">Ganhamos</div>
+        <div class="kpi-value positive">${ganhas}</div>
+        <div class="kpi-sub">${decididas?`${((ganhas/decididas)*100).toFixed(0)}% das decididas`:''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Perdemos</div>
+        <div class="kpi-value ${perdidas?'negative':''}">${perdidas}</div>
+        <div class="kpi-sub">${perdidas?'o preço do vencedor fica guardado':''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Valor aguardando</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(lista.filter(o=>{
+          const l=licDoOrcamento(o); return l && l.etapa==='enviada';
+        }).reduce((s,o)=>s+calcularVenda(o).bruto,0))}</div>
+        <div class="kpi-sub">em disputa agora</div></div>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr>
+          <th>Nº</th><th>Data</th><th>Órgão / escola</th><th>Tipo</th>
+          <th>Vendedor</th><th style="text-align:right;">Valor</th>
+          <th>Situação</th><th>Resultado</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${lista.map(o=>{
+            const l = licDoOrcamento(o);
+            const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+            const etapa = l ? l.etapa : 'proposta';
+            const sit = ORC_LIC_SITUACAO[etapa] || ORC_LIC_SITUACAO.proposta;
+            const tipo = (o.publico && o.publico.modalidade) || (l && l.modalidadeNome) || '—';
+            const valor = calcularVenda(o).bruto;
+            const decidida = etapa==='ganhou' || etapa==='perdeu' || etapa==='entregue';
+            const virouVenda = o.status==='convertido' || !!o.vendaGeradaId;
+            return `<tr>
+              <td>#${o.numero}</td>
+              <td>${fmtDate(o.data)}</td>
+              <td>${escapeHtml(cliente ? cliente.nome : (l && l.orgao) || '—')}
+                ${l && l.numero?`<div style="font-size:11px;color:var(--ink-faint);">nº ${escapeHtml(l.numero)}</div>`:''}</td>
+              <td><span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10.5px;">${escapeHtml(tipo)}</span></td>
+              <td>${escapeHtml(o.vendedor||'—')}</td>
+              <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(valor)}</td>
+              <td><span class="badge" style="background:${sit.fundo};color:${sit.cor};">${sit.t}</span>
+                ${virouVenda?'<div style="font-size:11px;color:var(--positive);">✅ virou venda</div>':''}</td>
+              <td>${decidida && l && l.valorResultado
+                    ? `<span style="font-size:12px;">${etapa==='perdeu'?'vencedor: ':'homologado: '}${fmtMoney(l.valorResultado)}</span>`
+                    : '<span style="color:var(--ink-faint);font-size:12px;">—</span>'}</td>
+              <td style="text-align:right;white-space:nowrap;">
+                ${l && etapa==='enviada' ? `
+                  <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+                  <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>` : ''}
+                ${l && etapa==='proposta' ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','proposta')">Abrir proposta</button>` : ''}
+                ${l && decidida ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','compra')">Ver</button>` : ''}
+                ${!l ? `<span style="font-size:11.5px;color:var(--ink-faint);">licitação removida</span>` : ''}
+                <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
+              </td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+    <div class="help-text" style="margin-top:8px;">
+      Estes não aparecem na lista de baixo de propósito — eles se resolvem com ganhou ou perdeu,
+      não com aprovado ou entregue. Marcando que ganhou, o sistema oferece lançar a venda.
+    </div>`;
+}
+
+/* Leva pro portal de licitações, na tela certa. */
+function licAbrirDoOrcamento(licId, tela){
+  navigateTo('licitacoes');
+  setTimeout(()=>{ licAbrir(licId, tela); }, 60);
+}
+
 function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
@@ -13300,7 +13424,11 @@ function renderListaOrcamentos(){
   // de verdade — ficam só na lista de "Orçamentos em Andamento" (ver
   // renderOrcamentosEmAndamento()), até o usuário finalizar de verdade
   // clicando em "Salvar Orçamento".
-  let lista = STATE.orcamentos.filter(o=>o.status!=='pre_venda' && o.status!=='rascunho');
+  /* Orçamento de licitação tem quadro próprio, logo abaixo: ele se
+     resolve com ganhou/perdeu, não com aprovado/entregue. Misturado
+     aqui, atrapalhava os dois. */
+  let lista = STATE.orcamentos.filter(o=>o.status!=='pre_venda' && o.status!=='rascunho' && !o.origemLicitacao);
+  renderOrcamentosLicitacao();
   // Orçamento já convertido em venda continua aparecendo aqui normalmente
   // (com o selo "✅ Virou Venda" na coluna Status) — antes ele sumia da
   // lista por padrão assim que convertia, o que dava a impressão de que
@@ -26731,7 +26859,8 @@ const LIC_ETAPAS = {
   enviada:      { aba:'propostas',    n:3, rotulo:'Enviada — aguardando retorno' },
   ganhou:       { aba:'propostas',    n:3, rotulo:'Ganhamos' },
   perdeu:       { aba:'propostas',    n:3, rotulo:'Perdemos' },
-  entregue:     { aba:'propostas',    n:3, rotulo:'Entregue' }
+  entregue:     { aba:'propostas',    n:3, rotulo:'Entregue' },
+  desistiu:     { aba:'propostas',    n:3, rotulo:'Desistimos' }
 };
 
 let licAba = 'oportunidades';
@@ -26976,6 +27105,18 @@ function licNormalizar(l){
   l.itens.forEach((it,i)=>{
     if(it.numero == null) it.numero = i+1;
     if(!Array.isArray(it.exigencias)) it.exigencias = [];
+    /* O campo antigo guardava o TOTAL. A conversão é disparada pela
+       PRESENÇA do campo velho, não pela ausência do novo — senão um
+       registro antigo que chega depois pela nuvem passaria batido. */
+    if(it.precoVenda != null){
+      const total = licNumDireto(it.precoVenda);
+      const q = Math.max(1, licNumDireto(it.qtd) || 1);
+      if(!licNumDireto(it.precoUnit) && total > 0) it.precoUnit = +(total / q).toFixed(2);
+      delete it.precoVenda;
+    }
+    if(it.precoUnit == null) it.precoUnit = 0;
+    /* unidade é "UND", não uma frase */
+    if(it.unidade) it.unidade = licUnidadeLimpa(it.unidade);
   });
   return l;
 }
@@ -26997,13 +27138,23 @@ function licNumDireto(v){ const n = parseFloat(v); return isNaN(n)?0:n; }
 /* Custo total de UM item, com tudo o que ela mandou entrar na conta:
    produto, acessórios obrigatórios, frete até nós, frete até o cliente,
    imposto (% sobre a venda) e comissão do vendedor (% sobre a venda). */
+/* O preço de venda que ela digita é o UNITÁRIO — é assim que a proposta
+   pede (valor unitário e valor global) e é como se pensa o preço. O
+   total sai da multiplicação. Antes o campo era o total e ela tinha que
+   fazer a conta de cabeça. */
+function licPrecoUnit(it){ return licNumDireto(it && it.precoUnit); }
+function licPrecoTotal(it){
+  const qtd = Math.max(1, licNumDireto(it && it.qtd) || 1);
+  return licPrecoUnit(it) * qtd;
+}
+
 function licCustoItem(it){
   const qtd = Math.max(1, licNumDireto(it.qtd) || 1);
   const produto = licNumDireto(it.custo) * qtd;
   const acessorios = licNumDireto(it.acessorios);
   const freteNos = licNumDireto(it.freteNos);
   const freteCliente = licNumDireto(it.freteCliente);
-  const venda = licNumDireto(it.precoVenda);
+  const venda = licPrecoUnit(it) * qtd;
   const imposto = venda * (licNumDireto(it.impostoPct)/100);
   const comissao = venda * (licNumDireto(it.comissaoPct)/100);
   const total = produto + acessorios + freteNos + freteCliente + imposto + comissao;
@@ -27025,7 +27176,7 @@ function licPisoItem(it){
 function licTotalLicitacao(l){
   let venda=0, custo=0, teto=0;
   (l.itens||[]).forEach(it=>{
-    venda += licNumDireto(it.precoVenda);
+    venda += licPrecoTotal(it);
     custo += licCustoItem(it).total;
     teto  += licNumDireto(it.teto);
   });
@@ -27100,7 +27251,8 @@ function licHistoricoProdutos(){
         qtd: c.qtd,
         custoUnit: licNumDireto(it.custo),
         custoTotal: c.total,
-        precoVenda: licNumDireto(it.precoVenda),
+        precoVenda: licPrecoTotal(it),
+        precoUnit: licPrecoUnit(it),
         teto: licNumDireto(it.teto),
         margem: c.margem,
         fornecedor: it.contatoFornecedor || it.obsCompra || '',
@@ -27110,6 +27262,7 @@ function licHistoricoProdutos(){
         resultadoObs: l.resultadoObs || '',
         resultado: l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
                  : l.etapa==='perdeu' ? 'perdeu'
+                 : l.etapa==='desistiu' ? 'desistiu'
                  : l.etapa==='enviada' ? 'enviado' : 'pendente'
       });
     });
@@ -27189,7 +27342,7 @@ function renderPortalLicitacoes(){
     oportunidades: (STATE.licitacoesRevisao||[]).length,
     analise: licPorEtapa(['analise']).length,
     precificacao: licPorEtapa(['precificacao']).length,
-    propostas: licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue']).length,
+    propostas: licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue','desistiu']).length,
     produtos: licHistoricoProdutos().length
   };
 
@@ -28285,12 +28438,13 @@ function licAvancarEtapa(id, etapa, tela){
    ABA 4 — PROPOSTAS (montando, enviadas, ganhou, perdeu)
    ========================================================= */
 function licPainelPropostas(){
-  const lista = licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue']);
+  const lista = licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue','desistiu']);
   const grupos = [
     { etapas:['proposta'], titulo:'Montando a proposta' },
     { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
     { etapas:['ganhou','entregue'], titulo:'Ganhamos' },
-    { etapas:['perdeu'],   titulo:'Perdemos' }
+    { etapas:['perdeu'],   titulo:'Perdemos' },
+    { etapas:['desistiu'], titulo:'Desistimos' }
   ];
   return `
     <div class="lic-topo">
@@ -28329,16 +28483,80 @@ function licCartaoProposta(l){
         <div class="lic-valor">${fmtMoney(t.venda)}</div>
         <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">lucro ${fmtMoney(t.lucro)}</div>
         ${l.etapa==='proposta' ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','proposta')">Abrir proposta →</button>
-            <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar</button>` : ''}
+            <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar</button>
+            <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
         ${l.etapa==='enviada' ? `<button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
             <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>
-            <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>` : ''}
+            <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>
+            <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
+        ${l.etapa==='desistiu' ? `<button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','proposta')">↩ Voltar a participar</button>
+            <button class="btn btn-sm" onclick="licApagarDeVez('${l.id}')">🗑 Apagar de vez</button>` : ''}
         ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
             ${licNotaPendente(l)>0?`<div style="font-size:11.5px;color:var(--negative);text-align:right;">falta dado da nota em ${licNotaPendente(l)} ite${licNotaPendente(l)===1?'m':'ns'}</div>`:''}` : ''}
         ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>` : ''}
       </div>
     </div>
   </div>`;
+}
+
+/* Desistir: sai da fila de trabalho, mas o que foi pesquisado continua
+   no histórico do produto — preço de fornecedor pesquisado tem valor na
+   próxima vez. O orçamento gerado some, porque proposta que não vai ser
+   enviada não é orçamento. */
+function licDesistir(id){
+  const l = licAchar(id); if(!l) return;
+  const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+  const virouVenda = orc && (orc.status==='convertido' || !!orc.vendaGeradaId);
+
+  if(virouVenda){
+    showToast('Esta já virou venda — não dá pra desistir. Cancele a venda primeiro, se for o caso.','error');
+    return;
+  }
+
+  confirmAction('Desistir desta licitação',
+    `Ela sai da fila de trabalho.` +
+    (orc ? ` O orçamento nº ${orc.numero} é apagado, porque proposta que não vai ser enviada não é orçamento.` : '') +
+    ` Os itens continuam em "Produtos de licitação" marcados como desistimos — o preço que você pesquisou serve na próxima.` +
+    ` Depois, se quiser sumir com tudo, use "Apagar de vez".`,
+    ()=>{
+      if(orc){
+        STATE.orcamentos = STATE.orcamentos.filter(o=>o.id!==orc.id);
+        l.orcamentoId = null;
+      }
+      l.etapa = 'desistiu';
+      l.status = 'Perdemos';
+      l.dataResultado = todayISO();
+      licRegistrar(l, 'Desistimos — não vamos participar.');
+      saveState(); licAberta=null; licTela=null; licAba='propostas';
+      renderPortalLicitacoes();
+      showToast('Desistiu. Continua no histórico dos produtos.','success');
+    }, 'Desistir');
+}
+
+/* Apagar de vez: some do portal E dos Produtos de licitação, porque a
+   lista de produtos é montada a partir dos itens das licitações. */
+function licApagarDeVez(id){
+  const l = licAchar(id); if(!l) return;
+  const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+  const virouVenda = orc && (orc.status==='convertido' || !!orc.vendaGeradaId);
+  if(virouVenda){
+    showToast('Esta virou venda — não dá pra apagar. O histórico fiscal depende dela.','error');
+    return;
+  }
+  const quantos = (l.itens||[]).length;
+  confirmAction('Apagar de vez',
+    `Apaga esta licitação inteira: sai das Propostas e também de "Produtos de licitação"` +
+    (quantos ? ` — ${quantos} ite${quantos===1?'m':'ns'} com o custo e o preço que você pesquisou` : '') +
+    (orc ? `, e o orçamento nº ${orc.numero}` : '') +
+    `. Não dá pra desfazer. Continuar?`,
+    ()=>{
+      if(orc) STATE.orcamentos = STATE.orcamentos.filter(o=>o.id!==orc.id);
+      licDescartadas().push(licChaveOportunidade(l));
+      STATE.licitacoes = STATE.licitacoes.filter(x=>x.id!==id);
+      saveState(); licAberta=null; licTela=null; licProdutoAberto=null;
+      renderPortalLicitacoes();
+      showToast('Apagada. Saiu também dos produtos de licitação.','success');
+    });
 }
 
 function licResultado(id, resultado){
@@ -28417,8 +28635,8 @@ function licPainelProdutos(){
           <tbody>
             ${lista.map(p=>{
               const u = p.usos[0] || {};
-              const sit = { ganhou:'🏆 Ganhou', perdeu:'Perdeu', enviado:'✈ Enviado', pendente:'Pendente' }[u.resultado] || '—';
-              const cor = u.resultado==='ganhou' ? 'var(--positive)' : u.resultado==='perdeu' ? 'var(--negative)' : 'var(--ink-soft)';
+              const sit = { ganhou:'🏆 Ganhou', perdeu:'Perdeu', desistiu:'Desistimos', enviado:'✈ Enviado', pendente:'Pendente' }[u.resultado] || '—';
+              const cor = u.resultado==='ganhou' ? 'var(--positive)' : (u.resultado==='perdeu'||u.resultado==='desistiu') ? 'var(--negative)' : 'var(--ink-soft)';
               return `<tr>
                 <td>${escapeHtml(p.nome)}</td>
                 <td>${escapeHtml(p.marca||'—')}</td>
@@ -28488,7 +28706,7 @@ function licFichaProduto(chave){
               <td style="text-align:right;font-family:var(--font-num);"><b>${fmtMoney(u.precoVenda)}</b></td>
               <td style="text-align:right;font-family:var(--font-num);color:var(--ink-faint);">${u.teto?fmtMoney(u.teto):'—'}</td>
               <td style="color:${u.resultado==='ganhou'?'var(--positive)':u.resultado==='perdeu'?'var(--negative)':'var(--ink-soft)'};">
-                ${ {ganhou:'🏆 Ganhou',perdeu:'Perdeu',enviado:'✈ Enviado',pendente:'Pendente'}[u.resultado] }</td>
+                ${ {ganhou:'🏆 Ganhou',perdeu:'Perdeu',desistiu:'Desistimos',enviado:'✈ Enviado',pendente:'Pendente'}[u.resultado] }</td>
               <td style="font-size:12px;">${escapeHtml(u.fornecedor||'—')}${u.link?` <a href="${escapeAttr(u.link)}" target="_blank" rel="noopener">🔗</a>`:''}</td>
             </tr>`).join('')}
           </tbody>
@@ -29173,6 +29391,37 @@ const LIC_VALORES_VAZIOS = new Set([
   'n/a','na','nao se aplica','não se aplica','nao consta','não consta','sem informacao',
   'sem informação','indefinido','a confirmar','aconfirmar','-','--','—','?','null','none'
 ]);
+/* "Unidade (o TR informa QTD., sem definir unidade de medida)" não é
+   unidade: é um comentário. O campo vale UND, CX, FD, PCT — e vai pra
+   nota fiscal, que não aceita frase. Fica a sigla; a explicação vai pra
+   observação do item. */
+const LIC_UNIDADES = ['UND','UN','UNID','CX','FD','PCT','PC','KG','G','L','ML','M','M2','M3',
+  'PAR','RL','SC','TN','DZ','JG','CJ','AMP','FR','GL','LT','BD','BL','KIT','RESMA','BOB'];
+/* o edital escreve por extenso; a gente usa a sigla, como no cadastro */
+const LIC_UNIDADE_POR_EXTENSO = {
+  UNIDADE:'UND', UNIDADES:'UND', CAIXA:'CX', CAIXAS:'CX', FARDO:'FD', FARDOS:'FD',
+  PACOTE:'PCT', PACOTES:'PCT', PECA:'PC', PECAS:'PC', QUILO:'KG', QUILOS:'KG',
+  QUILOGRAMA:'KG', GRAMA:'G', LITRO:'L', LITROS:'L', MILILITRO:'ML', METRO:'M',
+  ROLO:'RL', ROLOS:'RL', SACO:'SC', SACOS:'SC', DUZIA:'DZ', JOGO:'JG', CONJUNTO:'CJ',
+  FRASCO:'FR', GALAO:'GL', BALDE:'BD', BLOCO:'BL', TONELADA:'TN', BOBINA:'BOB',
+  AMPOLA:'AMP', LATA:'LT', RESMA:'RESMA', PARES:'PAR'
+};
+function licUnidadeLimpa(v){
+  const bruto = String(v==null?'':v).trim();
+  if(!bruto) return '';
+  const semAcento = bruto.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase();
+  /* 1) palavra por extenso vira a sigla */
+  for(const palavra of Object.keys(LIC_UNIDADE_POR_EXTENSO)){
+    if(new RegExp('(^|[^A-Z])'+palavra+'([^A-Z]|$)').test(semAcento)) return LIC_UNIDADE_POR_EXTENSO[palavra];
+  }
+  /* 2) sigla já escrita */
+  const achou = LIC_UNIDADES.find(u=>new RegExp('(^|[^A-Z0-9])'+u+'([^A-Z0-9]|$)').test(semAcento));
+  if(achou) return achou;
+  /* 3) a primeira palavra, curta */
+  const primeira = semAcento.replace(/[^A-Z0-9 ]/g,' ').trim().split(/\s+/)[0] || '';
+  return primeira.slice(0,6);
+}
+
 function licValorVazio(v){
   const s = String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .toLowerCase().replace(/[^a-z0-9\/ -]/g,'').trim();
@@ -29292,7 +29541,10 @@ function licAplicarRespostaIA(l, dado){
     const descLimpa = licLimparValor(ia.descricao);
     if(!it.descricao || it.descricao===l.objeto) it.descricao = descLimpa;
     if(!it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = descLimpa;
-    if(!it.unidade || it.unidade==='UND') it.unidade = ia.unidade || 'UND';
+    if(!it.unidade || it.unidade==='UND') it.unidade = licUnidadeLimpa(ia.unidade) || 'UND';
+    /* o que sobrou da frase da unidade vira observação, não se perde */
+    const unidadeBruta = String(ia.unidade||'').trim();
+    if(unidadeBruta.length > 8 && !it.observacoesEdital) it.observacoesEdital = unidadeBruta;
     if(!licNumDireto(it.qtd) || it.qtd===1) it.qtd = qtd;
     if(!licNumDireto(it.teto)){
       const total = licNumDireto(ia.valorTotalEstimado) || (licNumDireto(ia.valorUnitarioEstimado) * qtd);
@@ -29922,7 +30174,7 @@ function licComparacaoHtml(l){
         <b>📌 Já vendemos este produto antes.</b>
         <div class="hist">Em ${u.data?fmtDate(String(u.data).slice(0,10)):'—'}, para ${escapeHtml(u.cliente||u.orgao||'')}:
           custo <b>${fmtMoney(u.custoUnit)}</b>, vendemos por <b>${fmtMoney(u.precoVenda)}</b>
-          ${ {ganhou:'e ganhamos', perdeu:'e perdemos', enviado:'e está enviada', pendente:'(pendente)'}[u.resultado]||'' }.</div>
+          ${ {ganhou:'e ganhamos', perdeu:'e perdemos', desistiu:'e desistimos', enviado:'e está enviada', pendente:'(pendente)'}[u.resultado]||'' }.</div>
         ${h.perdido?`<div class="hist" style="color:var(--negative);">O vencedor daquela vez fechou em <b>${fmtMoney(h.perdido.valorResultado)}</b>${h.perdido.resultadoObs?` · ${escapeHtml(h.perdido.resultadoObs)}`:''}</div>`:''}
         <button class="btn btn-sm" style="margin-top:5px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(h.produto.chave)}')">Ver histórico deste produto</button>
       </div>`;
@@ -30155,7 +30407,7 @@ function licNovoItem(id, silencioso){
     descricaoProposta: l.itens.length===0 ? (l.objeto||'') : '',
     marca:'', modelo:'', unidade:'UND', qtd:1, teto: l.itens.length===0 ? (l.valorEstimado||0) : 0,
     custo:0, acessorios:0, freteNos:0, freteCliente:0, impostoPct:0,
-    comissaoVendedor:'', comissaoPct:0, precoVenda:0,
+    comissaoVendedor:'', comissaoPct:0, precoUnit:0,
     linkFornecedor:'', contatoFornecedor:'', obsCompra:''
   });
   if(!silencioso){ saveState(); renderPortalLicitacoes(); }
@@ -30170,9 +30422,9 @@ function licTelaPrecificar(l){
   const t = licTotalLicitacao(l);
   /* Item sem preço de venda ainda não é item no vermelho — é item que
      falta precificar. Misturar os dois faz o resumo mentir. */
-  const semPreco = l.itens.filter(it=>licNumDireto(it.precoVenda)<=0);
-  const itensRuins = l.itens.filter(it=>licNumDireto(it.precoVenda)>0 && licCustoItem(it).lucro<0);
-  const precificados = l.itens.filter(it=>licNumDireto(it.precoVenda)>0);
+  const semPreco = l.itens.filter(it=>licPrecoUnit(it)<=0);
+  const itensRuins = l.itens.filter(it=>licPrecoUnit(it)>0 && licCustoItem(it).lucro<0);
+  const precificados = l.itens.filter(it=>licPrecoUnit(it)>0);
   const fecha = semPreco.length===0 && precificados.length>0 &&
     (l.criterio==='global' ? t.lucro >= 0 : itensRuins.length===0);
 
@@ -30234,7 +30486,8 @@ function licTelaPrecificar(l){
 function licItemHtml(l, it, i){
   const c = licCustoItem(it);
   const faixa = 'lic-f' + ((i % 6) + 1);
-  const venda = licNumDireto(it.precoVenda);
+  const vendaUnit = licPrecoUnit(it);
+  const venda = licPrecoTotal(it);
   const teto = licNumDireto(it.teto);
   const piso = licPisoItem(it);
   const fecha = venda > 0 && c.lucro >= 0;
@@ -30252,8 +30505,15 @@ function licItemHtml(l, it, i){
         </div>
       </div>
       <div class="teto">
-        TETO DO EDITAL <b>${fmtMoney(teto)}</b>
-        <span style="font-size:11px;">acima disso, desclassifica</span>
+        TETO DO EDITAL
+        <b><input type="number" step="0.01" data-campo="teto" value="${teto||''}" placeholder="0,00"
+          title="O teto do edital. Corrija aqui se vier errado."
+          style="width:120px;text-align:right;border:1px solid transparent;background:transparent;
+                 font:inherit;font-size:16px;font-weight:700;font-family:var(--font-num);color:var(--ink);
+                 padding:1px 3px;border-radius:4px;"
+          onfocus="this.style.borderColor='var(--border)';this.style.background='#fff';"
+          onblur="this.style.borderColor='transparent';this.style.background='transparent';"></b>
+        <span style="font-size:11px;">${teto>0 && c.qtd>1 ? fmtMoney(teto/c.qtd)+' por '+escapeHtml((it.unidade||'unidade').toLowerCase())+' · ' : ''}acima disso, desclassifica</span>
       </div>
       ${l.itens.length>1?`<button class="btn btn-sm" onclick="licRemoverItem('${l.id}','${it.id}')">✕</button>`:''}
     </div>
@@ -30277,8 +30537,6 @@ function licItemHtml(l, it, i){
           <input type="text" data-campo="unidade" value="${escapeAttr(it.unidade||'UND')}"></div>
         <div><label>Quantidade</label>
           <input type="number" step="1" min="1" data-campo="qtd" value="${it.qtd||1}"></div>
-        <div><label>Teto do edital</label>
-          <input type="number" step="0.01" data-campo="teto" value="${teto||''}" placeholder="0,00"></div>
       </div>
 
       <div class="lic-grade">
@@ -30330,9 +30588,14 @@ function licItemHtml(l, it, i){
       </div>
 
       <div class="lic-grade" style="margin-top:12px;">
-        <div style="grid-column:1/-1;"><label>Preço de venda — é o que vai na proposta</label>
-          <input type="number" step="0.01" data-campo="precoVenda" value="${venda||''}" placeholder="0,00"
-            style="font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}"></div>
+        <div><label>Preço de venda <b>por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</b></label>
+          <input type="number" step="0.01" data-campo="precoUnit" value="${vendaUnit||''}" placeholder="0,00"
+            style="font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}">
+          <div class="dica">é o valor unitário que vai na proposta</div></div>
+        <div><label>Valor total do item</label>
+          <div style="padding:7px 0;font-size:17px;font-weight:600;font-family:var(--font-num);color:${temVenda?(fecha?'var(--positive)':'var(--negative)'):'var(--ink-faint)'};">
+            ${temVenda?fmtMoney(venda):'—'}</div>
+          <div class="dica">${c.qtd} × ${vendaUnit?fmtMoney(vendaUnit):'preço unitário'}</div></div>
       </div>
       <div class="lic-grade">
         <div><label>Link do fornecedor</label>
@@ -30361,7 +30624,7 @@ function licAvisoParecidos(parecidos, it){
       dif === 0 ? ' — mesmo custo da última vez'
       : dif > 0 ? ` — hoje está <b>${fmtMoney(dif)} mais caro</b> que da última vez`
       : ` — hoje está <b>${fmtMoney(Math.abs(dif))} mais barato</b> que da última vez`;
-    const res = {ganhou:'e ganhamos', perdeu:'e perdemos', enviado:'e está enviada', pendente:'(ainda pendente)'}[u.resultado]||'';
+    const res = {ganhou:'e ganhamos', perdeu:'e perdemos', desistiu:'e desistimos', enviado:'e está enviada', pendente:'(ainda pendente)'}[u.resultado]||'';
 
     /* O número mais útil que existe pra decidir o próximo lance: por
        quanto o vencedor fechou da última vez que perdemos este produto. */
@@ -30476,7 +30739,7 @@ function licTelaProposta(l){
           <tbody>
             ${l.itens.map((it,i)=>{
               const c = licCustoItem(it);
-              const unit = c.qtd>0 ? licNumDireto(it.precoVenda)/c.qtd : 0;
+              const unit = licPrecoUnit(it);
               return `<tr>
                 <td>${String(i+1).padStart(2,'0')}</td>
                 <td>${escapeHtml(it.descricaoProposta||it.descricao||'')}
@@ -30484,7 +30747,7 @@ function licTelaProposta(l){
                 <td>${escapeHtml(it.marca||'—')}${it.modelo?`<div style="font-size:11px;color:var(--ink-faint);">${escapeHtml(it.modelo)}</div>`:''}</td>
                 <td style="text-align:right;">${c.qtd}</td>
                 <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(unit)}</td>
-                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licNumDireto(it.precoVenda))}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licPrecoTotal(it))}</td>
               </tr>`;
             }).join('')}
             <tr><td colspan="5" style="text-align:right;font-weight:600;">Total da proposta</td>
@@ -30548,7 +30811,7 @@ function licSalvarCamposProposta(l){
 function licItemParaCarrinho(it){
   const c = licCustoItem(it);
   const qtd = c.qtd;
-  const total = licNumDireto(it.precoVenda);
+  const total = licPrecoTotal(it);
   return {
     produtoId: null,
     licitacao: true,
@@ -30556,7 +30819,7 @@ function licItemParaCarrinho(it){
     marca: it.marca || '',
     fornecedor: it.contatoFornecedor || '',
     custoUnit: qtd>0 ? (c.fixo/qtd) : 0,
-    precoUnit: qtd>0 ? (total/qtd) : total,
+    precoUnit: licPrecoUnit(it),
     qtd,
     origem: '', origemTipo: null, origemId: null, origemEndereco: ''
   };
@@ -30649,7 +30912,7 @@ async function licBaixarPasta(id){
     `Vendedor: ${l.vendedor||''}`,
     ``,
     `ITENS:`,
-    ...l.itens.map((it,i)=>`${i+1}. ${it.descricaoProposta||it.descricao} ${it.marca?'('+it.marca+')':''} — ${licCustoItem(it).qtd} ${it.unidade||'UND'} — ${fmtMoney(licNumDireto(it.precoVenda))}`),
+    ...l.itens.map((it,i)=>`${i+1}. ${it.descricaoProposta||it.descricao} ${it.marca?'('+it.marca+')':''} — ${licCustoItem(it).qtd} ${it.unidade||'UND'} — ${fmtMoney(licPrecoTotal(it))}`),
     ``,
     `O PDF da proposta é gerado pelo botão "Gerar proposta em PDF" e salvo por você na pasta.`
   ].join('\n');
@@ -30710,7 +30973,7 @@ function licTelaCompra(l){
                 <td>${escapeHtml(it.marca||'—')}</td>
                 <td style="text-align:right;">${c.qtd}</td>
                 <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(c.fixo)}</td>
-                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licNumDireto(it.precoVenda))}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licPrecoTotal(it))}</td>
                 <td style="font-size:12px;">${escapeHtml(it.contatoFornecedor||it.obsCompra||'—')}
                   ${it.linkFornecedor?`<br><a href="${escapeAttr(it.linkFornecedor)}" target="_blank" rel="noopener" style="color:var(--primary);">🔗 abrir</a>`:''}</td>
               </tr>`;
@@ -30736,7 +30999,7 @@ function licTelaCompra(l){
       ${l.itens.map(it=>{
         const chave = licChaveProduto(it.descricaoProposta||it.descricao, it.marca);
         return `<div class="lic-doc"><div><b>${escapeHtml(it.descricaoProposta||it.descricao||'')}</b>
-          <small>${escapeHtml(it.marca||'')} · custo ${fmtMoney(licCustoItem(it).total)} · propusemos ${fmtMoney(licNumDireto(it.precoVenda))}</small></div>
+          <small>${escapeHtml(it.marca||'')} · custo ${fmtMoney(licCustoItem(it).total)} · propusemos ${fmtMoney(licPrecoTotal(it))}</small></div>
           <button class="btn btn-sm" onclick="licVerProdutoDaPrecificacao('${escapeAttr(chave)}')">Histórico deste produto</button></div>`;
       }).join('')}
     </div>`}
@@ -30877,7 +31140,7 @@ function licNotaHtml(l){
               <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao||it.descricaoProposta||'')}</span>
               <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
                 ${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'—')} ·
-                ${fmtMoney(licNumDireto(it.precoVenda))}${it.marca?` · ${escapeHtml(it.marca)}`:''}
+                ${fmtMoney(licPrecoTotal(it))}${it.marca?` · ${escapeHtml(it.marca)}`:''}
               </div>
             </div>
             <div class="teto" style="text-align:right;">
@@ -31363,10 +31626,12 @@ function licLigarDetalhe(){
     if(!item) return;
     caixa.querySelectorAll('[data-campo]').forEach(inp2=>{
       const campo = inp2.dataset.campo;
-      const numerico = ['qtd','teto','custo','acessorios','freteNos','freteCliente','impostoPct','comissaoPct','precoVenda'].includes(campo);
+      const numerico = ['qtd','teto','custo','acessorios','freteNos','freteCliente','impostoPct','comissaoPct','precoUnit'].includes(campo);
       const aplicar = ()=>{
         const antes = JSON.stringify(item);
-        item[campo] = numerico ? licNumDireto(inp2.value) : inp2.value;
+        item[campo] = numerico ? licNumDireto(inp2.value)
+                   : campo==='unidade' ? licUnidadeLimpa(inp2.value)
+                   : inp2.value;
         if(campo==='comissaoVendedor' && inp2.value && !licNumDireto(item.comissaoPct)) item.comissaoPct = 3;
         if(JSON.stringify(item)===antes) return;
         saveState();
