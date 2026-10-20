@@ -26969,6 +26969,7 @@ function licNormalizar(l){
   if(!Array.isArray(l.documentosHabilitacao)) l.documentosHabilitacao = [];
   if(!Array.isArray(l.perguntasDistribuidor)) l.perguntasDistribuidor = [];
   if(!Array.isArray(l.emails)) l.emails = [];
+  if(!Array.isArray(l.arquivosLidos)) l.arquivosLidos = [];
   if(!Array.isArray(l.documentosNaoExigidos)) l.documentosNaoExigidos = [];
   if(l.respostaIATexto === undefined) l.respostaIATexto = '';
   if(!l.leituraManual || typeof l.leituraManual !== 'object') l.leituraManual = {};
@@ -28567,6 +28568,21 @@ function licTelaProcesso(l){
           </div>
         </div>`).join('')}
 
+      ${(()=>{
+        const esc = (l.arquivos||[]).filter(a=>/escaneado/i.test(a.erro||''));
+        const semTexto = (l.arquivos||[]).filter(a=>!a.texto && !/escaneado/i.test(a.erro||'') && /\.pdf$/i.test(a.nome||''));
+        if(esc.length===0 && semTexto.length===0) return '';
+        return `<div class="lic-doc aviso" style="display:block;margin-top:12px;">
+          <b>⚠️ ${esc.length+semTexto.length} arquivo${esc.length+semTexto.length===1?' é escaneado':'s são escaneados'} — só imagem, sem texto dentro</b>
+          <small>${esc.concat(semTexto).map(a=>escapeHtml(a.nome)).join(' · ')}</small>
+          <div style="margin-top:6px;font-size:12.5px;line-height:1.55;">
+            O ChatGPT consegue ler imagem, mas em documento escaneado longo é comum ele <b>pular página</b> —
+            e depois dizer "não achei" em vez de "não li". A pergunta já manda ele prestar contas de quais
+            páginas abriu. Mesmo assim, <b>confira no documento</b> o que vier sobre envio, prazo e habilitação.
+          </div>
+        </div>`;
+      })()}
+
       <div class="lic-passo">Passo 2 — a ida e volta com o ChatGPT</div>
       <h3 style="margin:0 0 4px;">Onde a análise acontece de verdade</h3>
       <p class="help-text">Você anexa o edital lá, ele lê e devolve tudo de uma vez: os campos da dispensa, os itens da precificação e a pesquisa de modelos. Aqui é só copiar e colar. O resto desta tela se preenche sozinho.</p>
@@ -28729,7 +28745,18 @@ function licTextoParaChatGpt(l){
   campo('Prazo final para proposta', l.dataEncerramentoProposta ? licDataHora(new Date(l.dataEncerramentoProposta)) : '');
   campo('Objeto (como veio do PNCP)', l.objeto);
 
-  return `Anexei o edital desta contratação e TODOS os anexos. Leia tudo, do começo ao fim.
+  const arqs = (l.arquivos||[]).filter(a=>a && a.nome);
+  const escaneados = arqs.filter(a=>/escaneado/i.test(a.erro||''));
+  const listaArq = arqs.length ? [
+    ``,
+    `ARQUIVOS QUE ESTOU ANEXANDO (${arqs.length}):`,
+    ...arqs.map(a=>`- ${a.nome}${a.paginas?` (${a.paginas} páginas)`:''}${/escaneado/i.test(a.erro||'')?' — ESTE É ESCANEADO, só imagem':''}`),
+    escaneados.length ? `` : null,
+    escaneados.length ? `ATENÇÃO: ${escaneados.length} destes arquivos são escaneados (imagem, sem texto).` : null,
+    escaneados.length ? `Você vai precisar LER A IMAGEM de cada página. Não pule página.` : null
+  ].filter(x=>x!==null).join('\n') : '';
+
+  return `Anexei o edital desta contratação e TODOS os anexos. Leia tudo, do começo ao fim.${listaArq}
 
 O QUE É
 ${d.join('\n')}
@@ -28762,7 +28789,15 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    Nunca invente, nunca deduza "o normal é 30 dias".
 5. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
    ilegível, diga qual em "trechosIlegiveis".
-6. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
+6. PRESTE CONTAS DO QUE VOCÊ LEU. Preencha "arquivosLidos" com uma
+   linha por arquivo que eu anexei: o nome, quantas páginas tem, se é
+   texto ou imagem escaneada, QUAIS PÁGINAS você realmente abriu, e o
+   que você não conseguiu ler.
+   Se você não leu um arquivo inteiro, diga. Se leu só algumas páginas,
+   diga quais. "Não li" é uma resposta aceitável e útil; "não achei",
+   quando na verdade você não leu, não é — me faz confiar num buraco.
+   Na dúvida entre as duas, diga "não li".
+7. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
    Se eu errar isso, não adianta nada o resto estar certo. Procure em
    TODO o documento — no aviso, no termo de referência, nos anexos, em
    parágrafo solto no meio do texto — a frase que diz para onde mandar a
@@ -28773,23 +28808,24 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    outra, dá um e-mail para onde mandar a proposta assinada. As duas
    coisas podem ser verdade ao mesmo tempo. Se achar as duas, descreva
    as duas.
-7. Varra o documento inteiro atrás de endereços de e-mail e diga para
+8. Varra o documento inteiro atrás de endereços de e-mail e diga para
    que serve cada um. Perder o e-mail certo me faz perder a dispensa.
    Se o edital tiver um único e-mail e não disser claramente para que
    serve, diga isso em vez de chutar a finalidade.
-8. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
+9. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
    página ("Aviso, item 6.2, p. 4"). Sem isso eu não consigo conferir.
-9. Antes de fechar a resposta, confira item por item desta lista:
+10. Antes de fechar a resposta, confira item por item desta lista:
    - o número de itens bate com o do edital?
    - o número de documentos de habilitação bate com a cláusula de
      habilitação?
    - "comoEnviarProposta" está preenchido com uma frase do edital?
    - todos os e-mails do documento estão em "emails"?
+   - "arquivosLidos" tem uma linha para CADA arquivo que eu anexei?
    - prazo de entrega, prazo de pagamento e validade da proposta estão
      preenchidos ou registrados como não encontrados?
    Se faltar qualquer um, volte ao documento e complete antes de
    responder. É melhor demorar do que me entregar resposta vaga.
-10. Se o que eu anexei não for o edital completo, diga isso logo no
+11. Se o que eu anexei não for o edital completo, diga isso logo no
    "resumoDaDecisao", diga QUAL parte falta, e marque como
    "não encontrado" tudo que dependeria dela — não deduza.
 
@@ -28845,6 +28881,10 @@ Use ponto como separador decimal nos números e não escreva "R$".
   "naoEncontrado": [],
   "editalSilente": [],
   "trechosIlegiveis": [],
+
+  "arquivosLidos": [
+    { "arquivo": "", "paginas": 0, "tipo": "", "paginasLidas": "", "naoConsegui": "" }
+  ],
 
   "contradicoes": [
     { "assunto": "", "versaoA": "", "fonteA": "", "versaoB": "", "fonteB": "" }
@@ -29123,6 +29163,22 @@ function licLimparValor(v){
   return v.replace(LIC_RUIDO_NO_VALOR, ' ').replace(/\s{2,}/g,' ').trim();
 }
 
+/* A IA às vezes escreve o NOME DO MARCADOR dentro do campo —
+   "naoEncontrado", "editalSilente", "não informado", "N/A" — em vez de
+   deixar vazio e registrar na lista. Isso aparecia na tela como se
+   fosse o valor. Aqui vira vazio, e o campo entra na lista certa. */
+const LIC_VALORES_VAZIOS = new Set([
+  'naoencontrado','nao encontrado','não encontrado','naoachei','nao achei','não achei',
+  'editalsilente','edital silente','nao informado','não informado','naoinformado',
+  'n/a','na','nao se aplica','não se aplica','nao consta','não consta','sem informacao',
+  'sem informação','indefinido','a confirmar','aconfirmar','-','--','—','?','null','none'
+]);
+function licValorVazio(v){
+  const s = String(v==null?'':v).normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().replace(/[^a-z0-9\/ -]/g,'').trim();
+  return s === '' || LIC_VALORES_VAZIOS.has(s);
+}
+
 function licSimNao(v){
   if(v === true) return 'Sim';
   if(v === false) return 'Não';
@@ -29153,7 +29209,13 @@ function licAplicarRespostaIA(l, dado){
   let preenchidos = 0;
 
   const naMao = l.leituraManual || {};
+  const faltaram = [];
   LIC_CAMPOS_LEITURA.forEach(c=>{
+    if(licValorVazio(d[c.id])){
+      /* campo com marcador no lugar do valor: trata como não achado */
+      if(d[c.id] != null && String(d[c.id]).trim() !== '') faltaram.push(c.id);
+      return;
+    }
     const v = licSimNao(d[c.id]);
     if(!v) return;
     /* o que ela escreveu à mão manda sempre; o que veio de uma resposta
@@ -29169,8 +29231,10 @@ function licAplicarRespostaIA(l, dado){
   const manter = (atual, novo, filtro)=>
     (ehContinuacao || !Array.isArray(novo)) ? (atual||[]) : novo.filter(filtro||(x=>!!x));
   l.naoEncontrado = manter(l.naoEncontrado, dado.naoEncontrado);
+  faltaram.forEach(id=>{ if(!l.naoEncontrado.includes(id)) l.naoEncontrado.push(id); });
   l.editalSilente = manter(l.editalSilente, dado.editalSilente);
   l.trechosIlegiveis = manter(l.trechosIlegiveis, dado.trechosIlegiveis);
+  l.arquivosLidos = manter(l.arquivosLidos, dado.arquivosLidos, x=>x && x.arquivo);
   l.emails = manter(l.emails, dado.emails, x=>x && x.endereco);
   /* Se ele listou os e-mails mas deixou o campo da proposta vazio, a
      informação existe — é só não ter sido copiada. Foi exatamente o que
@@ -29349,6 +29413,8 @@ function licLeituraHtml(l){
         <b>Leitura do ChatGPT:</b> ${escapeHtml(l.resumoDaDecisao.porque)}
       </div>`:''}
 
+    ${licAvisoNaoLeu(l)}
+
     ${licPendenciasHtml(l)}
 
     ${(l.contradicoes||[]).length ? `
@@ -29421,6 +29487,129 @@ function licLeituraHtml(l){
         :'<span style="align-self:center;font-size:11.5px;color:var(--warning);">preenchido pela leitura de reserva — confira tudo</span>'}
     </div>
   `;
+}
+
+/* Quando a resposta volta sem dizer COMO SE ENVIA A PROPOSTA, quase
+   sempre não é que a informação não exista: é que ele não abriu o aviso.
+   Dá pra provar olhando as fontes que ele citou — se todas são do Termo
+   de Referência, ele leu um documento e deixou o outro. Isso tem que
+   aparecer em letra grande, não como um campo amarelo no meio de vinte. */
+function licFontesCitadas(l){
+  return Object.values(l.fontes||{}).filter(Boolean)
+    .concat((l.documentosHabilitacao||[]).map(d=>d.fonte).filter(Boolean))
+    .concat((l.emails||[]).map(e=>e.fonte).filter(Boolean))
+    .map(f=>String(f));
+}
+function licSoLeuOTr(l){
+  const fontes = licFontesCitadas(l);
+  if(fontes.length < 3) return false;
+  const doTr = fontes.filter(f=>/termo de refer|^tr[,. ]/i.test(f)).length;
+  return doTr === fontes.length;
+}
+
+function licAvisoNaoLeu(l){
+  if(!l.respostaIA) return '';
+  const leitura = l.leitura || {};
+  const semEnvio = !leitura.comoEnviarProposta && !leitura.meioEnvio && !leitura.emailProposta;
+  const soTr = licSoLeuOTr(l);
+  const lidos = l.arquivosLidos || [];
+  const naoLeuAlgum = lidos.filter(a=>a.naoConsegui && String(a.naoConsegui).trim());
+
+  if(!semEnvio && !soTr && naoLeuAlgum.length===0){
+    if(lidos.length===0) return '';
+    return `
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer;font-size:12.5px;color:var(--primary);">
+          O que ele leu — ${lidos.length} arquivo${lidos.length===1?'':'s'}</summary>
+        <div style="margin-top:6px;">
+          ${lidos.map(a=>`<div class="lic-doc ok"><div><b>${escapeHtml(a.arquivo||'')}</b>
+            <small>${a.paginas?`${a.paginas} páginas · `:''}${escapeHtml(a.tipo||'')}${a.paginasLidas?` · leu ${escapeHtml(String(a.paginasLidas))}`:''}</small></div></div>`).join('')}
+        </div>
+      </details>`;
+  }
+
+  const motivos = [];
+  if(semEnvio) motivos.push('não disse <b>como enviar a proposta</b> — nem o meio, nem o e-mail, nem a cláusula');
+  if(soTr) motivos.push('citou <b>só o Termo de Referência</b> — nenhuma fonte do aviso, que é onde o envio costuma estar');
+  naoLeuAlgum.forEach(a=>motivos.push(`disse que não conseguiu ler <b>${escapeHtml(a.arquivo||'um arquivo')}</b>: ${escapeHtml(a.naoConsegui)}`));
+
+  return `
+    <div class="lic-doc falta" style="display:block;margin-bottom:12px;">
+      <b>⛔ Esta análise tem buraco — provavelmente ele não leu o edital inteiro</b>
+      <div style="margin-top:6px;font-size:12.5px;line-height:1.6;">
+        ${motivos.map(m=>'· '+m).join('<br>')}
+      </div>
+      <div style="margin-top:8px;font-size:12.5px;">
+        <b>"Não achei" e "não li" são coisas diferentes.</b> Antes de confiar nesta análise, confira no
+        documento o que está em amarelo — principalmente envio, prazo e habilitação.
+      </div>
+      ${lidos.length ? `<div style="margin-top:8px;font-size:12px;color:var(--ink-soft);">
+        O que ele declarou ter lido: ${lidos.map(a=>escapeHtml(a.arquivo||'')+(a.paginasLidas?` (${escapeHtml(String(a.paginasLidas))})`:'')).join(' · ')}</div>`
+        : `<div style="margin-top:8px;font-size:12px;color:var(--ink-soft);">Ele nem disse quais arquivos leu.</div>`}
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="licPedirOQueFaltou('${l.id}')">🔁 Pedir de novo só o que faltou</button>
+        <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">✎ Preencher à mão</button>
+      </div>
+    </div>`;
+}
+
+/* Pergunta curta, só dos campos que voltaram vazios, nomeando cada um e
+   dizendo onde costuma estar. Pra ela não refazer a pergunta inteira. */
+const LIC_ONDE_COSTUMA_ESTAR = {
+  comoEnviarProposta:'no aviso, na cláusula "ENTREGA DA PROPOSTA" ou "DO ENVIO"',
+  meioEnvio:'na mesma cláusula do envio',
+  emailProposta:'na cláusula do envio da proposta',
+  portal:'na cláusula do envio, ou no cabeçalho do aviso',
+  dataHoraLimite:'no aviso, junto das datas de recebimento',
+  dataHoraSessao:'no aviso',
+  validade:'no termo de referência ou no modelo de proposta',
+  prazoEntrega:'no termo de referência, na cláusula de entrega',
+  prazoPagamento:'no termo de referência ou na minuta do contrato',
+  localEntrega:'no termo de referência',
+  exigeCadastro:'no aviso, nas condições de participação',
+  mepp:'no aviso, nas condições de participação',
+  criterio:'no objeto, no aviso e no termo de referência — confira os dois',
+  garantia:'no termo de referência',
+  multas:'na minuta do contrato'
+};
+
+function licPedirOQueFaltou(id){
+  const l = licAchar(id); if(!l) return;
+  const leitura = l.leitura || {};
+  const silente = new Set(l.editalSilente || []);
+  const faltando = LIC_CAMPOS_LEITURA.filter(c=>!leitura[c.id] && !silente.has(c.id));
+  if(faltando.length===0){ showToast('Não faltou campo nenhum.','info'); return; }
+
+  const txt = [
+'Continuando a mesma dispensa, com os MESMOS arquivos que já te anexei.',
+'',
+`Você deixou ${faltando.length} campo${faltando.length===1?'':'s'} em branco. Para cada um abaixo, volte`,
+'ao documento e procure DE NOVO, página por página, inclusive nas páginas',
+'escaneadas. Não responda de memória.',
+'',
+'CAMPOS QUE FALTARAM:',
+...faltando.map(c=>`- ${c.id}  (${c.rotulo})` + (LIC_ONDE_COSTUMA_ESTAR[c.id] ? ` — costuma estar ${LIC_ONDE_COSTUMA_ESTAR[c.id]}` : '')),
+'',
+'Para CADA um, responda uma destas três coisas:',
+'  a) o valor, com a cláusula e a página de onde tirou;',
+'  b) "o edital não trata disso", se você leu e ele realmente não fala;',
+'  c) "não li esta parte", se você não abriu as páginas onde isso estaria.',
+'',
+'A letra (c) é uma resposta válida e eu prefiro ela a um palpite. O que eu',
+'não aceito é "não achei" quando na verdade a página não foi lida.',
+'',
+'Responda SOMENTE com este JSON:',
+'{',
+'  "dispensa": { ' + faltando.map(c=>`"${c.id}": ""`).join(', ') + ' },',
+'  "fontes": { },',
+'  "editalSilente": [],',
+'  "naoLi": [],',
+'  "arquivosLidos": [ { "arquivo": "", "paginas": 0, "tipo": "", "paginasLidas": "", "naoConsegui": "" } ]',
+'}'
+  ].join('\n');
+
+  licCopiarNaMao(txt);
+  showToast(`Pergunta copiada — ${faltando.length} campo${faltando.length===1?'':'s'}. Cole na mesma conversa do ChatGPT.`,'success');
 }
 
 function licEditarLeitura(id){
