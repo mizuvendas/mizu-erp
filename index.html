@@ -28336,7 +28336,7 @@ function licPainelOportunidades(){
       <div class="acoes">
         ${(lista.length + licTodas().length + licDescartadas().length) > 0
           ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
-        ${licLixeira().length ? `<button class="btn" onclick="licAbrirLixeira()" title="Dispensas descartadas ou apagadas nos últimos 30 dias">🗑️ Lixeira (${licLixeira().length})</button>` : ''}
+        <button class="btn" onclick="licAbrirLixeira()" title="Dispensas descartadas ou apagadas nos últimos 30 dias — dá pra restaurar">🗑️ Lixeira${licLixeira().length?` (${licLixeira().length})`:''}</button>
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirRepresentante()" title="Quem assina pela empresa — preenche uma vez">✍️ Representante</button>
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
@@ -28868,9 +28868,12 @@ function licAbrirLixeira(redesenhar){
 
       ${lix.length === 0
         ? `<div class="lic-vazio">A lixeira está vazia.</div>
-           <div class="help-text" style="margin-top:8px;">Se você apagou alguma coisa <b>antes</b> desta atualização,
-             ela não passou por aqui e não dá pra restaurar. Nesse caso, veja se a outra máquina ainda tem —
-             e <b>exporte o backup nela antes de abrir o sistema</b>, porque ao sincronizar ela também apaga.</div>`
+           <div class="lic-doc aviso" style="display:block;margin-top:10px;">
+             <b>Apagou antes desta atualização?</b>
+             <small>A lixeira começou a guardar cópias agora. O que saiu antes não passou por aqui — mas,
+               se veio do PNCP, dá pra trazer de volta <b>reimportando o mesmo arquivo</b>. O que segura é a
+               lista de descartadas: enquanto o número estiver nela, a importação pula.</small>
+           </div>`
         : lix.map(x=>{
             const l = x.registro || {};
             const itens = (l.itens||[]).length;
@@ -28890,12 +28893,74 @@ function licAbrirLixeira(redesenhar){
             </div>`;
           }).join('')}
 
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+          Tirar da lista de descartadas</div>
+        <p class="help-text" style="margin-top:0;">Digite o número da dispensa (ex.: <b>6539-0/2026</b> ou <b>7098</b>).
+          Ela sai da lista de descartadas e volta a aparecer <b>na próxima vez que você importar o arquivo do PNCP</b>.
+          ${licDescartadas().length} na lista hoje.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input type="text" id="lic-lixo-busca" placeholder="número da dispensa ou do controle PNCP"
+            style="flex:1;min-width:240px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+          <button class="btn btn-sm btn-primary" onclick="licTirarDasDescartadas()">🔎 Procurar e tirar</button>
+        </div>
+        <div id="lic-lixo-achados" style="margin-top:8px;"></div>
+        ${licDescartadas().length ? `<div class="help-text" style="margin-top:8px;">
+          Se preferir, <button class="btn btn-sm" onclick="licRestaurarDescartadas()">↩ limpar a lista inteira</button>
+          — aí todas as descartadas voltam na próxima importação.</div>` : ''}
+      </div>
+
       <div class="modal-actions">
         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
       </div>
     </div>`;
   document.body.appendChild(m);
+  const busca = m.querySelector('#lic-lixo-busca');
+  if(busca) busca.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); licTirarDasDescartadas(); } });
   if(redesenhar) renderPortalLicitacoes();
+}
+
+/* A dispensa que ela apagou antes da lixeira existir ainda pode voltar
+   pelo arquivo do PNCP — o que impede é a chave estar na lista de
+   descartadas. Aqui ela tira só aquela, sem limpar a lista toda. */
+function licTirarDasDescartadas(){
+  const campo = document.getElementById('lic-lixo-busca');
+  const onde = document.getElementById('lic-lixo-achados');
+  if(!campo || !onde) return;
+  const termo = String(campo.value||'').trim();
+  if(termo.length < 3){
+    onde.innerHTML = `<div class="help-text">Digite pelo menos 3 caracteres do número.</div>`;
+    return;
+  }
+  const alvo = termo.toLowerCase();
+  const soDigitos = termo.replace(/\D/g,'');
+  const achados = licDescartadas().filter(k=>{
+    const t = String(k).toLowerCase();
+    if(t.includes(alvo)) return true;
+    return soDigitos.length >= 3 && String(k).replace(/\D/g,'').includes(soDigitos);
+  });
+
+  if(achados.length === 0){
+    onde.innerHTML = `<div class="lic-doc falta" style="display:block;">
+      <b>Não achei "${escapeHtml(termo)}" na lista de descartadas.</b>
+      <small>Pode ser que ela tenha sido apagada sem passar pela lista, ou que o número seja outro.
+        Tente só os dígitos (ex.: 7098), ou importe o arquivo do PNCP e veja se ela volta sozinha.</small>
+    </div>`;
+    return;
+  }
+
+  onde.innerHTML = achados.map(k=>`
+    <div class="lic-doc">
+      <div><b>${escapeHtml(String(k).slice(0,90))}</b><small>está na lista de descartadas</small></div>
+      <button class="btn btn-sm btn-primary" onclick="licLiberarDescartada(${JSON.stringify(k).replace(/"/g,'&quot;')})">↩️ Tirar da lista</button>
+    </div>`).join('');
+}
+
+function licLiberarDescartada(chave){
+  STATE.licitacoesDescartadas = licDescartadas().filter(k => k !== chave);
+  saveState();
+  licAbrirLixeira(true);
+  showToast('Tirada da lista. Importe o arquivo do PNCP de novo que ela reaparece nas Oportunidades.','success');
 }
 
 function licRestaurarDescartadas(){
