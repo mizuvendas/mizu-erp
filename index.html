@@ -26742,6 +26742,61 @@ function licInjetarEstilo(){
   .lic-topo .sub{font-size:12.5px;color:var(--ink-soft);}
   .lic-topo .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 
+  /* ---- cartão da triagem ---- */
+  .lic-op{display:grid;grid-template-columns:28px 1fr 190px;gap:0;
+    background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+    margin-bottom:10px;overflow:hidden;transition:border-color .12s, box-shadow .12s;}
+  .lic-op:hover{border-color:#C9D2D8;}
+  .lic-op.sel{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary);}
+  .lic-op.urgente{border-left:4px solid var(--negative);}
+  .lic-op.vencida{opacity:.62;}
+  .lic-op > .marca{display:flex;align-items:flex-start;justify-content:center;padding:16px 0 0;cursor:pointer;}
+  .lic-op > .corpo{padding:14px 16px 13px 4px;min-width:0;}
+  .lic-op > .lado{border-left:1px solid var(--border);background:#FBFCFD;
+    padding:14px 14px;display:flex;flex-direction:column;gap:10px;justify-content:space-between;}
+
+  .lic-op .titulo{display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:5px;}
+  .lic-op .portal{font-size:11px;font-weight:700;letter-spacing:.03em;padding:3px 9px;border-radius:5px;
+    background:var(--primary-escuro);color:#fff;}
+  .lic-op .num{font-size:11.5px;font-weight:600;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.03em;}
+  .lic-op .ctrl{font-size:10.5px;color:var(--ink-faint);font-family:var(--font-num);}
+  .lic-op h4{margin:0 0 5px;font-size:14.5px;line-height:1.38;font-weight:600;color:var(--ink);}
+  .lic-op .quem{font-size:12.5px;color:var(--ink-soft);line-height:1.4;}
+  .lic-op .onde{font-size:12.5px;color:var(--ink-soft);margin-top:2px;}
+  .lic-op .onde b{color:var(--ink);} .lic-op .onde .aqui{color:var(--positive);}
+  .lic-op .onde .medindo{color:var(--ink-faint);font-style:italic;}
+
+  .lic-op .etiquetas{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px;}
+  .lic-op .etiquetas span{font-size:11px;padding:2px 9px;border-radius:20px;
+    background:#F2F5F7;color:var(--ink-soft);}
+  .lic-op .abre{margin-top:9px;font-size:12px;color:var(--warning);
+    background:var(--warning-soft);border-radius:var(--radius-sm);padding:5px 9px;display:inline-block;}
+  .lic-op .compl{margin-top:9px;font-size:12px;}
+  .lic-op .compl summary{cursor:pointer;color:var(--primary);}
+  .lic-op .compl div{margin-top:5px;color:var(--ink-soft);line-height:1.5;
+    background:#FAFBFC;border-radius:var(--radius-sm);padding:8px 10px;max-height:150px;overflow:auto;}
+  .lic-op .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
+  .lic-op .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
+    color:var(--primary);text-decoration:none;background:#fff;}
+  .lic-op .links a:hover{border-color:var(--primary);background:var(--primary-soft);}
+  .lic-op .links .semlink{font-size:11.5px;color:var(--ink-faint);}
+
+  .lic-op .valor{font-size:19px;font-weight:700;font-family:var(--font-num);line-height:1.1;color:var(--ink);}
+  .lic-op .valor-rot{font-size:11px;color:var(--ink-faint);margin-top:-6px;}
+  .lic-op .prazo .quando{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  .lic-op .cron{display:inline-block;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:20px;
+    background:var(--warning-soft);color:var(--warning);}
+  .lic-op .cron.urg{background:var(--negative-soft);color:var(--negative);}
+  .lic-op .cron.fim{background:#F2F5F7;color:var(--ink-faint);}
+  .lic-op .decidir{display:flex;flex-direction:column;gap:6px;}
+  .lic-op .decidir .btn{width:100%;}
+  @media(max-width:900px){
+    .lic-op{grid-template-columns:28px 1fr;}
+    .lic-op > .lado{grid-column:1/-1;border-left:none;border-top:1px solid var(--border);
+      flex-direction:row;align-items:center;flex-wrap:wrap;gap:12px;}
+    .lic-op .decidir{flex-direction:row;margin-left:auto;}
+    .lic-op .decidir .btn{width:auto;}
+  }
   .lic-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
     padding:12px 14px;margin-bottom:10px;}
   .lic-card.sel{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary);}
@@ -27155,7 +27210,13 @@ function licPainelOportunidades(){
     return (a.distanciaKm==null?99999:a.distanciaKm) - (b.distanciaKm==null?99999:b.distanciaKm);
   });
 
-  const ate24 = lista.filter(o=>{ const p = licPrazoInfo(o); return !p.encerrada && p.classe==='urg'; }).length;
+  /* "encerra em 24h" tem que ser 24h de verdade — a classe 'urg' também
+     pinta o que falta 2 dias, e contar isso aqui inflava o número. */
+  const ate24 = lista.filter(o=>{
+    const p = licPrazoInfo(o);
+    return !p.encerrada && p.quando && (p.quando.getTime() - Date.now()) < 86400000;
+  }).length;
+  const jaVencidas = lista.filter(o=>licPrazoInfo(o).encerrada).length;
   const cidade = (STATE.config.licitacoesArea && STATE.config.licitacoesArea.municipio) || 'Rio Verde/GO';
 
   return `
@@ -27169,7 +27230,7 @@ function licPainelOportunidades(){
         ${(lista.length + licTodas().length + licDescartadas().length) > 0
           ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
-        <button class="btn" onclick="licAbrirBuscaPNCP()">🔎 Buscar no PNCP</button>
+        <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
         <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
         <input type="file" id="lic-arquivo-pncp" accept=".xlsx,.xls,.csv,.json" style="display:none;">
       </div>
@@ -27178,7 +27239,7 @@ function licPainelOportunidades(){
     <div class="kpi-row">
       <div class="kpi-card"><div class="kpi-label">Aguardando triagem</div><div class="kpi-value">${lista.length}</div><div class="kpi-sub">importadas, não decididas</div></div>
       <div class="kpi-card"><div class="kpi-label">Encerra em até 24h</div><div class="kpi-value ${ate24?'negative':''}">${ate24}</div><div class="kpi-sub">decidir hoje ou perde</div></div>
-      <div class="kpi-card"><div class="kpi-label">Descartadas</div><div class="kpi-value">${licDescartadas().length}</div><div class="kpi-sub">não voltam na importação</div></div>
+      <div class="kpi-card"><div class="kpi-label">Prazo já vencido</div><div class="kpi-value">${jaVencidas}</div><div class="kpi-sub">dá pra tirar da lista</div></div>
       <div class="kpi-card"><div class="kpi-label">Referência de distância</div><div class="kpi-value" style="font-size:18px;">${escapeHtml(cidade)}</div><div class="kpi-sub">de onde medimos</div></div>
     </div>
 
@@ -27199,7 +27260,7 @@ function licPainelOportunidades(){
 
       ${filtradas.length===0 ? `<div class="lic-vazio">
           ${lista.length===0
-            ? 'Nenhuma oportunidade aguardando. Importe o arquivo que você baixou no PNCP pra começar.'
+            ? 'Nenhuma oportunidade aguardando. Importe o arquivo de resultados que você baixou no PNCP pra começar.<div style="margin-top:10px;"><button class="btn btn-sm" onclick="licAbrirBuscaPNCP()">🔎 ou buscar direto no PNCP</button></div>'
             : 'Nenhuma oportunidade bate com essa busca.'}
         </div>` : filtradas.map(o=>licCartaoOportunidade(o)).join('')}
 
@@ -27248,46 +27309,188 @@ function licComecarDoZero(){
     });
 }
 
+/* =========================================================
+   O QUE APARECE NO CARTÃO DA TRIAGEM
+   O arquivo do PNCP traz 55 colunas e a maioria não ajuda a decidir
+   se vale participar. Então o cartão mostra um conjunto curto por
+   padrão, e ela escolhe o resto no ⚙️ ao lado do importar.
+   ========================================================= */
+const LIC_CAMPOS_CARTAO = [
+  { id:'controle',   rotulo:'Nº de controle do PNCP',  padrao:false },
+  { id:'numero',     rotulo:'Nº da contratação',       padrao:true  },
+  { id:'orgao',      rotulo:'Órgão',                   padrao:true  },
+  { id:'unidade',    rotulo:'Unidade compradora',      padrao:false },
+  { id:'cidade',     rotulo:'Cidade e UF',             padrao:true  },
+  { id:'distancia',  rotulo:'Distância daqui',         padrao:true  },
+  { id:'plataforma', rotulo:'Onde é a disputa',        padrao:true  },
+  { id:'modalidade', rotulo:'Modalidade',              padrao:true  },
+  { id:'disputa',    rotulo:'Modo de disputa',         padrao:false },
+  { id:'srp',        rotulo:'Registro de preços',      padrao:false },
+  { id:'situacao',   rotulo:'Situação no PNCP',        padrao:false },
+  { id:'publicacao', rotulo:'Data de publicação',      padrao:false },
+  { id:'abertura',   rotulo:'Quando abre para proposta', padrao:false },
+  { id:'valor',      rotulo:'Valor estimado',          padrao:true  },
+  { id:'links',      rotulo:'Os três links',           padrao:true  },
+  { id:'complemento',rotulo:'Informação complementar', padrao:false },
+  { id:'amparo',     rotulo:'Amparo legal',            padrao:false }
+];
+
+function licCampos(){
+  if(!STATE.config.licitacoesCampos){
+    const p = {};
+    LIC_CAMPOS_CARTAO.forEach(c=>{ p[c.id] = c.padrao; });
+    STATE.config.licitacoesCampos = p;
+  }
+  return STATE.config.licitacoesCampos;
+}
+function licMostra(campo){ return licCampos()[campo] !== false && licCampos()[campo] !== undefined ? !!licCampos()[campo] : false; }
+
+function licAbrirCamposCartao(){
+  const atual = licCampos();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(560px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">O que mostrar na triagem</h3>
+      <p class="help-text">O arquivo do PNCP traz muito campo que não ajuda a decidir. Marque só o que você olha na hora de dizer sim ou não — o resto continua guardado e aparece quando você abrir o processo.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 14px;margin:12px 0;">
+        ${LIC_CAMPOS_CARTAO.map(c=>`
+          <label style="display:flex;gap:8px;align-items:center;font-size:13.5px;padding:5px 0;cursor:pointer;">
+            <input type="checkbox" data-campo="${c.id}" ${atual[c.id]?'checked':''}>
+            ${escapeHtml(c.rotulo)}
+          </label>`).join('')}
+      </div>
+      <div class="help-text">O objeto e o prazo aparecem sempre — sem eles não dá pra decidir nada.</div>
+      <div class="modal-actions">
+        <button class="btn" id="lic-campos-padrao">Voltar ao padrão</button>
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-campos-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-campos-padrao').onclick = ()=>{
+    m.querySelectorAll('[data-campo]').forEach(i=>{
+      const c = LIC_CAMPOS_CARTAO.find(x=>x.id===i.dataset.campo);
+      i.checked = !!(c && c.padrao);
+    });
+  };
+  m.querySelector('#lic-campos-ok').onclick = ()=>{
+    const novo = {};
+    m.querySelectorAll('[data-campo]').forEach(i=>{ novo[i.dataset.campo] = i.checked; });
+    STATE.config.licitacoesCampos = novo;
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Pronto — a triagem agora mostra só o que você marcou.','success');
+  };
+}
+
+/* ---------------------------------------------------------
+   O cartão
+   --------------------------------------------------------- */
 function licCartaoOportunidade(o){
   const p = licPrazoInfo(o);
   const sel = licSelecionadas.has(o.id);
+  const ver = licCampos();
   const perto = o.distanciaKm != null && o.distanciaKm <= 5;
+  const abre = o.dataAberturaProposta ? new Date(o.dataAberturaProposta) : null;
+  const aindaNaoAbriu = abre && !isNaN(abre.getTime()) && abre.getTime() > Date.now();
+
+  const links = [
+    o.linkSistemaOrigem ? { t: ver.plataforma ? licNomeDoPortal(o) : 'Plataforma de origem', u: o.linkSistemaOrigem } : null,
+    (o.linkPncp || o.linkEdital) ? { t: 'Edital no PNCP', u: o.linkPncp || o.linkEdital } : null,
+    o.linkProcesso ? { t: 'Processo eletrônico', u: o.linkProcesso } : null
+  ].filter(Boolean);
+
+  /* a linha de identificação, montada só com o que ela deixou ligado */
+  const identidade = [];
+  if(ver.orgao && o.orgao) identidade.push(escapeHtml(o.orgao));
+  if(ver.unidade && o.unidade) identidade.push(escapeHtml(o.unidade));
+
+  const lugar = [];
+  if(ver.cidade && o.municipioNome) lugar.push(`${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`);
+  if(ver.distancia){
+    if(o.distanciaKm != null) lugar.push(perto ? '<b class="aqui">na nossa cidade</b>' : `<b>${o.distanciaKm} km</b>`);
+    else if(licCalculandoDistancia) lugar.push('<span class="medindo">medindo…</span>');
+  }
+
+  const etiquetas = [];
+  if(ver.modalidade && o.modalidadeNome) etiquetas.push({ t:o.modalidadeNome });
+  if(ver.disputa && o.modoDisputa) etiquetas.push({ t:o.modoDisputa });
+  if(ver.srp && o.srp) etiquetas.push({ t:'Registro de preços' });
+  if(ver.situacao && o.situacao) etiquetas.push({ t:o.situacao });
+  if(ver.publicacao && o.dataPublicacao) etiquetas.push({ t:'Publicada '+fmtDate(o.dataPublicacao) });
+  if(ver.amparo && o.amparoLegal) etiquetas.push({ t:o.amparoLegal });
+
   return `
-  <div class="lic-card ${sel?'sel':''}">
-    <div class="lic-linha">
-      <div class="esq">
-        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
-          <input type="checkbox" ${sel?'checked':''} onchange="licMarcar('${o.id}', this.checked)" style="margin-top:4px;">
-          <span style="flex:1;">
-            <span class="ctrl">${escapeHtml(o.numeroControlePNCP || o.numero || '')}</span>
-            <div class="obj">${escapeHtml(o.objeto||'(sem descrição)')}</div>
-            <div class="meta">${escapeHtml(o.orgao||'')}${o.municipioNome?` · ${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`:''}</div>
-          </span>
-        </label>
-        <div class="lic-tags">
-          ${o.distanciaKm!=null ? `<span class="lic-tag ${perto?'perto':''}">📍 ${perto?'na nossa cidade':o.distanciaKm+' km'}</span>`:''}
-          ${o.plataforma ? `<span class="lic-tag">${escapeHtml(o.plataforma)}</span>`:''}
-          ${o.modalidadeNome ? `<span class="lic-tag">${escapeHtml(o.modalidadeNome)}</span>`:''}
-          ${o.dataPublicacao ? `<span class="lic-tag">Publicada ${fmtDate(o.dataPublicacao)}</span>`:''}
+  <article class="lic-op ${sel?'sel':''} ${p.classe==='urg'?'urgente':''} ${p.encerrada?'vencida':''}">
+    <label class="marca"><input type="checkbox" ${sel?'checked':''} onchange="licMarcar('${o.id}', this.checked)"></label>
+
+    <div class="corpo">
+      <header>
+        <div class="titulo">
+          ${ver.plataforma && (o.plataforma || o.linkSistemaOrigem)
+            ? `<span class="portal">${escapeHtml(licNomeDoPortal(o))}</span>` : ''}
+          ${ver.numero && o.numero ? `<span class="num">${escapeHtml(o.modalidadeNome||'')} nº ${escapeHtml(o.numero)}</span>` : ''}
+          ${ver.controle && o.numeroControlePNCP ? `<span class="ctrl">${escapeHtml(o.numeroControlePNCP)}</span>` : ''}
         </div>
-        <div class="lic-links">
-          ${o.linkSistemaOrigem ? `<a href="${escapeAttr(o.linkSistemaOrigem)}" target="_blank" rel="noopener">🔗 Plataforma</a>`:''}
-          ${o.linkEdital ? `<a href="${escapeAttr(o.linkEdital)}" target="_blank" rel="noopener">🔗 Edital no PNCP</a>`:''}
-          ${o.linkProcesso ? `<a href="${escapeAttr(o.linkProcesso)}" target="_blank" rel="noopener">🔗 Processo eletrônico</a>`:''}
-        </div>
-      </div>
-      <div class="dir">
-        <div class="lic-prazo">
-          Encerra <b>${licDataHora(p.quando)}</b><br>
-          <span class="lic-cron ${p.classe}">${p.texto}</span>
-        </div>
-        <div class="lic-valor">${fmtMoney(o.valorEstimado||0)}</div>
-        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">valor estimado</div>
-        <button class="btn btn-sm btn-primary" onclick="licTriar('${o.id}', true)">✓ Tenho interesse</button>
-        <button class="btn btn-sm" onclick="licTriar('${o.id}', false)">✕ Não tenho interesse</button>
-      </div>
+        <h4>${escapeHtml(o.objeto||'(sem descrição)')}</h4>
+        ${identidade.length ? `<div class="quem">${identidade.join(' — ')}</div>` : ''}
+        ${lugar.length ? `<div class="onde">📍 ${lugar.join(' · ')}</div>` : ''}
+      </header>
+
+      ${etiquetas.length ? `<div class="etiquetas">${etiquetas.map(e=>`<span>${escapeHtml(e.t)}</span>`).join('')}</div>` : ''}
+
+      ${ver.abertura && aindaNaoAbriu ? `<div class="abre">Propostas só a partir de <b>${licDataHora(abre)}</b></div>` : ''}
+
+      ${ver.complemento && o.complemento
+        ? `<details class="compl"><summary>Informação complementar</summary><div>${escapeHtml(o.complemento)}</div></details>` : ''}
+
+      ${ver.links ? `<div class="links">
+        ${links.length
+          ? links.map(l=>`<a href="${escapeAttr(l.u)}" target="_blank" rel="noopener">${escapeHtml(l.t)} ↗</a>`).join('')
+          : '<span class="semlink">sem link publicado — procure pelo nº de controle</span>'}
+      </div>` : ''}
     </div>
-  </div>`;
+
+    <aside class="lado">
+      ${ver.valor ? `<div class="valor">${o.valorEstimado>0?fmtMoney(o.valorEstimado):'sigiloso'}</div>
+        <div class="valor-rot">valor estimado</div>` : ''}
+      <div class="prazo">
+        <span class="cron ${p.classe}">${p.texto}</span>
+        <div class="quando">${p.quando?licDataHora(p.quando):'sem prazo informado'}</div>
+      </div>
+      <div class="decidir">
+        ${p.encerrada
+          ? `<button class="btn btn-sm" onclick="licTriar('${o.id}', false)">Prazo vencido — tirar da lista</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="licTriar('${o.id}', true)">Tenho interesse</button>
+             <button class="btn btn-sm" onclick="licTriar('${o.id}', false)">Não tenho</button>`}
+      </div>
+    </aside>
+  </article>`;
+}
+
+/* O nome do portal onde a disputa acontece. Vem da coluna "Nome do
+   usuário da plataforma" do arquivo do PNCP (CENTI, Megasoft, BNC,
+   Compras.gov.br, Sigep, Prodata, Licitanet, SISLOG...). Quando ela vem
+   vazia, o endereço do link entrega. */
+const LIC_PORTAIS = [
+  { dominio:'bnccompras.com',   nome:'BNC' },
+  { dominio:'cnetmobile',       nome:'Compras.gov.br' },
+  { dominio:'comprasnet',       nome:'Compras.gov.br' },
+  { dominio:'sigep.com.br',     nome:'Sigep' },
+  { dominio:'licitanet',        nome:'Licitanet' },
+  { dominio:'centi.com.br',     nome:'CENTI' },
+  { dominio:'portaldecompraspublicas', nome:'Portal de Compras Públicas' },
+  { dominio:'licitacoes-e',     nome:'Licitações-e (BB)' },
+  { dominio:'slicx',            nome:'SlicX' },
+  { dominio:'megasoft',         nome:'Megasoft' },
+  { dominio:'sislog',           nome:'SISLOG' },
+  { dominio:'fiorilli',         nome:'Fiorilli' }
+];
+function licNomeDoPortal(o){
+  if(o.plataforma) return o.plataforma;
+  const u = String(o.linkSistemaOrigem||'').toLowerCase();
+  const achado = LIC_PORTAIS.find(p=>u.includes(p.dominio));
+  return achado ? achado.nome : 'Plataforma de origem';
 }
 
 function licMarcar(id, marcado){
@@ -27328,30 +27531,91 @@ function licRestaurarDescartadas(){
     ()=>{ STATE.licitacoesDescartadas = []; saveState(); renderPortalLicitacoes(); showToast('Lista de descartadas limpa.','success'); });
 }
 
-/* ---- importação do arquivo baixado no PNCP ---- */
+/* ---- importação do arquivo baixado no PNCP ----
+   O arquivo que o PNCP exporta (.csv ou .xlsx) tem 55 colunas com nomes
+   fixos. Adivinhar por palavra-chave deu errado — "CNPJ do Órgão" virava
+   órgão, "Código IBGE do Município" virava município e os três links se
+   atropelavam. Então aqui o mapa é exato, pelo nome da coluna; o
+   adivinhador só sobra pra arquivo de outra origem. */
+const LIC_COLUNAS_PNCP = {
+  'Número de Controle PNCP da Contratação': 'controle',
+  'Número da Contratação': 'numero',
+  'Ano da Contratação': 'ano',
+  'Nome da Situação da Contratação': 'situacao',
+  'CNPJ do Órgão/Entidade da Contratação': 'cnpjOrgao',
+  'Razão Social do Órgão/Entidade da Contratação': 'orgao',
+  'Nome da Unidade Compradora/Vendedora da Contratação': 'unidade',
+  'Código IBGE do Município da Unidade Compradora/Vendedora': 'ibge',
+  'Nome do Município da Unidade': 'municipio',
+  'Sigla UF da Unidade Compradora/Vendedora': 'uf',
+  'Nome do Instrumento Convocatório da Contratação': 'instrumento',
+  'Nome do Amparo Legal da Contratação': 'amparo',
+  'Nome da Modalidade da Contratação': 'modalidade',
+  'Nome do Modo de Disputa da Contratação': 'disputa',
+  'Data/Hora Início de Recebimento de Propostas/Lances': 'abertura',
+  'Data/Hora Fim do Recebimento de Propostas/Lances': 'encerramento',
+  'Indicador SRP da Contratação': 'srp',
+  'Valor Total Estimado/Avaliado da Contratação': 'valor',
+  'Descrição do Objeto da Contratação': 'objeto',
+  'Informação Complementar da Contratação': 'complemento',
+  'Data de Publicação no PNCP': 'publicacao',
+  'Nome do usuário da plataforma que publicou/atualizou a Contratação': 'plataforma',
+  'Link para detalhamento da Contratação no Portal': 'linkPncp',
+  'Link plataforma de origem': 'linkPlataforma',
+  'Link Processo Eletrônico': 'linkProcesso'
+};
+
+function licNormalizarCabecalho(nome){
+  return String(nome||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toLowerCase().replace(/[^a-z0-9]/g,'');
+}
+
+/* Mapa exato, montado uma vez a partir da tabela acima. */
+const LIC_COLUNAS_PNCP_NORM = (()=>{
+  const m = {};
+  Object.keys(LIC_COLUNAS_PNCP).forEach(k=>{ m[licNormalizarCabecalho(k)] = LIC_COLUNAS_PNCP[k]; });
+  return m;
+})();
+
+/* Adivinhador, só pra arquivo que não é o do PNCP. Agora recusa coluna
+   que começa com código/CNPJ/ID quando o que se quer é o nome. */
 function licCabecalhoPara(nome){
-  const n = String(nome||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const n = licNormalizarCabecalho(nome);
   const tem = (...ps)=>ps.some(p=>n.includes(p));
-  if(tem('objeto','descricao','descricaodacompra')) return 'objeto';
-  if(tem('orgao','entidade','razaosocial','unidade')) return 'orgao';
-  if(tem('municipio','cidade')) return 'municipio';
-  if(n==='uf' || tem('estado','siglauf')) return 'uf';
-  if(tem('numerocontrole','controlepncp','idcompra')) return 'controle';
-  if(tem('numerocompra','numerodacompra','numeroprocesso','numeroedital','numero')) return 'numero';
-  if(tem('modalidade')) return 'modalidade';
-  if(tem('valortotalestimado','valorestimado','valortotal','valor')) return 'valor';
-  if(tem('encerramento','fimrecebimento','dataencerramento','prazofinal','datafinal')) return 'encerramento';
-  if(tem('abertura','iniciorecebimento','dataabertura')) return 'abertura';
-  if(tem('publicacao','datapublicacao','divulgacao')) return 'publicacao';
-  if(tem('linksistemaorigem','sistemaorigem','plataforma','portal')) return 'plataforma';
-  if(tem('linkedital','urledital','edital','linkpncp')) return 'edital';
-  if(tem('processoeletronico','linkprocesso')) return 'processo';
+  const ehCodigo = /^(codigo|cnpj|cpf|id|numerosequencial)/.test(n);
+
+  if(tem('linkplataforma','plataformadeorigem','linksistemaorigem','sistemaorigem')) return 'linkPlataforma';
+  if(tem('linkprocesso','processoeletronico')) return 'linkProcesso';
+  if(tem('linkparadetalhamento','linkpncp','linkedital','urledital')) return 'linkPncp';
+  if(tem('nomedousuariodaplataforma','plataforma','portaldeorigem')) return 'plataforma';
+  if(!ehCodigo && tem('objeto','descricaodoobjeto','descricaodacompra')) return 'objeto';
+  if(tem('informacaocomplementar','complemento')) return 'complemento';
+  if(!ehCodigo && tem('razaosocial','orgaoentidade','orgao','entidade')) return 'orgao';
+  if(!ehCodigo && tem('unidadecompradora','unidade')) return 'unidade';
+  if(tem('codigoibge','ibge')) return 'ibge';
+  if(!ehCodigo && tem('municipio','cidade')) return 'municipio';
+  if(n==='uf' || tem('siglauf','estado')) return 'uf';
+  if(tem('numerodecontrole','controlepncp')) return 'controle';
+  if(tem('fimdorecebimento','fimrecebimento','encerramento','dataencerramento','prazofinal','datafinal')) return 'encerramento';
+  if(tem('iniciodereceb','iniciorecebimento','abertura','dataabertura')) return 'abertura';
+  if(tem('datadepublicacao','publicacao','divulgacao')) return 'publicacao';
+  if(!ehCodigo && tem('modalidade')) return 'modalidade';
+  if(!ehCodigo && tem('mododedisputa','disputa')) return 'disputa';
+  if(!ehCodigo && tem('instrumentoconvocatorio')) return 'instrumento';
+  if(!ehCodigo && tem('amparolegal')) return 'amparo';
+  if(!ehCodigo && tem('situacao')) return 'situacao';
+  if(tem('srp')) return 'srp';
+  if(tem('valortotalestimado','valorestimado','valortotal')) return 'valor';
+  if(tem('anodacontratacao')) return 'ano';
+  if(!ehCodigo && tem('numerodacontratacao','numerodacompra','numeroprocesso','numeroedital','numero')) return 'numero';
   return null;
 }
+
 function licValorPlanilha(v){
   if(v==null || v==='') return 0;
   if(typeof v === 'number') return v;
-  const s = String(v).replace(/[R$\s]/g,'');
+  const s = String(v).replace(/R\$/gi,'').replace(/\s/g,'').trim();
+  if(!s) return 0;
   if(s.includes(',')) return licNum(s);
   return licNumDireto(s);
 }
@@ -27359,12 +27623,18 @@ function licDataPlanilha(v){
   if(v==null || v==='') return null;
   if(v instanceof Date && !isNaN(v.getTime())) return v.toISOString();
   const s = String(v).trim();
-  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2}))?/);
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{1,2}):(\d{2}))?/);
   if(m) return new Date(+m[3], +m[2]-1, +m[1], +(m[4]||0), +(m[5]||0)).toISOString();
-  m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2}))?/);
   if(m) return new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0)).toISOString();
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString();
+}
+/* Link só vale se for link. A exportação do PNCP às vezes traz texto
+   solto nessas colunas quando a linha vem torta. */
+function licLink(v){
+  const s = String(v==null?'':v).trim();
+  return /^https?:\/\//i.test(s) ? s : null;
 }
 
 async function licImportarArquivoPNCP(file){
@@ -27376,6 +27646,12 @@ async function licImportarArquivoPNCP(file){
       const txt = await file.text();
       const dado = JSON.parse(txt);
       linhas = Array.isArray(dado) ? dado : (dado.data || dado.items || dado.resultado || []);
+    }else if(nome.endsWith('.csv')){
+      /* O CSV do PNCP vem com BOM, separado por ponto e vírgula e com
+         campos entre aspas que contêm ponto e vírgula dentro. */
+      let txt = await file.text();
+      if(txt.charCodeAt(0) === 0xFEFF) txt = txt.slice(1);
+      linhas = licLerCsv(txt);
     }else{
       if(typeof XLSX === 'undefined'){ showToast('O leitor de planilha não carregou. Verifique a internet e recarregue a página.','error'); return; }
       const buf = await file.arrayBuffer();
@@ -27385,11 +27661,20 @@ async function licImportarArquivoPNCP(file){
     }
     if(linhas.length===0){ showToast('O arquivo não tem nenhuma linha de dados.','error'); return; }
 
-    /* mapeia os cabeçalhos uma vez */
+    /* Mapeia os cabeçalhos: primeiro o mapa exato do PNCP, depois o
+       adivinhador pro que sobrar. */
     const mapa = {};
-    Object.keys(linhas[0]).forEach(k=>{ const campo = licCabecalhoPara(k); if(campo && !mapa[campo]) mapa[campo] = k; });
+    Object.keys(linhas[0]).forEach(k=>{
+      const campo = LIC_COLUNAS_PNCP_NORM[licNormalizarCabecalho(k)];
+      if(campo && !mapa[campo]) mapa[campo] = k;
+    });
+    Object.keys(linhas[0]).forEach(k=>{
+      if(Object.values(mapa).includes(k)) return;
+      const campo = licCabecalhoPara(k);
+      if(campo && !mapa[campo]) mapa[campo] = k;
+    });
     if(!mapa.objeto && !mapa.orgao){
-      showToast('Não reconheci as colunas desse arquivo. Ele precisa ter pelo menos o objeto e o órgão.','error');
+      showToast('Não reconheci as colunas desse arquivo. Baixe o arquivo de resultados direto no PNCP (.csv ou .xlsx).','error');
       return;
     }
 
@@ -27398,50 +27683,70 @@ async function licImportarArquivoPNCP(file){
     licTodas().forEach(o=>jaTem.add(licChaveOportunidade(o)));
     const descartadas = new Set(licDescartadas());
 
-    let novas=0, repetidas=0, puladas=0;
+    let novas=0, repetidas=0, puladas=0, encerradas=0;
     const area = STATE.config.licitacoesArea;
+    const cache = STATE.licitacoesGeocodeCache || {};
+    const agora = Date.now();
 
     linhas.forEach(ln=>{
       const v = (campo)=> mapa[campo] ? ln[mapa[campo]] : '';
-      const objeto = String(v('objeto')||'').trim();
-      const orgao = String(v('orgao')||'').trim();
+      const txt = (campo)=> String(v(campo)==null?'':v(campo)).trim();
+      const objeto = txt('objeto');
+      const orgao = txt('orgao');
       if(!objeto && !orgao) return;
+
+      const ano = txt('ano');
+      const numeroBase = txt('numero');
+      const ibge = txt('ibge').replace(/\D/g,'');
 
       const o = {
         id: uid('lic'),
         orgao: orgao || '(órgão não informado)',
+        unidade: txt('unidade'),
+        cnpjOrgao: txt('cnpjOrgao').replace(/\D/g,'') || null,
         objeto: objeto || '(sem descrição)',
-        numero: String(v('numero')||'').trim(),
+        complemento: txt('complemento'),
+        numero: numeroBase ? (ano ? `${numeroBase}/${ano}` : numeroBase) : '',
+        anoCompra: ano || null,
         status: 'Potencial',
+        situacao: txt('situacao'),
         valorEstimado: licValorPlanilha(v('valor')),
         obs: '', historico: [],
         origem: 'pncp-arquivo',
-        numeroControlePNCP: String(v('controle')||'').trim() || null,
-        modalidadeNome: String(v('modalidade')||'').trim(),
-        municipioNome: String(v('municipio')||'').trim(),
-        uf: String(v('uf')||'').trim().toUpperCase().slice(0,2),
-        plataforma: String(v('plataforma')||'').trim().startsWith('http') ? '' : String(v('plataforma')||'').trim(),
-        linkSistemaOrigem: String(v('plataforma')||'').trim().startsWith('http') ? String(v('plataforma')).trim() : null,
-        linkEdital: String(v('edital')||'').trim() || null,
-        linkProcesso: String(v('processo')||'').trim() || null,
+        numeroControlePNCP: txt('controle') || null,
+        modalidadeNome: txt('modalidade'),
+        modoDisputa: txt('disputa'),
+        instrumento: txt('instrumento'),
+        amparoLegal: txt('amparo'),
+        srp: /^s(im)?$/i.test(txt('srp')),
+        municipioNome: txt('municipio'),
+        uf: txt('uf').toUpperCase().slice(0,2),
+        codigoIbge: ibge || null,
+        plataforma: txt('plataforma'),
+        linkPncp: licLink(v('linkPncp')),
+        linkSistemaOrigem: licLink(v('linkPlataforma')),
+        linkProcesso: licLink(v('linkProcesso')),
         dataPublicacao: (licDataPlanilha(v('publicacao'))||'').slice(0,10) || null,
-        dataAbertura: (licDataPlanilha(v('abertura'))||'').slice(0,10) || null,
+        dataAberturaProposta: licDataPlanilha(v('abertura')),
         dataEncerramentoProposta: licDataPlanilha(v('encerramento')),
         distanciaKm: null,
         pdfLido: false, pdfErro: null
       };
+      o.dataAbertura = (o.dataAberturaProposta||'').slice(0,10) || null;
+      /* o botão "Edital no PNCP" usa este */
+      o.linkEdital = o.linkPncp;
+
       const chave = licChaveOportunidade(o);
       if(descartadas.has(chave)){ puladas++; return; }
       if(jaTem.has(chave)){ repetidas++; return; }
       jaTem.add(chave);
 
-      /* distância: usa o cache de geocodificação que a busca do PNCP já alimenta */
-      if(area && area.lat!=null && o.municipioNome){
-        const cache = STATE.licitacoesGeocodeCache || {};
-        const achado = Object.values(cache).find(g=>
-          g && g.municipio && g.municipio.toLowerCase() === o.municipioNome.toLowerCase() &&
-          (!o.uf || !g.uf || g.uf.toUpperCase() === o.uf));
-        if(achado) o.distanciaKm = Math.round(distanciaKm(area.lat, area.lng, achado.lat, achado.lng));
+      if(o.dataEncerramentoProposta && new Date(o.dataEncerramentoProposta).getTime() < agora) encerradas++;
+
+      /* distância: pelo código IBGE, que é a chave do cache de
+         geocodificação que a busca online já alimenta */
+      if(area && area.lat!=null && ibge && cache[ibge]){
+        o.distanciaKm = Math.round(distanciaKm(area.lat, area.lng, cache[ibge].lat, cache[ibge].lng));
       }
 
       STATE.licitacoesRevisao.push(o);
@@ -27453,12 +27758,100 @@ async function licImportarArquivoPNCP(file){
     const partes = [`${novas} nova${novas===1?'':'s'}`];
     if(repetidas) partes.push(`${repetidas} já estava${repetidas===1?'':'m'} aqui`);
     if(puladas) partes.push(`${puladas} você já tinha descartado`);
+    if(encerradas) partes.push(`${encerradas} com prazo já vencido`);
     showToast(partes.join(' · '), novas>0?'success':'info');
+
+    if(novas>0 && licQuantosSemDistancia()>0) licCalcularDistancias();
   }catch(e){
     console.error(e);
-    showToast('Não consegui ler esse arquivo. Confira se é o arquivo que o PNCP exporta (.xlsx ou .csv).','error');
+    showToast('Não consegui ler esse arquivo. Confira se é o arquivo de resultados que o PNCP exporta (.csv ou .xlsx).','error');
   }
 }
+
+/* Leitor de CSV que respeita aspas — o objeto da contratação vem cheio
+   de ponto e vírgula dentro das aspas, e um split simples picava a linha
+   toda. Detecta o separador pela primeira linha. */
+function licLerCsv(texto){
+  const cab = texto.split(/\r?\n/)[0] || '';
+  const sep = (cab.split(';').length > cab.split(',').length) ? ';' : ',';
+  const linhas = [];
+  let campo = '', linha = [], dentroDeAspas = false;
+  for(let i=0; i<texto.length; i++){
+    const c = texto[i];
+    if(dentroDeAspas){
+      if(c === '"'){
+        if(texto[i+1] === '"'){ campo += '"'; i++; }
+        else dentroDeAspas = false;
+      }else campo += c;
+      continue;
+    }
+    if(c === '"'){ dentroDeAspas = true; continue; }
+    if(c === sep){ linha.push(campo); campo = ''; continue; }
+    if(c === '\n'){ linha.push(campo); linhas.push(linha); linha = []; campo = ''; continue; }
+    if(c === '\r') continue;
+    campo += c;
+  }
+  if(campo !== '' || linha.length){ linha.push(campo); linhas.push(linha); }
+  if(linhas.length < 2) return [];
+  const cabecalho = linhas[0].map(s=>s.trim());
+  return linhas.slice(1)
+    .filter(l=>l.some(c=>String(c).trim() !== ''))
+    .map(l=>{
+      const reg = {};
+      cabecalho.forEach((nome,i)=>{ reg[nome] = l[i]==null ? '' : l[i]; });
+      return reg;
+    });
+}
+
+function licQuantosSemDistancia(){
+  const area = STATE.config.licitacoesArea;
+  if(!area || area.lat==null) return 0;
+  return (STATE.licitacoesRevisao||[]).filter(o=>o.distanciaKm==null && o.codigoIbge && o.municipioNome).length;
+}
+
+/* Descobre a distância dos municípios que ainda não estão no cache.
+   O Nominatim só permite 1 chamada por segundo — por isso a pausa e o
+   aviso de progresso. Roda em segundo plano, sem travar a tela. */
+let licCalculandoDistancia = false;
+async function licCalcularDistancias(){
+  if(licCalculandoDistancia) return;
+  const area = STATE.config.licitacoesArea;
+  if(!area || area.lat==null){
+    showToast('Configure a área de atendimento no ⚙️ pra eu conseguir medir a distância.','info');
+    return;
+  }
+  const pendentes = new Map();
+  (STATE.licitacoesRevisao||[]).forEach(o=>{
+    if(o.distanciaKm!=null || !o.codigoIbge || !o.municipioNome) return;
+    if(!pendentes.has(o.codigoIbge)) pendentes.set(o.codigoIbge, o);
+  });
+  if(pendentes.size===0) return;
+
+  licCalculandoDistancia = true;
+  renderPortalLicitacoes();
+  let feitos = 0, falhas = 0;
+  for(const [ibge, exemplo] of pendentes){
+    try{
+      const geo = await geocodificarMunicipioPNCP(ibge, exemplo.municipioNome, exemplo.uf);
+      if(geo){
+        const km = Math.round(distanciaKm(area.lat, area.lng, geo.lat, geo.lng));
+        (STATE.licitacoesRevisao||[]).forEach(o=>{ if(o.codigoIbge===ibge) o.distanciaKm = km; });
+        feitos++;
+      }else falhas++;
+    }catch(e){ falhas++; }
+    if(falhas >= 8) break;   // serviço fora do ar: para de insistir
+    licDistanciaProgresso = { feitos, total: pendentes.size };
+    if(feitos % 3 === 0) renderPortalLicitacoes();
+    await new Promise(r=>setTimeout(r, 1100));
+  }
+  licCalculandoDistancia = false;
+  licDistanciaProgresso = null;
+  saveState();
+  renderPortalLicitacoes();
+  if(feitos>0) showToast(`Distância calculada para ${feitos} cidade${feitos===1?'':'s'}.`,'success');
+  else if(falhas>0) showToast('O serviço de localização não respondeu agora. Dá pra tentar de novo depois — as oportunidades continuam aqui.','error');
+}
+let licDistanciaProgresso = null;
 
 /* A busca online continua existindo — agora dentro de um modal, pra não
    encher a tela de filtro. Os campos de verdade são os da seção antiga
