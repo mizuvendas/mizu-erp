@@ -26779,7 +26779,9 @@ function licInjetarEstilo(){
   .lic-op .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
     color:var(--primary);text-decoration:none;background:#fff;}
   .lic-op .links a:hover{border-color:var(--primary);background:var(--primary-soft);}
-  .lic-op .links .semlink{font-size:11.5px;color:var(--ink-faint);}
+  .lic-op .links .semlink{font-size:11.5px;padding:4px 10px;border-radius:20px;
+    border:1px dashed var(--border);color:var(--ink-faint);background:#FAFBFC;
+    text-decoration:line-through;cursor:help;}
 
   .lic-op .valor{font-size:19px;font-weight:700;font-family:var(--font-num);line-height:1.1;color:var(--ink);}
   .lic-op .valor-rot{font-size:11px;color:var(--ink-faint);margin-top:-6px;}
@@ -27092,6 +27094,7 @@ function licProcurarParecidos(descricao, marca, ignorarItemId){
    ========================================================= */
 function renderPortalLicitacoes(){
   licInjetarEstilo();
+  licArrumarLinksAntigos();
   inicializarFiltrosDataLicitacoes();
   const box = document.getElementById('licitacoes-content');
   if(!box) return;
@@ -27322,7 +27325,7 @@ const LIC_CAMPOS_CARTAO = [
   { id:'unidade',    rotulo:'Unidade compradora',      padrao:false },
   { id:'cidade',     rotulo:'Cidade e UF',             padrao:true  },
   { id:'distancia',  rotulo:'Distância daqui',         padrao:true  },
-  { id:'plataforma', rotulo:'Onde é a disputa',        padrao:true  },
+  { id:'plataforma', rotulo:'Fonte da dispensa (CENTI, BNC, Megasoft, SISLOG…)', padrao:true },
   { id:'modalidade', rotulo:'Modalidade',              padrao:true  },
   { id:'disputa',    rotulo:'Modo de disputa',         padrao:false },
   { id:'srp',        rotulo:'Registro de preços',      padrao:false },
@@ -27394,11 +27397,18 @@ function licCartaoOportunidade(o){
   const abre = o.dataAberturaProposta ? new Date(o.dataAberturaProposta) : null;
   const aindaNaoAbriu = abre && !isNaN(abre.getTime()) && abre.getTime() > Date.now();
 
+  /* São três lugares, sempre os mesmos. O PNCP só publica o link de
+     todos os três em poucas dispensas — então os que faltam aparecem
+     apagados, pra ficar claro que o órgão não publicou, e não que o
+     sistema perdeu. */
   const links = [
-    o.linkSistemaOrigem ? { t: ver.plataforma ? licNomeDoPortal(o) : 'Plataforma de origem', u: o.linkSistemaOrigem } : null,
-    (o.linkPncp || o.linkEdital) ? { t: 'Edital no PNCP', u: o.linkPncp || o.linkEdital } : null,
-    o.linkProcesso ? { t: 'Processo eletrônico', u: o.linkProcesso } : null
-  ].filter(Boolean);
+    { t: ver.plataforma ? licNomeDoPortal(o) : 'Plataforma de origem', u: o.linkSistemaOrigem,
+      falta: 'o órgão não publicou o link da plataforma' },
+    { t: 'Edital no PNCP', u: o.linkPncp || o.linkEdital,
+      falta: 'sem o nº de controle não dá pra montar o endereço' },
+    { t: 'Processo eletrônico', u: o.linkProcesso,
+      falta: 'o órgão não publicou o processo eletrônico' }
+  ];
 
   /* a linha de identificação, montada só com o que ela deixou ligado */
   const identidade = [];
@@ -27445,9 +27455,9 @@ function licCartaoOportunidade(o){
         ? `<details class="compl"><summary>Informação complementar</summary><div>${escapeHtml(o.complemento)}</div></details>` : ''}
 
       ${ver.links ? `<div class="links">
-        ${links.length
-          ? links.map(l=>`<a href="${escapeAttr(l.u)}" target="_blank" rel="noopener">${escapeHtml(l.t)} ↗</a>`).join('')
-          : '<span class="semlink">sem link publicado — procure pelo nº de controle</span>'}
+        ${links.map(l=> l.u
+          ? `<a href="${escapeAttr(l.u)}" target="_blank" rel="noopener">${escapeHtml(l.t)} ↗</a>`
+          : `<span class="semlink" title="${escapeAttr(l.falta)}">${escapeHtml(l.t)}</span>`).join('')}
       </div>` : ''}
     </div>
 
@@ -27733,8 +27743,7 @@ async function licImportarArquivoPNCP(file){
         pdfLido: false, pdfErro: null
       };
       o.dataAbertura = (o.dataAberturaProposta||'').slice(0,10) || null;
-      /* o botão "Edital no PNCP" usa este */
-      o.linkEdital = o.linkPncp;
+      licArrumarLinkPncp(o);
 
       const chave = licChaveOportunidade(o);
       if(descartadas.has(chave)){ puladas++; return; }
@@ -27801,6 +27810,52 @@ function licLerCsv(texto){
       cabecalho.forEach((nome,i)=>{ reg[nome] = l[i]==null ? '' : l[i]; });
       return reg;
     });
+}
+
+/* O arquivo do PNCP traz, na coluna "Link para detalhamento da
+   Contratação no Portal", um endereço interno do Serpro
+   (pncp.estaleiro.serpro.gov.br) que responde 404 pra quem é de fora.
+   O endereço público se monta sozinho a partir do número de controle
+   "CNPJ-1-SEQUENCIAL/ANO" — é o mesmo que a busca online já usa. */
+function licArrumarLinkPncp(o){
+  let cnpj=null, ano=null, seq=null;
+  const m = String(o.numeroControlePNCP||'').match(/(\d{14})-\d+-(\d+)\/(\d{4})/);
+  if(m){ cnpj=m[1]; seq=String(Number(m[2])); ano=m[3]; }
+  else {
+    /* o próprio endereço interno tem as três partes no caminho:
+       .../compras/{cnpj}/{ano}/{sequencial} */
+    const u = String(o.linkPncp||'').match(/\/compras\/(\d{14})\/(\d{4})\/(\d+)/);
+    if(u){ cnpj=u[1]; ano=u[2]; seq=String(Number(u[3])); }
+  }
+  if(cnpj && ano && seq){
+    o.cnpjOrgao = o.cnpjOrgao || cnpj;
+    o.sequencialCompra = seq;
+    o.anoCompra = o.anoCompra || ano;
+    o.linkPncp = linkEditalPNCP(cnpj, ano, seq);
+  }else if(/estaleiro\.serpro\.gov\.br/i.test(String(o.linkPncp||''))){
+    o.linkPncp = null;   // endereço interno, não adianta oferecer
+  }
+  o.linkEdital = o.linkPncp;
+  return o;
+}
+
+/* Conserta o que já foi importado antes dessa correção, sem ela ter que
+   importar de novo. Roda uma vez por sessão. */
+let licLinksJaArrumados = false;
+function licArrumarLinksAntigos(){
+  if(licLinksJaArrumados) return;
+  licLinksJaArrumados = true;
+  let mexeu = 0;
+  const arrumar = (o)=>{
+    if(!o) return;
+    const antes = o.linkPncp || '';
+    if(!/estaleiro\.serpro\.gov\.br/i.test(antes) && antes) return;
+    licArrumarLinkPncp(o);
+    if((o.linkPncp||'') !== antes) mexeu++;
+  };
+  (STATE.licitacoesRevisao||[]).forEach(arrumar);
+  (STATE.licitacoes||[]).forEach(arrumar);
+  if(mexeu>0) saveState();
 }
 
 function licQuantosSemDistancia(){
