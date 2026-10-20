@@ -27166,6 +27166,8 @@ function licPainelOportunidades(){
         <div class="sub">Importe o arquivo que você baixou no PNCP e diga o que interessa. O que você descartar não volta.</div>
       </div>
       <div class="acoes">
+        ${(lista.length + licTodas().length + licDescartadas().length) > 0
+          ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirBuscaPNCP()">🔎 Buscar no PNCP</button>
         <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
@@ -27212,6 +27214,39 @@ function licPainelOportunidades(){
 
 let licFiltroBusca = '';
 let licOrdem = 'distancia';
+
+/* Zera o portal inteiro: nada de dispensa herdada do funil antigo nem de
+   busca antiga do PNCP. Só o portal — cliente, produto da loja, orçamento,
+   venda e certidão guardada não são tocados. A exclusão sobe pra nuvem,
+   então também some na outra máquina. */
+function licComecarDoZero(){
+  const nRev = (STATE.licitacoesRevisao||[]).length;
+  const nLic = (STATE.licitacoes||[]).length;
+  const nDesc = licDescartadas().length;
+  const orcamentosLigados = (STATE.orcamentos||[]).filter(o=>o.origemLicitacao).length;
+
+  const partes = [];
+  if(nRev) partes.push(`${nRev} oportunidade${nRev===1?'':'s'} aguardando triagem`);
+  if(nLic) partes.push(`${nLic} licitação${nLic===1?'':'ões'} (incluindo as do funil antigo, com seus itens e anexos)`);
+  if(nDesc) partes.push(`a lista de ${nDesc} descartada${nDesc===1?'':'s'}`);
+
+  confirmAction('Começar do zero',
+    `Vai apagar do portal de licitações: ${partes.join(', ')}. ` +
+    `Não mexe em clientes, produtos da loja, orçamentos, vendas, caixa nem nas certidões guardadas. ` +
+    (orcamentosLigados ? `Os ${orcamentosLigados} orçamento${orcamentosLigados===1?'':'s'} já gerado${orcamentosLigados===1?'':'s'} por licitação continua${orcamentosLigados===1?'':'m'} no menu de Orçamentos — só perde${orcamentosLigados===1?'':'m'} o vínculo com a licitação. ` : '') +
+    `Isso também apaga na outra máquina, pela nuvem, e não dá pra desfazer. Continuar?`,
+    ()=>{
+      STATE.licitacoesRevisao = [];
+      STATE.licitacoes = [];
+      STATE.licitacoesDescartadas = [];
+      licAba = 'oportunidades'; licAberta = null; licTela = null;
+      licSelecionadas = new Set(); licProdutoAberto = null;
+      licFiltroBusca = ''; licFiltroProduto = '';
+      saveState();
+      renderPortalLicitacoes();
+      showToast('Portal zerado. Pode importar o arquivo do PNCP.','success');
+    });
+}
 
 function licCartaoOportunidade(o){
   const p = licPrazoInfo(o);
