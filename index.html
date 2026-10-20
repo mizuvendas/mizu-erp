@@ -28875,7 +28875,8 @@ function licChatGptHtml(l){
   return `
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px;">
       <div class="lic-card" style="margin:0;"><b>1 · Copiar a pergunta</b>
-        <div class="meta">Ela já vai com os dados desta dispensa.</div></div>
+        <div class="meta">Ela já vai com os dados desta dispensa. Na primeira vez, cole antes o
+          <b>contexto fixo</b> nas instruções do Projeto do ChatGPT.</div></div>
       <div class="lic-card" style="margin:0;"><b>2 · Colar no ChatGPT</b>
         <div class="meta">E anexar lá os PDFs do edital. Quem lê é ele.</div></div>
       <div class="lic-card" style="margin:0;"><b>3 · Trazer a resposta</b>
@@ -28885,8 +28886,7 @@ function licChatGptHtml(l){
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
       <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar pergunta</button>
       <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
-      <span style="font-size:12px;color:var(--ink-faint);">
-        Na primeira vez, crie um Projeto no ChatGPT e cole lá o contexto fixo — depois é uma conversa por dispensa.</span>
+      <button class="btn btn-sm" onclick="licVerContextoFixo()">⚙️ Contexto fixo (cole uma vez)</button>
     </div>
 
     <div class="field">
@@ -28897,6 +28897,94 @@ function licChatGptHtml(l){
     <button class="btn btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler a resposta e preencher</button>
     ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')">Desfazer</button>`:''}
   `;
+}
+
+/* O contexto fixo: o texto que ela cola UMA VEZ nas instruções do
+   Projeto do ChatGPT. Toda conversa nova dentro do Projeto já nasce
+   sabendo quem ela é, o que está em jogo e como responder. Fica aqui
+   dentro pra ela não precisar procurar numa conversa antiga. */
+function licContextoFixo(){
+  const E = (typeof dadosProposta === 'function') ? dadosProposta() : {};
+  const cidade = (E.cidade || 'Rio Verde') + '/' + (E.estado || 'GO');
+  return `CONTEXTO FIXO — leia uma vez e siga em todas as nossas conversas.
+
+QUEM SOU
+Sou da Mizu Materiais de Limpeza, uma loja em ${cidade}. Vendemos
+material de limpeza, higiene e descartáveis, e também participamos de
+licitações públicas — principalmente dispensas eletrônicas e pregões de
+prefeituras, escolas, câmaras e órgãos federais de Goiás.
+
+O QUE VOCÊ VAI FAZER POR MIM
+Em cada conversa eu vou anexar o edital de uma dispensa (e todos os
+anexos: termo de referência, planilha de itens, minuta de contrato) e
+colar um pedido com um formato de resposta. Seu trabalho é ler os
+documentos inteiros e devolver, em JSON, tudo que meu sistema precisa
+para: decidir se vale participar, encontrar produtos que atendam à
+especificação, precificar e emitir a proposta.
+
+POR QUE O RIGOR IMPORTA
+Em licitação, uma única característica que não bate desclassifica a
+proposta inteira. Já perdi por isso. Então:
+- Nunca chute. Nunca "arredonde" uma especificação para parecer que bate.
+- Ficha técnica omissa NÃO é "atende" — é "a confirmar".
+- Quando algo não atende, eu preciso saber o número exato: o que o
+  produto tem e o que o edital exige.
+- Prefiro você me dizer "não achei" a me dar uma informação inventada.
+  Informação inventada aqui me custa dinheiro de verdade.
+
+COMO LER O EDITAL
+A planilha de itens é só o começo. Muita característica exigida está
+solta no corpo do texto, no termo de referência, em nota de rodapé ou
+num anexo separado. Leia tudo e cruze: se a planilha diz uma coisa e o
+termo de referência diz outra, me aponte a contradição em vez de
+escolher uma. Se um item aparece em dois lugares com descrições
+diferentes, me mostre as duas.
+
+FORMATO DA RESPOSTA
+A resposta é lida por um sistema, não por uma pessoa. Então, quando eu
+pedir JSON, responda SOMENTE o bloco JSON — sem introdução, sem
+explicação, sem comentário depois, sem perguntar se pode continuar.
+Se a resposta for longa, continue até terminar. Se precisar cortar,
+corte e eu peço a continuação — mas não resuma e não pule item.
+
+O QUE NUNCA FAZER
+- Não resumir a descrição de um item. Eu preciso dela inteira, como está
+  no edital, porque é ela que vai impressa na minha proposta.
+- Não agrupar itens parecidos.
+- Não omitir item nenhum, mesmo que sejam trinta.
+- Não sugerir produto sem link de onde comprar e preço visível.
+
+Se entendeu, responda só "Entendido" e aguarde o primeiro edital.`;
+}
+
+function licVerContextoFixo(){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(780px,95vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Contexto fixo — cole uma vez só</h3>
+      <p class="help-text">No ChatGPT, crie um <b>Projeto</b> e cole este texto nas <b>instruções do Projeto</b>.
+        Depois é só abrir <b>uma conversa nova por dispensa</b> dentro dele — cada uma já nasce sabendo de tudo.</p>
+      <div class="lic-doc aviso" style="display:block;">
+        <b>Por que uma conversa por dispensa?</b>
+        <small>Edital é documento grande. Depois de três ou quatro na mesma conversa, ele começa a misturar os
+        itens de um com os do outro e a qualidade cai. Conversa nova, limpa, pra cada dispensa.</small>
+      </div>
+      <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11.5px;line-height:1.55;margin-top:10px;">${escapeHtml(licContextoFixo())}</pre>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" onclick="licCopiarContextoFixo()">📋 Copiar o contexto fixo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+function licCopiarContextoFixo(){
+  const txt = licContextoFixo();
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt)
+      .then(()=>showToast('Contexto copiado. Cole nas instruções do Projeto, no ChatGPT.','success'))
+      .catch(()=>licCopiarNaMao(txt));
+  }else licCopiarNaMao(txt);
 }
 
 function licVerPergunta(id){
