@@ -27118,7 +27118,67 @@ function licNormalizar(l){
     /* unidade é "UND", não uma frase */
     if(it.unidade) it.unidade = licUnidadeLimpa(it.unidade);
   });
+  licSubirTaxas(l);
   return l;
+}
+
+/* Imposto, comissão e o frete final valem para a dispensa INTEIRA — ela
+   marca uma vez só, não item por item. O que já estava preenchido em
+   cada item sobe pra cá; o frete até o cliente de todos os itens vira
+   um frete final único. */
+function licSubirTaxas(l){
+  const cfg = STATE.config || {};
+  const doItem = campo => {
+    const v = (l.itens||[]).map(x=>licNumDireto(x[campo])).find(n=>n>0);
+    return v != null ? v : null;
+  };
+  if(l.impostoPct == null){
+    const v = doItem('impostoPct');
+    l.impostoPct = v != null ? v : licNumDireto(cfg.impostoPct);
+  }
+  if(l.comissaoPct == null){
+    const v = doItem('comissaoPct');
+    l.comissaoPct = v != null ? v : 0;
+  }
+  if(l.comissaoVendedor == null){
+    const v = (l.itens||[]).map(x=>x.comissaoVendedor).find(x=>x);
+    l.comissaoVendedor = v || '';
+  }
+  if(l.freteFinal == null){
+    l.freteFinal = (l.itens||[]).reduce((a,x)=>a+licNumDireto(x.freteCliente), 0);
+  }
+  /* os campos antigos saem do item pra não voltarem pela nuvem */
+  (l.itens||[]).forEach(it=>{
+    delete it.impostoPct; delete it.comissaoPct;
+    delete it.comissaoVendedor; delete it.freteCliente;
+  });
+  return l;
+}
+
+/* O frete final é um valor só da dispensa; cada item carrega a parte
+   dele, proporcional ao que vale na proposta. Sem preço ainda, divide
+   igual — serve só pra ela ver o peso. */
+/* o percentual (imposto + comissão) que vale para o item, já que agora
+   ele mora na licitação e não no item */
+function licPctDaLicitacao(it){
+  const l = licDonoDoItem(it);
+  return (licNumDireto(l && l.impostoPct) + licNumDireto(l && l.comissaoPct))/100;
+}
+
+function licFreteFinalDoItem(it, l){
+  const total = licNumDireto(l && l.freteFinal);
+  const itens = (l && l.itens) || [];
+  if(!total || itens.length === 0) return 0;
+  const i = itens.findIndex(x => x.id === it.id);
+  if(i < 0) return 0;
+  const vendas = itens.map(x => licPrecoTotal(x));
+  const soma = vendas.reduce((a,b)=>a+b, 0);
+  return soma > 0 ? total * (vendas[i]/soma) : total / itens.length;
+}
+
+/* A licitação dona de um item, pra quando a conta é chamada de longe. */
+function licDonoDoItem(it){
+  return (STATE.licitacoes||[]).find(l => (l.itens||[]).some(x => x.id === it.id)) || null;
 }
 function licTodas(){ (STATE.licitacoes||[]).forEach(licNormalizar); return STATE.licitacoes||[]; }
 function licPorEtapa(etapas){ return licTodas().filter(l=>etapas.includes(l.etapa)); }
@@ -27133,7 +27193,70 @@ function licRegistrar(l, texto){
    Números
    --------------------------------------------------------- */
 function licNum(v){ const n = parseFloat(String(v==null?'':v).replace(/\./g,'').replace(',','.')); return isNaN(n)?0:n; }
-function licNumDireto(v){ const n = parseFloat(v); return isNaN(n)?0:n; }
+/* Ela digita como se fala e como se escreve aqui: 3.600,00 — com vírgula
+   e com ponto de milhar, às vezes com "R$" na frente. O parseFloat seco
+   lia "3.600,00" como 3,6 e "3600,00" como 3600 só por sorte; num campo
+   type="number" o navegador recusava a vírgula e devolvia vazio, e o
+   valor aparecia zerado. Esta função entende os dois formatos. */
+function licNumDireto(v){
+  if(typeof v === 'number') return isFinite(v) ? v : 0;
+  if(v == null) return 0;
+  let s = String(v).trim();
+  if(!s) return 0;
+  s = s.replace(/r\$/ig,'').replace(/\s/g,'').replace(/[^\d,.\-]/g,'');
+  if(!s) return 0;
+  const temVirgula = s.includes(','), temPonto = s.includes('.');
+  if(temVirgula && temPonto){
+    /* o último separador manda: 3.600,00 (BR) ou 3,600.00 (US) */
+    s = s.lastIndexOf(',') > s.lastIndexOf('.')
+      ? s.replace(/\./g,'').replace(',', '.')
+      : s.replace(/,/g,'');
+  } else if(temVirgula){
+    s = s.replace(/\./g,'').replace(',', '.');
+  } else if(temPonto){
+    /* 3.600 é três mil e seiscentos; 3.6 e 3.60 são decimais de verdade */
+    const partes = s.split('.');
+    if(partes.length > 2 || (partes[1] || '').length === 3) s = partes.join('');
+  }
+  const n = parseFloat(s);
+  return isNaN(n) ? 0 : n;
+}
+
+/* O que vai dentro do campo: em reais, como ela lê. Vazio continua vazio
+   pra não encher a tela de 0,00 em campo que ela nem usou. */
+function licMoedaCampo(v){
+  const n = licNumDireto(v);
+  return n ? n.toLocaleString('pt-BR',{minimumFractionDigits:2, maximumFractionDigits:2}) : '';
+}
+function licPctCampo(v){
+  const n = licNumDireto(v);
+  return n ? String(n).replace('.', ',') : '';
+}
+
+/* Campo de dinheiro de verdade: texto, não type="number". O type="number"
+   recusa a vírgula no teclado brasileiro — ela digitava 3.600,00, o
+   navegador acusava erro e devolvia campo vazio, e o valor voltava zerado.
+   Aqui ela digita como quiser e o campo se arruma sozinho ao sair. */
+function licCampoMoeda(campo, valor, placeholder, estilo, escopo){
+  const attr = escopo==='lic-taxa' ? `data-taxa="${campo}"` : `data-campo="${campo}"`;
+  return `<div style="position:relative;">
+    <span style="position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:12.5px;
+                 color:var(--ink-faint);pointer-events:none;">R$</span>
+    <input type="text" inputmode="decimal" ${attr} data-moeda="1"
+      value="${escapeAttr(licMoedaCampo(valor))}" placeholder="${escapeAttr(placeholder||'0,00')}"
+      style="padding-left:32px;text-align:right;font-family:var(--font-num);${estilo||''}">
+  </div>`;
+}
+function licCampoPct(campo, valor, placeholder, estilo, escopo){
+  const attr = escopo==='lic-taxa' ? `data-taxa="${campo}"` : `data-campo="${campo}"`;
+  return `<div style="position:relative;">
+    <input type="text" inputmode="decimal" ${attr} data-pct="1"
+      value="${escapeAttr(licPctCampo(valor))}" placeholder="${escapeAttr(placeholder||'0')}"
+      style="padding-right:26px;text-align:right;font-family:var(--font-num);${estilo||''}">
+    <span style="position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:12.5px;
+                 color:var(--ink-faint);pointer-events:none;">%</span>
+  </div>`;
+}
 
 /* Custo total de UM item, com tudo o que ela mandou entrar na conta:
    produto, acessórios obrigatórios, frete até nós, frete até o cliente,
@@ -27148,27 +27271,33 @@ function licPrecoTotal(it){
   return licPrecoUnit(it) * qtd;
 }
 
-function licCustoItem(it){
+function licCustoItem(it, l){
+  if(l === undefined) l = licDonoDoItem(it);
   const qtd = Math.max(1, licNumDireto(it.qtd) || 1);
   const produto = licNumDireto(it.custo) * qtd;
+  /* acessórios saiu do formulário: um valor a menos pra ela preencher.
+     Se algum item antigo ainda tiver, continua entrando na conta. */
   const acessorios = licNumDireto(it.acessorios);
   const freteNos = licNumDireto(it.freteNos);
-  const freteCliente = licNumDireto(it.freteCliente);
+  const freteCliente = licFreteFinalDoItem(it, l);
   const venda = licPrecoUnit(it) * qtd;
-  const imposto = venda * (licNumDireto(it.impostoPct)/100);
-  const comissao = venda * (licNumDireto(it.comissaoPct)/100);
+  const impostoPct = licNumDireto(l && l.impostoPct);
+  const comissaoPct = licNumDireto(l && l.comissaoPct);
+  const imposto = venda * (impostoPct/100);
+  const comissao = venda * (comissaoPct/100);
   const total = produto + acessorios + freteNos + freteCliente + imposto + comissao;
   return { qtd, produto, acessorios, freteNos, freteCliente, imposto, comissao, total,
+           impostoPct, comissaoPct,
            lucro: venda - total,
            margem: venda>0 ? ((venda-total)/venda*100) : 0,
            /* custo que não depende do preço de venda — serve pra dizer o piso */
            fixo: produto + acessorios + freteNos + freteCliente,
-           percentual: (licNumDireto(it.impostoPct)+licNumDireto(it.comissaoPct))/100 };
+           percentual: (impostoPct + comissaoPct)/100 };
 }
 /* Menor preço de venda que ainda não dá prejuízo, dado que imposto e
    comissão saem do próprio preço: piso = fixo / (1 - %) */
-function licPisoItem(it){
-  const c = licCustoItem(it);
+function licPisoItem(it, l){
+  const c = licCustoItem(it, l);
   const resto = 1 - c.percentual;
   if(resto <= 0) return Infinity;
   return c.fixo / resto;
@@ -27177,10 +27306,11 @@ function licTotalLicitacao(l){
   let venda=0, custo=0, teto=0;
   (l.itens||[]).forEach(it=>{
     venda += licPrecoTotal(it);
-    custo += licCustoItem(it).total;
+    custo += licCustoItem(it, l).total;
     teto  += licNumDireto(it.teto);
   });
-  return { venda, custo, teto, lucro: venda-custo, margem: venda>0?((venda-custo)/venda*100):0 };
+  return { venda, custo, teto, lucro: venda-custo, margem: venda>0?((venda-custo)/venda*100):0,
+           freteFinal: licNumDireto(l.freteFinal) };
 }
 
 /* ---------------------------------------------------------
@@ -28206,6 +28336,7 @@ function licPainelOportunidades(){
       <div class="acoes">
         ${(lista.length + licTodas().length + licDescartadas().length) > 0
           ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
+        ${licLixeira().length ? `<button class="btn" onclick="licAbrirLixeira()" title="Dispensas descartadas ou apagadas nos últimos 30 dias">🗑️ Lixeira (${licLixeira().length})</button>` : ''}
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirRepresentante()" title="Quem assina pela empresa — preenche uma vez">✍️ Representante</button>
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
@@ -28263,12 +28394,14 @@ function licComecarDoZero(){
   const nRev = (STATE.licitacoesRevisao||[]).length;
   const nLic = (STATE.licitacoes||[]).length;
   const nDesc = licDescartadas().length;
+  const nLixo = licLixeira().length;
   const orcamentosLigados = (STATE.orcamentos||[]).filter(o=>o.origemLicitacao).length;
 
   const partes = [];
   if(nRev) partes.push(`${nRev} oportunidade${nRev===1?'':'s'} aguardando triagem`);
   if(nLic) partes.push(`${nLic} licitação${nLic===1?'':'ões'} (incluindo as do funil antigo, com seus itens e anexos)`);
   if(nDesc) partes.push(`a lista de ${nDesc} descartada${nDesc===1?'':'s'}`);
+  if(nLixo) partes.push(`a lixeira com ${nLixo} dispensa${nLixo===1?'':'s'} — <b>restaure antes o que ainda interessa</b>`);
 
   confirmAction('Começar do zero',
     `Vai apagar do portal de licitações: ${partes.join(', ')}. ` +
@@ -28279,6 +28412,7 @@ function licComecarDoZero(){
       STATE.licitacoesRevisao = [];
       STATE.licitacoes = [];
       STATE.licitacoesDescartadas = [];
+      STATE.licitacoesLixeira = [];
       licAba = 'oportunidades'; licAberta = null; licTela = null;
       licSelecionadas = new Set(); licProdutoAberto = null;
       licFiltroBusca = ''; licFiltroProduto = '';
@@ -28620,12 +28754,150 @@ function licTriar(id, interesse, emLote){
     STATE.licitacoes.push(o);
   }else{
     licDescartadas().push(licChaveOportunidade(o));
+    licParaLixeira(o, 'descartada na triagem');
   }
   if(emLote) return;
   saveState();
   renderPortalLicitacoes();
   showToast(interesse ? 'Foi para Em análise.' : 'Descartada — não volta na próxima importação.', 'success');
 }
+/* =========================================================
+   LIXEIRA — apagar não pode ser para sempre
+
+   Ela apagou uma dispensa sem querer e não tinha como voltar. Agora
+   tudo que sai do portal — descartado na triagem, descartado na
+   análise ou apagado de vez — guarda uma cópia inteira aqui por 30
+   dias, junto com o orçamento que tiver ido junto. Restaurar devolve
+   tudo no lugar onde estava.
+   ========================================================= */
+const LIC_LIXEIRA_DIAS = 30;
+const LIC_LIXEIRA_MAX = 60;
+
+function licLixeira(){
+  if(!Array.isArray(STATE.licitacoesLixeira)) STATE.licitacoesLixeira = [];
+  const limite = Date.now() - LIC_LIXEIRA_DIAS*86400000;
+  STATE.licitacoesLixeira = STATE.licitacoesLixeira
+    .filter(x => x && x.registro && new Date(x.apagadaEm||0).getTime() > limite)
+    .slice(0, LIC_LIXEIRA_MAX);
+  return STATE.licitacoesLixeira;
+}
+
+function licParaLixeira(registro, motivo, orcamento){
+  if(!registro) return;
+  const lix = licLixeira();
+  const copia = JSON.parse(JSON.stringify(registro));
+  const i = lix.findIndex(x => x.registro && x.registro.id === copia.id);
+  if(i >= 0) lix.splice(i, 1);
+  lix.unshift({
+    id: copia.id,
+    apagadaEm: new Date().toISOString(),
+    motivo: motivo || 'apagada',
+    registro: copia,
+    orcamento: orcamento ? JSON.parse(JSON.stringify(orcamento)) : null
+  });
+  if(lix.length > LIC_LIXEIRA_MAX) lix.length = LIC_LIXEIRA_MAX;
+}
+
+function licRotuloLixo(x){
+  const l = x.registro || {};
+  const num = l.numero || (l.propostaCampos && l.propostaCampos.numero) || '';
+  const controle = l.numeroControlePNCP || '';
+  return [num && `nº ${num}`, l.orgao, controle].filter(Boolean).join(' · ') || 'sem identificação';
+}
+
+function licRestaurarDaLixeira(id){
+  const lix = licLixeira();
+  const i = lix.findIndex(x => x.id === id);
+  if(i < 0){ showToast('Não achei essa na lixeira.','error'); return; }
+  const x = lix[i];
+  const l = x.registro;
+
+  if((STATE.licitacoes||[]).some(y => y.id === l.id)){
+    showToast('Essa já está no portal — não precisa restaurar.','info');
+    return;
+  }
+  licNormalizar(l);
+  if(!Array.isArray(STATE.licitacoes)) STATE.licitacoes = [];
+  STATE.licitacoes.push(l);
+
+  /* o orçamento volta junto, se foi apagado com ela */
+  if(x.orcamento && !(STATE.orcamentos||[]).some(o => o.id === x.orcamento.id)){
+    if(!Array.isArray(STATE.orcamentos)) STATE.orcamentos = [];
+    STATE.orcamentos.push(x.orcamento);
+    l.orcamentoId = x.orcamento.id;
+  }
+
+  /* sai da lista de descartadas, senão some de novo na próxima importação */
+  const chave = licChaveOportunidade(l);
+  STATE.licitacoesDescartadas = licDescartadas().filter(k => k !== chave);
+
+  lix.splice(i, 1);
+  licRegistrar(l, 'Restaurada da lixeira.');
+  saveState();
+  licAba = LIC_ETAPAS[l.etapa] ? LIC_ETAPAS[l.etapa].aba : 'analise';
+  licAberta = null; licTela = null;
+  renderPortalLicitacoes();
+  showToast('Restaurada. Está de volta em ' + (LIC_ETAPAS[l.etapa] ? LIC_ETAPAS[l.etapa].rotulo : 'Em análise') + '.','success');
+}
+
+function licApagarDaLixeira(id){
+  const lix = licLixeira();
+  const x = lix.find(y => y.id === id);
+  if(!x) return;
+  confirmAction('Apagar de vez mesmo',
+    `${licRotuloLixo(x)} sai da lixeira e aí sim não tem mais volta. Continuar?`,
+    ()=>{
+      STATE.licitacoesLixeira = licLixeira().filter(y => y.id !== id);
+      saveState(); licAbrirLixeira(true);
+      showToast('Apagada de vez.','success');
+    });
+}
+
+function licAbrirLixeira(redesenhar){
+  const antigo = document.getElementById('modal-lic-lixeira');
+  if(antigo) antigo.remove();
+  const lix = licLixeira();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-lixeira';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(760px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">🗑️ Lixeira das dispensas</h3>
+      <p class="help-text">Tudo que você descartou ou apagou fica aqui por ${LIC_LIXEIRA_DIAS} dias.
+        Restaurar devolve a dispensa inteira — itens, preços, leitura do edital e o orçamento que foi junto.</p>
+
+      ${lix.length === 0
+        ? `<div class="lic-vazio">A lixeira está vazia.</div>
+           <div class="help-text" style="margin-top:8px;">Se você apagou alguma coisa <b>antes</b> desta atualização,
+             ela não passou por aqui e não dá pra restaurar. Nesse caso, veja se a outra máquina ainda tem —
+             e <b>exporte o backup nela antes de abrir o sistema</b>, porque ao sincronizar ela também apaga.</div>`
+        : lix.map(x=>{
+            const l = x.registro || {};
+            const itens = (l.itens||[]).length;
+            const etapa = LIC_ETAPAS[l.etapa] ? LIC_ETAPAS[l.etapa].rotulo : (l.etapa||'—');
+            return `<div class="lic-doc" style="display:block;">
+              <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+                <div style="flex:1;min-width:240px;">
+                  <b>${escapeHtml((l.objeto||'sem objeto').slice(0,90))}</b>
+                  <small>${escapeHtml(licRotuloLixo(x))}</small>
+                  <small>${escapeHtml(x.motivo)} em ${fmtDate((x.apagadaEm||'').slice(0,10))} · estava em ${escapeHtml(etapa)}${itens?` · ${itens} ite${itens===1?'m':'ns'}`:''}${x.orcamento?` · com o orçamento nº ${escapeHtml(String(x.orcamento.numero||''))}`:''}</small>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button class="btn btn-sm btn-primary" onclick="licRestaurarDaLixeira('${l.id}')">↩️ Restaurar</button>
+                  <button class="btn btn-sm" onclick="licApagarDaLixeira('${l.id}')" title="Tirar da lixeira de vez">✕</button>
+                </div>
+              </div>
+            </div>`;
+          }).join('')}
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  if(redesenhar) renderPortalLicitacoes();
+}
+
 function licRestaurarDescartadas(){
   confirmAction('Limpar descartadas',
     'As dispensas que você descartou voltam a aparecer na próxima vez que importar o arquivo do PNCP. Continuar?',
@@ -29082,10 +29354,11 @@ function licDescartarProcesso(id){
   confirmAction('Descartar esta licitação',
     'Ela sai do portal e não volta na próxima importação do arquivo do PNCP. Continuar?',
     ()=>{
+      licParaLixeira(l, 'descartada na análise');
       licDescartadas().push(licChaveOportunidade(l));
       STATE.licitacoes = STATE.licitacoes.filter(x=>x.id!==id);
       saveState(); licAberta=null; licTela=null; renderPortalLicitacoes();
-      showToast('Descartada.','success');
+      showToast('Descartada. Se foi sem querer, está na lixeira.','success');
     });
 }
 
@@ -29232,6 +29505,9 @@ function licDesistir(id){
     ` Depois, se quiser sumir com tudo, use "Apagar de vez".`,
     ()=>{
       if(orc){
+        /* guarda uma cópia do orçamento com a dispensa, pro caso de ela
+           mudar de ideia: restaurar devolve os dois */
+        licParaLixeira(l, 'desistimos (o orçamento foi apagado)', orc);
         STATE.orcamentos = STATE.orcamentos.filter(o=>o.id!==orc.id);
         l.orcamentoId = null;
       }
@@ -29262,12 +29538,13 @@ function licApagarDeVez(id){
     (orc ? `, e o orçamento nº ${orc.numero}` : '') +
     `. Não dá pra desfazer. Continuar?`,
     ()=>{
+      licParaLixeira(l, 'apagada', orc || null);
       if(orc) STATE.orcamentos = STATE.orcamentos.filter(o=>o.id!==orc.id);
       licDescartadas().push(licChaveOportunidade(l));
       STATE.licitacoes = STATE.licitacoes.filter(x=>x.id!==id);
       saveState(); licAberta=null; licTela=null; licProdutoAberto=null;
       renderPortalLicitacoes();
-      showToast('Apagada. Saiu também dos produtos de licitação.','success');
+      showToast('Apagada. Fica 30 dias na lixeira, dá pra restaurar.','success');
     });
 }
 
@@ -30797,16 +31074,17 @@ function licSimularModelo(item, modelo){
   const teto = licNumDireto(item.teto);
   if(!(teto>0)) return null;
   const qtd = Math.max(1, licNumDireto(item.qtd)||1);
+  const dono = licDonoDoItem(item);
   const fixo = modelo.preco*qtd + licNumDireto(item.acessorios)
-             + licNumDireto(item.freteNos) + licNumDireto(item.freteCliente);
-  const pct = (licNumDireto(item.impostoPct) + licNumDireto(item.comissaoPct)) / 100;
+             + licNumDireto(item.freteNos) + licFreteFinalDoItem(item, dono);
+  const pct = (licNumDireto(dono && dono.impostoPct) + licNumDireto(dono && dono.comissaoPct)) / 100;
   const custoNoTeto = fixo + teto*pct;
   const sobra = teto - custoNoTeto;
   const piso = pct < 1 ? fixo/(1-pct) : Infinity;
   return { fixo, teto, sobra, piso, qtd,
            fecha: sobra >= 0,
            margem: teto>0 ? (sobra/teto)*100 : 0,
-           temFrete: licNumDireto(item.freteNos)+licNumDireto(item.freteCliente)>0 };
+           temFrete: licNumDireto(item.freteNos)+licFreteFinalDoItem(item, dono)>0 };
 }
 
 /* O que já sabemos deste produto de licitações passadas. */
@@ -30930,7 +31208,7 @@ function licComparacaoHtml(l){
         ${sim?`<div class="conta-rapida ${sim.fecha?'ok':'nao'}">
           ${sim.fecha
             ? `Comprando a ${fmtMoney(m.preco)}, <b>cabe no teto</b> com até <b>${fmtMoney(sim.sobra)}</b> de margem (${sim.margem.toFixed(1)}%).`
-            : `Comprando a ${fmtMoney(m.preco)}, <b>não cabe no teto</b> — passa ${fmtMoney(Math.abs(sim.sobra))}. Teria que comprar por até ${fmtMoney((sim.teto - (sim.fixo - m.preco*sim.qtd) - sim.teto*((licNumDireto(item.impostoPct)+licNumDireto(item.comissaoPct))/100))/sim.qtd)}.`}
+            : `Comprando a ${fmtMoney(m.preco)}, <b>não cabe no teto</b> — passa ${fmtMoney(Math.abs(sim.sobra))}. Teria que comprar por até ${fmtMoney((sim.teto - (sim.fixo - m.preco*sim.qtd) - sim.teto*licPctDaLicitacao(item))/sim.qtd)}.`}
           ${!sim.temFrete?'<span style="color:var(--ink-faint);"> · ainda sem frete na conta</span>':''}
         </div>`:''}
 
@@ -31119,8 +31397,7 @@ function licNovoItem(id, silencioso){
     descricao: l.itens.length===0 ? (l.objeto||'') : '',
     descricaoProposta: l.itens.length===0 ? (l.objeto||'') : '',
     marca:'', modelo:'', unidade:'UND', qtd:1, teto: l.itens.length===0 ? (l.valorEstimado||0) : 0,
-    custo:0, acessorios:0, freteNos:0, freteCliente:0, impostoPct:0,
-    comissaoVendedor:'', comissaoPct:0, precoUnit:0,
+    custo:0, freteNos:0, precoUnit:0,
     linkFornecedor:'', contatoFornecedor:'', obsCompra:''
   });
   if(!silencioso){ saveState(); renderPortalLicitacoes(); }
@@ -31161,12 +31438,17 @@ function licTelaPrecificar(l){
         : ' Como o julgamento é por item, dá pra simplesmente não disputar esse item.'}
     </div>`:''}
 
+    ${licTaxasHtml(l)}
+
     <div class="card">
       <h3 style="margin-top:0;">Precificação dos itens</h3>
-      <p class="help-text">Os itens já vieram do edital. Ajuste a descrição, informe custo e fretes — o resto o sistema calcula.</p>
+      <p class="help-text">Por item você informa só o <b>custo do produto</b>, o <b>preço de venda</b> e o
+        <b>frete até nós</b>. Imposto e comissão você marcou uma vez lá em cima; o frete da entrega fica no fim.</p>
       ${l.itens.length===0 ? '<div class="lic-vazio">Nenhum item ainda.</div>' : l.itens.map((it,i)=>licItemHtml(l, it, i)).join('')}
       <button class="btn btn-sm" onclick="licNovoItem('${l.id}')">+ Adicionar item</button>
     </div>
+
+    ${licFreteFinalHtml(l)}
 
     <div class="card">
       <h3 style="margin-top:0;">Resumo${l.criterio==='global'?' — preço global':''}</h3>
@@ -31196,13 +31478,79 @@ function licTelaPrecificar(l){
   `;
 }
 
+/* Imposto e comissão: uma vez só, valendo para a dispensa inteira.
+   Vem preenchido com o que está em Configurações, que é o caso normal. */
+function licTaxasHtml(l){
+  const imp = licNumDireto(l.impostoPct);
+  const com = licNumDireto(l.comissaoPct);
+  const vendedores = (typeof getVendedoresUnicos==='function'?getVendedoresUnicos():['NETO','GILBERTO','GERALDO']);
+  return `
+    <div class="card" style="padding-bottom:14px;">
+      <h3 style="margin-top:0;">Vale para todos os itens</h3>
+      <p class="help-text">Marque uma vez e serve para a dispensa inteira — não precisa repetir item por item.</p>
+      <div class="lic-grade" style="margin:0;">
+        <div><label>Impostos (%)</label>
+          ${licCampoPct('impostoPct', l.impostoPct, '0', '', 'lic-taxa')}
+          <div class="dica">${licNumDireto((STATE.config||{}).impostoPct)?`o padrão da loja é ${licPctCampo((STATE.config||{}).impostoPct)}%`:'você digita'}</div></div>
+        <div><label>Comissão de</label>
+          <select data-taxa="comissaoVendedor">
+            <option value="">sem comissão</option>
+            ${vendedores.map(v=>`<option value="${escapeAttr(v)}" ${l.comissaoVendedor===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+          <div class="dica">quem leva a comissão desta dispensa</div></div>
+        <div><label>Comissão (%)</label>
+          ${licCampoPct('comissaoPct', l.comissaoPct, '0', '', 'lic-taxa')}
+          <div class="dica">sai do lucro</div></div>
+      </div>
+      <div class="help-text" style="margin-top:8px;">
+        ${imp||com
+          ? `Cada item já desconta ${imp?`<b>${licPctCampo(imp)}% de imposto</b>`:''}${imp&&com?' e ':''}${com?`<b>${licPctCampo(com)}% de comissão${l.comissaoVendedor?' pra '+escapeHtml(l.comissaoVendedor):''}</b>`:''} sobre o preço de venda.`
+          : 'Sem imposto nem comissão, o lucro de cada item é preço menos custo.'}
+      </div>
+    </div>`;
+}
+
+/* O frete da entrega é um só, e entra por último — depois que todos os
+   itens já estão precificados. Ele se divide entre os itens na proporção
+   do que cada um vale, pra que o "fecha / não fecha" continue honesto. */
+function licFreteFinalHtml(l){
+  const frete = licNumDireto(l.freteFinal);
+  const t = licTotalLicitacao(l);
+  const semPreco = (l.itens||[]).filter(it=>licPrecoTotal(it)<=0).length;
+  return `
+    <div class="card">
+      <h3 style="margin-top:0;">Por último: o frete da entrega</h3>
+      <p class="help-text">Um valor só, para levar tudo até o órgão. Ele se divide entre os itens na proporção
+        do que cada um vale, e já está contado no resumo abaixo.</p>
+      <div class="lic-grade" style="margin:0;max-width:420px;">
+        <div><label>Frete final (entrega no órgão)</label>
+          ${licCampoMoeda('freteFinal', l.freteFinal, '0,00', 'font-size:16px;font-weight:600;', 'lic-taxa')}
+          <div class="dica">deixe em branco se a entrega for por conta do fornecedor</div></div>
+      </div>
+      ${frete>0 ? `
+        <div class="lic-conta" style="margin-top:12px;">
+          <table>
+            ${(l.itens||[]).map((it,i)=>{
+              const parte = licFreteFinalDoItem(it, l);
+              return `<tr><td>Item ${String(i+1).padStart(2,'0')} — ${escapeHtml((it.descricaoProposta||it.descricao||'').slice(0,46))}</td>
+                <td>${fmtMoney(parte)}</td></tr>`;
+            }).join('')}
+            <tr><td>Frete final</td><td>${fmtMoney(frete)}</td></tr>
+          </table>
+        </div>
+        ${semPreco>0?`<div class="help-text" style="margin-top:6px;">Enquanto ${semPreco===1?'um item estiver':'alguns itens estiverem'} sem preço,
+          o rateio é por igual. Assim que todos tiverem preço, ele passa a ser proporcional.</div>`:''}`
+        : `<div class="help-text" style="margin-top:8px;">Sem frete final, o custo de cada item é só produto, frete até nós, imposto e comissão.</div>`}
+    </div>`;
+}
+
 function licItemHtml(l, it, i){
-  const c = licCustoItem(it);
+  const c = licCustoItem(it, l);
   const faixa = 'lic-f' + ((i % 6) + 1);
   const vendaUnit = licPrecoUnit(it);
   const venda = licPrecoTotal(it);
   const teto = licNumDireto(it.teto);
-  const piso = licPisoItem(it);
+  const piso = licPisoItem(it, l);
   const fecha = venda > 0 && c.lucro >= 0;
   const temVenda = venda > 0;
   const parecidos = licProcurarParecidos(it.descricaoProposta || it.descricao, it.marca, it.id);
@@ -31219,7 +31567,8 @@ function licItemHtml(l, it, i){
       </div>
       <div class="teto">
         TETO DO EDITAL
-        <b><input type="number" step="0.01" data-campo="teto" value="${teto||''}" placeholder="0,00"
+        <b><input type="text" inputmode="decimal" data-campo="teto" data-moeda="1"
+          value="${escapeAttr(licMoedaCampo(teto))}" placeholder="0,00"
           title="O teto do edital. Corrija aqui se vier errado."
           style="width:120px;text-align:right;border:1px solid transparent;background:transparent;
                  font:inherit;font-size:16px;font-weight:700;font-family:var(--font-num);color:var(--ink);
@@ -31254,26 +31603,31 @@ function licItemHtml(l, it, i){
 
       <div class="lic-grade">
         <div><label>Custo do produto <span style="color:var(--ink-faint);">(unitário)</span></label>
-          <input type="number" step="0.01" data-campo="custo" value="${licNumDireto(it.custo)||''}" placeholder="0,00">
-          <div class="dica">o que o distribuidor cobra</div></div>
-        <div><label>Acessórios obrigatórios</label>
-          <input type="number" step="0.01" data-campo="acessorios" value="${licNumDireto(it.acessorios)||''}" placeholder="0,00">
-          <div class="dica">suporte, cabo, instalação</div></div>
-        <div><label>Frete até nós</label>
-          <input type="number" step="0.01" data-campo="freteNos" value="${licNumDireto(it.freteNos)||''}" placeholder="0,00"></div>
-        <div><label>Frete até o cliente</label>
-          <input type="number" step="0.01" data-campo="freteCliente" value="${licNumDireto(it.freteCliente)||''}" placeholder="0,00"></div>
-        <div><label>Impostos (%)</label>
-          <input type="number" step="0.01" data-campo="impostoPct" value="${licNumDireto(it.impostoPct)||''}" placeholder="0">
-          <div class="dica">você digita</div></div>
-        <div><label>Comissão</label>
-          <select data-campo="comissaoVendedor">
-            <option value="">sem comissão</option>
-            ${(typeof getVendedoresUnicos==='function'?getVendedoresUnicos():['NETO','GILBERTO','GERALDO']).map(v=>
-              `<option value="${escapeAttr(v)}" ${it.comissaoVendedor===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
-          </select>
-          <input type="number" step="0.01" data-campo="comissaoPct" value="${licNumDireto(it.comissaoPct)||''}" placeholder="%" style="margin-top:5px;">
-          <div class="dica">sai do lucro</div></div>
+          ${licCampoMoeda('custo', it.custo)}
+          <div class="dica">o que o distribuidor cobra, sem o frete</div></div>
+      </div>
+
+      <div class="lic-grade" style="margin-top:10px;">
+        <div><label>Preço de venda <b>por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</b></label>
+          ${licCampoMoeda('precoUnit', it.precoUnit, '0,00',
+            `font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}`)}
+          <div class="dica">é o valor unitário que vai na proposta</div></div>
+        <div><label>Valor total do item</label>
+          <div style="padding:7px 0;font-size:17px;font-weight:600;font-family:var(--font-num);color:${temVenda?(fecha?'var(--positive)':'var(--negative)'):'var(--ink-faint)'};">
+            ${temVenda?fmtMoney(venda):'—'}</div>
+          <div class="dica">${c.qtd} × ${vendaUnit?fmtMoney(vendaUnit):'preço unitário'}</div></div>
+      </div>
+
+      <div style="margin-top:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:var(--radius-sm);">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+          Agora o frete deste item — depois que o preço do produto já está de pé</div>
+        <div class="lic-grade" style="margin:0;max-width:420px;">
+          <div><label>Frete até nós</label>
+            ${licCampoMoeda('freteNos', it.freteNos)}
+            <div class="dica">o que o distribuidor cobra pra trazer este item</div></div>
+        </div>
+        <div class="dica" style="margin-top:6px;">Só o frete até nós entra aqui. O frete da entrega no órgão
+          é um valor só, no fim da tela. Se ainda não sabe, deixe em branco e volte quando o distribuidor responder.</div>
       </div>
 
       <div class="lic-conta">
@@ -31281,9 +31635,9 @@ function licItemHtml(l, it, i){
           <tr><td>Produto${c.qtd>1?` (${c.qtd} × ${fmtMoney(licNumDireto(it.custo))})`:''}</td><td>${fmtMoney(c.produto)}</td></tr>
           ${c.acessorios?`<tr><td>Acessórios obrigatórios</td><td>${fmtMoney(c.acessorios)}</td></tr>`:''}
           ${c.freteNos?`<tr><td>Frete até nós</td><td>${fmtMoney(c.freteNos)}</td></tr>`:''}
-          ${c.freteCliente?`<tr><td>Frete até o cliente</td><td>${fmtMoney(c.freteCliente)}</td></tr>`:''}
-          <tr><td>Impostos${licNumDireto(it.impostoPct)?` (${licNumDireto(it.impostoPct)}%)`:''}</td><td>${fmtMoney(c.imposto)}</td></tr>
-          ${c.comissao?`<tr><td>Comissão ${escapeHtml(it.comissaoVendedor||'')} (${licNumDireto(it.comissaoPct)}%)</td><td>${fmtMoney(c.comissao)}</td></tr>`:''}
+          ${c.freteCliente?`<tr><td>Parte do frete da entrega</td><td>${fmtMoney(c.freteCliente)}</td></tr>`:''}
+          ${c.imposto?`<tr><td>Impostos (${licPctCampo(c.impostoPct)}%)</td><td>${fmtMoney(c.imposto)}</td></tr>`:''}
+          ${c.comissao?`<tr><td>Comissão ${escapeHtml(l.comissaoVendedor||'')} (${licPctCampo(c.comissaoPct)}%)</td><td>${fmtMoney(c.comissao)}</td></tr>`:''}
           <tr><td>Custo total</td><td>${fmtMoney(c.total)}</td></tr>
         </table>
         <div class="lic-res ${fecha?'ok':'nao'}">
@@ -31301,16 +31655,6 @@ function licItemHtml(l, it, i){
       </div>
 
       <div class="lic-grade" style="margin-top:12px;">
-        <div><label>Preço de venda <b>por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</b></label>
-          <input type="number" step="0.01" data-campo="precoUnit" value="${vendaUnit||''}" placeholder="0,00"
-            style="font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}">
-          <div class="dica">é o valor unitário que vai na proposta</div></div>
-        <div><label>Valor total do item</label>
-          <div style="padding:7px 0;font-size:17px;font-weight:600;font-family:var(--font-num);color:${temVenda?(fecha?'var(--positive)':'var(--negative)'):'var(--ink-faint)'};">
-            ${temVenda?fmtMoney(venda):'—'}</div>
-          <div class="dica">${c.qtd} × ${vendaUnit?fmtMoney(vendaUnit):'preço unitário'}</div></div>
-      </div>
-      <div class="lic-grade">
         <div><label>Link do fornecedor</label>
           <input type="text" data-campo="linkFornecedor" value="${escapeAttr(it.linkFornecedor||'')}" placeholder="https://..."></div>
         <div><label>Contato</label>
@@ -32273,6 +32617,26 @@ function licLigarDetalhe(){
   const crit = document.getElementById('lic-criterio');
   if(crit) crit.onchange = ()=>{ l.criterio = crit.value; saveState(); renderPortalLicitacoes(); };
 
+  /* imposto, comissão e frete final: uma vez só, valem pra dispensa toda */
+  document.querySelectorAll('[data-taxa]').forEach(inp=>{
+    const campo = inp.dataset.taxa;
+    const numerico = ['impostoPct','comissaoPct','freteFinal'].includes(campo);
+    const aplicar = ()=>{
+      const antes = JSON.stringify([l.impostoPct, l.comissaoPct, l.comissaoVendedor, l.freteFinal]);
+      l[campo] = numerico ? licNumDireto(inp.value) : inp.value;
+      if(campo==='comissaoVendedor' && inp.value && !licNumDireto(l.comissaoPct)) l.comissaoPct = 3;
+      if(inp.dataset.moeda) inp.value = licMoedaCampo(l[campo]);
+      if(inp.dataset.pct)   inp.value = licPctCampo(l[campo]);
+      if(JSON.stringify([l.impostoPct, l.comissaoPct, l.comissaoVendedor, l.freteFinal])===antes) return;
+      saveState();
+      renderPortalLicitacoes();
+    };
+    inp.addEventListener('change', aplicar);
+    if(inp.dataset.moeda || inp.dataset.pct){
+      inp.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); inp.blur(); } });
+    }
+  });
+
   /* campos dos itens da precificação — salva ao sair do campo e redesenha
      só quando o número muda (pra não roubar o foco a cada tecla) */
   document.querySelectorAll('.lic-item').forEach(caixa=>{
@@ -32280,18 +32644,24 @@ function licLigarDetalhe(){
     if(!item) return;
     caixa.querySelectorAll('[data-campo]').forEach(inp2=>{
       const campo = inp2.dataset.campo;
-      const numerico = ['qtd','teto','custo','acessorios','freteNos','freteCliente','impostoPct','comissaoPct','precoUnit'].includes(campo);
+      const numerico = ['qtd','teto','custo','freteNos','precoUnit'].includes(campo);
       const aplicar = ()=>{
         const antes = JSON.stringify(item);
         item[campo] = numerico ? licNumDireto(inp2.value)
                    : campo==='unidade' ? licUnidadeLimpa(inp2.value)
                    : inp2.value;
-        if(campo==='comissaoVendedor' && inp2.value && !licNumDireto(item.comissaoPct)) item.comissaoPct = 3;
+        /* o campo se arruma na hora: 3600 vira 3.600,00 e ela vê que entrou */
+        if(inp2.dataset.moeda) inp2.value = licMoedaCampo(item[campo]);
+        if(inp2.dataset.pct)   inp2.value = licPctCampo(item[campo]);
         if(JSON.stringify(item)===antes) return;
         saveState();
         renderPortalLicitacoes();
       };
       inp2.addEventListener('change', aplicar);
+      /* Enter confirma sem precisar sair do campo */
+      if(inp2.dataset.moeda || inp2.dataset.pct){
+        inp2.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); inp2.blur(); } });
+      }
       if(campo==='descricaoProposta'){
         let t;
         inp2.addEventListener('input', ()=>{
@@ -43756,7 +44126,7 @@ function armazMedirState(){
 const ARMAZ_NOMES = {
   orcamentos:'Orçamentos', vendas:'Vendas', produtos:'Produtos', clientes:'Clientes',
   licitacoes:'Licitações', licitacoesRevisao:'Oportunidades na triagem',
-  licitacoesDescartadas:'Dispensas descartadas', licitacoesGeocodeCache:'Cache de distâncias',
+  licitacoesDescartadas:'Dispensas descartadas', licitacoesLixeira:'Lixeira das dispensas', licitacoesGeocodeCache:'Cache de distâncias',
   despesas:'Despesas', movimentosEstoque:'Movimentos de estoque', auditoria:'Trilha de auditoria',
   historicoPrecosCompra:'Histórico de preço de compra', notasFiscais:'Notas fiscais',
   fornecedores:'Fornecedores', locaisCompra:'Locais de compra', config:'Configurações',
