@@ -27385,32 +27385,743 @@ function licVoltarLista(){
 }
 
 /* ---- aviso de certidão vencendo, fica acima das abas ---- */
-const LIC_CERTIDOES = [
-  { id:'rfb',   nome:'Certidão conjunta RFB / PGFN' },
-  { id:'fgts',  nome:'CRF — FGTS' },
-  { id:'cndt',  nome:'CNDT — Justiça do Trabalho' },
-  { id:'est',   nome:'Certidão estadual' },
-  { id:'mun',   nome:'Certidão municipal' },
-  { id:'falen', nome:'Certidão de falência / concordata' }
+/* =========================================================
+   A PASTA DE DOCUMENTOS
+
+   Antes eram seis certidões fixas que EU escolhi. Mas o edital pede o
+   que quer: contrato social, cartão CNPJ, documento com foto dos sócios,
+   declarações do anexo, procuração, atestado. E cada um é um arquivo
+   separado — documento com foto não pode vir grudado no contrato social.
+
+   Então a pasta virou uma lista aberta: qualquer documento, com o nome
+   que o edital usa, um arquivo cada. Alguns vencem (certidão), outros
+   não (contrato social, cartão CNPJ) — isso é por documento.
+   ========================================================= */
+
+/* O que já vem sugerido numa pasta nova. É só ponto de partida. */
+/* Cada documento leva os termos com que o edital pode chamá-lo. É isso
+   que faz o sistema entender que "Ato constitutivo, estatuto ou contrato
+   social em vigor" é o contrato social que ela já anexou, e que "Cédula
+   de identidade dos sócios" é o documento com foto. Sem isso, o
+   casamento por palavra solta erra. */
+const LIC_DOCS_PADRAO = [
+  { id:'rfb',   nome:'Certidão conjunta RFB / PGFN (federal)', vence:true,
+    termos:['rfb','pgfn','receita federal','divida ativa da uniao','fazenda federal','tributos federais','conjunta negativa','certidao conjunta','regularidade fiscal federal'] },
+  { id:'fgts',  nome:'CRF — FGTS',                             vence:true,
+    termos:['fgts','crf','fundo de garantia','seguridade social','caixa economica','regularidade do fgts'] },
+  { id:'cndt',  nome:'CNDT — Justiça do Trabalho',             vence:true,
+    termos:['cndt','justica do trabalho','trabalhista','debitos trabalhistas','tst'] },
+  { id:'est',   nome:'Certidão estadual',                      vence:true,
+    termos:['estadual','fazenda estadual','sefaz','icms','tributos estaduais'] },
+  { id:'mun',   nome:'Certidão municipal',                     vence:true,
+    termos:['municipal','fazenda municipal','prefeitura','iss','tributos municipais'] },
+  { id:'falen', nome:'Certidão de falência / concordata',      vence:true,
+    termos:['falencia','concordata','recuperacao judicial','distribuidor','cartorio distribuidor','insolvencia civil'] },
+  { id:'contrato', nome:'Contrato social e alterações',        vence:false,
+    termos:['contrato social','ato constitutivo','estatuto','registro comercial','requerimento de empresario','consolidado','alteracao contratual','instrumento de constituicao'] },
+  { id:'cnpj',  nome:'Cartão CNPJ',                            vence:false,
+    termos:['cartao cnpj','comprovante de inscricao','situacao cadastral','inscricao no cnpj','cnpj'] },
+  { id:'foto',  nome:'Documento com foto dos sócios',          vence:false,
+    termos:['documento com foto','cedula de identidade','identidade','rg','cnh','carteira de identidade','documento dos socios','documento de identificacao','cpf dos socios'] },
+  { id:'ie',    nome:'Inscrição estadual / municipal',         vence:false,
+    termos:['inscricao estadual','inscricao municipal','cadastro de contribuintes','contribuinte estadual'] }
 ];
-function licCertidoesCfg(){
-  if(!STATE.config.certidoes) STATE.config.certidoes = {};
-  return STATE.config.certidoes;
-}
-function licCertidoesVencendo(){
-  const cfg = licCertidoesCfg();
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  let vencendo = 0;
-  LIC_CERTIDOES.forEach(c=>{
-    const val = cfg[c.id] && cfg[c.id].validade;
-    if(!val) return;
-    const d = new Date(val+'T00:00:00');
-    if(isNaN(d.getTime())) return;
-    const dias = Math.round((d-hoje)/86400000);
-    if(dias <= 15) vencendo++;
+
+/* Sugestões de uma clicada ao adicionar — o que mais aparece em edital. */
+const LIC_DOCS_SUGESTOES = [
+  'Declaração de cumprimento do inciso XXXIII do art. 7º da CF',
+  'Declaração de pleno conhecimento e aceitação das regras',
+  'Prova de enquadramento como ME/EPP',
+  'Declaração de reserva de cargos para PCD',
+  'Procuração',
+  'Atestado de capacidade técnica',
+  'Balanço patrimonial',
+  'Alvará de funcionamento',
+  'Certidão de regularidade do CRC',
+  'Dados bancários da empresa'
+];
+
+function licDocs(){
+  const cfg = STATE.config;
+  if(!Array.isArray(cfg.docsLicitacao)){
+    /* migra do formato antigo (objeto com as seis fixas) */
+    const velho = cfg.certidoes || {};
+    cfg.docsLicitacao = LIC_DOCS_PADRAO.map(d=>{
+      const v = velho[d.id] || {};
+      return { id:d.id, nome:d.nome, vence:d.vence, termos:d.termos||[],
+               validade:v.validade||'', arquivo:v.arquivo||'', tamanho:v.tamanho||0,
+               conteudo:v.conteudo || undefined };
+    });
+    /* o formato antigo já foi copiado — não pode continuar ocupando espaço */
+    delete cfg.certidoes;
+  }
+  /* pasta criada antes dos termos: completa os que são padrão */
+  cfg.docsLicitacao.forEach(d=>{
+    if(!Array.isArray(d.termos) || d.termos.length===0){
+      const padrao = LIC_DOCS_PADRAO.find(x=>x.id===d.id);
+      d.termos = padrao ? (padrao.termos||[]) : [];
+    }
   });
-  return vencendo;
+  return cfg.docsLicitacao;
 }
+function licDoc(id){ return licDocs().find(d=>d.id===id) || null; }
+
+function licEstadoDoc(d){
+  if(!d) return { classe:'falta', estado:'não temos este documento', temos:false };
+  const temArquivo = !!d.arquivo;
+  if(!d.vence){
+    return temArquivo
+      ? { classe:'ok', estado:'guardado', temos:true }
+      : { classe:'falta', estado:'não temos este documento', temos:false };
+  }
+  if(!d.validade) return { classe:'falta', estado: temArquivo ? 'guardado, mas sem validade informada' : 'não temos este documento', temos:false };
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const dt = new Date(d.validade+'T00:00:00');
+  const dias = Math.round((dt-hoje)/86400000);
+  if(isNaN(dias)) return { classe:'falta', estado:'validade inválida', temos:false };
+  if(dias < 0) return { classe:'falta', estado:'vencida em '+fmtDate(d.validade), temos:false };
+  if(dias <= 15) return { classe:'aviso', estado:`vence em ${dias} dia${dias===1?'':'s'}`, temos:true };
+  return { classe:'ok', estado:'válida até '+fmtDate(d.validade), temos:true };
+}
+
+function licCertidoesVencendo(){
+  return licDocs().filter(d=>{
+    if(!d.vence || !d.validade) return false;
+    const e = licEstadoDoc(d);
+    return e.classe==='aviso' || (e.classe==='falta' && /vencida/.test(e.estado));
+  }).length;
+}
+
+/* Casa o nome que o edital usa com o documento guardado. */
+function licTextoCru(txt){
+  return String(txt||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+
+function licDocDaPasta(nomeNoEdital){
+  const cru = licTextoCru(nomeNoEdital);
+  if(!cru) return null;
+  const alvo = new Set(licPalavras(nomeNoEdital));
+  let melhor = null, melhorPontos = 0;
+
+  licDocs().forEach(d=>{
+    /* 1) o termo com que o edital chama este documento. Expressão longa
+       vale mais que palavra solta — "contrato social" ganha de "cnpj"
+       numa frase que tem os dois. */
+    (d.termos||[]).forEach(t=>{
+      const termo = licTextoCru(t);
+      if(!termo) return;
+      const achou = new RegExp('(^| )'+termo.replace(/ /g,' ')+'( |$)').test(cru);
+      if(!achou) return;
+      const pontos = 1 + termo.length/100;   // termo mais específico ganha
+      if(pontos > melhorPontos){ melhorPontos = pontos; melhor = d; }
+    });
+
+    /* 2) sem termo, cai no nome do documento, palavra por palavra */
+    const p = [...new Set(licPalavras(d.nome))];
+    if(p.length===0) return;
+    const batem = p.filter(x=>alvo.has(x)).length;
+    const distintivas = p.filter(x=>alvo.has(x) && x.length>=4).length;
+    if(batem < 2 && !(p.length<=3 && distintivas >= 1)) return;
+    const pontos = batem / p.length;
+    if(pontos >= 0.5 && pontos > melhorPontos){ melhorPontos = pontos; melhor = d; }
+  });
+  return melhor;
+}
+
+/* ---------------------------------------------------------
+   A janela da pasta
+   --------------------------------------------------------- */
+/* =========================================================
+   DECLARAÇÕES DO EDITAL
+
+   Todo edital pede as mesmas três ou quatro declarações, sempre com o
+   mesmo miolo e sempre com os mesmos dados: a empresa, o representante
+   legal, local e data. Preencher isso à mão, a cada dispensa, é tempo
+   perdido e é onde entra erro de digitação.
+
+   Os dados da empresa já existem no sistema. O que falta é o
+   representante legal — e isso ela preenche uma vez em ⚙️ Representante,
+   não a cada proposta.
+   ========================================================= */
+
+const LIC_REPRESENTANTE_PADRAO = {
+  nome:'', nacionalidade:'brasileiro(a)', estadoCivil:'',
+  endereco:'', rg:'', rgOrgao:'', cpf:'', cargo:'sócio'
+};
+
+function licRepresentante(){
+  if(!STATE.config.representante) STATE.config.representante = Object.assign({}, LIC_REPRESENTANTE_PADRAO);
+  return STATE.config.representante;
+}
+function licRepresentanteCompleto(){
+  const r = licRepresentante();
+  return !!(r.nome && r.cpf && r.rg);
+}
+
+/* O parágrafo de abertura, igual em todas as declarações. */
+function licQualificacao(){
+  const E = dadosProposta();
+  const r = licRepresentante();
+  const nada = (v, tam)=> v ? escapeHtml(v) : '<span class="vazio">'+'_'.repeat(tam||24)+'</span>';
+  return `A empresa <b>${escapeHtml(DADOS_EMPRESA.razaoSocial)}</b>, inscrita no CNPJ (M.F.) sob o nº
+    <b>${escapeHtml(DADOS_EMPRESA.cnpj)}</b>, sediada à ${escapeHtml(E.endereco||'')},
+    Setor/Bairro ${escapeHtml(E.bairro||'')}, na cidade de ${escapeHtml(E.cidade||'')},
+    Estado de ${escapeHtml(E.estado||'')}, neste ato representada por seu ${escapeHtml(r.cargo||'sócio')},
+    Senhor(a) ${nada(r.nome, 40)}, nacionalidade ${nada(r.nacionalidade, 16)},
+    estado civil ${nada(r.estadoCivil, 14)}, residente e domiciliado(a) à ${nada(r.endereco, 40)},
+    portador(a) da Carteira de Identidade nº ${nada(r.rg, 16)}${r.rgOrgao?' '+escapeHtml(r.rgOrgao):''}
+    e CPF nº ${nada(r.cpf, 16)},`;
+}
+
+/* Os modelos. "miolo" é o que muda de uma pra outra. */
+function licModelosDeclaracao(l){
+  const E = dadosProposta();
+  const orgao = (l && l.orgao) ? l.orgao : '';
+  const porte = (E.porte || 'ME').toUpperCase();
+  const ehME = porte === 'ME';
+
+  return [
+    { id:'pleno', titulo:'DECLARAÇÃO DE PLENO CONHECIMENTO',
+      miolo:`<b>DECLARA</b> o pleno conhecimento e aceitação das regras e das condições gerais da
+        contratação, constantes do procedimento, inclusive quanto ao cumprimento das exigências de
+        reserva de cargos para pessoa com deficiência e para reabilitado da Previdência Social, de que
+        trata o art. 93 da Lei nº 8.213, de 24 de julho de 1991, se couber; e ao cumprimento do disposto
+        no inciso VI do art. 68 da Lei nº 14.133, de 1º de abril de 2021.` },
+
+    { id:'meepp', titulo:'DECLARAÇÃO DE MICROEMPRESA E EMPRESA DE PEQUENO PORTE',
+      miolo:`<b>DECLARA</b>, sob as penas da lei e sem prejuízo das penalidades previstas no instrumento
+        convocatório, que é:
+        <div class="opcoes">
+          <span class="${ehME?'marcado':''}">${ehME?'☑':'☐'} MICROEMPRESA (ME)</span>
+          <span class="${ehME?'':'marcado'}">${ehME?'☐':'☑'} EMPRESA DE PEQUENO PORTE (EPP)</span>
+        </div>
+        nos termos do enquadramento previsto na Lei Complementar nº 123, de 14 de dezembro de 2006, que
+        conhece na íntegra, e está, portanto, apta a exercer o direito de preferência como critério de
+        desempate${orgao?`, na contratação realizada por ${escapeHtml(orgao)}`:''}.` },
+
+    { id:'menor', titulo:'DECLARAÇÃO QUE NÃO EMPREGA MENOR',
+      miolo:`<b>DECLARA</b>, para fins do disposto no art. 7º, inciso XXXIII, da Constituição Federal,
+        que não emprega menor de 18 (dezoito) anos em trabalho noturno, perigoso ou insalubre e menor de
+        16 (dezesseis) anos em qualquer trabalho.
+        <div class="opcoes"><span>☐ Ressalva: emprega menor, a partir de quatorze anos, na condição de aprendiz.</span></div>` },
+
+    { id:'idoneidade', titulo:'DECLARAÇÃO DE IDONEIDADE E INEXISTÊNCIA DE FATO IMPEDITIVO',
+      miolo:`<b>DECLARA</b>, sob as penas da lei, que não foi declarada inidônea para licitar ou contratar
+        com a Administração Pública, que não está suspensa nem impedida de participar de licitações, e que
+        inexiste fato superveniente impeditivo de sua habilitação, obrigando-se a comunicar a ocorrência de
+        qualquer fato dessa natureza.` },
+
+    { id:'parentesco', titulo:'DECLARAÇÃO DE INEXISTÊNCIA DE PARENTESCO',
+      miolo:`<b>DECLARA</b>, sob as penas da lei, que não possui em seu quadro societário ou de empregados
+        cônjuge, companheiro ou parente em linha reta, colateral ou por afinidade, até o terceiro grau, de
+        agente público que exerça cargo em comissão ou função de confiança no órgão contratante, nos termos
+        do art. 9º, § 1º, da Lei nº 14.133/2021.` }
+  ];
+}
+
+/* Quais declarações marcar sozinho: as que o edital pediu. */
+function licDeclaracoesSugeridas(l){
+  const pedidos = (l && l.documentosHabilitacao) || [];
+  const texto = pedidos.map(d=>d.documento||'').join(' ').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'');
+  const marcadas = {};
+  if(/pleno conhecimento|aceitacao das regras|reserva de cargos|art. 68|inciso vi/.test(texto)) marcadas.pleno = true;
+  if(/me\/epp|microempresa|pequeno porte|enquadramento|lc 123|123\/2006/.test(texto)) marcadas.meepp = true;
+  if(/menor|xxxiii|art. 7|aprendiz/.test(texto)) marcadas.menor = true;
+  if(/idonei|fato impeditivo|superveniente|suspensa|impedida/.test(texto)) marcadas.idoneidade = true;
+  if(/parentesco|conjuge|nepotismo|grau/.test(texto)) marcadas.parentesco = true;
+  /* edital sem lista lida: as três que todo mundo pede */
+  if(Object.keys(marcadas).length===0 && pedidos.length===0){
+    marcadas.pleno = true; marcadas.meepp = true; marcadas.menor = true;
+  }
+  return marcadas;
+}
+
+/* As declarações, uma a uma, com o botão de gerar em cada. Ela não
+   escreve nada: os dados da empresa já existem e os do representante
+   foram preenchidos uma vez só. */
+function licDeclaracoesHtml(l){
+  const modelos = licModelosDeclaracao(l);
+  const sugeridas = licDeclaracoesSugeridas(l);
+  const r = licRepresentante();
+  const pronto = licRepresentanteCompleto();
+  const pedidas = modelos.filter(d=>sugeridas[d.id]);
+
+  return `
+    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:16px 0 6px;">
+      Declarações — o sistema escreve por você</div>
+
+    ${pronto
+      ? `<div class="lic-doc ok" style="margin-bottom:8px;">
+          <div><b>${escapeHtml(r.nome)}</b>
+            <small>${escapeHtml(r.cargo||'sócio')} · assina todas as declarações · preenchido uma vez, vale sempre</small></div>
+          <button class="btn btn-sm" onclick="licAbrirRepresentante()">Alterar</button>
+        </div>`
+      : `<div class="lic-doc falta" style="display:block;margin-bottom:8px;">
+          <b>⚠️ Preencha o representante legal uma vez</b>
+          <small>Nome, RG e CPF de quem assina. Depois disso você nunca mais digita — vale para todas as
+            declarações, de todos os editais.</small>
+          <button class="btn btn-sm btn-primary" style="margin-top:6px;" onclick="licAbrirRepresentante()">Preencher agora</button>
+        </div>`}
+
+    ${modelos.map(d=>{
+      const pedida = !!sugeridas[d.id];
+      return `<div class="lic-doc ${pedida?'aviso':''}" style="${pedida?'':'opacity:.72;'}">
+        <div><b>${escapeHtml(d.titulo)}</b>
+          <small>${pedida?'este edital pede':'não vi o edital pedir — gere se precisar'}</small></div>
+        <button class="btn btn-sm ${pedida?'btn-primary':''}" onclick="licGerarDeclaracoes('${l.id}',['${d.id}'],'${escapeAttr((dadosProposta().cidade||'Rio Verde')+'/'+(dadosProposta().estado||'GO'))}')">📄 Gerar</button>
+      </div>`;
+    }).join('')}
+
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      ${pedidas.length>1 ? `<button class="btn btn-sm btn-primary" onclick="licAbrirDeclaracoes('${l.id}')">📄 Gerar as ${pedidas.length}, uma por arquivo</button>` : ''}
+      <button class="btn btn-sm" onclick="licAbrirDeclaracoes('${l.id}')">Escolher quais gerar</button>
+    </div>
+    <div class="help-text" style="margin-top:6px;">Cada declaração sai em um PDF separado — é um arquivo por
+      exigência do edital, do jeito que se anexa.</div>`;
+}
+
+function licAbrirDeclaracoes(id){
+  const l = licAchar(id); if(!l) return;
+  const modelos = licModelosDeclaracao(l);
+  const sugeridas = licDeclaracoesSugeridas(l);
+  const r = licRepresentante();
+  const faltaRep = !licRepresentanteCompleto();
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,94vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Declarações do edital</h3>
+      <p class="help-text">Saem no papel timbrado da Mizu, com os dados da empresa e do representante já
+        preenchidos. Marque as que este edital pede — <b>cada uma sai em um PDF separado</b>, um arquivo
+        por declaração, que é como se anexa.</p>
+
+      ${faltaRep ? `<div class="lic-doc falta" style="display:block;">
+        <b>⚠️ Falta o representante legal</b>
+        <small>Sem nome, RG e CPF, as declarações saem com as linhas em branco pra preencher à mão.</small>
+        <button class="btn btn-sm" style="margin-top:6px;" onclick="licAbrirRepresentante()">Preencher agora</button>
+      </div>` : `<div class="lic-doc ok">
+        <div><b>${escapeHtml(r.nome)}</b><small>${escapeHtml(r.cargo||'sócio')} · CPF ${escapeHtml(r.cpf)} · RG ${escapeHtml(r.rg)}${r.rgOrgao?' '+escapeHtml(r.rgOrgao):''}</small></div>
+        <button class="btn btn-sm" onclick="licAbrirRepresentante()">Alterar</button>
+      </div>`}
+
+      <div style="margin-top:12px;">
+        ${modelos.map(d=>`
+          <label class="lic-doc" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">
+            <input type="checkbox" data-decl="${d.id}" ${sugeridas[d.id]?'checked':''} style="width:auto;margin-top:3px;">
+            <div style="flex:1;"><b>${escapeHtml(d.titulo)}</b>
+              ${sugeridas[d.id]?'<small style="color:var(--positive);">o edital pede esta</small>':'<small>não vi o edital pedir — marque se precisar</small>'}</div>
+          </label>`).join('')}
+      </div>
+
+      <div class="field" style="margin-top:10px;">
+        <label>Cidade e data que vão no rodapé</label>
+        <input type="text" id="lic-decl-local" value="${escapeAttr((dadosProposta().cidade||'Rio Verde')+'/'+(dadosProposta().estado||'GO'))}">
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-decl-ok">📄 Gerar, uma por arquivo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  m.querySelector('#lic-decl-ok').onclick = ()=>{
+    const escolhidas = [...m.querySelectorAll('[data-decl]')].filter(c=>c.checked).map(c=>c.dataset.decl);
+    if(escolhidas.length===0){ showToast('Marque pelo menos uma declaração.','error'); return; }
+    const local = m.querySelector('#lic-decl-local').value.trim();
+    m.remove();
+    licGerarDeclaracoes(id, escolhidas, local);
+  };
+}
+
+function licAbrirRepresentante(){
+  const r = licRepresentante();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,94vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Representante legal</h3>
+      <p class="help-text">Quem assina pela empresa. Preencha uma vez — vale para todas as declarações, de
+        todos os editais. Fica guardado só no seu sistema.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field" style="grid-column:1/-1;"><label>Nome completo</label>
+          <input type="text" id="rep-nome" value="${escapeAttr(r.nome||'')}" placeholder="como está no RG"></div>
+        <div class="field"><label>Assina como</label>
+          <select id="rep-cargo">
+            ${['sócio','sócio administrador','procurador','representante legal','titular'].map(c=>
+              `<option ${r.cargo===c?'selected':''}>${c}</option>`).join('')}
+          </select></div>
+        <div class="field"><label>Nacionalidade</label>
+          <input type="text" id="rep-nac" value="${escapeAttr(r.nacionalidade||'brasileiro(a)')}"></div>
+        <div class="field"><label>Estado civil</label>
+          <input type="text" id="rep-ec" value="${escapeAttr(r.estadoCivil||'')}" placeholder="casado(a), solteiro(a)..."></div>
+        <div class="field"><label>RG nº</label>
+          <input type="text" id="rep-rg" value="${escapeAttr(r.rg||'')}"></div>
+        <div class="field"><label>Órgão emissor</label>
+          <input type="text" id="rep-rgo" value="${escapeAttr(r.rgOrgao||'')}" placeholder="SSP/GO"></div>
+        <div class="field"><label>CPF</label>
+          <input type="text" id="rep-cpf" value="${escapeAttr(r.cpf||'')}" placeholder="000.000.000-00"></div>
+        <div class="field" style="grid-column:1/-1;"><label>Endereço residencial</label>
+          <input type="text" id="rep-end" value="${escapeAttr(r.endereco||'')}" placeholder="rua, nº, bairro, cidade/UF"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="rep-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#rep-ok').onclick = ()=>{
+    const v = (id)=>{ const e = m.querySelector('#'+id); return e ? e.value.trim() : ''; };
+    STATE.config.representante = {
+      nome:v('rep-nome'), cargo:v('rep-cargo'), nacionalidade:v('rep-nac'),
+      estadoCivil:v('rep-ec'), rg:v('rep-rg'), rgOrgao:v('rep-rgo'),
+      cpf:v('rep-cpf'), endereco:v('rep-end')
+    };
+    saveState(); m.remove();
+    showToast('Representante salvo. Vale para todas as declarações.','success');
+  };
+}
+
+/* O título da janela vira o nome do arquivo quando ela salva em PDF —
+   então ele precisa dizer qual declaração é e de qual dispensa. */
+function licNomeArquivoDecl(modelo, proc){
+  const base = (modelo && modelo.titulo ? modelo.titulo : 'Declaração')
+    .replace(/^DECLARAÇÃO\s+(DE\s+|DO\s+|QUE\s+)?/i,'')
+    .replace(/[\\/:*?"<>|]/g,' ').replace(/\s{2,}/g,' ').trim();
+  const num = String(proc||'').replace(/[\\/:*?"<>|]/g,'-');
+  return `Declaração - ${base}${num?` - ${num}`:''}`;
+}
+
+/* Cada declaração é um documento próprio — ela anexa um arquivo por
+   exigência do edital. Então nunca sai mais de uma por PDF: quando ela
+   pede várias, elas saem uma de cada vez, cada clique gerando o próximo
+   arquivo (um clique por janela, se não o navegador bloqueia). */
+function licGerarDeclaracoes(id, escolhidas, local){
+  const lista = (escolhidas||[]).slice();
+  if(lista.length > 1){ licFilaDeclaracoes(id, lista, local); return; }
+  licGerarUmaDeclaracao(id, lista[0], local);
+}
+
+function licFilaDeclaracoes(id, lista, local){
+  const l = licAchar(id); if(!l) return;
+  if(!licRepresentanteCompleto()){
+    showToast('Falta o representante legal — quem assina as declarações. Preencha uma vez e fica salvo.','error');
+    licAbrirRepresentante(); return;
+  }
+  const modelos = licModelosDeclaracao(l);
+  const nome = i => { const m = modelos.find(x=>x.id===lista[i]); return m ? m.titulo : lista[i]; };
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  let i = 0;
+
+  const desenhar = ()=>{
+    const acabou = i >= lista.length;
+    m.innerHTML = `
+      <div class="modal-box" style="max-width:min(560px,94vw);">
+        <h3 style="margin-top:0;">📄 ${lista.length} declarações, ${lista.length} arquivos</h3>
+        <p class="help-text">Cada declaração é um PDF separado — é assim que o edital pede e é assim
+          que você anexa. Um clique gera um arquivo; salve em PDF e volte aqui para o próximo.</p>
+        <div style="margin:10px 0;">
+          ${lista.map((x,n)=>`<div class="lic-doc ${n<i?'ok':(n===i?'aviso':'')}" style="${n>i?'opacity:.6;':''}">
+            <div><b>${escapeHtml(nome(n))}</b>
+              <small>${n<i?'gerado':(n===i?'é o próximo':'na fila')}</small></div>
+            ${n<i?'<span style="color:var(--positive);">✓</span>':''}
+          </div>`).join('')}
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="this.closest('.modal-overlay').remove()">${acabou?'Fechar':'Parar por aqui'}</button>
+          ${acabou ? '' : `<button class="btn btn-primary" id="lic-fila-prox">📄 Gerar ${i===0?'a 1ª':'a próxima'} (${i+1} de ${lista.length})</button>`}
+        </div>
+      </div>`;
+    const bt = m.querySelector('#lic-fila-prox');
+    if(bt) bt.onclick = ()=>{ licGerarUmaDeclaracao(id, lista[i], local); i++; desenhar(); };
+  };
+
+  document.body.appendChild(m);
+  desenhar();
+}
+
+function licGerarUmaDeclaracao(id, qual, local){
+  const l = licAchar(id); if(!l) return;
+  const E = dadosProposta();
+  const modelos = licModelosDeclaracao(l).filter(d=>d.id===qual);
+  if(modelos.length===0){ showToast('Não achei esse modelo de declaração.','error'); return; }
+  const qualificacao = licQualificacao();
+  const hoje = new Date();
+  const dataLinha = `${String(hoje.getDate()).padStart(2,'0')} / ${String(hoje.getMonth()+1).padStart(2,'0')} / ${hoje.getFullYear()}`;
+  const r = licRepresentante();
+  /* Declaração sem quem assina é papel em branco — e é assinando que ela vale.
+     Em vez de gerar, abre a tela do representante já com o aviso. */
+  if(!r.nome || !r.cpf){
+    showToast('Falta o representante legal — quem assina as declarações. Preencha uma vez e fica salvo.','error');
+    licAbrirRepresentante();
+    return;
+  }
+  const proc = (l.propostaCampos && l.propostaCampos.numero) || l.numero || '';
+  const mod = (l.propostaCampos && l.propostaCampos.modalidade) || l.modalidadeNome || '';
+
+  const janela = window.open('', '_blank');
+  if(!janela){ showToast('O navegador bloqueou a janela. Libere os pop-ups para este site.','error'); return; }
+  janela.document.write(`
+    <!DOCTYPE html>
+    <html><head><meta charset="utf-8">
+    <title>${escapeHtml(licNomeArquivoDecl(modelos[0], proc))}</title>
+    <style>
+      @page{ size:A4; margin:0; }
+      *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; box-sizing:border-box; }
+      body{ font-family:"Times New Roman", Georgia, serif; font-size:11pt; color:#000;
+            margin:0; padding:14mm 16mm; line-height:1.45; }
+      .folha{ page-break-after:always; }
+      .folha:last-child{ page-break-after:auto; }
+      .topo{ display:flex; align-items:center; gap:16px; padding-bottom:10px; border-bottom:2.5px solid #000; }
+      .topo img{ height:58px; }
+      .topo .emp{ flex:1; text-align:right; line-height:1.35; }
+      .topo .emp .rs{ font-size:13.5pt; font-weight:bold; letter-spacing:.4px; }
+      .topo .emp .l{ font-size:9pt; }
+      .ref{ font-size:9.5pt; text-align:right; margin-top:7px; letter-spacing:.3px; }
+      h1{ text-align:center; font-size:13pt; letter-spacing:1.4px; margin:30px auto 4px;
+          text-transform:uppercase; font-weight:bold; }
+      .filete{ width:38%; margin:0 auto 22px; border-bottom:1.6px solid #000; }
+      p{ text-align:justify; margin:0 0 15px; text-indent:0; }
+      .vazio{ letter-spacing:.5px; }
+      .opcoes{ margin:16px 0; text-align:center; font-size:11pt; }
+      .opcoes span{ display:inline-block; margin:0 22px; }
+      .opcoes .marcado{ font-weight:bold; }
+      .fecho{ margin-top:52px; }
+      .fecho .ld{ text-align:center; margin-bottom:64px; }
+      .fecho .ld .linha{ border-bottom:1px solid #000; display:inline-block; min-width:58%;
+                         padding-bottom:3px; }
+      .fecho .ld .rot{ display:block; font-size:9pt; margin-top:4px; color:#000; }
+      .ass{ text-align:center; }
+      .ass .linha{ border-bottom:1px solid #000; display:block; width:74%; margin:0 auto 5px; height:1px; }
+      .ass .nome{ font-size:11pt; font-weight:bold; letter-spacing:.3px; }
+      .ass .doc{ font-size:9.5pt; margin-top:2px; }
+      .ass .rot{ display:block; font-size:9pt; margin-top:6px; line-height:1.5; }
+      @media print{ body{ padding:13mm 15mm; } }
+    </style></head><body>
+    ${modelos.map(d=>`
+      <div class="folha">
+        <div class="topo">
+          <img src="${getLogoMizuBase64()}" alt="">
+          <div class="emp">
+            <div class="rs">${escapeHtml(DADOS_EMPRESA.razaoSocial)}</div>
+            <div class="l">CNPJ ${escapeHtml(DADOS_EMPRESA.cnpj)}${E.inscricaoEstadual?' · IE '+escapeHtml(E.inscricaoEstadual):''}</div>
+            <div class="l">${escapeHtml(E.endereco||'')}, ${escapeHtml(E.bairro||'')} — ${escapeHtml(E.cidade||'')}/${escapeHtml(E.estado||'')}${E.cep?' · CEP '+escapeHtml(E.cep):''}</div>
+            <div class="l">${escapeHtml(E.telefone||'')} · ${escapeHtml(E.email||'')}</div>
+          </div>
+        </div>
+        ${proc||mod ? `<div class="ref">${escapeHtml(mod)}${proc?' nº '+escapeHtml(String(proc)):''}${l.orgao?' — '+escapeHtml(l.orgao):''}</div>`:''}
+
+        <h1>${escapeHtml(d.titulo)}</h1>
+        <div class="filete"></div>
+
+        <p>${qualificacao}</p>
+        <p>${d.miolo}</p>
+
+        <div class="fecho">
+          <div class="ld">
+            <span class="linha">${escapeHtml(local||'')}, ${dataLinha}</span>
+            <span class="rot">Local e data</span>
+          </div>
+          <div class="ass">
+            <span class="linha"></span>
+            <div class="nome">${r.nome?escapeHtml(r.nome).toUpperCase():''}</div>
+            ${r.rg||r.cpf ? `<div class="doc">${r.rg?('RG '+escapeHtml(r.rg)+(r.rgOrgao?' '+escapeHtml(r.rgOrgao):'')):''}${r.rg&&r.cpf?' · ':''}${r.cpf?('CPF '+escapeHtml(r.cpf)):''}</div>`:''}
+            <span class="rot">${escapeHtml(r.cargo||'Representante legal')} — assinatura e carimbo<br>Carimbo do CNPJ</span>
+          </div>
+        </div>
+      </div>`).join('')}
+    </body></html>`);
+  janela.document.close();
+  setTimeout(()=>{ try{ janela.print(); }catch(e){} }, 400);
+  licRegistrar(l, `Declaração gerada: ${modelos[0].titulo}.`);
+  saveState();
+}
+
+function licAbrirCertidoes(nomeNovo){
+  licMigrarCertidoesAntigas();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-docs-licitacao';
+  document.body.appendChild(m);
+  licDesenharDocs(m, nomeNovo);
+}
+
+function licDesenharDocs(m, nomeNovo){
+  const docs = licDocs();
+  const hoje = todayISO();
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(760px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">📎 Pasta de documentos</h3>
+      <p class="help-text">Tudo que você precisa ter à mão para participar. <b>Um arquivo por documento</b> —
+        documento com foto não pode vir grudado no contrato social, cada edital pede separado.
+        Alguns vencem, outros não; marque em cada um.</p>
+
+      ${nomeNovo ? `<div class="lic-doc aviso" style="display:block;">
+        <b>O edital pede: ${escapeHtml(nomeNovo)}</b>
+        <small>Criei a linha aqui embaixo com esse nome. Só anexar.</small></div>` : ''}
+
+      <div id="lic-docs-lista">
+        ${docs.map((d,i)=>{
+          const e = licEstadoDoc(d);
+          return `
+          <div class="lic-doc ${e.classe}" style="display:block;" data-doc="${d.id}">
+            <div style="display:flex;gap:10px;align-items:flex-start;">
+              <input type="text" data-dnome="${d.id}" value="${escapeAttr(d.nome)}"
+                style="flex:1;min-width:180px;border:1px solid transparent;background:transparent;font:inherit;
+                       font-size:13.5px;font-weight:600;color:var(--ink);padding:3px 5px;border-radius:4px;"
+                onfocus="this.style.borderColor='var(--border)';this.style.background='#fff';"
+                onblur="this.style.borderColor='transparent';this.style.background='transparent';">
+              <button class="btn btn-sm" onclick="licRemoverDoc('${d.id}')" title="Tirar da pasta">✕</button>
+            </div>
+            <div style="display:grid;grid-template-columns:auto 150px 1fr;gap:10px;align-items:end;margin-top:6px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;white-space:nowrap;">
+                <input type="checkbox" data-dvence="${d.id}" ${d.vence?'checked':''} style="width:auto;">
+                vence
+              </label>
+              <div>
+                <label style="font-size:11.5px;color:var(--ink-soft);">Válido até</label>
+                <input type="date" data-dval="${d.id}" value="${escapeAttr(d.validade||'')}"
+                  ${d.vence?'':'disabled'} min="${hoje}"
+                  style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;${d.vence?'':'background:#F6F7F9;'}">
+              </div>
+              <div>
+                <label style="font-size:11.5px;color:var(--ink-soft);">Arquivo (PDF)</label>
+                <input type="file" data-darq="${d.id}" accept=".pdf,.jpg,.jpeg,.png" style="width:100%;font-size:12px;">
+                <div style="font-size:11.5px;margin-top:3px;color:${d.arquivo?'var(--positive)':'var(--ink-faint)'};">
+                  ${d.arquivo ? `✓ ${escapeHtml(d.arquivo)}${d.tamanho?` · ${(d.tamanho/1024).toFixed(0)} KB`:''}` : 'nenhum arquivo ainda'}
+                  ${d.arquivo ? `<button class="btn btn-sm" style="margin-left:6px;" onclick="licBaixarDoc('${d.id}')">abrir</button>` : ''}
+                </div>
+              </div>
+            </div>
+            <div style="font-size:11.5px;color:${e.classe==='ok'?'var(--positive)':e.classe==='aviso'?'var(--warning)':'var(--negative)'};margin-top:5px;">
+              ${escapeHtml(e.estado)}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+          Acrescentar documento</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;">
+          <div style="flex:1;min-width:240px;">
+            <input type="text" id="lic-doc-novo" placeholder="Nome do documento, como o edital chama"
+              value="${escapeAttr(nomeNovo||'')}"
+              style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="licAdicionarDoc()">+ Acrescentar</button>
+        </div>
+        <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">
+          ${LIC_DOCS_SUGESTOES.filter(s=>!licDocDaPasta(s)).map(s=>
+            `<button class="btn btn-sm" style="font-size:11px;" onclick="licAdicionarDoc(${JSON.stringify(s).replace(/"/g,'&quot;')})">+ ${escapeHtml(s.length>38?s.slice(0,38)+'…':s)}</button>`).join('')}
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="lic-cert-ok">Salvar</button>
+      </div>
+    </div>`;
+
+  /* a caixa "vence" liga e desliga a data na hora */
+  m.querySelectorAll('[data-dvence]').forEach(chk=>{
+    chk.addEventListener('change', ()=>{
+      const campo = m.querySelector(`[data-dval="${chk.dataset.dvence}"]`);
+      if(!campo) return;
+      campo.disabled = !chk.checked;
+      campo.style.background = chk.checked ? '' : '#F6F7F9';
+      if(!chk.checked) campo.value = '';
+    });
+  });
+
+  /* arquivos escolhidos ficam esperando o Salvar */
+  const pendentes = {};
+  m.querySelectorAll('[data-darq]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const f = inp.files && inp.files[0];
+      if(!f) return;
+      if(f.size > 20*1024*1024){ showToast('Esse arquivo passa de 20 MB — guarde um menor.','error'); inp.value=''; return; }
+      pendentes[inp.dataset.darq] = { arquivo:f.name, blob:f, tamanho:f.size };
+    });
+  });
+
+  m.querySelector('#lic-cert-ok').onclick = async ()=>{
+    const docs2 = licDocs();
+    m.querySelectorAll('[data-dnome]').forEach(inp=>{
+      const d = docs2.find(x=>x.id===inp.dataset.dnome);
+      if(d && inp.value.trim()) d.nome = inp.value.trim();
+    });
+    m.querySelectorAll('[data-dvence]').forEach(chk=>{
+      const d = docs2.find(x=>x.id===chk.dataset.dvence);
+      if(d) d.vence = chk.checked;
+    });
+    m.querySelectorAll('[data-dval]').forEach(inp=>{
+      const d = docs2.find(x=>x.id===inp.dataset.dval);
+      if(d) d.validade = inp.value || '';
+    });
+    let falhou = 0;
+    for(const id of Object.keys(pendentes)){
+      const d = docs2.find(x=>x.id===id);
+      if(!d) continue;
+      try{
+        await licArquivoIdb('put', 'certidao:'+id, pendentes[id].blob);
+        d.arquivo = pendentes[id].arquivo;
+        d.tamanho = pendentes[id].tamanho;
+        delete d.conteudo;
+      }catch(e){ console.error(e); falhou++; }
+    }
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast(falhou ? `${falhou} arquivo não coube — o resto foi salvo.` : 'Pasta salva.', falhou?'error':'success');
+  };
+}
+
+function licAdicionarDoc(nome){
+  const campo = document.getElementById('lic-doc-novo');
+  const texto = String(nome || (campo ? campo.value : '') || '').trim();
+  if(!texto){ showToast('Escreva o nome do documento.','error'); return; }
+  const docs = licDocs();
+  if(docs.some(d=>licChaveProduto(d.nome,'') === licChaveProduto(texto,''))){
+    showToast('Esse documento já está na pasta.','info'); return;
+  }
+  docs.push({ id: uid('doc'), nome: texto, vence:false, validade:'', arquivo:'', tamanho:0 });
+  saveState();
+  const m = document.getElementById('modal-docs-licitacao');
+  if(m) licDesenharDocs(m);
+  showToast('Linha criada. Agora anexe o arquivo.','success');
+}
+
+function licRemoverDoc(id){
+  const d = licDoc(id); if(!d) return;
+  confirmAction('Tirar da pasta',
+    `"${d.nome}" sai da sua pasta${d.arquivo?' e o arquivo guardado é apagado':''}. Continuar?`,
+    ()=>{
+      STATE.config.docsLicitacao = licDocs().filter(x=>x.id!==id);
+      licArquivoIdb('del', 'certidao:'+id).catch(()=>{});
+      saveState();
+      const m = document.getElementById('modal-docs-licitacao');
+      if(m) licDesenharDocs(m);
+      renderPortalLicitacoes();
+    });
+}
+
+async function licBaixarDoc(id){
+  const d = licDoc(id); if(!d || !d.arquivo) return;
+  try{
+    const blob = await licArquivoIdb('get', 'certidao:'+id);
+    if(!blob){ showToast('O arquivo não está mais guardado — anexe de novo.','error'); return; }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = d.arquivo;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }catch(e){ console.error(e); showToast('Não consegui abrir o arquivo.','error'); }
+}
+
 /* Dispensa que encerra nas próximas 48h e ainda não foi enviada. É o
    jeito mais fácil de perder dinheiro: o trabalho todo feito e o prazo
    passando. */
@@ -27496,6 +28207,7 @@ function licPainelOportunidades(){
         ${(lista.length + licTodas().length + licDescartadas().length) > 0
           ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
+        <button class="btn" onclick="licAbrirRepresentante()" title="Quem assina pela empresa — preenche uma vez">✍️ Representante</button>
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
         <button class="btn" onclick="licNovaCotacao()">✏️ Cotação sem edital</button>
         <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
@@ -28819,9 +29531,8 @@ function licTelaProcesso(l){
       ${l.comparacao ? licComparacaoHtml(l) : ''}
 
       <div class="lic-passo">Passo 5 — habilitação</div>
-      <h3 style="margin:0 0 4px;">Documentos que vão pedir</h3>
-      <p class="help-text">Conferindo contra as certidões que você guardou em 📎 Certidões.</p>
-      ${licChecklistHtml(l)}
+      <h3 style="margin:0 0 4px;">Dá pra habilitar?</h3>
+      ${licResumoHabilitacao(l)}
 
       <div class="lic-passo">Decisão</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
@@ -29717,11 +30428,6 @@ function licLeituraHtml(l){
           errado é perder a dispensa com a proposta pronta.</div>
       </div>`:''}
 
-    ${(l.documentosNaoExigidos||[]).length ? `
-      <div class="help-text" style="margin-bottom:12px;">
-        <b>Este edital NÃO pede:</b> ${l.documentosNaoExigidos.map(d=>escapeHtml(typeof d==='string'?d:(d.documento||''))).join(' · ')}.
-        Não precisa juntar esses papéis.</div>`:''}
-
     ${(l.riscos||[]).length ? `
       <div style="margin-bottom:12px;">
         <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">O que pode custar caro</div>
@@ -29904,34 +30610,36 @@ function licEditarLeitura(id){
    coisa: é o que a gente guarda. Antes as duas saíam coladas e dava pra
    ler certidão da pasta como se fosse exigência do edital — inclusive a
    de falência, que este edital nem pediu. */
-function licEstadoCertidao(c){
-  const cfg = licCertidoesCfg();
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  const dados = cfg[c.id] || {};
-  const val = dados.validade;
-  if(!val) return { classe:'falta', estado:'não temos este documento', temos:false };
-  const d = new Date(val+'T00:00:00');
-  const dias = Math.round((d-hoje)/86400000);
-  if(dias < 0) return { classe:'falta', estado:'vencida em '+fmtDate(val), temos:false };
-  if(dias <= 15) return { classe:'aviso', estado:`vence em ${dias} dia${dias===1?'':'s'}`, temos:true };
-  return { classe:'ok', estado:'válida até '+fmtDate(val), temos:true };
-}
-
-/* Casa o nome que o edital usa com a certidão que a gente guarda. */
-function licCertidaoDaPasta(nomeNoEdital){
-  const p = new Set(licPalavras(nomeNoEdital));
-  let melhor = null, melhorPontos = 0;
-  LIC_CERTIDOES.forEach(c=>{
-    const q = licPalavras(c.nome);
-    const batem = q.filter(x=>p.has(x)).length;
-    if(batem > melhorPontos){ melhorPontos = batem; melhor = c; }
+/* Na análise a pergunta é só "dá pra habilitar?". A lista inteira e as
+   declarações ficam na montagem da proposta, que é quando a pasta é
+   feita de verdade. */
+function licResumoHabilitacao(l){
+  const pedidos = l.documentosHabilitacao || [];
+  if(pedidos.length === 0){
+    return `<div class="help-text" style="margin-top:0;">O edital ainda não foi lido. A lista aparece aqui
+      assim que a resposta do ChatGPT chegar — e a pasta completa fica na montagem da proposta.</div>`;
+  }
+  const faltando = pedidos.filter(d=>{
+    const c = licDocDaPasta(d.documento);
+    return !c || !licEstadoDoc(c).temos;
   });
-  return melhorPontos >= 1 ? melhor : null;
+  const temos = pedidos.length - faltando.length;
+  return `
+    <div class="lic-res ${faltando.length?'nao':'ok'}">
+      ${faltando.length
+        ? `<b>Faltam ${faltando.length} de ${pedidos.length} documentos.</b>
+           <div style="margin-top:4px;">${faltando.slice(0,4).map(d=>escapeHtml(d.documento.slice(0,64))).join(' · ')}${faltando.length>4?` e mais ${faltando.length-4}`:''}</div>
+           <div style="margin-top:6px;">Dá pra resolver — a lista completa e as declarações ficam na montagem da proposta.</div>`
+        : `✓ Você tem os ${pedidos.length} documentos que este edital pede.`}
+    </div>
+    <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 Minha pasta (${temos} de ${pedidos.length} prontos)</button>
+    </div>`;
 }
 
 function licChecklistHtml(l){
   const pedidos = l.documentosHabilitacao || [];
-  const minhaPasta = LIC_CERTIDOES.map(c=>({ c, e: licEstadoCertidao(c) }));
+  const minhaPasta = licDocs().map(d=>({ c:d, e: licEstadoDoc(d) }));
 
   /* Sem a leitura do edital ainda: mostra só a pasta, dizendo o que é. */
   if(pedidos.length === 0){
@@ -29947,9 +30655,9 @@ function licChecklistHtml(l){
   /* Com a leitura: a lista do edital é a que manda. */
   const casados = new Set();
   const linhas = pedidos.map(d=>{
-    const daPasta = licCertidaoDaPasta(d.documento);
+    const daPasta = licDocDaPasta(d.documento);
     if(daPasta) casados.add(daPasta.id);
-    const e = daPasta ? licEstadoCertidao(daPasta) : null;
+    const e = daPasta ? licEstadoDoc(daPasta) : null;
     const classe = !daPasta ? 'falta' : e.classe;
     const situacao = !daPasta ? 'não está na sua pasta de certidões'
                    : e.temos ? `você tem — ${e.estado}`
@@ -29958,13 +30666,13 @@ function licChecklistHtml(l){
       <div><b>${escapeHtml(d.documento)}</b>
         <small>${escapeHtml(situacao)}${d.fonte?` · <span style="color:var(--ink-faint);">${escapeHtml(d.fonte)}</span>`:''}</small></div>
       ${classe==='ok' ? '<span style="color:var(--positive);font-size:13px;">✓</span>'
-                      : `<button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 ${daPasta?'Atualizar':'Guardar'}</button>`}
+                      : `<button class="btn btn-sm" onclick="licAbrirCertidoes(${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📎 ${daPasta?'Atualizar':'Guardar'}</button>`}
     </div>`;
   }).join('');
 
   const faltando = pedidos.filter(d=>{
-    const c = licCertidaoDaPasta(d.documento);
-    return !c || !licEstadoCertidao(c).temos;
+    const c = licDocDaPasta(d.documento);
+    return !c || !licEstadoDoc(c).temos;
   }).length;
 
   return `
@@ -29978,6 +30686,11 @@ function licChecklistHtml(l){
     <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 6px;">
       O que ESTE edital pede</div>
     ${linhas}
+
+    ${(l.documentosNaoExigidos||[]).length ? `
+      <div class="help-text" style="margin-top:8px;">
+        <b>Este edital NÃO pede:</b> ${l.documentosNaoExigidos.map(d=>escapeHtml(typeof d==='string'?d:(d.documento||''))).join(' · ')}.
+        Não precisa juntar esses papéis.</div>`:''}
 
     <div class="help-text" style="margin-top:8px;">
       Só o que ESTE edital pede, com a cláusula de onde saiu. Verde é o que você já tem guardado,
@@ -30764,13 +31477,20 @@ function licTelaProposta(l){
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;">4 · A pasta para enviar</h3>
-      <p class="help-text">Só aqui, depois da proposta pronta. Baixa tudo junto: proposta + certidões.</p>
+      <h3 style="margin-top:0;">4 · Os documentos da habilitação</h3>
+      <p class="help-text">É aqui que a pasta é montada. Verde é o que você já tem guardado; vermelho é o que
+        falta. As declarações o sistema gera na hora, com os seus dados.</p>
+      ${licChecklistHtml(l)}
+      ${licDeclaracoesHtml(l)}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">5 · A pasta para enviar</h3>
+      <p class="help-text">Só aqui, depois da proposta pronta. Baixa tudo junto: proposta + documentos.</p>
       ${orc ? `<div class="lic-doc ok"><div><b>Proposta ${escapeHtml(pc.numero||l.numero||'')}.pdf</b><small>modelo de órgão público</small></div><span style="color:var(--positive);">✓</span></div>` : ''}
-      ${LIC_CERTIDOES.map(c=>{
-        const d = licCertidoesCfg()[c.id]||{};
-        return d.arquivo ? `<div class="lic-doc ok"><div><b>${escapeHtml(d.arquivo)}</b><small>${d.validade?'válida até '+fmtDate(d.validade):''}</small></div><span style="color:var(--positive);">✓</span></div>` : '';
-      }).join('')}
+      ${licDocs().filter(d=>d.arquivo).map(d=>`<div class="lic-doc ok">
+        <div><b>${escapeHtml(d.arquivo)}</b><small>${escapeHtml(d.nome)}${d.validade?' · válida até '+fmtDate(d.validade):''}</small></div>
+        <span style="color:var(--positive);">✓</span></div>`).join('')}
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
         <button class="btn" onclick="licBaixarPasta('${l.id}')">📦 Baixar a pasta (.zip)</button>
         ${l.etapa==='proposta'?`<button class="btn btn-primary" onclick="licMarcarEnviada('${l.id}')">✈ Marcar como enviada</button>`:''}
@@ -30889,17 +31609,14 @@ function licGerarProposta(id){
 async function licBaixarPasta(id){
   const l = licAchar(id); if(!l) return;
   if(typeof JSZip === 'undefined'){ showToast('O compactador não carregou. Verifique a internet e recarregue.','error'); return; }
-  const cfg = licCertidoesCfg();
   const zip = new JSZip();
   let n = 0;
-  for(const c of LIC_CERTIDOES){
-    const d = cfg[c.id];
-    if(!d || !d.arquivo) continue;
+  for(const d of licDocs()){
+    if(!d.arquivo) continue;
     try{
-      const blob = await licArquivoIdb('get', 'certidao:'+c.id);
+      const blob = await licArquivoIdb('get', 'certidao:'+d.id);
       if(blob){ zip.file(d.arquivo, blob); n++; continue; }
     }catch(e){ console.warn(e); }
-    /* formato antigo, caso a migração não tenha rodado */
     if(d.conteudo){ zip.file(d.arquivo, d.conteudo.split(',').pop(), {base64:true}); n++; }
   }
   const resumo = [
@@ -31325,17 +32042,15 @@ let licCertidoesJaMigradas = false;
 async function licMigrarCertidoesAntigas(){
   if(licCertidoesJaMigradas) return;
   licCertidoesJaMigradas = true;
-  const cfg = licCertidoesCfg();
   let mexeu = 0;
-  for(const c of LIC_CERTIDOES){
-    const d = cfg[c.id];
-    if(!d || !d.conteudo) continue;
+  for(const d of licDocs()){
+    if(!d.conteudo) continue;
     try{
       const resp = await fetch(d.conteudo);
       const blob = await resp.blob();
-      await licArquivoIdb('put', 'certidao:'+c.id, blob);
+      await licArquivoIdb('put', 'certidao:'+d.id, blob);
       d.tamanho = blob.size;
-    }catch(e){ console.warn('não consegui migrar a certidão', c.id, e); }
+    }catch(e){ console.warn('não consegui migrar o documento', d.id, e); }
     delete d.conteudo;
     mexeu++;
   }
@@ -31343,67 +32058,6 @@ async function licMigrarCertidoesAntigas(){
     saveState();
     showToast(`${mexeu} certidão${mexeu===1?'':'ões'} movida${mexeu===1?'':'s'} pra fora do espaço do sistema.`,'success');
   }
-}
-
-function licAbrirCertidoes(){
-  const cfg = licCertidoesCfg();
-  const m = document.createElement('div');
-  m.className = 'modal-overlay open';
-  m.innerHTML = `
-    <div class="modal-box" style="max-width:min(680px,94vw);max-height:88vh;overflow-y:auto;">
-      <h3 style="margin-top:0;">📎 Certidões e modelos</h3>
-      <p class="help-text">Guarde aqui as certidões atualizadas. Elas entram na pasta da proposta e o sistema avisa quando estiverem perto de vencer.</p>
-      ${LIC_CERTIDOES.map(c=>{
-        const d = cfg[c.id]||{};
-        return `<div class="lic-doc" style="display:block;" data-cert="${c.id}">
-          <b>${escapeHtml(c.nome)}</b>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
-            <div><label style="font-size:11.5px;color:var(--ink-soft);">Válida até</label>
-              <input type="date" data-cv="${c.id}" value="${escapeAttr(d.validade||'')}" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;"></div>
-            <div><label style="font-size:11.5px;color:var(--ink-soft);">Arquivo</label>
-              <input type="file" data-cf="${c.id}" accept=".pdf" style="width:100%;font-size:12px;">
-              ${d.arquivo?`<div style="font-size:11.5px;color:var(--positive);margin-top:3px;">✓ ${escapeHtml(d.arquivo)}${d.tamanho?` · ${(d.tamanho/1024).toFixed(0)} KB`:''}</div>`:''}</div>
-          </div>
-        </div>`;
-      }).join('')}
-      <div class="modal-actions">
-        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
-        <button class="btn btn-primary" id="lic-cert-ok">Salvar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(m);
-
-  const pendentes = {};
-  m.querySelectorAll('[data-cf]').forEach(inp=>{
-    inp.addEventListener('change', ()=>{
-      const f = inp.files && inp.files[0];
-      if(!f) return;
-      if(f.size > 20*1024*1024){ showToast('Esse arquivo passa de 20 MB — guarde um menor.','error'); inp.value=''; return; }
-      pendentes[inp.dataset.cf] = { arquivo:f.name, blob:f, tamanho:f.size };
-    });
-  });
-  m.querySelector('#lic-cert-ok').onclick = async ()=>{
-    m.querySelectorAll('[data-cv]').forEach(inp=>{
-      const id = inp.dataset.cv;
-      if(!cfg[id]) cfg[id] = {};
-      cfg[id].validade = inp.value || '';
-    });
-    let falhou = 0;
-    for(const id of Object.keys(pendentes)){
-      if(!cfg[id]) cfg[id] = {};
-      try{
-        await licArquivoIdb('put', 'certidao:'+id, pendentes[id].blob);
-        cfg[id].arquivo = pendentes[id].arquivo;
-        cfg[id].tamanho = pendentes[id].tamanho;
-        delete cfg[id].conteudo;   // limpa o resto do formato antigo
-      }catch(e){ console.error(e); falhou++; }
-    }
-    saveState(); m.remove(); renderPortalLicitacoes();
-    showToast(falhou ? `${falhou} arquivo não coube — o resto foi salvo.` : 'Certidões salvas.', falhou?'error':'success');
-  };
-
-  /* migra o que já foi guardado no formato antigo (base64 dentro do STATE) */
-  licMigrarCertidoesAntigas();
 }
 
 /* =========================================================
