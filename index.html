@@ -1021,7 +1021,7 @@ table.data-table{ width:100%; font-size:13px; }
       <span class="ic ic-relatorios">👥</span> Vendas por Cliente
     </a>
     <a class="nav-item" data-page="licitacoes" href="#">
-      <span class="ic ic-relatorios">🏛️</span> Licitações
+      <span class="ic ic-relatorios">🏛️</span> Licitações <span class="nav-badge" id="nav-badge-licitacoes" style="display:none;"></span>
     </a>
     <a class="nav-item" data-page="sugestao-compra" href="#">
       <span class="ic ic-relatorios">🛒</span> Sugestão de Compra
@@ -1037,6 +1037,11 @@ table.data-table{ width:100%; font-size:13px; }
     </a>
     <a class="nav-item" data-page="historico-precos" href="#">
       <span class="ic ic-relatorios">📈</span> Histórico de Preço de Compra
+    </a>
+
+    <div class="nav-section-label">Sistema</div>
+    <a class="nav-item" data-page="armazenamento" href="#">
+      <span class="ic">💾</span> Armazenamento
     </a>
 
     <div class="sidebar-footer">
@@ -1369,6 +1374,17 @@ table.data-table{ width:100%; font-size:13px; }
       <div id="fechamento-mes-content"></div>
     </section>
 
+    <!-- ============ ARMAZENAMENTO ============ -->
+    <section class="page" id="page-armazenamento">
+      <div class="page-header">
+        <div>
+          <h2>Armazenamento</h2>
+          <p class="subtitle">Quanto espaço o sistema está usando, e onde</p>
+        </div>
+      </div>
+      <div id="armazenamento-content"></div>
+    </section>
+
     <!-- ============ LICITAÇÕES ============ -->
     <section class="page" id="page-licitacoes">
       <div class="page-header">
@@ -1640,7 +1656,7 @@ const DADOS_EMPRESA = {
    modalidade, objeto, declarações e dados que nenhum outro orçamento usa.
    ========================================================= */
 const MODALIDADES_LICITACAO = [
-  'DISPENSA', 'PREGÃO ELETRÔNICO', 'PREGÃO PRESENCIAL', 'INEXIGIBILIDADE',
+  'DISPENSA', 'COTAÇÃO ESCOLAR', 'PREGÃO ELETRÔNICO', 'PREGÃO PRESENCIAL', 'INEXIGIBILIDADE',
   'TOMADA DE PREÇOS', 'CONVITE', 'CONCORRÊNCIA', 'CHAMAMENTO PÚBLICO',
   'COTAÇÃO / PESQUISA DE PREÇOS', 'ADESÃO A ATA'
 ];
@@ -1927,6 +1943,7 @@ function saveState(){
     showToast('Erro ao salvar dados. Veja o console.', 'error');
   }
   atualizarBadgesMenu();
+  if(typeof armazVigiar === 'function') armazVigiar();
   if(typeof nuvemAoSalvar === 'function') nuvemAoSalvar();
 }
 
@@ -2004,6 +2021,13 @@ function atualizarBadgesMenu(){
     const atrasados = (STATE.lembretes||[]).filter(l=>!l.concluido && l.dataLembrete && l.dataLembrete<hoje).length;
     if(atrasados>0){ badgeLemb.textContent = atrasados; badgeLemb.style.display = ''; }
     else{ badgeLemb.style.display = 'none'; }
+  }
+  const badgeLic = document.getElementById('nav-badge-licitacoes');
+  if(badgeLic){
+    /* dispensa que encerra em menos de 2 dias e ainda não foi enviada */
+    const urgentes = (typeof licPrazoApertado==='function') ? licPrazoApertado().length : 0;
+    if(urgentes>0){ badgeLic.textContent = urgentes; badgeLic.style.display = ''; badgeLic.title = 'encerra em menos de 2 dias'; }
+    else{ badgeLic.style.display = 'none'; }
   }
   const badgeMargem = document.getElementById('nav-badge-margem');
   if(badgeMargem){
@@ -26742,6 +26766,31 @@ function licInjetarEstilo(){
   .lic-topo .sub{font-size:12.5px;color:var(--ink-soft);}
   .lic-topo .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 
+  /* ---- sugestões de modelo, item por item ---- */
+  .lic-passos-itens{display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-bottom:12px;
+    background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;}
+  .lic-passos-itens .bolinha{width:30px;height:30px;border-radius:50%;border:2px solid var(--border);
+    background:#fff;color:var(--ink-soft);font:inherit;font-size:12px;font-weight:600;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;padding:0;}
+  .lic-passos-itens .bolinha:hover{border-color:var(--primary);}
+  .lic-passos-itens .bolinha.atual{outline:2px solid var(--primary);outline-offset:2px;}
+  .lic-passos-itens .bolinha.ok{background:var(--primary);border-color:var(--primary);color:#fff;}
+  .lic-passos-itens .bolinha.tem{border-color:var(--positive);color:var(--positive);}
+  .lic-passos-itens .bolinha.talvez{border-color:var(--warning);color:var(--warning);}
+  .lic-passos-itens .bolinha.nao{border-color:var(--negative);color:var(--negative);}
+
+  .lic-modelo{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;margin-bottom:8px;}
+  .lic-modelo .topo{display:flex;gap:12px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;}
+  .lic-modelo .motivos{margin-top:9px;border-radius:var(--radius-sm);padding:8px 11px;font-size:12.5px;line-height:1.5;}
+  .lic-modelo .motivos b{display:block;margin-bottom:2px;}
+  .lic-modelo .acoes-modelo{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;}
+  .lic-modelo .conta-rapida{margin-top:9px;font-size:12.5px;padding:7px 11px;border-radius:var(--radius-sm);
+    border-left:3px solid;}
+  .lic-modelo .conta-rapida.ok{background:#F3FAF6;border-left-color:var(--positive);color:var(--ink);}
+  .lic-modelo .conta-rapida.nao{background:#FDF4F3;border-left-color:var(--negative);color:var(--ink);}
+
+  #lic-resposta-gpt.hover-json{border-color:var(--positive);background:var(--positive-soft);}
   /* ---- cartão da triagem ---- */
   .lic-op{display:grid;grid-template-columns:28px 1fr 190px;gap:0;
     background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
@@ -26911,6 +26960,20 @@ function licNormalizar(l){
   if(!l.criterio) l.criterio = 'item';
   if(l.comparacaoTexto === undefined) l.comparacaoTexto = '';
   if(!l.comparacao) l.comparacao = null;
+  if(!l.fontes || typeof l.fontes !== 'object') l.fontes = {};
+  if(!Array.isArray(l.naoEncontrado)) l.naoEncontrado = [];
+  if(!Array.isArray(l.editalSilente)) l.editalSilente = [];
+  if(!Array.isArray(l.trechosIlegiveis)) l.trechosIlegiveis = [];
+  if(!Array.isArray(l.contradicoes)) l.contradicoes = [];
+  if(!Array.isArray(l.riscos)) l.riscos = [];
+  if(!Array.isArray(l.documentosHabilitacao)) l.documentosHabilitacao = [];
+  if(!Array.isArray(l.perguntasDistribuidor)) l.perguntasDistribuidor = [];
+  if(l.respostaIATexto === undefined) l.respostaIATexto = '';
+  if(!l.leituraManual || typeof l.leituraManual !== 'object') l.leituraManual = {};
+  l.itens.forEach((it,i)=>{
+    if(it.numero == null) it.numero = i+1;
+    if(!Array.isArray(it.exigencias)) it.exigencias = [];
+  });
   return l;
 }
 function licTodas(){ (STATE.licitacoes||[]).forEach(licNormalizar); return STATE.licitacoes||[]; }
@@ -27040,6 +27103,8 @@ function licHistoricoProdutos(){
         fornecedor: it.contatoFornecedor || it.obsCompra || '',
         link: it.linkFornecedor || '',
         etapa: l.etapa,
+        valorResultado: l.valorResultado || null,
+        resultadoObs: l.resultadoObs || '',
         resultado: l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
                  : l.etapa==='perdeu' ? 'perdeu'
                  : l.etapa==='enviada' ? 'enviado' : 'pendente'
@@ -27060,13 +27125,21 @@ function licProcurarParecidos(descricao, marca, ignorarItemId){
   if(alvo.length === 0) return { licitacao: [], loja: [] };
   const alvoSet = new Set(alvo);
 
+  /* A descrição que vem do edital é comprida ("DETERGENTE NEUTRO 500ML
+     PARA USO EM COZINHA INDUSTRIAL CONFORME ANEXO I DO TERMO DE
+     REFERÊNCIA"), e o nome do produto na loja é curto ("DETERGENTE
+     NEUTRO 500ML"). Medir quanto do alvo o candidato cobre reprovava
+     justamente o caso certo. O que importa é o contrário: o candidato
+     estar CONTIDO na descrição. Duas palavras no mínimo, pra não casar
+     por uma palavra genérica solta. */
   const pontuar = (texto)=>{
-    const p = licPalavras(texto);
+    const p = [...new Set(licPalavras(texto))];
     if(p.length===0) return 0;
-    let batem = 0;
-    const vistas = new Set();
-    p.forEach(x=>{ if(alvoSet.has(x) && !vistas.has(x)){ vistas.add(x); batem++; } });
-    return batem / Math.max(alvo.length, 1);
+    const batem = p.filter(x=>alvoSet.has(x)).length;
+    if(batem < 2) return 0;
+    const cobertura = batem / p.length;        // quanto do candidato está na descrição
+    const inverso  = batem / alvo.length;      // quanto da descrição o candidato cobre
+    return Math.max(cobertura, inverso);
   };
 
   /* O próprio item que está sendo digitado não conta como "já existe" —
@@ -27074,14 +27147,14 @@ function licProcurarParecidos(descricao, marca, ignorarItemId){
   const emLicitacao = licHistoricoProdutos()
     .map(p=>({ p: { ...p, usos: p.usos.filter(u=>u.itemId !== ignorarItemId) },
                score: pontuar(p.nome + ' ' + p.marca) }))
-    .filter(x=>x.score >= 0.5 && x.p.usos.length > 0)
+    .filter(x=>x.score >= 0.6 && x.p.usos.length > 0)
     .sort((a,b)=>b.score-a.score)
     .slice(0,3)
     .map(x=>x.p);
 
   const naLoja = (STATE.produtos||[])
     .map(pr=>({ pr, score: pontuar(pr.nome + ' ' + (pr.marca||'')) }))
-    .filter(x=>x.score >= 0.6)
+    .filter(x=>x.score >= 0.75)
     .sort((a,b)=>b.score-a.score)
     .slice(0,2)
     .map(x=>x.pr);
@@ -27095,6 +27168,7 @@ function licProcurarParecidos(descricao, marca, ignorarItemId){
 function renderPortalLicitacoes(){
   licInjetarEstilo();
   licArrumarLinksAntigos();
+  licMigrarCertidoesAntigas();
   inicializarFiltrosDataLicitacoes();
   const box = document.getElementById('licitacoes-content');
   if(!box) return;
@@ -27125,6 +27199,7 @@ function renderPortalLicitacoes(){
   }[licAba] || licPainelOportunidades;
 
   box.innerHTML = `
+    ${licAvisoPrazo()}
     ${licAvisoCertidoes()}
     <div class="lic-abas">
       ${LIC_ABAS.map(a=>`
@@ -27180,6 +27255,38 @@ function licCertidoesVencendo(){
   });
   return vencendo;
 }
+/* Dispensa que encerra nas próximas 48h e ainda não foi enviada. É o
+   jeito mais fácil de perder dinheiro: o trabalho todo feito e o prazo
+   passando. */
+function licPrazoApertado(){
+  const agora = Date.now();
+  return licPorEtapa(['analise','precificacao','proposta']).filter(l=>{
+    const p = licPrazoInfo(l);
+    if(!p.quando || p.encerrada) return false;
+    return (p.quando.getTime() - agora) < 48*3600000;
+  }).sort((a,b)=> new Date(a.dataEncerramentoProposta||a.dataAbertura) - new Date(b.dataEncerramentoProposta||b.dataAbertura));
+}
+
+function licAvisoPrazo(){
+  const urgentes = licPrazoApertado();
+  if(urgentes.length===0) return '';
+  return `<div class="lic-doc falta" style="display:block;margin-bottom:12px;">
+    <b>⏰ ${urgentes.length} dispensa${urgentes.length===1?'':'s'} encerra${urgentes.length===1?'':'m'} em menos de 2 dias e a proposta não foi enviada</b>
+    ${urgentes.slice(0,4).map(l=>{
+      const p = licPrazoInfo(l);
+      const et = LIC_ETAPAS[l.etapa]||{};
+      return `<div style="margin-top:6px;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <span class="lic-cron ${p.classe}">${p.texto}</span>
+        <b>${escapeHtml((l.modalidadeNome||'')+' '+(l.numero||''))}</b>
+        <span style="color:var(--ink-soft);">${escapeHtml((l.objeto||'').slice(0,70))}${(l.objeto||'').length>70?'…':''}</span>
+        <span style="color:var(--ink-faint);">· ${escapeHtml(et.rotulo||'')}</span>
+        <button class="btn btn-sm" onclick="licAbrir('${l.id}','${l.etapa==='proposta'?'proposta':l.etapa==='precificacao'?'precificar':'processo'}')">Abrir</button>
+      </div>`;
+    }).join('')}
+    ${urgentes.length>4?`<div style="margin-top:6px;font-size:12px;color:var(--ink-faint);">e mais ${urgentes.length-4}.</div>`:''}
+  </div>`;
+}
+
 function licAvisoCertidoes(){
   const n = licCertidoesVencendo();
   if(n===0) return '';
@@ -27234,6 +27341,7 @@ function licPainelOportunidades(){
           ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
+        <button class="btn" onclick="licNovaCotacao()">✏️ Cotação sem edital</button>
         <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
         <input type="file" id="lic-arquivo-pncp" accept=".xlsx,.xls,.csv,.json" style="display:none;">
       </div>
@@ -27501,6 +27609,121 @@ function licNomeDoPortal(o){
   const u = String(o.linkSistemaOrigem||'').toLowerCase();
   const achado = LIC_PORTAIS.find(p=>u.includes(p.dominio));
   return achado ? achado.nome : 'Plataforma de origem';
+}
+
+/* =========================================================
+   COTAÇÃO SEM EDITAL
+   A escola publica a planilha de itens no Instagram e pronto: não há
+   edital, não há PNCP, não há nada pra ler. Ela digita o que eles
+   querem e segue pelo mesmo caminho — precificação, proposta,
+   ganhou/perdeu — porque é justamente esse histórico de preço que
+   interessa quando se disputa com muita gente.
+   O PDF sai no modelo do cliente: escola recebe a planilha de escola,
+   órgão público recebe a proposta pública. Quem decide é o cadastro.
+   ========================================================= */
+function licNovaCotacao(){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  const amanha = new Date(Date.now()+86400000*3);
+  const iso = amanha.toISOString().slice(0,10);
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(620px,94vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Cotação sem edital</h3>
+      <p class="help-text">Para quando a escola ou o órgão só publica a lista do que quer — no Instagram, por
+        e-mail, num grupo. Você digita aqui e depois adiciona os itens na precificação, um por um.</p>
+
+      <div class="field"><label>Tipo</label>
+        <select id="cot-modalidade">
+          <option>COTAÇÃO ESCOLAR</option>
+          <option>COTAÇÃO / PESQUISA DE PREÇOS</option>
+          <option>DISPENSA</option>
+        </select></div>
+
+      <div class="field"><label>Quem está pedindo <span style="color:var(--negative);">*</span></label>
+        <input type="text" id="cot-orgao" placeholder="ex: Colégio Estadual Professora Liodosia"></div>
+
+      <div class="field"><label>O que eles querem <span style="color:var(--negative);">*</span></label>
+        <textarea id="cot-objeto" style="width:100%;height:70px;padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;" placeholder="ex: material de limpeza e higiene para o 1º semestre"></textarea></div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field"><label>Nº da cotação</label>
+          <input type="text" id="cot-numero" placeholder="opcional"></div>
+        <div class="field"><label>Cidade</label>
+          <input type="text" id="cot-cidade" value="Rio Verde" placeholder="Rio Verde"></div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field"><label>Encerra em <span style="color:var(--negative);">*</span></label>
+          <input type="date" id="cot-data" value="${iso}"></div>
+        <div class="field"><label>às</label>
+          <input type="time" id="cot-hora" value="17:00"></div>
+      </div>
+
+      <div class="field"><label>Valor estimado <span style="font-weight:400;color:var(--ink-faint);">(se eles disserem)</span></label>
+        <input type="number" step="0.01" id="cot-valor" placeholder="0,00"></div>
+
+      <div class="field"><label>Onde foi publicado <span style="font-weight:400;color:var(--ink-faint);">(link, se tiver)</span></label>
+        <input type="text" id="cot-link" placeholder="https://instagram.com/..."></div>
+
+      <div class="help-text">Ela já abre na <b>precificação</b>, porque não há edital pra analisar. Você adiciona
+        os itens um por um — e lá o sistema avisa quando já vendemos aquele produto antes, com o preço da
+        última vez e por quanto o concorrente fechou.</div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="cot-ok">Criar e abrir</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  m.querySelector('#cot-ok').onclick = ()=>{
+    const v = (id)=>{ const e=m.querySelector('#'+id); return e ? String(e.value||'').trim() : ''; };
+    const orgao = v('cot-orgao'), objeto = v('cot-objeto'), data = v('cot-data');
+    if(!orgao){ showToast('Diga quem está pedindo.','error'); return; }
+    if(!objeto){ showToast('Escreva o que eles querem.','error'); return; }
+    if(!data){ showToast('Informe quando encerra.','error'); return; }
+
+    const hora = v('cot-hora') || '17:00';
+    const encerra = new Date(data + 'T' + hora + ':00');
+    const link = v('cot-link');
+
+    const l = {
+      id: uid('lic'),
+      orgao, objeto,
+      unidade: '',
+      numero: v('cot-numero'),
+      status: 'Potencial',
+      etapa: 'precificacao',
+      origem: 'manual',
+      semEdital: true,
+      modalidadeNome: v('cot-modalidade'),
+      municipioNome: v('cot-cidade'),
+      uf: 'GO',
+      valorEstimado: licNumDireto(v('cot-valor')),
+      dataEncerramentoProposta: isNaN(encerra.getTime()) ? null : encerra.toISOString(),
+      dataAbertura: data,
+      dataPublicacao: todayISO(),
+      linkSistemaOrigem: /^https?:\/\//i.test(link) ? link : null,
+      linkPncp: null, linkEdital: null, linkProcesso: null,
+      distanciaKm: null,
+      criadoEm: new Date().toISOString(),
+      historico: []
+    };
+    licNormalizar(l);
+    l.propostaCampos.modalidade = l.modalidadeNome;
+    l.propostaCampos.numero = l.numero;
+    l.propostaCampos.objeto = objeto;
+    licRegistrar(l, 'Cotação criada à mão, sem edital.');
+    STATE.licitacoes.push(l);
+    licNovoItem(l.id, true);          // já abre com uma linha pra digitar
+    l.itens[0].teto = 0;
+    l.itens[0].descricao = '';
+    l.itens[0].descricaoProposta = '';
+    saveState();
+    m.remove();
+    licAbrir(l.id, 'precificar');
+    showToast('Cotação criada. Agora adicione os itens.','success');
+  };
 }
 
 function licMarcar(id, marcado){
@@ -28107,7 +28330,8 @@ function licCartaoProposta(l){
         ${l.etapa==='enviada' ? `<button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
             <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>
             <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>` : ''}
-        ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>` : ''}
+        ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
+            ${licNotaPendente(l)>0?`<div style="font-size:11.5px;color:var(--negative);text-align:right;">falta dado da nota em ${licNotaPendente(l)} ite${licNotaPendente(l)===1?'m':'ns'}</div>`:''}` : ''}
         ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>` : ''}
       </div>
     </div>
@@ -28138,8 +28362,24 @@ function licResultado(id, resultado){
     l.valorResultado = licNumDireto(m.querySelector('#lic-res-valor').value) || null;
     l.resultadoObs = m.querySelector('#lic-res-obs').value.trim();
     licRegistrar(l, (resultado==='ganhou'?'Ganhamos':'Perdemos') + (l.valorResultado?` — ${fmtMoney(l.valorResultado)}`:'') + (l.resultadoObs?` · ${l.resultadoObs}`:''));
+
+    const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+    if(orc) orc.status = resultado==='ganhou' ? 'aprovado' : 'recusado';
     saveState(); m.remove(); renderPortalLicitacoes();
-    showToast(resultado==='ganhou'?'Marcada como ganha.':'Marcada como perdida — fica no histórico do produto.','success');
+
+    const jaVirouVenda = orc && (orc.status==='convertido' || !!orc.vendaGeradaId);
+    if(resultado==='ganhou' && orc && !jaVirouVenda){
+      /* Ganhou de verdade: o orçamento vira venda, igual ao caminho
+         normal. É isso que faz entrar no histórico do cliente, na
+         análise de vendas e no faturamento. */
+      confirmAction('Lançar a venda',
+        `Ganhamos. Quer lançar a venda agora, como em qualquer orçamento aprovado? ` +
+        `Assim ela entra no histórico do cliente e nos relatórios. Se preferir lançar depois, ` +
+        `o orçamento nº ${orc.numero} fica aprovado esperando por você em Orçamentos.`,
+        ()=>{ converterOrcamentoEmVenda(orc.id); }, 'Lançar venda');
+    }else{
+      showToast(resultado==='ganhou'?'Marcada como ganha.':'Marcada como perdida — fica no histórico do produto.','success');
+    }
   };
 }
 
@@ -28304,8 +28544,10 @@ function licTelaProcesso(l){
 
     <div class="card">
       <div class="lic-passo">Passo 1 — anexar</div>
-      <h3 style="margin:0 0 4px;">O edital</h3>
-      <p class="help-text">Baixe tudo no PNCP e solte aqui. PDF, planilha ou .zip — vários de uma vez.</p>
+      <h3 style="margin:0 0 4px;">${l.semEdital?'A lista que eles mandaram':'O edital'}</h3>
+      <p class="help-text">${l.semEdital
+        ? 'Esta cotação não tem edital. Se eles mandaram uma planilha ou um print, guarde aqui — e adicione os itens direto na precificação.'
+        : 'Baixe tudo no PNCP e solte aqui. PDF, planilha ou .zip — vários de uma vez.'}</p>
       <div class="lic-solta" id="lic-solta">
         <div style="font-size:28px;">📄</div>
         Arraste o edital e os anexos<br>
@@ -28323,26 +28565,27 @@ function licTelaProcesso(l){
           </div>
         </div>`).join('')}
 
-      <div class="lic-passo">Passo 2 — leitura automática, de graça</div>
-      <h3 style="margin:0 0 4px;">O que o edital diz</h3>
-      <p class="help-text">Sai da máquina, sem custo nenhum. Cada campo mostra de onde veio — confira sempre o que estiver marcado em amarelo.</p>
+      <div class="lic-passo">Passo 2 — a ida e volta com o ChatGPT</div>
+      <h3 style="margin:0 0 4px;">Onde a análise acontece de verdade</h3>
+      <p class="help-text">Você anexa o edital lá, ele lê e devolve tudo de uma vez: os campos da dispensa, os itens da precificação e a pesquisa de modelos. Aqui é só copiar e colar. O resto desta tela se preenche sozinho.</p>
+      ${licChatGptHtml(l)}
+
+      <div class="lic-passo">Passo 3 — o que o edital diz</div>
+      <h3 style="margin:0 0 4px;">Os campos da dispensa</h3>
+      <p class="help-text">Cada campo mostra de onde veio. Amarelo é o que não foi encontrado — confira. O que tem * segura a proposta.</p>
       ${licLeituraHtml(l)}
 
-      <div class="lic-passo">Passo 3 — habilitação</div>
+      <div class="lic-passo">Passo 4 — os itens</div>
+      <h3 style="margin:0 0 4px;">O que a dispensa pede, item por item</h3>
+      <p class="help-text">Estes são os itens que vão virar a precificação, com as exigências de cada um.</p>
+      ${licExigenciasHtml(l)}
+
+      ${l.comparacao ? licComparacaoHtml(l) : ''}
+
+      <div class="lic-passo">Passo 5 — habilitação</div>
       <h3 style="margin:0 0 4px;">Documentos que vão pedir</h3>
       <p class="help-text">Conferindo contra as certidões que você guardou em 📎 Certidões.</p>
       ${licChecklistHtml(l)}
-
-      <div class="lic-passo">Passo 4 — o produto</div>
-      <h3 style="margin:0 0 4px;">Exigências técnicas dos itens</h3>
-      <p class="help-text">Estas são as linhas do edital que descrevem o produto. É isso que o ChatGPT precisa receber.</p>
-      ${licExigenciasHtml(l)}
-
-      <div class="lic-passo">Passo 5 — pesquisa de modelos</div>
-      <h3 style="margin:0 0 4px;">A ida e volta com o ChatGPT</h3>
-      ${licChatGptHtml(l)}
-
-      ${l.comparacao ? licComparacaoHtml(l) : ''}
 
       <div class="lic-passo">Decisão</div>
       <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
@@ -28358,245 +28601,318 @@ function licTelaProcesso(l){
 }
 
 /* ---- leitura automática (palavras-chave, sem IA, sem custo) ---- */
-const LIC_CAMPOS_LEITURA = [
-  { id:'criterio',   rotulo:'Critério de julgamento' },
-  { id:'mepp',       rotulo:'Exclusiva ME/EPP' },
-  { id:'formaEnvio', rotulo:'Forma de envio' },
-  { id:'sessao',     rotulo:'Sessão' },
-  { id:'validade',   rotulo:'Validade da proposta' },
-  { id:'prazoEntrega', rotulo:'Prazo de entrega' },
-  { id:'prazoPagamento', rotulo:'Prazo de pagamento' },
-  { id:'garantia',   rotulo:'Garantia exigida' },
-  { id:'local',      rotulo:'Local de entrega' },
-  { id:'email',      rotulo:'E-mail para esclarecimento' },
-  { id:'subcontratacao', rotulo:'Subcontratação' },
-  { id:'quantidade', rotulo:'Quantidade do item' }
-];
+/* =========================================================
+   LEITURA DO EDITAL
 
+   Dois caminhos, de propósito:
+
+   1) O caminho bom — a pergunta pronta vai pro ChatGPT junto com os
+      PDFs do edital, ele devolve um JSON e o sistema preenche tudo:
+      a dispensa, os ITENS da precificação e a pesquisa de modelos.
+      Quem lê o PDF é ele, que lê de verdade, inclusive escaneado.
+
+   2) O caminho de reserva — o leitor por palavra-chave daqui de dentro,
+      que roda sozinho, de graça e sem internet, mas é "melhor esforço":
+      acerta data, e-mail e valor, e erra o resto com frequência. Nunca
+      foi bom pra achar item em tabela, e não finge que é.
+   ========================================================= */
+
+/* Campos da dispensa, agrupados pelo lugar onde são usados. O que tem
+   `trava:true` segura a proposta: sem ele não dá pra enviar nada. */
+const LIC_BLOCOS_LEITURA = [
+  { titulo:'As regras do jogo', campos:[
+    { id:'criterio',        rotulo:'Critério de julgamento', trava:true },
+    { id:'aceitaParcial',   rotulo:'Pode propor só alguns itens' },
+    { id:'mepp',            rotulo:'Exclusiva ME/EPP' },
+    { id:'modoDisputa',     rotulo:'Modo de disputa' },
+    { id:'orcamentoSigiloso', rotulo:'Orçamento sigiloso' }
+  ]},
+  { titulo:'Como se envia a proposta', campos:[
+    { id:'meioEnvio',       rotulo:'Por onde envia', trava:true },
+    { id:'portal',          rotulo:'Qual portal' },
+    { id:'emailProposta',   rotulo:'E-mail da proposta' },
+    { id:'emailEsclarecimento', rotulo:'E-mail de dúvidas' },
+    { id:'exigeCadastro',   rotulo:'Exige cadastro prévio' },
+    { id:'dataHoraLimite',  rotulo:'Limite para enviar', trava:true },
+    { id:'dataHoraSessao',  rotulo:'Sessão de disputa' }
+  ]},
+  { titulo:'O que vai impresso na proposta', campos:[
+    { id:'validade',        rotulo:'Validade da proposta', trava:true },
+    { id:'prazoEntrega',    rotulo:'Prazo de entrega', trava:true },
+    { id:'prazoPagamento',  rotulo:'Prazo de pagamento', trava:true },
+    { id:'localEntrega',    rotulo:'Local de entrega' },
+    { id:'garantia',        rotulo:'Garantia exigida' },
+    { id:'exigeMarcaModelo',rotulo:'Exige marca e modelo' },
+    { id:'exigeExtenso',    rotulo:'Exige valor por extenso' },
+    { id:'exigeDadosBancarios', rotulo:'Exige dados bancários' }
+  ]},
+  { titulo:'Habilitação e contrato', campos:[
+    { id:'exigeAmostra',    rotulo:'Exige amostra' },
+    { id:'prazoAmostra',    rotulo:'Prazo da amostra' },
+    { id:'exigeAtestado',   rotulo:'Atestado de capacidade' },
+    { id:'exigeVisita',     rotulo:'Visita técnica' },
+    { id:'exigeBalanco',    rotulo:'Balanço / qualificação econômica' },
+    { id:'subcontratacao',  rotulo:'Subcontratação' },
+    { id:'exigeGarantiaContratual', rotulo:'Garantia contratual (caução)' },
+    { id:'prazoAssinatura', rotulo:'Prazo para assinar o contrato' },
+    { id:'multas',          rotulo:'Multas e penalidades' }
+  ]}
+];
+const LIC_CAMPOS_LEITURA = LIC_BLOCOS_LEITURA.reduce((a,b)=>a.concat(b.campos), []);
+function licCampoLeitura(id){ return LIC_CAMPOS_LEITURA.find(c=>c.id===id); }
+
+/* ---------------------------------------------------------
+   Caminho de reserva: leitor por palavra-chave
+   --------------------------------------------------------- */
 function licLerEdital(l){
   const texto = l.arquivos.map(a=>a.texto||'').join('\n');
   if(!texto.trim()){ showToast('Anexe pelo menos um arquivo que dê pra ler.','error'); return; }
   const T = texto.replace(/\s+/g,' ');
   const achar = (re)=>{ const m = T.match(re); return m ? (m[1]||m[0]).trim() : ''; };
 
-  const leitura = {};
-  if(/menor\s+pre[çc]o\s+(global|por\s+lote)/i.test(T)) leitura.criterio = 'Menor preço global';
-  else if(/menor\s+pre[çc]o\s+(por\s+)?item/i.test(T)) leitura.criterio = 'Menor preço por item';
-  else if(/maior\s+desconto/i.test(T)) leitura.criterio = 'Maior desconto';
+  const leitura = Object.assign({}, l.leitura||{});
+  const por = (campo, valor)=>{ if(valor && !leitura[campo]) leitura[campo] = valor; };
 
-  if(/exclusiv[ao].{0,40}(ME|EPP|microempresa)/i.test(T)) leitura.mepp = 'SIM — podemos participar';
-  else if(/ampla\s+(participa[çc][ãa]o|concorr[êe]ncia)/i.test(T)) leitura.mepp = 'Ampla participação';
+  if(/menor\s+pre[çc]o\s+(global|por\s+lote)/i.test(T)) por('criterio','Menor preço global');
+  else if(/menor\s+pre[çc]o\s+(por\s+)?item/i.test(T)) por('criterio','Menor preço por item');
+  else if(/maior\s+desconto/i.test(T)) por('criterio','Maior desconto');
+
+  if(/exclusiv[ao].{0,40}(ME|EPP|microempresa)/i.test(T)) por('mepp','Sim — podemos participar');
+  else if(/ampla\s+(participa[çc][ãa]o|concorr[êe]ncia)/i.test(T)) por('mepp','Ampla participação');
 
   const email = achar(/[\w.+-]+@[\w-]+\.[\w]{2,}(?:\.[\w]{2,})*/);
-  if(email) leitura.email = email.replace(/[.,;]+$/,'');
+  if(email) por('emailEsclarecimento', email.replace(/[.,;]+$/,''));
 
-  if(/compras\.gov\.br/i.test(T)) leitura.formaEnvio = 'Portal compras.gov.br';
-  else if(/bnc\b|bolsa\s+nacional/i.test(T)) leitura.formaEnvio = 'BNC — Bolsa Nacional de Compras';
-  else if(/licitanet/i.test(T)) leitura.formaEnvio = 'Licitanet';
-  else if(/portal\s+de\s+compras\s+p[úu]blicas/i.test(T)) leitura.formaEnvio = 'Portal de Compras Públicas';
-  else if(email) leitura.formaEnvio = 'Por e-mail';
+  if(/compras\.gov\.br/i.test(T)) { por('meioEnvio','Pelo sistema'); por('portal','Compras.gov.br'); }
+  else if(/bnc\b|bolsa\s+nacional/i.test(T)) { por('meioEnvio','Pelo sistema'); por('portal','BNC'); }
+  else if(/licitanet/i.test(T)) { por('meioEnvio','Pelo sistema'); por('portal','Licitanet'); }
+  else if(/portal\s+de\s+compras\s+p[úu]blicas/i.test(T)) { por('meioEnvio','Pelo sistema'); por('portal','Portal de Compras Públicas'); }
 
   const validade = achar(/validade\s+d[ae]\s+proposta[^.]{0,60}?(\d{1,3})\s*\(?\s*\w*\s*\)?\s*dias/i);
-  if(validade) leitura.validade = `mínimo ${validade} dias`;
-
+  if(validade) por('validade', `mínimo ${validade} dias`);
   const entrega = achar(/prazo\s+d[ae]\s+entrega[^.]{0,80}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*dias[^.,;]{0,20})/i);
-  if(entrega) leitura.prazoEntrega = entrega;
-
+  if(entrega) por('prazoEntrega', entrega);
   const pagamento = achar(/pagamento[^.]{0,120}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*dias[^.,;]{0,40})/i);
-  if(pagamento) leitura.prazoPagamento = pagamento;
-
+  if(pagamento) por('prazoPagamento', pagamento);
   const garantia = achar(/garantia[^.]{0,80}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*(?:meses|anos)[^.,;]{0,30})/i);
-  if(garantia) leitura.garantia = garantia;
-
-  if(/n[ãa]o\s+(ser[áa]\s+)?admitid[ao]\s+(a\s+)?subcontrata/i.test(T)) leitura.subcontratacao = 'Não admitida';
-  else if(/subcontrata[çc][ãa]o/i.test(T)) leitura.subcontratacao = 'Mencionada — confira';
-
+  if(garantia) por('garantia', garantia);
+  if(/n[ãa]o\s+(ser[áa]\s+)?admitid[ao]\s+(a\s+)?subcontrata/i.test(T)) por('subcontratacao','Não admitida');
   const sessao = achar(/(?:sess[ãa]o|abertura)[^.]{0,60}?(\d{2}\/\d{2}\/\d{4}(?:\s*[àa]s?\s*\d{1,2}[:h]\d{2})?)/i);
-  if(sessao) leitura.sessao = sessao;
-
-  const local = achar(/(?:local\s+de\s+entrega|entregue?\s+n[oa])[^.]{0,20}([A-ZÁÉÍÓÚÃÕÇ][^.;]{10,80})/);
-  if(local) leitura.local = local.trim();
-
-  const qtd = achar(/quantidade[^.\d]{0,20}(\d{1,6})/i);
-  if(qtd) leitura.quantidade = qtd;
+  if(sessao) por('dataHoraSessao', sessao);
 
   l.leitura = leitura;
-
-  /* exigências técnicas: linhas que descrevem produto */
-  /* Quebra em pedaços do tamanho de uma exigência. Edital bem formatado
-     já vem em linhas; edital que veio tudo grudado é quebrado por ponto
-     final, ponto e vírgula e numeração de item. */
-  const linhas = texto
-    .split(/\n|;|•|(?=\d+\s*[-–)]\s)/)
-    .reduce((acc, p)=>{
-      const t = p.replace(/\s+/g,' ').trim();
-      if(t.length <= 260){ acc.push(t); return acc; }
-      t.split(/(?<=[.:])\s+(?=[A-Z0-9])/).forEach(x=>acc.push(x.trim()));
-      return acc;
-    }, [])
-    .map(s=>s.replace(/\s+/g,' ').trim())
-    .filter(s=>s.length>=25 && s.length<=260)
-    .filter(s=>/(polegada|"|cm|mm|kg|hz|watts?|w\b|volts?|v\b|gb|ram|hdmi|usb|resolu[çc][ãa]o|brilho|cd\/m|processador|android|tela|touch|garantia|vesa|bivolt|litros?|unidade|embalagem|fardo|pacote)/i.test(s))
-    .filter((s,i,arr)=>arr.indexOf(s)===i)
-    .slice(0,24);
-  l.exigencias = linhas.map((t,i)=>({ n:i+1, texto:t }));
-
+  l.leituraOrigem = l.leituraOrigem || 'palavra-chave';
   saveState();
   renderPortalLicitacoes();
   const achados = Object.keys(leitura).length;
-  showToast(`Leitura pronta: ${achados} campo${achados===1?'':'s'} e ${l.exigencias.length} exigência${l.exigencias.length===1?'':'s'}. Confira o que ficou em amarelo.`, achados?'success':'info');
+  showToast(`Leitura de reserva: ${achados} campo${achados===1?'':'s'}. Confira tudo — essa leitura erra bastante.`, achados?'info':'error');
 }
 
-function licLeituraHtml(l){
-  const temTexto = l.arquivos.some(a=>a.texto);
-  if(!temTexto){
-    return `<div class="lic-doc aviso"><div><b>Nada lido ainda</b>
-      <small>Anexe o edital acima — a leitura roda sozinha assim que o arquivo entrar.</small></div></div>`;
-  }
-  const temAlgo = Object.keys(l.leitura||{}).length>0;
-  return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:10px;">
-      ${LIC_CAMPOS_LEITURA.map(c=>{
-        const v = (l.leitura||{})[c.id];
-        return `<div>
-          <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);">${escapeHtml(c.rotulo)}</div>
-          <div style="font-size:13.5px;font-weight:600;color:${v?'var(--ink)':'var(--warning)'};">${v?escapeHtml(v):'não achei — confira'}</div>
-        </div>`;
-      }).join('')}
-    </div>
-    <button class="btn btn-sm" onclick="licLerEdital(licAchar('${l.id}'))">${temAlgo?'↻ Ler de novo':'Ler o edital'}</button>
-    <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">✎ Corrigir à mão</button>
-  `;
-}
-
-function licEditarLeitura(id){
-  const l = licAchar(id); if(!l) return;
-  const m = document.createElement('div');
-  m.className = 'modal-overlay open';
-  m.innerHTML = `
-    <div class="modal-box" style="max-width:min(640px,94vw);max-height:88vh;overflow-y:auto;">
-      <h3 style="margin-top:0;">Corrigir a leitura do edital</h3>
-      <p class="help-text">O que você escrever aqui é o que vai pra proposta.</p>
-      ${LIC_CAMPOS_LEITURA.map(c=>`
-        <div class="field"><label>${escapeHtml(c.rotulo)}</label>
-          <input type="text" data-campo="${c.id}" value="${escapeAttr((l.leitura||{})[c.id]||'')}"></div>`).join('')}
-      <div class="modal-actions">
-        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-        <button class="btn btn-primary" id="lic-leitura-ok">Salvar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.querySelector('#lic-leitura-ok').onclick = ()=>{
-    const novo = {};
-    m.querySelectorAll('[data-campo]').forEach(i=>{ const v=i.value.trim(); if(v) novo[i.dataset.campo]=v; });
-    l.leitura = novo; saveState(); m.remove(); renderPortalLicitacoes();
-    showToast('Leitura corrigida.','success');
-  };
-}
-
-function licChecklistHtml(l){
-  const cfg = licCertidoesCfg();
-  const hoje = new Date(); hoje.setHours(0,0,0,0);
-  return LIC_CERTIDOES.map(c=>{
-    const dados = cfg[c.id] || {};
-    const val = dados.validade;
-    let classe='falta', estado='não temos este documento', nota='';
-    if(val){
-      const d = new Date(val+'T00:00:00');
-      const dias = Math.round((d-hoje)/86400000);
-      if(dias < 0){ classe='falta'; estado='vencida em '+fmtDate(val); }
-      else if(dias <= 15){ classe='aviso'; estado=`vence em ${dias} dia${dias===1?'':'s'}`; }
-      else { classe='ok'; estado='válida até '+fmtDate(val); }
-    }
-    if(dados.obs) nota = ' · ' + dados.obs;
-    return `<div class="lic-doc ${classe}">
-      <div><b>${escapeHtml(c.nome)}</b><small>${escapeHtml(estado+nota)}</small></div>
-      <button class="btn btn-sm" onclick="licAbrirCertidoes()">${classe==='ok'?'Ver':'Atualizar'}</button>
-    </div>`;
-  }).join('') + `<div class="help-text" style="margin-top:6px;">
-    Se pedirem documento que não está nessa lista, guarde junto em 📎 Certidões — ele entra na pasta da proposta automaticamente.</div>`;
-}
-
-function licExigenciasHtml(l){
-  if(l.exigencias.length===0){
-    return `<div class="help-text">Nada extraído ainda. Anexe o edital e rode a leitura acima — ou escreva as exigências à mão.</div>
-      <button class="btn btn-sm" style="margin-top:6px;" onclick="licEditarExigencias('${l.id}')">✎ Escrever à mão</button>`;
-  }
-  return `<ol style="margin:0 0 8px;padding-left:22px;font-size:13px;line-height:1.55;">
-      ${l.exigencias.map(e=>`<li>${escapeHtml(e.texto)}</li>`).join('')}
-    </ol>
-    <button class="btn btn-sm" onclick="licEditarExigencias('${l.id}')">✎ Ajustar a lista</button>`;
-}
-
-function licEditarExigencias(id){
-  const l = licAchar(id); if(!l) return;
-  const m = document.createElement('div');
-  m.className = 'modal-overlay open';
-  m.innerHTML = `
-    <div class="modal-box" style="max-width:min(680px,94vw);">
-      <h3 style="margin-top:0;">Exigências técnicas</h3>
-      <p class="help-text">Uma por linha. É exatamente isso que vai no texto para o ChatGPT.</p>
-      <textarea id="lic-exig-txt" style="width:100%;height:280px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">${escapeHtml(l.exigencias.map(e=>e.texto).join('\n'))}</textarea>
-      <div class="modal-actions">
-        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-        <button class="btn btn-primary" id="lic-exig-ok">Salvar</button>
-      </div>
-    </div>`;
-  document.body.appendChild(m);
-  m.querySelector('#lic-exig-ok').onclick = ()=>{
-    const linhas = m.querySelector('#lic-exig-txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
-    l.exigencias = linhas.map((t,i)=>({n:i+1, texto:t}));
-    saveState(); m.remove(); renderPortalLicitacoes();
-    showToast('Exigências salvas.','success');
-  };
-}
-
-/* ---- a ida e volta com o ChatGPT ---- */
+/* =========================================================
+   A PERGUNTA PARA O CHATGPT
+   Montada por blocos numerados de propósito: quando aparecer uma
+   pegadinha nova de edital, acrescenta-se uma linha no bloco certo
+   sem refazer o resto.
+   ========================================================= */
 function licTextoParaChatGpt(l){
-  const ref = l.valorEstimado ? fmtMoney(l.valorEstimado) : '(não informado)';
-  const mod = (l.propostaCampos.modalidade || l.modalidadeNome || 'Dispensa');
-  const num = (l.propostaCampos.numero || l.numero || '');
-  const criterio = (l.leitura||{}).criterio || 'menor preço por item';
-  return [
-`Você é especialista em licitação pública. Vou participar da ${mod} ${num} de ${l.orgao||'um órgão público'}. Critério: ${criterio}. Valor de referência: ${ref}.`,
-``,
-`Procure no mínimo 5 produtos reais, à venda no Brasil, e confira CADA UM contra a especificação abaixo. Produto que falhe em uma única exigência me desclassifica.`,
-``,
-`EXIGÊNCIAS DO EDITAL:`,
-...(l.exigencias.length ? l.exigencias.map(e=>`${e.n}. ${e.texto}`) : ['(cole aqui as exigências)']),
-``,
-`RESPONDA EXATAMENTE NESTE FORMATO, uma linha por modelo, campos separados por | :`,
-`MODELO | FABRICANTE | PREÇO | LINK ONDE COMPRAR | ATENDE/NÃO ATENDE/A CONFIRMAR por exigência, na ordem de 1 a ${l.exigencias.length||'N'}, separadas por ponto e vírgula`,
-``,
-`Regras da resposta:`,
-`- Quando NÃO ATENDE, diga o valor do produto e o valor exigido ("350 cd/m², 50 abaixo dos 400").`,
-`- Quando a ficha não informar, escreva A CONFIRMAR — nunca chute.`,
-`- O link tem que ser de onde dá pra comprar de verdade, com o preço visível.`,
-`- No fim, liste as perguntas que eu preciso fazer ao distribuidor para fechar o que ficou A CONFIRMAR.`
-  ].join('\n');
+  const d = [];
+  const campo = (rot, v)=>{ if(v) d.push(`${rot}: ${v}`); };
+  campo('Modalidade', l.modalidadeNome || (l.propostaCampos||{}).modalidade);
+  campo('Número', l.numero || (l.propostaCampos||{}).numero);
+  campo('Órgão', l.orgao);
+  campo('Unidade compradora', l.unidade);
+  campo('Cidade/UF', l.municipioNome ? `${l.municipioNome}/${l.uf||''}` : '');
+  campo('Valor total estimado', l.valorEstimado>0 ? fmtMoney(l.valorEstimado) : 'não divulgado');
+  campo('Prazo final para proposta', l.dataEncerramentoProposta ? licDataHora(new Date(l.dataEncerramentoProposta)) : '');
+  campo('Objeto (como veio do PNCP)', l.objeto);
+
+  return `Anexei o edital desta contratação e TODOS os anexos. Leia tudo, do começo ao fim.
+
+O QUE É
+${d.join('\n')}
+
+SUA TAREFA
+Extrair, com o máximo de esforço, tudo que eu preciso para decidir se
+participo, precificar e emitir a proposta. Depois, pesquisar produtos
+reais que atendam a cada item.
+
+COMO LER — isto é o que separa uma resposta útil de uma inútil
+
+1. A planilha de itens é só o começo. Boa parte da especificação está
+   solta no corpo do texto, no Termo de Referência, em nota de rodapé,
+   em tabela de anexo ou numa cláusula do contrato. Leia tudo e junte.
+2. Para CADA item, varra o documento inteiro atrás de qualquer linha que
+   fale dele, mesmo longe da planilha. Junte tudo numa lista única de
+   exigências daquele item.
+3. Se a planilha disser uma coisa e o Termo de Referência disser outra,
+   NÃO escolha: me aponte a contradição com as duas versões e as duas
+   fontes.
+4. Diferencie três situações, porque elas pedem reação diferente:
+   - achei a informação  -> preencha e diga a fonte;
+   - procurei e não achei -> ponha o campo em "naoEncontrado";
+   - o edital não trata do assunto -> ponha em "editalSilente".
+   Nunca invente, nunca deduza "o normal é 30 dias".
+5. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
+   ilegível, diga qual em "trechosIlegiveis".
+6. Antes de fechar a resposta, confira: o número de itens que você
+   listou bate com o número de itens do edital? Se não bater, volte e
+   complete.
+
+PESQUISA DE PRODUTOS
+Para cada item, procure no mínimo 5 produtos reais, à venda no Brasil
+hoje, de marcas diferentes, com link de onde comprar e preço visível.
+Confira cada produto contra CADA exigência daquele item:
+- ATENDE: a ficha técnica comprova.
+- NAO_ATENDE: diga o número do produto E o número exigido
+  ("brilho 350 cd/m², o edital exige 400 — 50 abaixo").
+- A_CONFIRMAR: a ficha é omissa. Diga exatamente o que falta.
+Ficha omissa NUNCA é ATENDE. Um único NAO_ATENDE reprova o produto
+inteiro, porque me desclassifica. Para tudo que ficar A_CONFIRMAR,
+escreva a pergunta que eu devo fazer ao distribuidor, por escrito.
+
+FORMATO
+Responda SOMENTE com o bloco JSON abaixo preenchido. Sem introdução,
+sem explicação, sem comentário no fim, sem perguntar se pode seguir.
+Se for longo, vá até o fim; se precisar cortar, corte no meio de uma
+lista e eu peço a continuação — mas não resuma e não pule item.
+Use ponto como separador decimal nos números e não escreva "R$".
+
+{
+  "dispensa": {
+    "modalidade": "", "numero": "", "orgao": "", "unidade": "",
+    "cnpjOrgao": "", "cidade": "", "uf": "",
+    "objeto": "",
+    "criterio": "",
+    "aceitaParcial": "", "mepp": "", "modoDisputa": "",
+    "orcamentoSigiloso": "",
+    "meioEnvio": "", "portal": "",
+    "emailProposta": "", "emailEsclarecimento": "",
+    "exigeCadastro": "",
+    "dataHoraLimite": "", "dataHoraSessao": "",
+    "validade": "", "prazoEntrega": "", "prazoPagamento": "",
+    "localEntrega": "", "garantia": "",
+    "exigeMarcaModelo": "", "exigeExtenso": "", "exigeDadosBancarios": "",
+    "exigeAmostra": "", "prazoAmostra": "",
+    "exigeAtestado": "", "exigeVisita": "", "exigeBalanco": "",
+    "subcontratacao": "", "exigeGarantiaContratual": "",
+    "prazoAssinatura": "", "multas": ""
+  },
+
+  "fontes": {
+    "criterio": "", "prazoEntrega": "", "prazoPagamento": "",
+    "meioEnvio": "", "validade": "", "localEntrega": ""
+  },
+
+  "naoEncontrado": [],
+  "editalSilente": [],
+  "trechosIlegiveis": [],
+
+  "contradicoes": [
+    { "assunto": "", "versaoA": "", "fonteA": "", "versaoB": "", "fonteB": "" }
+  ],
+
+  "itens": [
+    {
+      "numero": 1,
+      "descricao": "",
+      "unidade": "",
+      "quantidade": 0,
+      "valorUnitarioEstimado": 0,
+      "valorTotalEstimado": 0,
+      "marcaReferencia": "",
+      "aceitaEquivalente": "",
+      "exigeAmostra": "",
+      "exigencias": [],
+      "observacoes": ""
+    }
+  ],
+
+  "modelos": [
+    {
+      "item": 1,
+      "marca": "", "modelo": "", "fabricante": "",
+      "preco": 0, "link": "", "fornecedor": "",
+      "veredictos": [
+        { "exigencia": 1, "situacao": "ATENDE", "observacao": "" }
+      ],
+      "resultado": ""
+    }
+  ],
+
+  "perguntasAoDistribuidor": [
+    { "item": 1, "pergunta": "" }
+  ],
+
+  "documentosHabilitacao": [
+    { "documento": "", "obrigatorio": true, "fonte": "" }
+  ],
+
+  "riscos": [
+    { "risco": "", "impacto": "", "fonte": "" }
+  ],
+
+  "resumoDaDecisao": { "vale": "", "porque": "" }
+}
+
+REGRAS DOS CAMPOS
+- "criterio": escreva exatamente "por item", "global" ou "por lote".
+- "meioEnvio": exatamente "sistema", "email" ou "presencial".
+- "emailProposta" só se a proposta for enviada por e-mail. E-mail de
+  esclarecimento NÃO é e-mail de proposta — são campos diferentes.
+- "descricao" do item: a descrição INTEIRA, como está no edital. Ela vai
+  impressa na minha proposta. Não resuma, não agrupe, não pule item.
+- "exigencias": uma linha por característica exigida, na ordem. O número
+  do veredicto se refere à posição nesta lista.
+- "resultado": "atende" só se todos os veredictos forem ATENDE.
+- "naoEncontrado" e "editalSilente": use os nomes dos campos acima
+  (ex: "prazoEntrega").
+- Campo sem informação: deixe "" e registre em "naoEncontrado" ou
+  "editalSilente". Não preencha com "não informado".`;
 }
 
 function licChatGptHtml(l){
+  const temResposta = !!l.respostaIA;
   return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px;">
-      <div class="lic-card" style="margin:0;"><b>1 · Copiar</b>
-        <div class="meta">O botão copia as exigências e as instruções de resposta.</div></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px;">
+      <div class="lic-card" style="margin:0;"><b>1 · Copiar a pergunta</b>
+        <div class="meta">Ela já vai com os dados desta dispensa.</div></div>
       <div class="lic-card" style="margin:0;"><b>2 · Colar no ChatGPT</b>
-        <div class="meta">Ele procura os modelos e devolve a tabela.</div></div>
-      <div class="lic-card" style="margin:0;"><b>3 · Colar a resposta aqui</b>
-        <div class="meta">O sistema lê e monta a comparação.</div></div>
+        <div class="meta">E anexar lá os PDFs do edital. Quem lê é ele.</div></div>
+      <div class="lic-card" style="margin:0;"><b>3 · Trazer a resposta</b>
+        <div class="meta">Cole o JSON aqui, ou arraste o arquivo.</div></div>
     </div>
-    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px;">O que o botão copia</div>
-    <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;font-size:11.5px;max-height:170px;overflow:auto;margin:0 0 8px;">${escapeHtml(licTextoParaChatGpt(l))}</pre>
-    <button class="btn btn-sm btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar pergunta</button>
 
-    <div class="field" style="margin-top:12px;">
-      <label>Cole aqui a resposta do ChatGPT</label>
-      <textarea id="lic-resposta-gpt" style="width:100%;height:120px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole a tabela que o ChatGPT devolveu">${escapeHtml(l.comparacaoTexto||'')}</textarea>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+      <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar pergunta</button>
+      <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
+      <span style="font-size:12px;color:var(--ink-faint);">
+        Na primeira vez, crie um Projeto no ChatGPT e cole lá o contexto fixo — depois é uma conversa por dispensa.</span>
     </div>
-    <button class="btn btn-sm btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler resposta e montar a comparação</button>
-    ${l.comparacao?`<button class="btn btn-sm" onclick="licLimparComparacao('${l.id}')">Desfazer</button>`:''}
+
+    <div class="field">
+      <label>Cole aqui a resposta do ChatGPT</label>
+      <textarea id="lic-resposta-gpt" style="width:100%;height:110px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole o bloco JSON inteiro — ou arraste aqui o arquivo que ele te deu">${escapeHtml(l.respostaIATexto||'')}</textarea>
+      <div class="dica" style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;">Pode arrastar um arquivo .json ou .txt direto pra cima desta caixa.</div>
+    </div>
+    <button class="btn btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler a resposta e preencher</button>
+    ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')">Desfazer</button>`:''}
   `;
+}
+
+function licVerPergunta(id){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(820px,95vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">A pergunta que vai pro ChatGPT</h3>
+      <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11.5px;line-height:1.5;">${escapeHtml(licTextoParaChatGpt(l))}</pre>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 function licCopiarPergunta(id){
@@ -28604,7 +28920,7 @@ function licCopiarPergunta(id){
   const txt = licTextoParaChatGpt(l);
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt)
-      .then(()=>showToast('Pergunta copiada. Cole no ChatGPT.','success'))
+      .then(()=>showToast('Pergunta copiada. Cole no ChatGPT e anexe os PDFs do edital.','success'))
       .catch(()=>licCopiarNaMao(txt));
   }else licCopiarNaMao(txt);
 }
@@ -28613,104 +28929,807 @@ function licCopiarNaMao(txt){
   ta.value = txt; ta.style.position='fixed'; ta.style.left='-9999px';
   document.body.appendChild(ta); ta.select();
   try{ document.execCommand('copy'); showToast('Pergunta copiada.','success'); }
-  catch(e){ showToast('Não consegui copiar — selecione o texto na caixa acima.','error'); }
+  catch(e){ showToast('Não consegui copiar — use "ver o texto" e copie à mão.','error'); }
   ta.remove();
 }
 
-/* Lê a resposta colada. Aceita o formato pedido (campos separados por |)
-   e também tabela em markdown, que é como o ChatGPT costuma devolver. */
+/* =========================================================
+   LER A RESPOSTA
+   Aceita o JSON puro, dentro de cercas ```json, ou no meio de texto.
+   Conserta os defeitos comuns antes de desistir.
+   ========================================================= */
+function licExtrairJson(bruto){
+  let t = String(bruto||'').trim();
+  if(!t) return { erro:'Cole a resposta do ChatGPT primeiro.' };
+
+  /* tira as cercas de código */
+  const cerca = t.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if(cerca) t = cerca[1].trim();
+
+  /* pega do primeiro { até o último } */
+  const i = t.indexOf('{'), f = t.lastIndexOf('}');
+  if(i < 0 || f < i) return { erro:'Não achei nenhum bloco JSON na resposta. Confira se copiou o bloco inteiro, com as chaves { }.' };
+  t = t.slice(i, f+1);
+
+  const tentar = (texto)=>{ try{ return JSON.parse(texto); }catch(e){ return null; } };
+  let dado = tentar(t);
+  if(dado) return { dado };
+
+  /* conserto 1: aspas curvas que o navegador/editor troca */
+  let c = t.replace(/[“”]/g,'"').replace(/[‘’]/g,"'");
+  /* conserto 2: vírgula sobrando antes de fechar */
+  c = c.replace(/,\s*([}\]])/g, '$1');
+  /* conserto 3: comentários // que algumas IAs deixam */
+  c = c.replace(/^\s*\/\/.*$/gm, '');
+  dado = tentar(c);
+  if(dado) return { dado, consertado:true };
+
+  return { erro:'A resposta veio com o JSON quebrado. Peça ao ChatGPT: "repita apenas o bloco JSON, completo e válido, sem nenhum texto em volta".' };
+}
+
+function licSimNao(v){
+  if(v === true) return 'Sim';
+  if(v === false) return 'Não';
+  const s = String(v==null?'':v).trim();
+  return s;
+}
+
 function licLerRespostaGpt(id){
   const l = licAchar(id); if(!l) return;
   const el = document.getElementById('lic-resposta-gpt');
-  const txt = el ? el.value : '';
-  l.comparacaoTexto = txt;
-  if(!txt.trim()){ showToast('Cole a resposta do ChatGPT primeiro.','error'); saveState(); return; }
+  const bruto = el ? el.value : (l.respostaIATexto||'');
+  l.respostaIATexto = bruto;
 
-  const linhas = txt.split('\n').map(s=>s.trim()).filter(s=>s.includes('|'));
-  const modelos = [];
-  linhas.forEach(ln=>{
-    const campos = ln.replace(/^\||\|$/g,'').split('|').map(s=>s.trim());
-    if(campos.length < 4) return;
-    if(/^-+$/.test(campos[0]) || /^modelo$/i.test(campos[0])) return;
-    const veredictos = (campos[4]||'').split(';').map(s=>s.trim()).filter(Boolean);
-    modelos.push({
-      modelo: campos[0], fabricante: campos[1],
-      preco: licValorPlanilha(campos[2]),
-      precoTexto: campos[2],
-      link: (campos[3].match(/https?:\/\/\S+/)||[''])[0] || campos[3],
-      veredictos
-    });
+  const r = licExtrairJson(bruto);
+  if(r.erro){ saveState(); showToast(r.erro,'error'); return; }
+  licAplicarRespostaIA(l, r.dado);
+  if(r.consertado) showToast('O JSON veio com uns defeitos, consertei e li.','info');
+}
+
+/* Aplica no sistema. O que você já tinha escrito à mão manda — a IA
+   preenche o que está vazio e o resto fica marcado como mudança. */
+function licAplicarRespostaIA(l, dado){
+  const d = dado.dispensa || {};
+  /* Uma resposta de continuação (o botão "pedir mais opções deste item")
+     traz só modelos e perguntas. Ela SOMA; uma resposta completa, que
+     vem com o bloco "dispensa", substitui. */
+  const ehContinuacao = !dado.dispensa && (!Array.isArray(dado.itens) || dado.itens.length===0);
+  const leitura = Object.assign({}, l.leitura || {});
+  let preenchidos = 0;
+
+  const naMao = l.leituraManual || {};
+  LIC_CAMPOS_LEITURA.forEach(c=>{
+    const v = licSimNao(d[c.id]);
+    if(!v) return;
+    /* o que ela escreveu à mão manda sempre; o que veio de uma resposta
+       anterior é substituído, senão não dá pra corrigir uma análise ruim */
+    if(naMao[c.id]) return;
+    if(leitura[c.id] === v) return;
+    leitura[c.id] = v; preenchidos++;
   });
-  if(modelos.length===0){
-    showToast('Não achei nenhuma linha no formato pedido. Confira se a resposta tem os campos separados por | .','error');
-    saveState(); return;
+  l.leitura = leitura;
+  l.leituraOrigem = 'ia';
+  l.fontes = Object.assign({}, l.fontes||{}, dado.fontes || {});
+  /* numa continuação esses blocos não vêm — manter o que já havia */
+  const manter = (atual, novo, filtro)=>
+    (ehContinuacao || !Array.isArray(novo)) ? (atual||[]) : novo.filter(filtro||(x=>!!x));
+  l.naoEncontrado = manter(l.naoEncontrado, dado.naoEncontrado);
+  l.editalSilente = manter(l.editalSilente, dado.editalSilente);
+  l.trechosIlegiveis = manter(l.trechosIlegiveis, dado.trechosIlegiveis);
+  l.contradicoes = manter(l.contradicoes, dado.contradicoes, c=>c && c.assunto);
+  l.riscos = manter(l.riscos, dado.riscos, x=>x && x.risco);
+  l.documentosHabilitacao = manter(l.documentosHabilitacao, dado.documentosHabilitacao, x=>x && x.documento);
+  const perguntasNovas = Array.isArray(dado.perguntasAoDistribuidor) ? dado.perguntasAoDistribuidor.filter(x=>x && x.pergunta) : [];
+  if(ehContinuacao){
+    const jaTem = new Set((l.perguntasDistribuidor||[]).map(x=>(x.pergunta||'').trim()));
+    l.perguntasDistribuidor = (l.perguntasDistribuidor||[]).concat(perguntasNovas.filter(x=>!jaTem.has((x.pergunta||'').trim())));
+  }else{
+    l.perguntasDistribuidor = perguntasNovas;
   }
-  l.comparacao = { modelos, quando: new Date().toISOString() };
-  licRegistrar(l, `Comparação montada com ${modelos.length} modelo${modelos.length===1?'':'s'}.`);
-  saveState(); renderPortalLicitacoes();
-  showToast(`Entendi ${modelos.length} modelo${modelos.length===1?'':'s'}. A comparação está logo abaixo.`,'success');
-}
-function licLimparComparacao(id){
-  const l = licAchar(id); if(!l) return;
-  l.comparacao = null; saveState(); renderPortalLicitacoes();
+  if(dado.resumoDaDecisao) l.resumoDaDecisao = dado.resumoDaDecisao;
+
+  /* campos da proposta que já dá pra adiantar */
+  const pc = l.propostaCampos;
+  if(!pc.objeto && d.objeto) pc.objeto = d.objeto;
+  if(!pc.numero && d.numero) pc.numero = d.numero;
+  if(!pc.prazoEntrega && leitura.prazoEntrega) pc.prazoEntrega = leitura.prazoEntrega;
+  if(!pc.prazoPagamento && leitura.prazoPagamento) pc.prazoPagamento = leitura.prazoPagamento;
+  if(leitura.criterio){
+    const g = /global|lote/i.test(leitura.criterio);
+    l.criterio = g ? 'global' : 'item';
+    if(!pc.tipo) pc.tipo = g ? 'MENOR PREÇO GLOBAL' : 'MENOR PREÇO POR ITEM';
+  }
+
+  /* ---- os itens ---- */
+  const itensIA = Array.isArray(dado.itens) ? dado.itens.filter(x=>x && (x.descricao||'').trim()) : [];
+  let novos = 0, atualizados = 0;
+  itensIA.forEach((ia, pos)=>{
+    const n = Number(ia.numero) || (pos+1);
+    let it = l.itens.find(x=>Number(x.numero)===n);
+    if(!it){
+      licNovoItem(l.id, true);
+      it = l.itens[l.itens.length-1];
+      it.numero = n;
+      /* licNovoItem semeia o primeiro item com o valor total da licitação,
+         que só faz sentido quando ela tem um item só. Vindo da IA, cada
+         item traz o teto dele. */
+      it.teto = 0; it.descricao = ''; it.descricaoProposta = '';
+      novos++;
+    }else atualizados++;
+    const qtd = Math.max(1, licNumDireto(ia.quantidade) || 1);
+    if(!it.descricao || it.descricao===l.objeto) it.descricao = ia.descricao;
+    if(!it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = ia.descricao;
+    if(!it.unidade || it.unidade==='UND') it.unidade = ia.unidade || 'UND';
+    if(!licNumDireto(it.qtd) || it.qtd===1) it.qtd = qtd;
+    if(!licNumDireto(it.teto)){
+      const total = licNumDireto(ia.valorTotalEstimado) || (licNumDireto(ia.valorUnitarioEstimado) * qtd);
+      if(total>0) it.teto = total;
+    }
+    if(!it.marca && ia.marcaReferencia) it.marcaReferencia = ia.marcaReferencia;
+    it.exigencias = Array.isArray(ia.exigencias) ? ia.exigencias.filter(Boolean) : (it.exigencias||[]);
+    it.aceitaEquivalente = licSimNao(ia.aceitaEquivalente);
+    it.exigeAmostra = licSimNao(ia.exigeAmostra);
+    it.observacoesEdital = ia.observacoes || '';
+  });
+  l.itens.sort((a,b)=>(Number(a.numero)||99) - (Number(b.numero)||99));
+
+  /* a lista geral de exigências continua existindo, pra quem só tem 1 item */
+  l.exigencias = [];
+  itensIA.forEach(ia=>{
+    (ia.exigencias||[]).forEach((t,i)=>l.exigencias.push({ n:l.exigencias.length+1, texto:t, item:Number(ia.numero)||1 }));
+  });
+
+  /* ---- os modelos, agrupados por item ---- */
+  const modelos = Array.isArray(dado.modelos) ? dado.modelos.filter(m=>m && (m.modelo||m.marca)) : [];
+  modelos.forEach(m=>{
+    m.item = Number(m.item) || 1;
+    m.preco = licNumDireto(m.preco);
+    m.veredictos = Array.isArray(m.veredictos) ? m.veredictos : [];
+    const reprova = m.veredictos.some(v=>/NAO_ATENDE|NÃO ATENDE/i.test(String(v.situacao||'')));
+    const confirmar = m.veredictos.some(v=>/A_CONFIRMAR|CONFIRMAR/i.test(String(v.situacao||'')));
+    m.resultado = reprova ? 'reprova' : (confirmar ? 'a confirmar' : 'atende');
+  });
+  /* Resposta de continuação (só "modelos", sem "itens") SOMA aos que já
+     existem, em vez de apagar — senão pedir mais opções de um item
+     derrubava a pesquisa dos outros. */
+  const soModelos = modelos.length > 0 && ehContinuacao;
+  if(soModelos && l.comparacao && l.comparacao.modelos.length){
+    const chave = (m)=>`${Number(m.item)||1}|${(m.marca||'').toUpperCase()}|${(m.modelo||'').toUpperCase()}`;
+    const tinha = new Set(l.comparacao.modelos.map(chave));
+    const novosModelos = modelos.filter(m=>!tinha.has(chave(m)));
+    l.comparacao = { modelos: l.comparacao.modelos.concat(novosModelos), quando:new Date().toISOString() };
+  }else if(modelos.length){
+    l.comparacao = { modelos, quando:new Date().toISOString() };
+  }else if(itensIA.length){
+    l.comparacao = null;
+  }
+  l.respostaIA = true;
+  licItemFoco = 0;
+
+  licRegistrar(l, `Resposta da IA lida: ${preenchidos} campo${preenchidos===1?'':'s'}, ${itensIA.length} item${itensIA.length===1?'':'ns'}, ${modelos.length} modelo${modelos.length===1?'':'s'}.`);
+  saveState();
+  renderPortalLicitacoes();
+
+  const partes = [];
+  if(itensIA.length) partes.push(`${itensIA.length} item${itensIA.length===1?'':'ns'}${novos?` (${novos} novo${novos===1?'':'s'})`:''}`);
+  if(preenchidos) partes.push(`${preenchidos} campo${preenchidos===1?'':'s'}`);
+  if(modelos.length) partes.push(`${modelos.length} modelo${modelos.length===1?'':'s'}`);
+  showToast(partes.length?('Li: '+partes.join(' · ')):'Li a resposta, mas ela veio vazia.', partes.length?'success':'error');
 }
 
-function licVeredictoClasse(v){
-  const s = String(v||'').toUpperCase();
-  if(s.startsWith('NÃO ATENDE')||s.startsWith('NAO ATENDE')) return 'naoatende';
-  if(s.startsWith('ATENDE')||s.startsWith('SUPERIOR')) return 'atende';
-  return 'confirmar';
+function licLimparRespostaIA(id){
+  const l = licAchar(id); if(!l) return;
+  confirmAction('Desfazer a leitura da IA',
+    'Isso apaga os modelos pesquisados e as marcações de fonte. Os itens e o que você digitou à mão continuam. Continuar?',
+    ()=>{
+      l.comparacao = null; l.respostaIA = false;
+      l.fontes = {}; l.naoEncontrado = []; l.editalSilente = [];
+      l.contradicoes = []; l.riscos = []; l.perguntasDistribuidor = [];
+      l.resumoDaDecisao = null;
+      saveState(); renderPortalLicitacoes();
+    });
 }
-function licComparacaoHtml(l){
-  const c = l.comparacao;
-  const nExig = Math.max(l.exigencias.length, ...c.modelos.map(m=>m.veredictos.length));
+
+/* =========================================================
+   O QUE AINDA FALTA
+   ========================================================= */
+function licPendencias(l){
+  const faltam = [];
+  LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{
+    if(!(l.leitura||{})[c.id]) faltam.push(c);
+  });
+  return faltam;
+}
+function licPendenciasHtml(l){
+  const faltam = licPendencias(l);
+  if(faltam.length===0) return '';
+  return `<div class="lic-doc aviso" style="display:block;">
+    <b>⚠️ Falta resolver ${faltam.length} coisa${faltam.length===1?'':'s'} antes de enviar a proposta</b>
+    <div style="margin-top:5px;font-size:12.5px;">
+      ${faltam.map(c=>escapeHtml(c.rotulo)).join(' · ')}
+    </div>
+    <button class="btn btn-sm" style="margin-top:8px;" onclick="licEditarLeitura('${l.id}')">Preencher à mão</button>
+  </div>`;
+}
+
+/* =========================================================
+   A TELA DA LEITURA
+   ========================================================= */
+function licLeituraHtml(l){
+  const leitura = l.leitura || {};
+  const fontes = l.fontes || {};
+  const naoAchou = new Set(l.naoEncontrado || []);
+  const silente = new Set(l.editalSilente || []);
+  const temAlgo = Object.keys(leitura).length > 0;
+
+  if(!temAlgo && !l.respostaIA){
+    return `<div class="lic-doc aviso" style="display:block;">
+      <b>Nada preenchido ainda</b>
+      <small>O jeito bom é o passo 5, abaixo: copiar a pergunta, colar no ChatGPT com os PDFs e trazer a resposta.
+      Se preferir tentar sem isso, a leitura por palavra-chave roda aqui — mas erra bastante.</small>
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="licLerEdital(licAchar('${l.id}'))">Tentar a leitura de reserva</button>
+        <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">✎ Preencher à mão</button>
+      </div>
+    </div>`;
+  }
+
   return `
-    <div class="lic-passo">Comparação dos modelos</div>
-    <p class="help-text">Uma linha por exigência, uma coluna por modelo. Vermelho desclassifica.</p>
-    <div class="table-wrap">
-      <table class="lic-comp">
-        <thead><tr><th style="min-width:200px;">Exigência do edital</th>
-          ${c.modelos.map(m=>`<th>${escapeHtml(m.modelo)}<br><span style="font-weight:400;opacity:.8;">${escapeHtml(m.fabricante||'')}</span></th>`).join('')}
-        </tr></thead>
-        <tbody>
-          ${Array.from({length:nExig}).map((_,i)=>{
-            const ex = l.exigencias[i];
-            return `<tr class="${i%2?'par':''}">
-              <td><b>${i+1}.</b> ${escapeHtml(ex?ex.texto:'(exigência '+(i+1)+')')}</td>
-              ${c.modelos.map(m=>{
-                const v = m.veredictos[i]||'';
-                return `<td class="${licVeredictoClasse(v)}">${escapeHtml(v||'—')}</td>`;
-              }).join('')}
-            </tr>`;
+    ${l.resumoDaDecisao && l.resumoDaDecisao.porque ? `
+      <div class="lic-res ${/n[ãa]o/i.test(l.resumoDaDecisao.vale||'')?'nao':'ok'}" style="margin-bottom:12px;">
+        <b>Leitura do ChatGPT:</b> ${escapeHtml(l.resumoDaDecisao.porque)}
+      </div>`:''}
+
+    ${licPendenciasHtml(l)}
+
+    ${(l.contradicoes||[]).length ? `
+      <div class="lic-doc aviso" style="display:block;margin-bottom:10px;">
+        <b>⚠️ Os documentos se contradizem em ${l.contradicoes.length} ponto${l.contradicoes.length===1?'':'s'}</b>
+        ${l.contradicoes.map(c=>`<div style="margin-top:6px;font-size:12.5px;">
+          <b>${escapeHtml(c.assunto)}</b><br>
+          ${escapeHtml(c.versaoA)} <span style="color:var(--ink-faint);">(${escapeHtml(c.fonteA||'')})</span><br>
+          ${escapeHtml(c.versaoB)} <span style="color:var(--ink-faint);">(${escapeHtml(c.fonteB||'')})</span>
+        </div>`).join('')}
+        <small style="display:block;margin-top:6px;">Decida qual vale antes de precificar — e, na dúvida, peça esclarecimento ao órgão.</small>
+      </div>`:''}
+
+    ${LIC_BLOCOS_LEITURA.map(bloco=>`
+      <div style="margin-bottom:14px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">${escapeHtml(bloco.titulo)}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:12px;">
+          ${bloco.campos.map(c=>{
+            const v = leitura[c.id];
+            const fonte = fontes[c.id];
+            let cor = 'var(--ink)', extra = '';
+            if(!v){
+              if(silente.has(c.id)){ cor='var(--ink-faint)'; extra='o edital não trata disso — você escolhe'; }
+              else { cor='var(--warning)'; extra='não achei — confira'; }
+            }
+            return `<div>
+              <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint);">${escapeHtml(c.rotulo)}${c.trava?' *':''}</div>
+              <div style="font-size:13.5px;font-weight:600;color:${cor};line-height:1.35;">${v?escapeHtml(v):escapeHtml(extra)}</div>
+              ${fonte?`<div style="font-size:10.5px;color:var(--ink-faint);margin-top:1px;">${escapeHtml(fonte)}</div>`:''}
+            </div>`;
           }).join('')}
-          <tr style="background:#FAFBFC;">
-            <td><b>Preço e onde comprar</b><br><span style="color:var(--ink-faint);">referência ${fmtMoney(l.valorEstimado||0)}</span></td>
-            ${c.modelos.map(m=>`<td>
-              <b style="font-family:var(--font-num);font-size:14px;">${m.preco?fmtMoney(m.preco):escapeHtml(m.precoTexto||'—')}</b><br>
-              ${m.link && m.link.startsWith('http') ? `<a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="color:var(--primary);font-size:12px;">🔗 abrir anúncio</a>` : escapeHtml(m.link||'')}<br>
-              <button class="btn btn-sm" style="margin-top:5px;" onclick="licUsarModelo('${l.id}',${c.modelos.indexOf(m)})">Usar este na precificação</button>
-            </td>`).join('')}
-          </tr>
-        </tbody>
-      </table>
+        </div>
+      </div>`).join('')}
+
+    ${(l.riscos||[]).length ? `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">O que pode custar caro</div>
+        ${l.riscos.map(r=>`<div class="lic-doc aviso"><div><b>${escapeHtml(r.risco)}</b>
+          <small>${escapeHtml(r.impacto||'')}${r.fonte?' · '+escapeHtml(r.fonte):''}</small></div></div>`).join('')}
+      </div>`:''}
+
+    ${(l.trechosIlegiveis||[]).length ? `
+      <div class="help-text" style="margin-bottom:10px;">
+        Trechos que a IA não conseguiu ler: ${l.trechosIlegiveis.map(t=>escapeHtml(t)).join(' · ')}</div>`:''}
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">✎ Corrigir à mão</button>
+      ${l.leituraOrigem==='ia'?'<span style="align-self:center;font-size:11.5px;color:var(--ink-faint);">preenchido pela resposta do ChatGPT · * campos que seguram a proposta</span>'
+        :'<span style="align-self:center;font-size:11.5px;color:var(--warning);">preenchido pela leitura de reserva — confira tudo</span>'}
     </div>
   `;
 }
 
-/* Leva o modelo escolhido direto pro item 1 da precificação. */
+function licEditarLeitura(id){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Corrigir o que o edital diz</h3>
+      <p class="help-text">O que você escrever aqui manda — vale mais que a leitura automática.</p>
+      ${LIC_BLOCOS_LEITURA.map(b=>`
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:14px 0 4px;">${escapeHtml(b.titulo)}</div>
+        ${b.campos.map(c=>`
+          <div class="field" style="margin-bottom:8px;"><label>${escapeHtml(c.rotulo)}${c.trava?' <span style="color:var(--warning);">*</span>':''}</label>
+            <input type="text" data-campo="${c.id}" value="${escapeAttr((l.leitura||{})[c.id]||'')}"></div>`).join('')}
+      `).join('')}
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-leitura-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-leitura-ok').onclick = ()=>{
+    const novo = {};
+    const manual = Object.assign({}, l.leituraManual||{});
+    m.querySelectorAll('[data-campo]').forEach(i=>{
+      const v = i.value.trim();
+      if(v) novo[i.dataset.campo] = v;
+      /* o que ela mexeu aqui fica protegido de respostas futuras da IA */
+      if(v !== ((l.leitura||{})[i.dataset.campo]||'')) manual[i.dataset.campo] = true;
+    });
+    l.leitura = novo; l.leituraManual = manual;
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Salvo — e o que você escreveu não será sobrescrito.','success');
+  };
+}
+
+/* ---- habilitação: usa a lista da IA quando ela veio ---- */
+function licChecklistHtml(l){
+  const cfg = licCertidoesCfg();
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+
+  const estadoCertidao = (c)=>{
+    const dados = cfg[c.id] || {};
+    const val = dados.validade;
+    if(!val) return { classe:'falta', estado:'não temos este documento' };
+    const d = new Date(val+'T00:00:00');
+    const dias = Math.round((d-hoje)/86400000);
+    if(dias < 0) return { classe:'falta', estado:'vencida em '+fmtDate(val) };
+    if(dias <= 15) return { classe:'aviso', estado:`vence em ${dias} dia${dias===1?'':'s'}` };
+    return { classe:'ok', estado:'válida até '+fmtDate(val) };
+  };
+
+  const nossas = LIC_CERTIDOES.map(c=>{
+    const e = estadoCertidao(c);
+    return `<div class="lic-doc ${e.classe}">
+      <div><b>${escapeHtml(c.nome)}</b><small>${escapeHtml(e.estado)}</small></div>
+      <button class="btn btn-sm" onclick="licAbrirCertidoes()">${e.classe==='ok'?'Ver':'Atualizar'}</button>
+    </div>`;
+  }).join('');
+
+  const pedidos = (l.documentosHabilitacao||[]);
+  if(pedidos.length===0){
+    return nossas + `<div class="help-text" style="margin-top:6px;">
+      Esta é a sua pasta de certidões. Quando a resposta do ChatGPT chegar, o que o edital pedir a mais aparece aqui embaixo.</div>`;
+  }
+
+  /* casa o que o edital pede com o que a gente tem */
+  const temParecida = (nome)=>{
+    const p = licPalavras(nome);
+    return LIC_CERTIDOES.some(c=>{
+      const q = licPalavras(c.nome);
+      return p.some(x=>q.includes(x));
+    });
+  };
+  const extras = pedidos.filter(p=>!temParecida(p.documento));
+
+  return nossas + `
+    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:14px 0 6px;">
+      O edital pede ${pedidos.length} documento${pedidos.length===1?'':'s'}${extras.length?` · ${extras.length} fora da sua pasta`:''}</div>
+    ${pedidos.map(p=>{
+      const temos = temParecida(p.documento);
+      return `<div class="lic-doc ${temos?'ok':'falta'}">
+        <div><b>${escapeHtml(p.documento)}</b>
+          <small>${temos?'você já guarda esse':'não está na sua pasta de certidões'}${p.fonte?' · '+escapeHtml(p.fonte):''}</small></div>
+        ${temos?'<span style="color:var(--positive);font-size:12px;">✓</span>'
+               :`<button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 Guardar</button>`}
+      </div>`;
+    }).join('')}`;
+}
+
+/* ---- exigências: agora por item ---- */
+function licExigenciasHtml(l){
+  if(l.itens.length===0 && l.exigencias.length===0){
+    return `<div class="help-text">Nada ainda. Traga a resposta do ChatGPT no passo 5 — é ela que cria os itens.</div>`;
+  }
+  if(l.itens.length===0){
+    return `<ol style="margin:0 0 8px;padding-left:22px;font-size:13px;line-height:1.55;">
+      ${l.exigencias.map(e=>`<li>${escapeHtml(e.texto)}</li>`).join('')}</ol>`;
+  }
+  return l.itens.map((it,i)=>`
+    <div class="lic-item lic-f${(i%6)+1}" style="margin-bottom:10px;">
+      <div class="cab">
+        <div style="flex:1;min-width:200px;">
+          <span class="selo">ITEM ${String(it.numero||i+1).padStart(2,'0')}</span>
+          <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao||it.descricaoProposta||'')}</span>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
+            ${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'UND')}
+            ${it.marcaReferencia?` · referência ${escapeHtml(it.marcaReferencia)}`:''}
+            ${it.aceitaEquivalente?` · equivalente: ${escapeHtml(it.aceitaEquivalente)}`:''}
+            ${it.exigeAmostra && /sim/i.test(it.exigeAmostra)?' · <b style="color:var(--warning);">exige amostra</b>':''}
+          </div>
+        </div>
+        <div class="teto">TETO <b>${fmtMoney(licNumDireto(it.teto))}</b></div>
+      </div>
+      <div class="corpo">
+        ${(it.exigencias||[]).length
+          ? `<ol style="margin:0;padding-left:22px;font-size:12.5px;line-height:1.6;">
+              ${it.exigencias.map(e=>`<li>${escapeHtml(e)}</li>`).join('')}</ol>`
+          : '<div class="help-text" style="margin:0;">Sem exigência técnica listada para este item.</div>'}
+        ${it.observacoesEdital?`<div class="help-text" style="margin-top:6px;">${escapeHtml(it.observacoesEdital)}</div>`:''}
+      </div>
+    </div>`).join('') + `
+    <button class="btn btn-sm" onclick="licEditarExigencias('${l.id}')">✎ Ajustar à mão</button>`;
+}
+
+function licEditarExigencias(id){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(700px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Exigências técnicas</h3>
+      <p class="help-text">Uma por linha, por item.</p>
+      ${(l.itens.length?l.itens:[{id:'_geral',numero:1,descricao:l.objeto}]).map((it,i)=>`
+        <div class="field">
+          <label>Item ${String(it.numero||i+1).padStart(2,'0')} — ${escapeHtml((it.descricao||'').slice(0,70))}</label>
+          <textarea data-item="${it.id}" style="width:100%;height:130px;padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;">${escapeHtml((it.exigencias||[]).join('\n'))}</textarea>
+        </div>`).join('')}
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-exig-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-exig-ok').onclick = ()=>{
+    m.querySelectorAll('[data-item]').forEach(t=>{
+      const it = l.itens.find(x=>x.id===t.dataset.item);
+      if(it) it.exigencias = t.value.split('\n').map(s=>s.trim()).filter(Boolean);
+    });
+    l.exigencias = [];
+    l.itens.forEach(it=>(it.exigencias||[]).forEach(txt=>l.exigencias.push({ n:l.exigencias.length+1, texto:txt, item:it.numero })));
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Exigências salvas.','success');
+  };
+}
+
+/* =========================================================
+   SUGESTÕES DE MODELO — um item de cada vez
+   ========================================================= */
+let licItemFoco = 0;
+
+function licVeredictoClasse(v){
+  const s = String(v||'').toUpperCase();
+  if(s.includes('NAO_ATENDE') || s.includes('NÃO ATENDE') || s.includes('NAO ATENDE')) return 'naoatende';
+  if(s.includes('A_CONFIRMAR') || s.includes('CONFIRMAR')) return 'confirmar';
+  if(s.includes('ATENDE') || s.includes('SUPERIOR')) return 'atende';
+  return 'confirmar';
+}
+
+function licItensComModelo(l){
+  if(!l.comparacao) return [];
+  const nums = [...new Set(l.comparacao.modelos.map(m=>Number(m.item)||1))].sort((a,b)=>a-b);
+  return nums;
+}
+function licIrItem(delta){
+  const l = licAchar(licAberta); if(!l) return;
+  const nums = licItensComModelo(l);
+  licItemFoco = Math.max(0, Math.min(nums.length-1, licItemFoco + delta));
+  renderPortalLicitacoes();
+}
+function licFocarItem(i){ licItemFoco = i; renderPortalLicitacoes(); }
+
+/* Com o preço que a IA achou, dá pra dizer já aqui se o item fecha no
+   teto — sem esperar a tela de precificação. Usa os fretes e percentuais
+   que já estiverem preenchidos no item. */
+function licSimularModelo(item, modelo){
+  if(!item || !modelo || !(modelo.preco>0)) return null;
+  const teto = licNumDireto(item.teto);
+  if(!(teto>0)) return null;
+  const qtd = Math.max(1, licNumDireto(item.qtd)||1);
+  const fixo = modelo.preco*qtd + licNumDireto(item.acessorios)
+             + licNumDireto(item.freteNos) + licNumDireto(item.freteCliente);
+  const pct = (licNumDireto(item.impostoPct) + licNumDireto(item.comissaoPct)) / 100;
+  const custoNoTeto = fixo + teto*pct;
+  const sobra = teto - custoNoTeto;
+  const piso = pct < 1 ? fixo/(1-pct) : Infinity;
+  return { fixo, teto, sobra, piso, qtd,
+           fecha: sobra >= 0,
+           margem: teto>0 ? (sobra/teto)*100 : 0,
+           temFrete: licNumDireto(item.freteNos)+licNumDireto(item.freteCliente)>0 };
+}
+
+/* O que já sabemos deste produto de licitações passadas. */
+function licHistoricoDoItem(item){
+  if(!item) return null;
+  const desc = item.descricaoProposta || item.descricao || '';
+  if(!desc.trim()) return null;
+  const achados = licProcurarParecidos(desc, item.marca, item.id);
+  const p = achados.licitacao[0];
+  if(!p) return null;
+  const u = p.usos[0];
+  const perdido = p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
+  return { produto:p, ultimo:u, perdido };
+}
+
+function licComparacaoHtml(l){
+  if(!l.comparacao || !l.comparacao.modelos.length) return '';
+  const nums = licItensComModelo(l);
+  if(licItemFoco >= nums.length) licItemFoco = 0;
+  const numAtual = nums[licItemFoco];
+  const item = l.itens.find(x=>Number(x.numero)===numAtual) || l.itens[licItemFoco] || null;
+  const doItem = l.comparacao.modelos.filter(m=>(Number(m.item)||1)===numAtual);
+
+  const ordem = { 'atende':0, 'a confirmar':1, 'reprova':2 };
+  doItem.sort((a,b)=>(ordem[a.resultado]??3)-(ordem[b.resultado]??3) || (a.preco||0)-(b.preco||0));
+
+  const exigencias = (item && item.exigencias) || [];
+  const atendem = doItem.filter(m=>m.resultado==='atende').length;
+  const confirmar = doItem.filter(m=>m.resultado==='a confirmar').length;
+  const reprovam = doItem.filter(m=>m.resultado==='reprova').length;
+
+  const situacaoDoItem = (n)=>{
+    const ms = l.comparacao.modelos.filter(m=>(Number(m.item)||1)===n);
+    const it = l.itens.find(x=>Number(x.numero)===n);
+    if(it && (it.marca || licNumDireto(it.custo))) return 'ok';
+    if(ms.some(m=>m.resultado==='atende')) return 'tem';
+    if(ms.some(m=>m.resultado==='a confirmar')) return 'talvez';
+    return 'nao';
+  };
+
+  return `
+    <div class="lic-passo">Sugestões de modelo — item ${licItemFoco+1} de ${nums.length}</div>
+
+    <div class="lic-passos-itens">
+      <button class="btn btn-sm" onclick="licIrItem(-1)" ${licItemFoco===0?'disabled':''}>‹</button>
+      ${nums.map((n,i)=>{
+        const s = situacaoDoItem(n);
+        return `<button class="bolinha ${s} ${i===licItemFoco?'atual':''}" onclick="licFocarItem(${i})"
+          title="Item ${n}">${n}</button>`;
+      }).join('')}
+      <button class="btn btn-sm" onclick="licIrItem(1)" ${licItemFoco>=nums.length-1?'disabled':''}>›</button>
+      <span style="margin-left:auto;font-size:12px;color:var(--ink-soft);">
+        <span style="color:var(--positive);">●</span> tem modelo que atende ·
+        <span style="color:var(--warning);">●</span> só a confirmar ·
+        <span style="color:var(--negative);">●</span> nenhum atende
+      </span>
+    </div>
+
+    ${item ? `<div class="lic-item lic-f${(licItemFoco%6)+1}" style="margin-bottom:10px;">
+      <div class="cab">
+        <div style="flex:1;min-width:200px;">
+          <span class="selo">ITEM ${String(numAtual).padStart(2,'0')}</span>
+          <span style="font-weight:600;margin-left:8px;">${escapeHtml(item.descricao||item.descricaoProposta||'')}</span>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
+            ${licNumDireto(item.qtd)||1} ${escapeHtml(item.unidade||'UND')} ·
+            ${doItem.length} modelo${doItem.length===1?'':'s'} pesquisado${doItem.length===1?'':'s'} ·
+            <b style="color:${atendem?'var(--positive)':'var(--negative)'};">${atendem} atende${atendem===1?'':'m'} tudo</b>
+            ${confirmar?` · ${confirmar} a confirmar`:''}${reprovam?` · ${reprovam} reprova${reprovam===1?'':'m'}`:''}
+          </div>
+        </div>
+        <div class="teto">TETO <b>${fmtMoney(licNumDireto(item.teto))}</b></div>
+      </div>
+    </div>`:''}
+
+    ${(()=>{ const h = licHistoricoDoItem(item); if(!h) return '';
+      const u = h.ultimo;
+      return `<div class="lic-achado" style="margin:0 0 10px;">
+        <b>📌 Já vendemos este produto antes.</b>
+        <div class="hist">Em ${u.data?fmtDate(String(u.data).slice(0,10)):'—'}, para ${escapeHtml(u.cliente||u.orgao||'')}:
+          custo <b>${fmtMoney(u.custoUnit)}</b>, vendemos por <b>${fmtMoney(u.precoVenda)}</b>
+          ${ {ganhou:'e ganhamos', perdeu:'e perdemos', enviado:'e está enviada', pendente:'(pendente)'}[u.resultado]||'' }.</div>
+        ${h.perdido?`<div class="hist" style="color:var(--negative);">O vencedor daquela vez fechou em <b>${fmtMoney(h.perdido.valorResultado)}</b>${h.perdido.resultadoObs?` · ${escapeHtml(h.perdido.resultadoObs)}`:''}</div>`:''}
+        <button class="btn btn-sm" style="margin-top:5px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(h.produto.chave)}')">Ver histórico deste produto</button>
+      </div>`;
+    })()}
+
+    ${doItem.map((m, idxLocal)=>{
+      const idx = l.comparacao.modelos.indexOf(m);
+      const sim = licSimularModelo(item, m);
+      const falhas = m.veredictos.filter(v=>licVeredictoClasse(v.situacao)==='naoatende');
+      const duvidas = m.veredictos.filter(v=>licVeredictoClasse(v.situacao)==='confirmar');
+      const sinal = m.resultado==='atende' ? '✅' : m.resultado==='a confirmar' ? '⚠️' : '❌';
+      const cor = m.resultado==='atende' ? 'var(--positive)' : m.resultado==='a confirmar' ? 'var(--warning)' : 'var(--negative)';
+      const fundo = m.resultado==='atende' ? 'var(--positive-soft)' : m.resultado==='a confirmar' ? 'var(--warning-soft)' : 'var(--negative-soft)';
+      return `
+      <div class="lic-modelo" style="border-left:4px solid ${cor};${m.resultado==='reprova'?'opacity:.75;':''}">
+        <div class="topo">
+          <div>
+            <b style="font-size:14px;">${sinal} ${escapeHtml(m.marca||'')} ${escapeHtml(m.modelo||'')}</b>
+            <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">
+              ${escapeHtml(m.fabricante||'')}${m.fornecedor?' · '+escapeHtml(m.fornecedor):''}
+              ${exigencias.length?` · atende ${m.veredictos.filter(v=>licVeredictoClasse(v.situacao)==='atende').length} de ${exigencias.length}`:''}
+            </div>
+          </div>
+          <div style="text-align:right;">
+            <div style="font-size:17px;font-weight:700;font-family:var(--font-num);">${m.preco>0?fmtMoney(m.preco):'sem preço'}</div>
+            ${m.link && /^https?:/i.test(m.link)?`<a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary);">🔗 abrir anúncio</a>`:''}
+          </div>
+        </div>
+
+        ${falhas.length?`<div class="motivos" style="background:${fundo};">
+          <b>Reprova em ${falhas.length}:</b>
+          ${falhas.map(v=>`<div>· ${escapeHtml(v.observacao || ('exigência '+v.exigencia))}</div>`).join('')}
+        </div>`:''}
+
+        ${!falhas.length && duvidas.length?`<div class="motivos" style="background:${fundo};">
+          <b>Falta confirmar ${duvidas.length}:</b>
+          ${duvidas.map(v=>`<div>· ${escapeHtml(v.observacao || ('exigência '+v.exigencia))}</div>`).join('')}
+        </div>`:''}
+
+        ${sim?`<div class="conta-rapida ${sim.fecha?'ok':'nao'}">
+          ${sim.fecha
+            ? `Comprando a ${fmtMoney(m.preco)}, <b>cabe no teto</b> com até <b>${fmtMoney(sim.sobra)}</b> de margem (${sim.margem.toFixed(1)}%).`
+            : `Comprando a ${fmtMoney(m.preco)}, <b>não cabe no teto</b> — passa ${fmtMoney(Math.abs(sim.sobra))}. Teria que comprar por até ${fmtMoney((sim.teto - (sim.fixo - m.preco*sim.qtd) - sim.teto*((licNumDireto(item.impostoPct)+licNumDireto(item.comissaoPct))/100))/sim.qtd)}.`}
+          ${!sim.temFrete?'<span style="color:var(--ink-faint);"> · ainda sem frete na conta</span>':''}
+        </div>`:''}
+
+        <div class="acoes-modelo">
+          <button class="btn btn-sm" onclick="licDetalharModelo('${l.id}',${idx})">ver exigência por exigência</button>
+          ${m.resultado!=='reprova'
+            ? `<button class="btn btn-sm btn-primary" onclick="licUsarModelo('${l.id}',${idx})">Escolher este${licItemFoco < nums.length-1?' e ir pro próximo':''}</button>`
+            : `<button class="btn btn-sm" onclick="licUsarModelo('${l.id}',${idx})" title="Reprova numa exigência — só use se você souber que a ficha está errada">usar mesmo assim</button>`}
+        </div>
+      </div>`;
+    }).join('')}
+
+    ${doItem.length===0?'<div class="lic-vazio">Nenhum modelo pesquisado para este item.</div>':''}
+
+    ${atendem===0 && doItem.length>0 ? `<div class="lic-res nao" style="margin-top:10px;">
+      <b>Nenhum dos ${doItem.length} modelos atende 100% deste item.</b>
+      ${confirmar?' Os que estão em amarelo podem servir — resolva as perguntas com o distribuidor antes.':
+        ' Vale pedir esclarecimento ao órgão ou deixar este item de fora.'}
+    </div>`:''}
+
+    ${(l.perguntasDistribuidor||[]).filter(p=>(Number(p.item)||1)===numAtual).length ? `
+      <div class="lic-doc aviso" style="display:block;margin-top:12px;">
+        <b>Perguntar ao distribuidor antes de enviar</b>
+        <ol style="margin:6px 0 0;padding-left:22px;font-size:12.5px;line-height:1.6;">
+          ${l.perguntasDistribuidor.filter(p=>(Number(p.item)||1)===numAtual)
+            .map(p=>`<li>${escapeHtml(p.pergunta)}</li>`).join('')}
+        </ol>
+        <button class="btn btn-sm" style="margin-top:8px;" onclick="licCopiarPerguntasItem('${l.id}',${numAtual})">📋 Copiar as perguntas</button>
+      </div>`:''}
+
+    <div style="display:flex;gap:8px;margin-top:12px;align-items:center;flex-wrap:wrap;">
+      <button class="btn btn-sm" onclick="licPedirMaisModelos('${l.id}',${numAtual})">🔁 Pedir mais opções deste item</button>
+      <button class="btn btn-sm" onclick="licIrItem(-1)" ${licItemFoco===0?'disabled':''}>‹ item anterior</button>
+      <button class="btn btn-sm" onclick="licIrItem(1)" ${licItemFoco>=nums.length-1?'disabled':''}>próximo item ›</button>
+      ${licItemFoco>=nums.length-1?`<span style="font-size:12.5px;color:var(--ink-soft);">Acabou. Confira o resumo e avance pra precificação.</span>`:''}
+    </div>
+  `;
+}
+
+/* Quando nenhum dos modelos serve, não adianta refazer a pergunta
+   inteira. Isto gera uma pergunta curta, só daquele item, já dizendo o
+   que reprovou, pra ele não repetir os mesmos. */
+function licPedirMaisModelos(id, numItem){
+  const l = licAchar(id); if(!l) return;
+  const item = l.itens.find(x=>Number(x.numero)===numItem);
+  if(!item){ showToast('Não achei esse item.','error'); return; }
+  const jaVistos = ((l.comparacao&&l.comparacao.modelos)||[])
+    .filter(m=>(Number(m.item)||1)===numItem);
+
+  const txt = [
+`Continuando a mesma dispensa. Preciso de MAIS opções só para o item ${numItem}.`,
+``,
+`ITEM ${numItem}: ${item.descricao||item.descricaoProposta||''}`,
+`Quantidade: ${licNumDireto(item.qtd)||1} ${item.unidade||'UND'}`,
+licNumDireto(item.teto)>0 ? `Teto do edital: ${fmtMoney(licNumDireto(item.teto))} no total` : '',
+``,
+`EXIGÊNCIAS:`,
+...((item.exigencias||[]).map((e,i)=>`${i+1}. ${e}`)),
+``,
+jaVistos.length ? `JÁ PESQUISADOS — não repita estes:` : '',
+...jaVistos.map(m=>{
+  const falhas = (m.veredictos||[]).filter(v=>licVeredictoClasse(v.situacao)==='naoatende');
+  const motivo = falhas.length ? falhas.map(v=>v.observacao||('exigência '+v.exigencia)).join('; ')
+               : (m.resultado==='a confirmar' ? 'ficha incompleta' : 'já considerado');
+  return `- ${m.marca||''} ${m.modelo||''} — ${motivo}`;
+}),
+``,
+`Procure mais 5 produtos DIFERENTES destes, reais, à venda no Brasil hoje,`,
+`de marcas diferentes, com link de compra e preço visível.`,
+`Priorize os que atendem 100% das exigências acima.`,
+``,
+`Responda SOMENTE com este JSON, sem texto em volta:`,
+`{ "modelos": [ { "item": ${numItem}, "marca": "", "modelo": "", "fabricante": "",`,
+`  "preco": 0, "link": "", "fornecedor": "",`,
+`  "veredictos": [ { "exigencia": 1, "situacao": "ATENDE", "observacao": "" } ],`,
+`  "resultado": "" } ],`,
+`  "perguntasAoDistribuidor": [ { "item": ${numItem}, "pergunta": "" } ] }`,
+``,
+`Regras: NAO_ATENDE com o número do produto e o número exigido.`,
+`Ficha omissa é A_CONFIRMAR, nunca ATENDE.`
+  ].filter(x=>x!=='').join('\n');
+
+  licCopiarNaMao(txt);
+  showToast('Pergunta do item copiada. Cole na mesma conversa do ChatGPT.','success');
+}
+
+function licDetalharModelo(id, idx){
+  const l = licAchar(id); if(!l || !l.comparacao) return;
+  const m = l.comparacao.modelos[idx]; if(!m) return;
+  const item = l.itens.find(x=>Number(x.numero)===(Number(m.item)||1));
+  const exig = (item && item.exigencias) || [];
+  const mm = document.createElement('div');
+  mm.className = 'modal-overlay open';
+  mm.innerHTML = `
+    <div class="modal-box" style="max-width:min(800px,95vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">${escapeHtml(m.marca||'')} ${escapeHtml(m.modelo||'')}</h3>
+      <p class="help-text">${m.preco>0?fmtMoney(m.preco):'sem preço'}${m.fornecedor?' · '+escapeHtml(m.fornecedor):''}</p>
+      <div class="table-wrap">
+        <table class="lic-comp">
+          <thead><tr><th style="width:55%;">Exigência do edital</th><th>Situação</th><th>Observação</th></tr></thead>
+          <tbody>
+            ${(exig.length?exig:m.veredictos.map((v,i)=>'exigência '+(i+1))).map((e,i)=>{
+              const v = m.veredictos.find(x=>Number(x.exigencia)===i+1) || m.veredictos[i] || {};
+              const cl = licVeredictoClasse(v.situacao);
+              const rotulo = cl==='atende'?'ATENDE':cl==='naoatende'?'NÃO ATENDE':'A CONFIRMAR';
+              return `<tr class="${i%2?'par':''}">
+                <td><b>${i+1}.</b> ${escapeHtml(typeof e==='string'?e:'')}</td>
+                <td class="${cl}">${rotulo}</td>
+                <td>${escapeHtml(v.observacao||'')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        ${m.link && /^https?:/i.test(m.link)?`<a class="btn" href="${escapeAttr(m.link)}" target="_blank" rel="noopener">🔗 Abrir anúncio</a>`:''}
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove(); licUsarModelo('${l.id}',${idx});">Escolher este</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mm);
+}
+
+function licCopiarPerguntasItem(id, numItem){
+  const l = licAchar(id); if(!l) return;
+  const item = l.itens.find(x=>Number(x.numero)===numItem);
+  const perguntas = (l.perguntasDistribuidor||[]).filter(p=>(Number(p.item)||1)===numItem);
+  const txt = [
+    `Bom dia. Preciso confirmar algumas características antes de participar de uma licitação pública.`,
+    item?`Produto: ${item.descricao||item.descricaoProposta}`:'',
+    ``,
+    ...perguntas.map((p,i)=>`${i+1}. ${p.pergunta}`),
+    ``,
+    `Preciso da confirmação por escrito, porque uma característica que não bata me desclassifica. Obrigado.`
+  ].filter(x=>x!==undefined).join('\n');
+  licCopiarNaMao(txt);
+}
+
+/* Leva o modelo escolhido pro item certo da precificação e, se houver
+   próximo item, já avança — é o passo-a-passo que ela pediu. */
 function licUsarModelo(id, idx){
   const l = licAchar(id); if(!l || !l.comparacao) return;
   const m = l.comparacao.modelos[idx]; if(!m) return;
-  if(l.itens.length===0) licNovoItem(id, true);
-  const it = l.itens[0];
-  it.marca = it.marca || m.fabricante || '';
-  it.modelo = m.modelo;
-  if(!it.custo) it.custo = m.preco || 0;
-  if(!it.linkFornecedor) it.linkFornecedor = m.link || '';
-  if(!it.descricaoProposta) it.descricaoProposta = `${(l.objeto||'').slice(0,80)} — ${m.fabricante||''} ${m.modelo}`.trim();
-  licRegistrar(l, `Modelo ${m.modelo} levado para a precificação.`);
+  const num = Number(m.item) || 1;
+
+  let it = l.itens.find(x=>Number(x.numero)===num);
+  if(!it){
+    licNovoItem(id, true);
+    it = l.itens[l.itens.length-1];
+    it.numero = num;
+  }
+  it.marca = m.marca || m.fabricante || it.marca || '';
+  it.modelo = m.modelo || it.modelo || '';
+  if(!licNumDireto(it.custo) && m.preco>0) it.custo = m.preco;
+  if(!it.linkFornecedor && m.link) it.linkFornecedor = m.link;
+  if(!it.contatoFornecedor && m.fornecedor) it.contatoFornecedor = m.fornecedor;
+  if(!it.descricaoProposta || it.descricaoProposta===l.objeto){
+    it.descricaoProposta = `${it.descricao||''} — ${m.marca||m.fabricante||''} ${m.modelo||''}`.replace(/\s+/g,' ').trim();
+  }
+  it.modeloEscolhido = idx;
+  licRegistrar(l, `Item ${num}: escolhido ${m.marca||''} ${m.modelo||''}.`);
   saveState();
-  licAvancarEtapa(id, 'precificacao', 'precificar');
+
+  const nums = licItensComModelo(l);
+  if(licItemFoco < nums.length-1){
+    licItemFoco++;
+    renderPortalLicitacoes();
+    showToast(`Item ${num} resolvido. Vamos pro próximo.`,'success');
+    const alvo = document.querySelector('.lic-passos-itens');
+    if(alvo) alvo.scrollIntoView({behavior:'smooth', block:'center'});
+  }else{
+    renderPortalLicitacoes();
+    showToast('Todos os itens escolhidos. Pode avançar para a precificação.','success');
+  }
 }
 
 /* ---------------------------------------------------------
@@ -28813,7 +29832,7 @@ function licItemHtml(l, it, i){
   const parecidos = licProcurarParecidos(it.descricaoProposta || it.descricao, it.marca, it.id);
 
   return `
-  <div class="lic-item ${faixa}" data-item="${it.id}">
+  <div class="lic-item lic-item-prec ${faixa}" data-item="${it.id}">
     <div class="cab">
       <div style="flex:1;min-width:220px;">
         <span class="selo">ITEM ${String(i+1).padStart(2,'0')}</span>
@@ -28933,11 +29952,25 @@ function licAvisoParecidos(parecidos, it){
       : dif > 0 ? ` — hoje está <b>${fmtMoney(dif)} mais caro</b> que da última vez`
       : ` — hoje está <b>${fmtMoney(Math.abs(dif))} mais barato</b> que da última vez`;
     const res = {ganhou:'e ganhamos', perdeu:'e perdemos', enviado:'e está enviada', pendente:'(ainda pendente)'}[u.resultado]||'';
+
+    /* O número mais útil que existe pra decidir o próximo lance: por
+       quanto o vencedor fechou da última vez que perdemos este produto. */
+    let vencedor = '';
+    const perdido = p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
+    if(perdido){
+      const dif = perdido.precoVenda>0 ? ((perdido.valorResultado/perdido.precoVenda)-1)*100 : null;
+      vencedor = `<div style="margin-top:4px;color:var(--negative);">
+        Quando perdemos, o vencedor fechou em <b>${fmtMoney(perdido.valorResultado)}</b>` +
+        (dif!=null?` — <b>${Math.abs(dif).toFixed(1)}% ${dif<0?'abaixo':'acima'}</b> do que propusemos`:'') +
+        (perdido.resultadoObs?` · ${escapeHtml(perdido.resultadoObs)}`:'') + `</div>`;
+    }
+
     partes.push(`<div class="hist">
       <b>${escapeHtml(p.nome)}${p.marca?' — '+escapeHtml(p.marca):''}</b><br>
       Última vez (${u.data?fmtDate(String(u.data).slice(0,10)):'—'}, ${escapeHtml(u.cliente||u.orgao||'')}):
       custo <b>${fmtMoney(u.custoUnit)}</b>, vendemos por <b>${fmtMoney(u.precoVenda)}</b> ${res}${difTxt}.
-      <button class="btn btn-sm" style="margin-left:6px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(p.chave)}')">Ver histórico</button>
+      ${vencedor}
+      <button class="btn btn-sm" style="margin-top:5px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(p.chave)}')">Ver histórico</button>
     </div>`);
   });
 
@@ -28970,10 +30003,14 @@ function licTelaProposta(l){
     ${licCabecalho(l, l.objeto||'Proposta', `${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · ${fmtMoney(t.venda)}`,
       l.etapa==='proposta' ? `<button class="btn" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar à precificação</button>` : '')}
 
+    ${licPendenciasHtml(l)}
+
     <div class="card">
       <h3 style="margin-top:0;">1 · O cliente</h3>
       ${cliente ? `<div class="lic-doc ok"><div><b>${escapeHtml(cliente.nome)}</b>
-          <small>${escapeHtml(cliente.documento||'')} · ${escapeHtml(tipoClienteDe(cliente))} — a proposta sai no modelo de órgão público</small></div></div>`
+          <small>${escapeHtml(cliente.documento||'')} · ${escapeHtml(tipoClienteDe(cliente))} — a proposta sai ${
+            tipoClienteDe(cliente)==='Público' ? 'no modelo de <b>órgão público</b>' : 'no <b>modelo de orçamento</b> normal, o de escola'
+          }</small></div></div>`
         : `<div class="lic-doc aviso"><div><b>Ainda sem cliente</b>
           <small>Escolha um órgão já cadastrado ou cadastre agora — ele passa a existir no sistema inteiro.</small></div></div>`}
       <div class="lic-grade" style="margin-top:10px;">
@@ -29122,6 +30159,18 @@ function licGerarProposta(id){
   if(l.itens.length===0){ showToast('Não tem item nenhum para colocar na proposta.','error'); return; }
   if(licTotalLicitacao(l).venda <= 0){ showToast('Falta o preço de venda dos itens — volte à precificação.','error'); return; }
 
+  /* Campos que seguram a proposta. Não trava — ela pode saber de cabeça —
+     mas não deixa passar em branco sem ver. */
+  const faltam = licPendencias(l);
+  if(faltam.length > 0 && !l._avisadoPendencias){
+    l._avisadoPendencias = true;
+    confirmAction('Falta informação do edital',
+      `O edital ainda está sem: ${faltam.map(c=>c.rotulo).join(', ')}. ` +
+      `Dá pra gerar assim mesmo, mas confira antes de enviar. Gerar agora?`,
+      ()=>{ licGerarProposta(id); }, 'Gerar assim mesmo');
+    return;
+  }
+
   const pc = l.propostaCampos;
   const dados = {
     clienteId: l.clienteId,
@@ -29170,13 +30219,16 @@ async function licBaixarPasta(id){
   const cfg = licCertidoesCfg();
   const zip = new JSZip();
   let n = 0;
-  LIC_CERTIDOES.forEach(c=>{
+  for(const c of LIC_CERTIDOES){
     const d = cfg[c.id];
-    if(d && d.conteudo && d.arquivo){
-      zip.file(d.arquivo, d.conteudo.split(',').pop(), {base64:true});
-      n++;
-    }
-  });
+    if(!d || !d.arquivo) continue;
+    try{
+      const blob = await licArquivoIdb('get', 'certidao:'+c.id);
+      if(blob){ zip.file(d.arquivo, blob); n++; continue; }
+    }catch(e){ console.warn(e); }
+    /* formato antigo, caso a migração não tenha rodado */
+    if(d.conteudo){ zip.file(d.arquivo, d.conteudo.split(',').pop(), {base64:true}); n++; }
+  }
   const resumo = [
     `PASTA DA PROPOSTA`,
     `${(l.propostaCampos.modalidade||'')} ${(l.propostaCampos.numero||l.numero||'')}`,
@@ -29260,7 +30312,8 @@ function licTelaCompra(l){
         Lucro previsto nesta licitação: <b>${fmtMoney(t.lucro)}</b>${t.venda>0?` (${t.margem.toFixed(1)}%)`:''}.
         ${l.valorResultado?` Homologado em ${fmtMoney(l.valorResultado)}.`:''}
       </div>
-    </div>` : `
+    </div>
+    ${licNotaHtml(l)}` : `
     <div class="card">
       <h3 style="margin-top:0;">O que aconteceu</h3>
       <div class="lic-res nao">
@@ -29286,6 +30339,273 @@ function licTelaCompra(l){
   `;
 }
 
+/* =========================================================
+   DADOS PARA A NOTA FISCAL — depois de ganhar
+
+   Produto de licitação não existe no cadastro da loja, de propósito.
+   Mas a nota fiscal exige coisas que só o cadastro teria: NCM, unidade,
+   se tem substituição tributária, CEST quando tem. Se isso não for
+   preenchido, na hora de emitir a nota falta tudo.
+
+   Então, ganhando a dispensa, a cotação ou o pregão, este bloco cobra
+   os dados item por item e grava com OS MESMOS NOMES de campo que o
+   produto usa (ncm, cest, unidade, stConfirmado) — no item da licitação
+   e também no item do orçamento, que é de onde a nota vai sair.
+   ========================================================= */
+
+const LIC_ORIGENS_MERCADORIA = [
+  { v:'0', t:'0 — Nacional' },
+  { v:'1', t:'1 — Estrangeira, importação direta' },
+  { v:'2', t:'2 — Estrangeira, adquirida no mercado interno' },
+  { v:'3', t:'3 — Nacional, com mais de 40% de conteúdo importado' },
+  { v:'4', t:'4 — Nacional, processos produtivos básicos' },
+  { v:'5', t:'5 — Nacional, com até 40% de conteúdo importado' },
+  { v:'6', t:'6 — Estrangeira, importação direta, sem similar nacional' },
+  { v:'7', t:'7 — Estrangeira, mercado interno, sem similar nacional' },
+  { v:'8', t:'8 — Nacional, com mais de 70% de conteúdo importado' }
+];
+
+/* As mesmas regras que o cadastro de produto usa — assim a nota não
+   descobre tarde que falta coisa. */
+function licPendenciasNota(it){
+  const bloqueia = [], completar = [];
+  if(!it) return { bloqueia, completar, ok:false };
+  const ncm = ncmSo8(it.ncm||'');
+  const cest = (it.cest||'').replace(/\D/g,'');
+  if(ncm.length !== 8) bloqueia.push('NCM');
+  if(!(it.unidade||'').trim()) bloqueia.push('unidade');
+  if(it.stConfirmado == null) bloqueia.push('confirmar se tem ST');
+  if(it.stConfirmado === true && cest.length !== 7) bloqueia.push('CEST');
+  if(!(it.descricaoNota||it.descricaoProposta||it.descricao||'').trim()) bloqueia.push('descrição');
+  if(it.origemMercadoria == null || it.origemMercadoria === '') completar.push('origem da mercadoria');
+  if(!(it.marca||'').trim()) completar.push('marca');
+  return { bloqueia, completar, ok: bloqueia.length === 0 };
+}
+
+function licNotaPendente(l){
+  return (l.itens||[]).filter(it=>!licPendenciasNota(it).ok).length;
+}
+
+/* A descrição da nota costuma precisar ser mais curta que a da
+   proposta. Sugere uma, sem cortar no meio de uma palavra. */
+function licDescricaoCurta(txt, limite){
+  const t = String(txt||'').replace(/\s+/g,' ').trim();
+  if(t.length <= limite) return t;
+  const corte = t.slice(0, limite);
+  const espaco = corte.lastIndexOf(' ');
+  return (espaco > limite*0.6 ? corte.slice(0, espaco) : corte).trim();
+}
+
+/* Quando existe produto parecido na loja ou numa licitação anterior,
+   aproveita o NCM que já foi conferido — é o que menos erra. */
+function licSugerirDadosNota(it){
+  const nome = it.descricaoProposta || it.descricao || '';
+  if(!nome.trim()) return null;
+
+  /* 1) outro item de licitação com o mesmo nome, já preenchido */
+  for(const l of licTodas()){
+    for(const outro of (l.itens||[])){
+      if(outro.id === it.id) continue;
+      if(!outro.ncm) continue;
+      if(licChaveProduto(outro.descricaoProposta||outro.descricao, outro.marca) ===
+         licChaveProduto(nome, it.marca)){
+        return { ncm: outro.ncm, cest: outro.cest||'', unidade: outro.unidade||'',
+                 stConfirmado: outro.stConfirmado, origemMercadoria: outro.origemMercadoria,
+                 de: 'uma licitação anterior' };
+      }
+    }
+  }
+
+  /* 2) produto da loja com nome parecido */
+  const parecidos = licProcurarParecidos(nome, it.marca, it.id);
+  const daLoja = (parecidos.loja||[]).find(p=>ncmSo8(p.ncm||'').length===8);
+  if(daLoja){
+    return { ncm: daLoja.ncm, cest: daLoja.cest||'', unidade: daLoja.unidade||'',
+             stConfirmado: daLoja.stConfirmado, origemMercadoria: daLoja.origemMercadoria,
+             de: `do produto "${daLoja.nome}" da loja` };
+  }
+
+  /* 3) a tabela de NCM do ramo / das notas de entrada */
+  try{
+    const sug = sugerirNcmLocal(nome);
+    if(sug && sug.length) return { ncm: sug[0].ncm, sugestao: sug.slice(0,3), de: 'sugestão pelo nome' };
+  }catch(e){ console.warn(e); }
+  return null;
+}
+
+/* O bloco que aparece na tela de "ganhamos". */
+function licNotaHtml(l){
+  const itens = l.itens || [];
+  if(itens.length === 0) return '';
+  const faltando = licNotaPendente(l);
+
+  return `
+    <div class="card">
+      <h3 style="margin-top:0;">Dados para a nota fiscal
+        <span class="hint">${faltando===0?'tudo preenchido':`${faltando} item${faltando===1?'':'ns'} com pendência`}</span></h3>
+      <p class="help-text">Produto de licitação não fica cadastrado na loja — então estes dados moram aqui.
+        Sem eles a nota não sai. Vale preencher agora, enquanto o edital está fresco, mesmo que a emissão
+        fique para depois.</p>
+
+      ${faltando>0 ? `<div class="lic-doc aviso" style="display:block;margin-bottom:10px;">
+        <b>⚠️ Falta informação em ${faltando} ite${faltando===1?'m':'ns'}</b>
+        <small>Na hora de emitir a nota, isso trava. Preencha abaixo.</small>
+      </div>` : `<div class="lic-res ok" style="margin-bottom:10px;">
+        ✓ Todos os itens têm o que a nota fiscal exige.
+      </div>`}
+
+      ${itens.map((it,i)=>{
+        const pend = licPendenciasNota(it);
+        const faixa = 'lic-f' + ((i%6)+1);
+        const sug = (!it.ncm) ? licSugerirDadosNota(it) : null;
+        const descNota = it.descricaoNota || licDescricaoCurta(it.descricaoProposta||it.descricao||'', 120);
+        return `
+        <div class="lic-item ${faixa}" data-nota="${it.id}" style="margin-bottom:12px;">
+          <div class="cab">
+            <div style="flex:1;min-width:200px;">
+              <span class="selo">ITEM ${String(it.numero||i+1).padStart(2,'0')}</span>
+              <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao||it.descricaoProposta||'')}</span>
+              <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
+                ${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'—')} ·
+                ${fmtMoney(licNumDireto(it.precoVenda))}${it.marca?` · ${escapeHtml(it.marca)}`:''}
+              </div>
+            </div>
+            <div class="teto" style="text-align:right;">
+              ${pend.ok ? '<b style="color:var(--positive);font-size:13px;">✓ pronto para a nota</b>'
+                        : `<b style="color:var(--negative);font-size:13px;">falta ${escapeHtml(pend.bloqueia.join(', '))}</b>`}
+            </div>
+          </div>
+          <div class="corpo">
+            <div class="field" style="margin-bottom:8px;">
+              <label style="font-size:11.5px;color:var(--ink-soft);">Descrição que vai na nota</label>
+              <input type="text" data-nf="descricaoNota" maxlength="120" value="${escapeAttr(descNota)}"
+                style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+              <div class="dica" style="font-size:11px;color:var(--ink-faint);margin-top:3px;">
+                Até 120 caracteres. A da proposta pode ser mais longa — esta é a que o cliente vê na nota.</div>
+            </div>
+
+            ${sug && sug.ncm ? `<div class="lic-achado" style="margin:0 0 10px;">
+              <b>📌 Sugestão de NCM: ${escapeHtml(ncmFormatado(sug.ncm))}</b> — ${escapeHtml(sug.de)}.
+              <button class="btn btn-sm" style="margin-left:6px;" onclick="licAplicarSugestaoNota('${l.id}','${it.id}')">Usar esta</button>
+            </div>`:''}
+
+            <div class="lic-grade">
+              <div><label>NCM <span style="color:var(--negative);">*</span></label>
+                <input type="text" data-nf="ncm" maxlength="10" value="${escapeAttr(ncmFormatado(it.ncm||''))}" placeholder="8 dígitos">
+                <div class="dica">classifica o produto na Receita</div></div>
+              <div><label>Unidade <span style="color:var(--negative);">*</span></label>
+                <input type="text" data-nf="unidade" value="${escapeAttr(it.unidade||'')}" placeholder="UN, CX, FD, PCT">
+                <div class="dica">a mesma que vai na nota</div></div>
+              <div><label>Tem substituição tributária? <span style="color:var(--negative);">*</span></label>
+                <select data-nf="stConfirmado">
+                  <option value="" ${it.stConfirmado==null?'selected':''}>— preciso confirmar —</option>
+                  <option value="nao" ${it.stConfirmado===false?'selected':''}>Não tem ST</option>
+                  <option value="sim" ${it.stConfirmado===true?'selected':''}>Sim, tem ST</option>
+                </select>
+                <div class="dica">na dúvida, pergunte à contadora</div></div>
+              <div><label>CEST ${it.stConfirmado===true?'<span style="color:var(--negative);">*</span>':''}</label>
+                <input type="text" data-nf="cest" maxlength="9" value="${escapeAttr(it.cest||'')}"
+                  placeholder="${it.stConfirmado===true?'7 dígitos':'só se tiver ST'}"
+                  ${it.stConfirmado===true?'':'disabled style="background:#F6F7F9;"'}>
+                <div class="dica" data-cest-sug>${it.stConfirmado===true?'escolha abaixo':'só obrigatório com ST'}</div></div>
+              <div><label>Origem da mercadoria</label>
+                <select data-nf="origemMercadoria">
+                  <option value="">— não informado —</option>
+                  ${LIC_ORIGENS_MERCADORIA.map(o=>`<option value="${o.v}" ${String(it.origemMercadoria)===o.v?'selected':''}>${escapeHtml(o.t)}</option>`).join('')}
+                </select>
+                <div class="dica">quase sempre 0 — nacional</div></div>
+              <div><label>Código do produto na nota</label>
+                <input type="text" data-nf="codigoNota" value="${escapeAttr(it.codigoNota||'')}" placeholder="opcional">
+                <div class="dica">se o cliente exigir um código</div></div>
+            </div>
+
+            ${it.stConfirmado===true ? `<div data-cest-lista style="margin-top:-4px;">${licCestOpcoesHtml(l.id, it)}</div>`:''}
+          </div>
+        </div>`;
+      }).join('')}
+
+      <div class="help-text">
+        Isto fica guardado no item desta licitação e também no orçamento que gerou a proposta —
+        é de lá que a nota vai sair quando chegar a hora.
+      </div>
+    </div>`;
+}
+
+function licCestOpcoesHtml(licId, it){
+  const ncm = ncmSo8(it.ncm||'');
+  if(ncm.length !== 8) return '<div class="help-text" style="margin:0;">Preencha o NCM para ver os CEST possíveis.</div>';
+  let ops = [];
+  try{ ops = cestsDoNcm(ncm) || []; }catch(e){ ops = []; }
+  if(ops.length === 0) return '<div class="help-text" style="margin:0;">Não tenho CEST na tabela interna para esse NCM. Pegue com a contadora.</div>';
+  return `<div style="display:flex;gap:6px;flex-wrap:wrap;">
+    ${ops.map(o=>`<button class="btn btn-sm" onclick="licUsarCest('${licId}','${it.id}','${escapeAttr(o.cest||o)}')">${escapeHtml(o.cest||o)}${o.desc?' — '+escapeHtml(o.desc):''}</button>`).join('')}
+  </div>`;
+}
+
+function licUsarCest(licId, itemId, cest){
+  const l = licAchar(licId); if(!l) return;
+  const it = (l.itens||[]).find(x=>x.id===itemId); if(!it) return;
+  it.cest = String(cest).replace(/\D/g,'').slice(0,7);
+  licEspelharNotaNoOrcamento(l);
+  saveState(); renderPortalLicitacoes();
+}
+
+function licAplicarSugestaoNota(licId, itemId){
+  const l = licAchar(licId); if(!l) return;
+  const it = (l.itens||[]).find(x=>x.id===itemId); if(!it) return;
+  const sug = licSugerirDadosNota(it);
+  if(!sug){ showToast('Não achei sugestão para esse item.','error'); return; }
+  it.ncm = ncmSo8(sug.ncm||'');
+  if(sug.cest && !it.cest) it.cest = sug.cest;
+  if(sug.unidade && !it.unidade) it.unidade = sug.unidade;
+  if(sug.stConfirmado != null && it.stConfirmado == null) it.stConfirmado = sug.stConfirmado;
+  if(sug.origemMercadoria != null && (it.origemMercadoria==null || it.origemMercadoria==='')) it.origemMercadoria = sug.origemMercadoria;
+  licEspelharNotaNoOrcamento(l);
+  saveState(); renderPortalLicitacoes();
+  showToast(`NCM ${ncmFormatado(it.ncm)} aplicado — ${sug.de}.`,'success');
+}
+
+/* O orçamento é de onde a nota sai. Então o que ela preencher aqui tem
+   que estar lá também, com os mesmos nomes de campo do produto. */
+function licEspelharNotaNoOrcamento(l){
+  if(!l || !l.orcamentoId) return;
+  const orc = (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId);
+  if(!orc || !Array.isArray(orc.itens)) return;
+  (l.itens||[]).forEach((it,i)=>{
+    const alvo = orc.itens[i];
+    if(!alvo) return;
+    alvo.ncm = it.ncm || '';
+    alvo.cest = it.cest || '';
+    alvo.unidade = it.unidade || '';
+    alvo.stConfirmado = it.stConfirmado;
+    alvo.origemMercadoria = it.origemMercadoria;
+    alvo.codigoNota = it.codigoNota || '';
+    alvo.descricaoNota = it.descricaoNota || '';
+  });
+}
+
+function licLigarNota(l){
+  document.querySelectorAll('[data-nota]').forEach(caixa=>{
+    const it = (l.itens||[]).find(x=>x.id===caixa.dataset.nota);
+    if(!it) return;
+    caixa.querySelectorAll('[data-nf]').forEach(inp=>{
+      inp.addEventListener('change', ()=>{
+        const campo = inp.dataset.nf;
+        let v = inp.value;
+        if(campo==='ncm') v = ncmSo8(v);
+        else if(campo==='cest') v = String(v).replace(/\D/g,'').slice(0,7);
+        else if(campo==='unidade') v = String(v).trim().toUpperCase().slice(0,6);
+        else if(campo==='stConfirmado') v = v==='sim' ? true : v==='nao' ? false : null;
+        else v = String(v).trim();
+        it[campo] = v;
+        licEspelharNotaNoOrcamento(l);
+        saveState();
+        renderPortalLicitacoes();
+      });
+    });
+  });
+}
+
 function licMarcarEntregue(id){
   const l = licAchar(id); if(!l) return;
   l.etapa = 'entregue'; l.status = 'Entregue';
@@ -29297,6 +30617,61 @@ function licMarcarEntregue(id){
 /* =========================================================
    CERTIDÕES E MODELOS
    ========================================================= */
+/* Os PDFs das certidões vão para o IndexedDB, que aguenta centenas de MB,
+   e NÃO para o localStorage, que tem 5 MB pro sistema inteiro. Guardar um
+   PDF de 3 MB lá dentro enchia tudo e fazia o saveState() falhar — o
+   sistema parava de salvar venda, orçamento e cliente sem avisar. No
+   STATE fica só o nome do arquivo e a validade. */
+function licArquivoIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-arquivos', 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains('certidoes')) req.result.createObjectStore('certidoes');
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('certidoes', modo==='get'?'readonly':'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore('certidoes');
+      const op = modo==='get' ? store.get(chave)
+               : modo==='del' ? store.delete(chave)
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+/* Tira do STATE qualquer PDF guardado em base64 pelo formato anterior e
+   põe no IndexedDB. Roda uma vez, sozinha, e libera o espaço na hora. */
+let licCertidoesJaMigradas = false;
+async function licMigrarCertidoesAntigas(){
+  if(licCertidoesJaMigradas) return;
+  licCertidoesJaMigradas = true;
+  const cfg = licCertidoesCfg();
+  let mexeu = 0;
+  for(const c of LIC_CERTIDOES){
+    const d = cfg[c.id];
+    if(!d || !d.conteudo) continue;
+    try{
+      const resp = await fetch(d.conteudo);
+      const blob = await resp.blob();
+      await licArquivoIdb('put', 'certidao:'+c.id, blob);
+      d.tamanho = blob.size;
+    }catch(e){ console.warn('não consegui migrar a certidão', c.id, e); }
+    delete d.conteudo;
+    mexeu++;
+  }
+  if(mexeu>0){
+    saveState();
+    showToast(`${mexeu} certidão${mexeu===1?'':'ões'} movida${mexeu===1?'':'s'} pra fora do espaço do sistema.`,'success');
+  }
+}
+
 function licAbrirCertidoes(){
   const cfg = licCertidoesCfg();
   const m = document.createElement('div');
@@ -29314,7 +30689,7 @@ function licAbrirCertidoes(){
               <input type="date" data-cv="${c.id}" value="${escapeAttr(d.validade||'')}" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;"></div>
             <div><label style="font-size:11.5px;color:var(--ink-soft);">Arquivo</label>
               <input type="file" data-cf="${c.id}" accept=".pdf" style="width:100%;font-size:12px;">
-              ${d.arquivo?`<div style="font-size:11.5px;color:var(--positive);margin-top:3px;">✓ ${escapeHtml(d.arquivo)}</div>`:''}</div>
+              ${d.arquivo?`<div style="font-size:11.5px;color:var(--positive);margin-top:3px;">✓ ${escapeHtml(d.arquivo)}${d.tamanho?` · ${(d.tamanho/1024).toFixed(0)} KB`:''}</div>`:''}</div>
           </div>
         </div>`;
       }).join('')}
@@ -29330,26 +30705,32 @@ function licAbrirCertidoes(){
     inp.addEventListener('change', ()=>{
       const f = inp.files && inp.files[0];
       if(!f) return;
-      if(f.size > 3*1024*1024){ showToast('Esse PDF passa de 3 MB — guarde um menor, senão o navegador não aguenta.','error'); inp.value=''; return; }
-      const fr = new FileReader();
-      fr.onload = ()=>{ pendentes[inp.dataset.cf] = { arquivo:f.name, conteudo: fr.result }; };
-      fr.readAsDataURL(f);
+      if(f.size > 20*1024*1024){ showToast('Esse arquivo passa de 20 MB — guarde um menor.','error'); inp.value=''; return; }
+      pendentes[inp.dataset.cf] = { arquivo:f.name, blob:f, tamanho:f.size };
     });
   });
-  m.querySelector('#lic-cert-ok').onclick = ()=>{
+  m.querySelector('#lic-cert-ok').onclick = async ()=>{
     m.querySelectorAll('[data-cv]').forEach(inp=>{
       const id = inp.dataset.cv;
       if(!cfg[id]) cfg[id] = {};
       cfg[id].validade = inp.value || '';
     });
-    Object.keys(pendentes).forEach(id=>{
+    let falhou = 0;
+    for(const id of Object.keys(pendentes)){
       if(!cfg[id]) cfg[id] = {};
-      cfg[id].arquivo = pendentes[id].arquivo;
-      cfg[id].conteudo = pendentes[id].conteudo;
-    });
+      try{
+        await licArquivoIdb('put', 'certidao:'+id, pendentes[id].blob);
+        cfg[id].arquivo = pendentes[id].arquivo;
+        cfg[id].tamanho = pendentes[id].tamanho;
+        delete cfg[id].conteudo;   // limpa o resto do formato antigo
+      }catch(e){ console.error(e); falhou++; }
+    }
     saveState(); m.remove(); renderPortalLicitacoes();
-    showToast('Certidões salvas.','success');
+    showToast(falhou ? `${falhou} arquivo não coube — o resto foi salvo.` : 'Certidões salvas.', falhou?'error':'success');
   };
+
+  /* migra o que já foi guardado no formato antigo (base64 dentro do STATE) */
+  licMigrarCertidoesAntigas();
 }
 
 /* =========================================================
@@ -29526,6 +30907,7 @@ function licLigarPainel(){
 function licLigarDetalhe(){
   const l = licAchar(licAberta);
   if(!l) return;
+  if(licTela==='compra') licLigarNota(l);
 
   /* anexos */
   const inp = document.getElementById('lic-arquivos');
@@ -29535,6 +30917,29 @@ function licLigarDetalhe(){
     ['dragenter','dragover'].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.add('hover'); }));
     ['dragleave','drop'].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.remove('hover'); }));
     solta.addEventListener('drop', e=>{ const fs = [...(e.dataTransfer.files||[])]; if(fs.length) licAnexar(l.id, fs); });
+  }
+
+  /* arrastar o arquivo da resposta direto na caixa */
+  const caixa = document.getElementById('lic-resposta-gpt');
+  if(caixa){
+    caixa.addEventListener('blur', ()=>{ l.respostaIATexto = caixa.value; saveState(); });
+    ['dragenter','dragover'].forEach(ev=>caixa.addEventListener(ev, e=>{
+      e.preventDefault(); e.stopPropagation(); caixa.classList.add('hover-json'); }));
+    ['dragleave','drop'].forEach(ev=>caixa.addEventListener(ev, e=>{
+      e.preventDefault(); e.stopPropagation(); caixa.classList.remove('hover-json'); }));
+    caixa.addEventListener('drop', async e=>{
+      const f = (e.dataTransfer.files||[])[0];
+      if(!f) return;
+      const nome = (f.name||'').toLowerCase();
+      if(!/\.(json|txt|md)$/.test(nome)){
+        showToast('Arraste aqui o arquivo da resposta (.json ou .txt), não o edital.','error');
+        return;
+      }
+      try{
+        caixa.value = await f.text();
+        showToast('Arquivo lido. Clique em "Ler a resposta e preencher".','info');
+      }catch(err){ showToast('Não consegui abrir esse arquivo.','error'); }
+    });
   }
 
   /* critério de julgamento */
@@ -40954,6 +42359,314 @@ const NUVEM_SESSAO  = 'mizu_sessao_v1';
 const NUVEM_ESPELHO = 'mizu_espelho_v1';  // impressão digital do que já subiu
 const NUVEM_MARCA   = 'mizu_marca_v1';    // até onde já baixei
 
+
+/* =========================================================
+   MÓDULO: ARMAZENAMENTO
+
+   Três lugares guardam dados, e eles têm limites bem diferentes:
+
+   1. localStorage — é onde o STATE inteiro mora. Limite fixo do
+      navegador, normalmente 5 MB, e NÃO dá pra comprar mais. Quando
+      enche, saveState() falha e o sistema para de salvar. É este que
+      precisa de vigia.
+   2. IndexedDB — arquivos guardados à parte (certidões, por exemplo).
+      Limite muito maior, em geral centenas de MB. Também não se compra,
+      mas dificilmente aperta.
+   3. Supabase — a nuvem que sincroniza as máquinas. Esse sim tem plano
+      pago: o gratuito dá 500 MB de banco e 1 GB de arquivos.
+   ========================================================= */
+
+const ARMAZ_LIMITE_LOCAL = 5 * 1024 * 1024;   // referência de 5 MB do navegador
+const ARMAZ_SUPABASE_GRATIS_BANCO = 500 * 1024 * 1024;
+
+function armazFormatar(bytes){
+  const b = Number(bytes)||0;
+  if(b < 1024) return b + ' B';
+  if(b < 1024*1024) return (b/1024).toFixed(1).replace('.',',') + ' KB';
+  return (b/1024/1024).toFixed(2).replace('.',',') + ' MB';
+}
+
+/* O navegador guarda string em UTF-16, então cada caractere pesa 2 bytes.
+   É estimativa, mas é a mesma conta que o limite usa. */
+function armazTamanhoTexto(txt){ return (String(txt||'').length) * 2; }
+
+function armazMedirLocalStorage(){
+  let total = 0;
+  const porChave = [];
+  try{
+    for(let i=0; i<localStorage.length; i++){
+      const chave = localStorage.key(i);
+      const valor = localStorage.getItem(chave) || '';
+      const tam = armazTamanhoTexto(chave) + armazTamanhoTexto(valor);
+      total += tam;
+      porChave.push({ chave, bytes: tam });
+    }
+  }catch(e){ console.warn(e); }
+  porChave.sort((a,b)=>b.bytes-a.bytes);
+  return { total, porChave };
+}
+
+/* Quebra o STATE por coleção, pra mostrar quem está ocupando espaço. */
+function armazMedirState(){
+  const linhas = [];
+  try{
+    Object.keys(STATE).forEach(colecao=>{
+      const v = STATE[colecao];
+      let texto = '';
+      try{ texto = JSON.stringify(v); }catch(e){ texto = ''; }
+      const bytes = armazTamanhoTexto(texto);
+      const quantos = Array.isArray(v) ? v.length : null;
+      /* coleção vazia é só ruído na tabela */
+      if(bytes > 40 && !(quantos === 0)) linhas.push({ colecao, bytes, quantos });
+    });
+  }catch(e){ console.warn(e); }
+  linhas.sort((a,b)=>b.bytes-a.bytes);
+  return linhas;
+}
+
+const ARMAZ_NOMES = {
+  orcamentos:'Orçamentos', vendas:'Vendas', produtos:'Produtos', clientes:'Clientes',
+  licitacoes:'Licitações', licitacoesRevisao:'Oportunidades na triagem',
+  licitacoesDescartadas:'Dispensas descartadas', licitacoesGeocodeCache:'Cache de distâncias',
+  despesas:'Despesas', movimentosEstoque:'Movimentos de estoque', auditoria:'Trilha de auditoria',
+  historicoPrecosCompra:'Histórico de preço de compra', notasFiscais:'Notas fiscais',
+  fornecedores:'Fornecedores', locaisCompra:'Locais de compra', config:'Configurações',
+  lembretes:'Lembretes', caixa:'Caixa', contasReceber:'Contas a receber',
+  marcas:'Marcas', pagadores:'Pagadores de repasse', pagamentosRepasse:'Pagamentos de repasse',
+  cobrancasRepasse:'Cobranças de repasse', anosArquivados:'Anos arquivados',
+  valeFuncionarios:'Vales de funcionário', haverClientes:'Haver de clientes',
+  simulacaoSemTemporarios:'Simulação de margem', planosEntrega:'Planos de entrega',
+  usuarios:'Usuários', rotas:'Rotas de entrega'
+};
+function armazNome(colecao){ return ARMAZ_NOMES[colecao] || colecao; }
+
+/* O que dá pra limpar sem perder nada que importe. */
+function armazFaxinas(){
+  const f = [];
+  const desc = (STATE.licitacoesDescartadas||[]).length;
+  if(desc > 0) f.push({ id:'descartadas', rotulo:`${desc} dispensa${desc===1?'':'s'} descartada${desc===1?'':'s'}`,
+    explica:'Só a lista do que você já disse "não" — serve pra não voltar na importação. Limpando, elas voltam a aparecer.',
+    bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesDescartadas||[])) });
+
+  const geo = Object.keys(STATE.licitacoesGeocodeCache||{}).length;
+  if(geo > 0) f.push({ id:'geocache', rotulo:`Cache de ${geo} cidade${geo===1?'':'s'}`,
+    explica:'As coordenadas das cidades, pra calcular distância. Limpando, elas são buscadas de novo na próxima importação.',
+    bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesGeocodeCache||{})) });
+
+  let anexos = 0, nAnexos = 0;
+  (STATE.licitacoes||[]).forEach(l=>{
+    (l.arquivos||[]).forEach(a=>{ anexos += armazTamanhoTexto(a.texto||''); nAnexos++; });
+  });
+  if(anexos > 0) f.push({ id:'anexos', rotulo:`Texto de ${nAnexos} anexo${nAnexos===1?'':'s'} de edital`,
+    explica:'O texto extraído dos editais já analisados. A análise e os itens ficam; só o texto bruto sai.',
+    bytes: anexos });
+
+  const respostas = (STATE.licitacoes||[]).reduce((s,l)=>s+armazTamanhoTexto(l.respostaIATexto||''), 0);
+  if(respostas > 0) f.push({ id:'respostas', rotulo:'Respostas do ChatGPT guardadas',
+    explica:'O JSON cru de cada dispensa. Tudo que ele preencheu continua — só o texto original sai.',
+    bytes: respostas });
+
+  const auditoria = (STATE.auditoria||[]).length;
+  if(auditoria > 500) f.push({ id:'auditoria', rotulo:`Trilha de auditoria (${auditoria} registros)`,
+    explica:'Mantém os 300 mais recentes e descarta o resto.',
+    bytes: armazTamanhoTexto(JSON.stringify((STATE.auditoria||[]).slice(300))) });
+
+  return f.filter(x=>x.bytes > 1024).sort((a,b)=>b.bytes-a.bytes);
+}
+
+async function armazMedirTudo(){
+  const local = armazMedirLocalStorage();
+  const state = armazMedirState();
+  let origem = null;
+  try{
+    if(navigator.storage && navigator.storage.estimate){
+      origem = await navigator.storage.estimate();
+    }
+  }catch(e){ console.warn(e); }
+
+  /* nuvem: conta pelo espelho local do que já subiu */
+  let nuvem = { registros: 0, bytes: 0, ligada: false };
+  try{
+    if(typeof nuvemLerEspelho === 'function'){
+      const esp = nuvemLerEspelho();
+      nuvem.registros = Object.keys(esp||{}).length;
+      nuvem.ligada = typeof nuvemUsuario !== 'undefined' && !!nuvemUsuario;
+    }
+    nuvem.bytes = armazTamanhoTexto(JSON.stringify(STATE)) / 2;  // no servidor é UTF-8
+  }catch(e){ console.warn(e); }
+
+  return { local, state, origem, nuvem };
+}
+
+function armazBarra(usado, limite, cor){
+  const pct = limite>0 ? Math.min(100, (usado/limite)*100) : 0;
+  return `<div style="background:var(--border);border-radius:20px;height:10px;overflow:hidden;margin:6px 0 4px;">
+    <div style="width:${pct.toFixed(1)}%;height:100%;background:${cor};border-radius:20px;"></div>
+  </div>`;
+}
+
+async function renderArmazenamento(){
+  const box = document.getElementById('armazenamento-content');
+  if(!box) return;
+  box.innerHTML = '<div class="card"><p class="help-text">Medindo...</p></div>';
+
+  const m = await armazMedirTudo();
+  const usado = m.local.total;
+  const pct = (usado / ARMAZ_LIMITE_LOCAL) * 100;
+  const cor = pct >= 85 ? 'var(--negative)' : pct >= 70 ? 'var(--warning)' : 'var(--positive)';
+  const estado = pct >= 85 ? 'Está apertado — limpe alguma coisa hoje.'
+               : pct >= 70 ? 'Já passou de três quartos. Vale limpar.'
+               : 'Tem espaço de sobra.';
+
+  const faxinas = armazFaxinas();
+  const outrasChaves = m.local.porChave.filter(k=>k.chave !== STORAGE_KEY);
+
+  box.innerHTML = `
+    ${pct >= 70 ? `<div class="lic-doc ${pct>=85?'falta':'aviso'}" style="display:block;margin-bottom:12px;">
+      <b>${pct>=85?'⛔':'⚠️'} O armazenamento deste navegador está em ${pct.toFixed(0)}%</b>
+      <small>Quando ele enche, o sistema para de salvar — e você perde o que digitou sem aviso. Limpe algo abaixo.</small>
+    </div>`:''}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Neste navegador <span class="hint">é este que trava o sistema</span></h3>
+      <p class="help-text">Todo o sistema — clientes, produtos, orçamentos, vendas, licitações — mora aqui dentro.
+        O limite é do navegador, fixo, e <b>não dá pra comprar mais</b>. Quando enche, o sistema para de salvar.</p>
+
+      <div style="font-size:26px;font-weight:700;font-family:var(--font-num);">
+        ${armazFormatar(usado)} <span style="font-size:15px;font-weight:400;color:var(--ink-faint);">de cerca de ${armazFormatar(ARMAZ_LIMITE_LOCAL)}</span>
+      </div>
+      ${armazBarra(usado, ARMAZ_LIMITE_LOCAL, cor)}
+      <div style="font-size:12.5px;color:${cor};font-weight:600;">${pct.toFixed(1)}% ocupado — ${estado}</div>
+      <div class="help-text" style="margin-top:4px;">O limite exato varia um pouco com o navegador; 5 MB é o mais comum.</div>
+
+      <div class="table-wrap" style="margin-top:14px;">
+        <table class="data-table">
+          <thead><tr><th>O que está guardado</th><th style="text-align:right;">Quantidade</th>
+            <th style="text-align:right;">Espaço</th><th style="text-align:right;">Fatia</th></tr></thead>
+          <tbody>
+            ${m.state.slice(0,14).map(l=>`<tr>
+              <td>${escapeHtml(armazNome(l.colecao))}</td>
+              <td style="text-align:right;">${l.quantos!=null?fmtNum(l.quantos):'—'}</td>
+              <td style="text-align:right;font-family:var(--font-num);">${armazFormatar(l.bytes)}</td>
+              <td style="text-align:right;color:var(--ink-faint);">${usado>0?((l.bytes/usado)*100).toFixed(1):'0'}%</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      ${outrasChaves.length ? `<div class="help-text" style="margin-top:8px;">
+        Fora o sistema, há ${outrasChaves.length} item${outrasChaves.length===1?'':'ns'} menor${outrasChaves.length===1?'':'es'}
+        (rascunhos, preferências de tela): ${armazFormatar(outrasChaves.reduce((s,k)=>s+k.bytes,0))}.</div>`:''}
+    </div>
+
+    ${faxinas.length ? `<div class="card">
+      <h3 style="margin-top:0;">O que dá pra limpar sem perder nada importante</h3>
+      ${faxinas.map(f=>`
+        <div class="lic-doc" style="display:flex;">
+          <div style="flex:1;"><b>${escapeHtml(f.rotulo)}</b><small>${escapeHtml(f.explica)}</small></div>
+          <div style="display:flex;gap:10px;align-items:center;">
+            <span style="font-family:var(--font-num);font-size:13px;">${armazFormatar(f.bytes)}</span>
+            <button class="btn btn-sm" onclick="armazLimpar('${f.id}')">Limpar</button>
+          </div>
+        </div>`).join('')}
+      <div class="help-text" style="margin-top:8px;">Nada aqui apaga cliente, produto, orçamento, venda ou o resultado de licitação.</div>
+    </div>`:''}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Arquivos guardados à parte</h3>
+      <p class="help-text">PDFs de certidão e arquivos grandes ficam fora do espaço acima, num lugar do navegador que
+        aguenta muito mais. Este número é do navegador inteiro neste site.</p>
+      ${m.origem ? `
+        <div style="font-size:22px;font-weight:700;font-family:var(--font-num);">
+          ${armazFormatar(m.origem.usage||0)}
+          <span style="font-size:14px;font-weight:400;color:var(--ink-faint);">de ${armazFormatar(m.origem.quota||0)} que o navegador libera</span>
+        </div>
+        ${armazBarra(m.origem.usage||0, m.origem.quota||1, 'var(--primary)')}
+        <div class="help-text">Inclui tudo: o sistema, os arquivos e o cache do navegador.</div>
+      ` : '<div class="help-text">Este navegador não informa o espaço usado.</div>'}
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Na nuvem <span class="hint">é este que dá pra aumentar</span></h3>
+      <p class="help-text">É o Supabase, que sincroniza esta máquina com a do balcão. O plano gratuito dá
+        <b>500 MB de banco</b> e <b>1 GB de arquivos</b>. Se um dia apertar, é aqui que se paga por mais — e o
+        espaço do navegador continua sendo o mesmo 5 MB, independente disso.</p>
+      <div class="kpi-row">
+        <div class="kpi-card"><div class="kpi-label">Situação</div>
+          <div class="kpi-value" style="font-size:17px;">${m.nuvem.ligada?'Sincronizando':'Desligada'}</div>
+          <div class="kpi-sub">${m.nuvem.ligada?'as duas máquinas conversando':'só este navegador'}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Registros na nuvem</div>
+          <div class="kpi-value">${fmtNum(m.nuvem.registros)}</div>
+          <div class="kpi-sub">um por cliente, produto, venda...</div></div>
+        <div class="kpi-card"><div class="kpi-label">Tamanho estimado</div>
+          <div class="kpi-value" style="font-size:20px;">${armazFormatar(m.nuvem.bytes)}</div>
+          <div class="kpi-sub">de 500 MB do plano gratuito</div></div>
+        <div class="kpi-card"><div class="kpi-label">Fatia do plano</div>
+          <div class="kpi-value">${((m.nuvem.bytes/ARMAZ_SUPABASE_GRATIS_BANCO)*100).toFixed(2)}%</div>
+          <div class="kpi-sub">longe de apertar</div></div>
+      </div>
+      <div class="help-text" style="margin-top:8px;">
+        O tamanho da nuvem é estimado a partir do que existe aqui — o número exato está no painel do Supabase.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Em resumo</h3>
+      <p style="font-size:13.5px;line-height:1.6;margin:0;">
+        O espaço que pode te dar problema é o <b>deste navegador</b>, e ele não se compra — se administra.
+        Hoje você está usando <b>${armazFormatar(usado)}</b> dos ${armazFormatar(ARMAZ_LIMITE_LOCAL)}, ou seja
+        <b>${pct.toFixed(1)}%</b>. A nuvem, que é a que se paga, está praticamente vazia.
+        ${pct < 50 ? 'Não há nada a fazer por enquanto.' : 'Vale limpar o que está listado acima.'}
+      </p>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm" onclick="renderArmazenamento()">↻ Medir de novo</button>
+        <button class="btn btn-sm" onclick="document.getElementById('btn-export').click()">⬇ Exportar backup antes de limpar</button>
+      </div>
+    </div>
+  `;
+}
+
+function armazLimpar(id){
+  const acoes = {
+    descartadas: { titulo:'Limpar as descartadas',
+      texto:'As dispensas que você descartou voltam a aparecer na próxima importação do arquivo do PNCP. Continuar?',
+      faz: ()=>{ STATE.licitacoesDescartadas = []; } },
+    geocache: { titulo:'Limpar o cache de distâncias',
+      texto:'As coordenadas das cidades serão buscadas de novo na próxima importação — leva alguns segundos a mais. Continuar?',
+      faz: ()=>{ STATE.licitacoesGeocodeCache = {}; } },
+    anexos: { titulo:'Limpar o texto dos anexos',
+      texto:'Some o texto bruto dos editais já anexados. A análise, os itens e os modelos continuam. Os arquivos originais você guarda no computador. Continuar?',
+      faz: ()=>{ (STATE.licitacoes||[]).forEach(l=>(l.arquivos||[]).forEach(a=>{ a.texto=''; a.limpo=true; })); } },
+    respostas: { titulo:'Limpar as respostas guardadas',
+      texto:'Some o JSON cru que você colou. Tudo que ele preencheu — campos, itens, modelos — continua. Continuar?',
+      faz: ()=>{ (STATE.licitacoes||[]).forEach(l=>{ l.respostaIATexto=''; }); } },
+    auditoria: { titulo:'Encurtar a trilha de auditoria',
+      texto:'Mantém os 300 registros mais recentes e descarta os mais antigos. Continuar?',
+      faz: ()=>{ if(STATE.auditoria) STATE.auditoria = STATE.auditoria.slice(0,300); } }
+  };
+  const a = acoes[id];
+  if(!a) return;
+  const antes = armazMedirLocalStorage().total;
+  confirmAction(a.titulo, a.texto, ()=>{
+    a.faz();
+    saveState();
+    const depois = armazMedirLocalStorage().total;
+    renderArmazenamento();
+    showToast(`Liberou ${armazFormatar(Math.max(0, antes-depois))}.`,'success');
+  }, 'Limpar');
+}
+
+/* Vigia: quando o espaço passa de 80%, avisa uma vez por sessão. */
+let armazJaAvisou = false;
+function armazVigiar(){
+  if(armazJaAvisou) return;
+  const usado = armazMedirLocalStorage().total;
+  if(usado / ARMAZ_LIMITE_LOCAL < 0.8) return;
+  armazJaAvisou = true;
+  showToast('O armazenamento deste navegador passou de 80%. Veja em Armazenamento o que dá pra limpar.','error');
+}
+
+RENDERERS['armazenamento'] = renderArmazenamento;
+
 /* licitacoesGeocodeCache é cache de mapa, recriável — subir isso
    só gastaria banco e banda. */
 const NUVEM_NAO_SINCRONIZA = ['licitacoesGeocodeCache'];
@@ -41586,10 +43299,15 @@ function nuvemMontarMenuUsuarios(){
   const rodapeBarra = document.querySelector('.sidebar-footer');
   if(!barra || !rodapeBarra) return;
 
-  const rotulo = document.createElement('div');
-  rotulo.className = 'nav-section-label';
-  rotulo.textContent = 'Sistema';
-  barra.insertBefore(rotulo, rodapeBarra);
+  /* o rótulo "Sistema" já existe no menu fixo (Armazenamento) — não cria outro */
+  const jaTemRotulo = [...barra.querySelectorAll('.nav-section-label')]
+    .some(r=>r.textContent.trim()==='Sistema');
+  if(!jaTemRotulo){
+    const rotulo = document.createElement('div');
+    rotulo.className = 'nav-section-label';
+    rotulo.textContent = 'Sistema';
+    barra.insertBefore(rotulo, rodapeBarra);
+  }
 
   const a = document.createElement('a');
   a.className = 'nav-item';
