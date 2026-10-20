@@ -28316,9 +28316,9 @@ function licTelaProcesso(l){
       ${l.arquivos.map((a,i)=>`
         <div class="lic-doc ${a.erro?'aviso':'ok'}">
           <div><b>${escapeHtml(a.nome)}</b>
-            <small>${a.paginas?`${a.paginas} página${a.paginas===1?'':'s'} · `:''}${(a.tamanho/1024).toFixed(0)} KB${a.erro?' · '+escapeHtml(a.erro):''}</small></div>
+            <small>${a.dentroDe?`de ${escapeHtml(a.dentroDe)} · `:''}${a.paginas?`${a.paginas} página${a.paginas===1?'':'s'} · `:''}${a.tamanho?`${(a.tamanho/1024).toFixed(0)} KB · `:''}${a.erro?escapeHtml(a.erro):'texto lido'}</small></div>
           <div style="display:flex;gap:6px;align-items:center;">
-            <span style="font-size:12px;color:${a.erro?'var(--warning)':'var(--positive)'};">${a.erro?'⚠️ não dá pra ler':'✓ lido'}</span>
+            <span style="font-size:12px;color:${a.erro?'var(--warning)':'var(--positive)'};">${a.erro?'⚠️':'✓ lido'}</span>
             <button class="btn btn-sm" onclick="licRemoverArquivo('${l.id}',${i})">✕</button>
           </div>
         </div>`).join('')}
@@ -29358,7 +29358,7 @@ function licAbrirCertidoes(){
 async function licLerPdf(file){
   if(typeof pdfjsLib === 'undefined') return { erro:'leitor de PDF não carregou' };
   try{
-    const buf = await file.arrayBuffer();
+    const buf = await file.arrayBuffer();   // vale pro File e pro item do .zip
     const doc = await pdfjsLib.getDocument({ data: buf }).promise;
     let texto = '';
     const limite = Math.min(doc.numPages, 60);
@@ -29377,32 +29377,108 @@ async function licLerPdf(file){
   }
 }
 
+/* Lê um arquivo solto (fora do .zip) e devolve o registro dele. */
+async function licLerUmArquivo(nome, tamanho, pegarBuffer, pegarTexto){
+  const registro = { nome, tamanho, texto:'', erro:null };
+  const n = String(nome||'').toLowerCase();
+  try{
+    if(n.endsWith('.pdf')){
+      const r = await licLerPdf({ arrayBuffer: pegarBuffer });
+      registro.texto = r.texto || '';
+      registro.paginas = r.paginas;
+      registro.erro = r.erro || null;
+    }else if(n.endsWith('.txt') || n.endsWith('.csv')){
+      registro.texto = await pegarTexto();
+    }else if(n.endsWith('.xlsx') || n.endsWith('.xls')){
+      if(typeof XLSX === 'undefined'){ registro.erro = 'o leitor de planilha não carregou'; }
+      else{
+        const wb = XLSX.read(await pegarBuffer(), { type:'array' });
+        registro.texto = wb.SheetNames.map(s=>XLSX.utils.sheet_to_csv(wb.Sheets[s])).join('\n');
+      }
+    }else if(n.endsWith('.doc') || n.endsWith('.docx')){
+      registro.erro = 'é Word — guardado, mas o navegador não lê o conteúdo';
+    }else if(/\.(png|jpe?g|gif|bmp|tiff?)$/.test(n)){
+      registro.erro = 'é imagem — guardado, não tem texto pra ler';
+    }else{
+      registro.erro = 'guardado, mas não dá pra ler o conteúdo';
+    }
+  }catch(e){
+    console.error(e);
+    registro.erro = 'não consegui abrir';
+  }
+  return registro;
+}
+
+/* Abre o .zip que o PNCP entrega e lê TUDO que está dentro — um registro
+   por arquivo, não só o primeiro PDF. Entra um nível em zip dentro de
+   zip, que é comum quando o órgão junta os anexos. */
+async function licAbrirZip(file, dentroDe, profundidade){
+  if(typeof JSZip === 'undefined'){
+    return [{ nome:file.name||dentroDe, tamanho:file.size||0, texto:'', erro:'o leitor de .zip não carregou — recarregue a página com internet' }];
+  }
+  const saida = [];
+  try{
+    const buffer = file.arrayBuffer ? await file.arrayBuffer() : file;
+    const zip = await JSZip.loadAsync(buffer);
+    const nomes = Object.keys(zip.files)
+      .filter(n=>!zip.files[n].dir)
+      .filter(n=>!/^__MACOSX\//.test(n) && !/\/\.|^\./.test(n.split('/').pop()))
+      .slice(0, 40);
+
+    if(nomes.length===0){
+      return [{ nome:file.name||dentroDe, tamanho:file.size||0, texto:'', erro:'o .zip está vazio' }];
+    }
+
+    for(const nome of nomes){
+      const entrada = zip.files[nome];
+      const curto = nome.split('/').pop();
+      if(/\.zip$/i.test(curto)){
+        if(profundidade < 1){
+          const dentro = await entrada.async('arraybuffer');
+          const filhos = await licAbrirZip(dentro, curto, profundidade+1);
+          filhos.forEach(f=>{ f.dentroDe = (dentroDe? dentroDe+' › ':'') + curto; saida.push(f); });
+        }else{
+          saida.push({ nome:curto, tamanho:0, texto:'', erro:'zip dentro de zip demais — descompacte à mão', dentroDe });
+        }
+        continue;
+      }
+      /* o JSZip v3 não expõe o tamanho descompactado numa API pública,
+         então fica 0 e a tela simplesmente não mostra o tamanho */
+      const reg = await licLerUmArquivo(
+        curto, 0,
+        ()=>entrada.async('arraybuffer'),
+        ()=>entrada.async('string')
+      );
+      reg.dentroDe = dentroDe;
+      saida.push(reg);
+    }
+  }catch(e){
+    console.error(e);
+    return [{ nome:file.name||dentroDe, tamanho:file.size||0, texto:'', erro:'não consegui abrir o .zip (pode estar com senha ou corrompido)' }];
+  }
+  return saida;
+}
+
 async function licAnexar(id, files){
   const l = licAchar(id); if(!l || !files || files.length===0) return;
   showToast(`Lendo ${files.length} arquivo${files.length===1?'':'s'}...`,'info');
   for(const f of files){
-    const registro = { nome:f.name, tamanho:f.size, texto:'', erro:null };
-    const nome = f.name.toLowerCase();
-    if(nome.endsWith('.pdf')){
-      const r = await licLerPdf(f);
-      registro.texto = r.texto||''; registro.paginas = r.paginas; registro.erro = r.erro||null;
-    }else if(nome.endsWith('.txt') || nome.endsWith('.csv')){
-      try{ registro.texto = await f.text(); }catch(e){ registro.erro = 'não consegui ler'; }
-    }else if(nome.endsWith('.xlsx') || nome.endsWith('.xls')){
-      try{
-        const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
-        registro.texto = wb.SheetNames.map(n=>XLSX.utils.sheet_to_csv(wb.Sheets[n])).join('\n');
-      }catch(e){ registro.erro = 'não consegui ler a planilha'; }
+    const n = (f.name||'').toLowerCase();
+    if(n.endsWith('.zip')){
+      const dentro = await licAbrirZip(f, f.name, 0);
+      dentro.forEach(r=>l.arquivos.push(r));
     }else{
-      registro.erro = 'guardado, mas não dá pra ler o conteúdo';
+      l.arquivos.push(await licLerUmArquivo(f.name, f.size, ()=>f.arrayBuffer(), ()=>f.text()));
     }
-    l.arquivos.push(registro);
   }
   saveState();
   const temTexto = l.arquivos.some(a=>a.texto);
   if(temTexto && Object.keys(l.leitura||{}).length===0){ licLerEdital(l); return; }
   renderPortalLicitacoes();
-  showToast('Arquivos anexados.','success');
+  const lidos = l.arquivos.filter(a=>a.texto).length;
+  showToast(lidos>0
+    ? `${l.arquivos.length} arquivo${l.arquivos.length===1?'':'s'} anexado${l.arquivos.length===1?'':'s'} · ${lidos} com texto pra ler.`
+    : 'Arquivos anexados, mas nenhum deles tem texto pra ler.', lidos>0?'success':'info');
 }
 
 function licRemoverArquivo(id, i){
