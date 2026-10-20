@@ -26968,6 +26968,8 @@ function licNormalizar(l){
   if(!Array.isArray(l.riscos)) l.riscos = [];
   if(!Array.isArray(l.documentosHabilitacao)) l.documentosHabilitacao = [];
   if(!Array.isArray(l.perguntasDistribuidor)) l.perguntasDistribuidor = [];
+  if(!Array.isArray(l.emails)) l.emails = [];
+  if(!Array.isArray(l.documentosNaoExigidos)) l.documentosNaoExigidos = [];
   if(l.respostaIATexto === undefined) l.respostaIATexto = '';
   if(!l.leituraManual || typeof l.leituraManual !== 'object') l.leituraManual = {};
   l.itens.forEach((it,i)=>{
@@ -28629,6 +28631,7 @@ const LIC_BLOCOS_LEITURA = [
   ]},
   { titulo:'Como se envia a proposta', campos:[
     { id:'meioEnvio',       rotulo:'Por onde envia', trava:true },
+    { id:'comoEnviarProposta', rotulo:'O que o edital diz, na letra', trava:true },
     { id:'portal',          rotulo:'Qual portal' },
     { id:'emailProposta',   rotulo:'E-mail da proposta' },
     { id:'emailEsclarecimento', rotulo:'E-mail de dúvidas' },
@@ -28736,6 +28739,11 @@ Extrair, com o máximo de esforço, tudo que eu preciso para decidir se
 participo, precificar e emitir a proposta. Depois, pesquisar produtos
 reais que atendam a cada item.
 
+Resposta vaga não me serve. "Conforme o edital", "a ser confirmado" e
+campo em branco sem explicação me obrigam a reler tudo — que é
+justamente o que eu estou tentando evitar. Prefiro que você demore e
+volte ao documento três vezes.
+
 COMO LER — isto é o que separa uma resposta útil de uma inútil
 
 1. A planilha de itens é só o começo. Boa parte da especificação está
@@ -28754,9 +28762,36 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    Nunca invente, nunca deduza "o normal é 30 dias".
 5. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
    ilegível, diga qual em "trechosIlegiveis".
-6. Antes de fechar a resposta, confira: o número de itens que você
-   listou bate com o número de itens do edital? Se não bater, volte e
-   complete.
+6. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
+   Se eu errar isso, não adianta nada o resto estar certo. Procure em
+   TODO o documento — no aviso, no termo de referência, nos anexos, em
+   parágrafo solto no meio do texto — a frase que diz para onde mandar a
+   proposta. Copie essa frase literalmente em "comoEnviarProposta",
+   com a cláusula em "fontes". Não resuma, não interprete: a frase como
+   ela está escrita.
+   Muita dispensa eletrônica diz "pelo sistema" numa cláusula e, em
+   outra, dá um e-mail para onde mandar a proposta assinada. As duas
+   coisas podem ser verdade ao mesmo tempo. Se achar as duas, descreva
+   as duas.
+7. Varra o documento inteiro atrás de endereços de e-mail e diga para
+   que serve cada um. Perder o e-mail certo me faz perder a dispensa.
+   Se o edital tiver um único e-mail e não disser claramente para que
+   serve, diga isso em vez de chutar a finalidade.
+8. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
+   página ("Aviso, item 6.2, p. 4"). Sem isso eu não consigo conferir.
+9. Antes de fechar a resposta, confira item por item desta lista:
+   - o número de itens bate com o do edital?
+   - o número de documentos de habilitação bate com a cláusula de
+     habilitação?
+   - "comoEnviarProposta" está preenchido com uma frase do edital?
+   - todos os e-mails do documento estão em "emails"?
+   - prazo de entrega, prazo de pagamento e validade da proposta estão
+     preenchidos ou registrados como não encontrados?
+   Se faltar qualquer um, volte ao documento e complete antes de
+   responder. É melhor demorar do que me entregar resposta vaga.
+10. Se o que eu anexei não for o edital completo, diga isso logo no
+   "resumoDaDecisao", diga QUAL parte falta, e marque como
+   "não encontrado" tudo que dependeria dela — não deduza.
 
 PESQUISA DE PRODUTOS
 Para cada item, procure no mínimo 5 produtos reais, à venda no Brasil
@@ -28785,7 +28820,7 @@ Use ponto como separador decimal nos números e não escreva "R$".
     "criterio": "",
     "aceitaParcial": "", "mepp": "", "modoDisputa": "",
     "orcamentoSigiloso": "",
-    "meioEnvio": "", "portal": "",
+    "meioEnvio": "", "comoEnviarProposta": "", "portal": "",
     "emailProposta": "", "emailEsclarecimento": "",
     "exigeCadastro": "",
     "dataHoraLimite": "", "dataHoraSessao": "",
@@ -28802,6 +28837,10 @@ Use ponto como separador decimal nos números e não escreva "R$".
     "criterio": "", "prazoEntrega": "", "prazoPagamento": "",
     "meioEnvio": "", "validade": "", "localEntrega": ""
   },
+
+  "emails": [
+    { "endereco": "", "para": "", "fonte": "" }
+  ],
 
   "naoEncontrado": [],
   "editalSilente": [],
@@ -28844,8 +28883,10 @@ Use ponto como separador decimal nos números e não escreva "R$".
   ],
 
   "documentosHabilitacao": [
-    { "documento": "", "obrigatorio": true, "fonte": "" }
+    { "documento": "", "obrigatorio": true, "fonte": "", "observacao": "" }
   ],
+
+  "documentosNaoExigidos": [],
 
   "riscos": [
     { "risco": "", "impacto": "", "fonte": "" }
@@ -28855,15 +28896,32 @@ Use ponto como separador decimal nos números e não escreva "R$".
 }
 
 REGRAS DOS CAMPOS
+- Cada campo leva SÓ O VALOR. Nada de observação, origem ou comentário
+  dentro do valor. Errado: "FUNDO MUNICIPAL (PNCP informado pelo usuário)".
+  Certo: o nome, e a observação vai em "fontes".
 - "criterio": escreva exatamente "por item", "global" ou "por lote".
 - "meioEnvio": exatamente "sistema", "email" ou "presencial".
-- "emailProposta" só se a proposta for enviada por e-mail. E-mail de
-  esclarecimento NÃO é e-mail de proposta — são campos diferentes.
+- "emails": liste TODOS os endereços que aparecerem no edital, cada um
+  com a finalidade em "para" (proposta, esclarecimento, recurso,
+  habilitação, contato do setor) e a cláusula em "fonte". Não deixe
+  nenhum de fora, mesmo que pareça repetido ou secundário.
+- "emailProposta": preencha SEMPRE que o edital der um endereço para
+  onde mandar a proposta, mesmo que o envio principal seja por sistema —
+  muitos editais aceitam os dois. E-mail de esclarecimento NÃO é e-mail
+  de proposta, mas ambos têm que aparecer em "emails".
 - "descricao" do item: a descrição INTEIRA, como está no edital. Ela vai
   impressa na minha proposta. Não resuma, não agrupe, não pule item.
 - "exigencias": uma linha por característica exigida, na ordem. O número
   do veredicto se refere à posição nesta lista.
 - "resultado": "atende" só se todos os veredictos forem ATENDE.
+- "documentosHabilitacao": liste SÓ o que ESTE edital exige, na redação
+  dele, e "fonte" é obrigatória em cada um (cláusula e página). Não
+  acrescente documento de praxe que o edital não pediu.
+- "documentosNaoExigidos": dos documentos comuns em licitação (certidão
+  federal RFB/PGFN, FGTS, trabalhista CNDT, estadual, municipal,
+  falência/concordata, balanço, atestado de capacidade técnica,
+  contrato social), liste os que você procurou e o edital NÃO exige.
+  Isso me evita juntar papel à toa.
 - "naoEncontrado" e "editalSilente": use os nomes dos campos acima
   (ex: "prazoEntrega").
 - Campo sem informação: deixe "" e registre em "naoEncontrado" ou
@@ -29055,11 +29113,20 @@ function licExtrairJson(bruto){
   return { erro:'A resposta veio com o JSON quebrado. Peça ao ChatGPT: "repita apenas o bloco JSON, completo e válido, sem nenhum texto em volta".' };
 }
 
+/* A IA às vezes gruda a origem dentro do valor:
+   "FUNDO MUNICIPAL DO MEIO AMBIENTE (PNCP informado pelo usuário)".
+   Isso sairia impresso na proposta. Tira o parêntese que é comentário,
+   e preserva o que faz parte do nome de verdade ("(FMMA)", "(dez)"). */
+const LIC_RUIDO_NO_VALOR = /\s*\((?:[^()]*\b(?:informad[oa]|conforme informado|pelo usu[áa]rio|segundo o usu[áa]rio|n[ãa]o consta|n[ãa]o informad[oa]|presumid[oa]|estimad[oa] por|inferid[oa]|dedu[zç]id[oa]|assumid[oa])\b[^()]*)\)\s*/gi;
+function licLimparValor(v){
+  if(typeof v !== 'string') return v;
+  return v.replace(LIC_RUIDO_NO_VALOR, ' ').replace(/\s{2,}/g,' ').trim();
+}
+
 function licSimNao(v){
   if(v === true) return 'Sim';
   if(v === false) return 'Não';
-  const s = String(v==null?'':v).trim();
-  return s;
+  return licLimparValor(String(v==null?'':v).trim());
 }
 
 function licLerRespostaGpt(id){
@@ -29104,6 +29171,19 @@ function licAplicarRespostaIA(l, dado){
   l.naoEncontrado = manter(l.naoEncontrado, dado.naoEncontrado);
   l.editalSilente = manter(l.editalSilente, dado.editalSilente);
   l.trechosIlegiveis = manter(l.trechosIlegiveis, dado.trechosIlegiveis);
+  l.emails = manter(l.emails, dado.emails, x=>x && x.endereco);
+  /* Se ele listou os e-mails mas deixou o campo da proposta vazio, a
+     informação existe — é só não ter sido copiada. Foi exatamente o que
+     aconteceu na primeira dispensa de verdade. */
+  if(!leitura.emailProposta){
+    const daProposta = (l.emails||[]).find(e=>/proposta|envio|lance/i.test(e.para||''));
+    if(daProposta && daProposta.endereco){
+      leitura.emailProposta = licLimparValor(daProposta.endereco);
+      if(!l.fontes.emailProposta && daProposta.fonte) l.fontes.emailProposta = daProposta.fonte;
+      preenchidos++;
+    }
+  }
+  l.documentosNaoExigidos = manter(l.documentosNaoExigidos, dado.documentosNaoExigidos);
   l.contradicoes = manter(l.contradicoes, dado.contradicoes, c=>c && c.assunto);
   l.riscos = manter(l.riscos, dado.riscos, x=>x && x.risco);
   l.documentosHabilitacao = manter(l.documentosHabilitacao, dado.documentosHabilitacao, x=>x && x.documento);
@@ -29118,8 +29198,8 @@ function licAplicarRespostaIA(l, dado){
 
   /* campos da proposta que já dá pra adiantar */
   const pc = l.propostaCampos;
-  if(!pc.objeto && d.objeto) pc.objeto = d.objeto;
-  if(!pc.numero && d.numero) pc.numero = d.numero;
+  if(!pc.objeto && d.objeto) pc.objeto = licLimparValor(d.objeto);
+  if(!pc.numero && d.numero) pc.numero = licLimparValor(d.numero);
   if(!pc.prazoEntrega && leitura.prazoEntrega) pc.prazoEntrega = leitura.prazoEntrega;
   if(!pc.prazoPagamento && leitura.prazoPagamento) pc.prazoPagamento = leitura.prazoPagamento;
   if(leitura.criterio){
@@ -29145,8 +29225,9 @@ function licAplicarRespostaIA(l, dado){
       novos++;
     }else atualizados++;
     const qtd = Math.max(1, licNumDireto(ia.quantidade) || 1);
-    if(!it.descricao || it.descricao===l.objeto) it.descricao = ia.descricao;
-    if(!it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = ia.descricao;
+    const descLimpa = licLimparValor(ia.descricao);
+    if(!it.descricao || it.descricao===l.objeto) it.descricao = descLimpa;
+    if(!it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = descLimpa;
     if(!it.unidade || it.unidade==='UND') it.unidade = ia.unidade || 'UND';
     if(!licNumDireto(it.qtd) || it.qtd===1) it.qtd = qtd;
     if(!licNumDireto(it.teto)){
@@ -29302,6 +29383,27 @@ function licLeituraHtml(l){
         </div>
       </div>`).join('')}
 
+    ${(l.emails||[]).length ? `
+      <div style="margin-bottom:12px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+          Os e-mails do edital</div>
+        ${l.emails.map(e=>{
+          const proposta = /proposta/i.test(e.para||'');
+          return `<div class="lic-doc ${proposta?'ok':''}" style="${proposta?'':'opacity:.9;'}">
+            <div><b>${escapeHtml(e.endereco||'')}</b>
+              <small>${escapeHtml(e.para||'finalidade não informada no edital')}${e.fonte?' · '+escapeHtml(e.fonte):''}</small></div>
+            ${proposta?'<span style="font-size:11.5px;color:var(--positive);font-weight:600;">é para onde vai a proposta</span>':''}
+          </div>`;
+        }).join('')}
+        <div class="help-text" style="margin-top:4px;">Confira no edital antes de enviar — mandar pro endereço
+          errado é perder a dispensa com a proposta pronta.</div>
+      </div>`:''}
+
+    ${(l.documentosNaoExigidos||[]).length ? `
+      <div class="help-text" style="margin-bottom:12px;">
+        <b>Este edital NÃO pede:</b> ${l.documentosNaoExigidos.map(d=>escapeHtml(typeof d==='string'?d:(d.documento||''))).join(' · ')}.
+        Não precisa juntar esses papéis.</div>`:''}
+
     ${(l.riscos||[]).length ? `
       <div style="margin-bottom:12px;">
         <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">O que pode custar caro</div>
@@ -29356,58 +29458,89 @@ function licEditarLeitura(id){
   };
 }
 
-/* ---- habilitação: usa a lista da IA quando ela veio ---- */
-function licChecklistHtml(l){
+/* ---- habilitação ----
+   A lista que manda é a DO EDITAL. A nossa pasta de certidões é outra
+   coisa: é o que a gente guarda. Antes as duas saíam coladas e dava pra
+   ler certidão da pasta como se fosse exigência do edital — inclusive a
+   de falência, que este edital nem pediu. */
+function licEstadoCertidao(c){
   const cfg = licCertidoesCfg();
   const hoje = new Date(); hoje.setHours(0,0,0,0);
+  const dados = cfg[c.id] || {};
+  const val = dados.validade;
+  if(!val) return { classe:'falta', estado:'não temos este documento', temos:false };
+  const d = new Date(val+'T00:00:00');
+  const dias = Math.round((d-hoje)/86400000);
+  if(dias < 0) return { classe:'falta', estado:'vencida em '+fmtDate(val), temos:false };
+  if(dias <= 15) return { classe:'aviso', estado:`vence em ${dias} dia${dias===1?'':'s'}`, temos:true };
+  return { classe:'ok', estado:'válida até '+fmtDate(val), temos:true };
+}
 
-  const estadoCertidao = (c)=>{
-    const dados = cfg[c.id] || {};
-    const val = dados.validade;
-    if(!val) return { classe:'falta', estado:'não temos este documento' };
-    const d = new Date(val+'T00:00:00');
-    const dias = Math.round((d-hoje)/86400000);
-    if(dias < 0) return { classe:'falta', estado:'vencida em '+fmtDate(val) };
-    if(dias <= 15) return { classe:'aviso', estado:`vence em ${dias} dia${dias===1?'':'s'}` };
-    return { classe:'ok', estado:'válida até '+fmtDate(val) };
-  };
+/* Casa o nome que o edital usa com a certidão que a gente guarda. */
+function licCertidaoDaPasta(nomeNoEdital){
+  const p = new Set(licPalavras(nomeNoEdital));
+  let melhor = null, melhorPontos = 0;
+  LIC_CERTIDOES.forEach(c=>{
+    const q = licPalavras(c.nome);
+    const batem = q.filter(x=>p.has(x)).length;
+    if(batem > melhorPontos){ melhorPontos = batem; melhor = c; }
+  });
+  return melhorPontos >= 1 ? melhor : null;
+}
 
-  const nossas = LIC_CERTIDOES.map(c=>{
-    const e = estadoCertidao(c);
-    return `<div class="lic-doc ${e.classe}">
-      <div><b>${escapeHtml(c.nome)}</b><small>${escapeHtml(e.estado)}</small></div>
-      <button class="btn btn-sm" onclick="licAbrirCertidoes()">${e.classe==='ok'?'Ver':'Atualizar'}</button>
+function licChecklistHtml(l){
+  const pedidos = l.documentosHabilitacao || [];
+  const minhaPasta = LIC_CERTIDOES.map(c=>({ c, e: licEstadoCertidao(c) }));
+
+  /* Sem a leitura do edital ainda: mostra só a pasta, dizendo o que é. */
+  if(pedidos.length === 0){
+    return `<div class="help-text" style="margin-top:0;">
+        O edital ainda não foi lido, então aqui está <b>a sua pasta</b> — não a exigência desta dispensa.
+        Quando a resposta do ChatGPT chegar, a lista do edital aparece no lugar.</div>
+      ${minhaPasta.map(({c,e})=>`<div class="lic-doc ${e.classe}">
+        <div><b>${escapeHtml(c.nome)}</b><small>${escapeHtml(e.estado)}</small></div>
+        <button class="btn btn-sm" onclick="licAbrirCertidoes()">${e.temos?'Ver':'Atualizar'}</button>
+      </div>`).join('')}`;
+  }
+
+  /* Com a leitura: a lista do edital é a que manda. */
+  const casados = new Set();
+  const linhas = pedidos.map(d=>{
+    const daPasta = licCertidaoDaPasta(d.documento);
+    if(daPasta) casados.add(daPasta.id);
+    const e = daPasta ? licEstadoCertidao(daPasta) : null;
+    const classe = !daPasta ? 'falta' : e.classe;
+    const situacao = !daPasta ? 'não está na sua pasta de certidões'
+                   : e.temos ? `você tem — ${e.estado}`
+                   : `você guarda esta, mas ${e.estado}`;
+    return `<div class="lic-doc ${classe}">
+      <div><b>${escapeHtml(d.documento)}</b>
+        <small>${escapeHtml(situacao)}${d.fonte?` · <span style="color:var(--ink-faint);">${escapeHtml(d.fonte)}</span>`:''}</small></div>
+      ${classe==='ok' ? '<span style="color:var(--positive);font-size:13px;">✓</span>'
+                      : `<button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 ${daPasta?'Atualizar':'Guardar'}</button>`}
     </div>`;
   }).join('');
 
-  const pedidos = (l.documentosHabilitacao||[]);
-  if(pedidos.length===0){
-    return nossas + `<div class="help-text" style="margin-top:6px;">
-      Esta é a sua pasta de certidões. Quando a resposta do ChatGPT chegar, o que o edital pedir a mais aparece aqui embaixo.</div>`;
-  }
+  const faltando = pedidos.filter(d=>{
+    const c = licCertidaoDaPasta(d.documento);
+    return !c || !licEstadoCertidao(c).temos;
+  }).length;
 
-  /* casa o que o edital pede com o que a gente tem */
-  const temParecida = (nome)=>{
-    const p = licPalavras(nome);
-    return LIC_CERTIDOES.some(c=>{
-      const q = licPalavras(c.nome);
-      return p.some(x=>q.includes(x));
-    });
-  };
-  const extras = pedidos.filter(p=>!temParecida(p.documento));
+  return `
+    <div class="${faltando>0?'lic-res nao':'lic-res ok'}" style="margin-bottom:10px;">
+      ${faltando>0
+        ? `<b>⚠️ ${faltando} de ${pedidos.length} documento${pedidos.length===1?'':'s'} que o edital pede não está pronto.</b>
+           <div style="margin-top:4px;">Resolva antes de enviar — é o que mais reprova proposta boa.</div>`
+        : `✓ Você tem os ${pedidos.length} documento${pedidos.length===1?'':'s'} que este edital pede.`}
+    </div>
 
-  return nossas + `
-    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:14px 0 6px;">
-      O edital pede ${pedidos.length} documento${pedidos.length===1?'':'s'}${extras.length?` · ${extras.length} fora da sua pasta`:''}</div>
-    ${pedidos.map(p=>{
-      const temos = temParecida(p.documento);
-      return `<div class="lic-doc ${temos?'ok':'falta'}">
-        <div><b>${escapeHtml(p.documento)}</b>
-          <small>${temos?'você já guarda esse':'não está na sua pasta de certidões'}${p.fonte?' · '+escapeHtml(p.fonte):''}</small></div>
-        ${temos?'<span style="color:var(--positive);font-size:12px;">✓</span>'
-               :`<button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 Guardar</button>`}
-      </div>`;
-    }).join('')}`;
+    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 6px;">
+      O que ESTE edital pede</div>
+    ${linhas}
+
+    <div class="help-text" style="margin-top:8px;">
+      Só o que ESTE edital pede, com a cláusula de onde saiu. Verde é o que você já tem guardado,
+      vermelho é o que falta. A sua pasta inteira fica em 📎 Certidões.</div>`;
 }
 
 /* ---- exigências: agora por item ---- */
