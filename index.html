@@ -32687,12 +32687,14 @@ function licLigarDetalhe(){
     const campo = inp.dataset.taxa;
     const numerico = ['impostoPct','comissaoPct','freteFinal'].includes(campo);
     const aplicar = ()=>{
-      const antes = JSON.stringify([l.impostoPct, l.comissaoPct, l.comissaoVendedor, l.freteFinal]);
-      l[campo] = numerico ? licNumDireto(inp.value) : inp.value;
-      if(campo==='comissaoVendedor' && inp.value && !licNumDireto(l.comissaoPct)) l.comissaoPct = 3;
-      if(inp.dataset.moeda) inp.value = licMoedaCampo(l[campo]);
-      if(inp.dataset.pct)   inp.value = licPctCampo(l[campo]);
-      if(JSON.stringify([l.impostoPct, l.comissaoPct, l.comissaoVendedor, l.freteFinal])===antes) return;
+      const alvo = licAchar(l.id);
+      if(!alvo){ renderPortalLicitacoes(); return; }
+      const antes = JSON.stringify([alvo.impostoPct, alvo.comissaoPct, alvo.comissaoVendedor, alvo.freteFinal]);
+      alvo[campo] = numerico ? licNumDireto(inp.value) : inp.value;
+      if(campo==='comissaoVendedor' && inp.value && !licNumDireto(alvo.comissaoPct)) alvo.comissaoPct = 3;
+      if(inp.dataset.moeda) inp.value = licMoedaCampo(alvo[campo]);
+      if(inp.dataset.pct)   inp.value = licPctCampo(alvo[campo]);
+      if(JSON.stringify([alvo.impostoPct, alvo.comissaoPct, alvo.comissaoVendedor, alvo.freteFinal])===antes) return;
       saveState();
       renderPortalLicitacoes();
     };
@@ -32705,12 +32707,23 @@ function licLigarDetalhe(){
   /* campos dos itens da precificação — salva ao sair do campo e redesenha
      só quando o número muda (pra não roubar o foco a cada tecla) */
   document.querySelectorAll('.lic-item').forEach(caixa=>{
-    const item = l.itens.find(x=>x.id===caixa.dataset.item);
-    if(!item) return;
+    const itemId = caixa.dataset.item;
+    if(!(l.itens||[]).some(x=>x.id===itemId)) return;
     caixa.querySelectorAll('[data-campo]').forEach(inp2=>{
       const campo = inp2.dataset.campo;
       const numerico = ['qtd','teto','custo','freteNos','precoUnit'].includes(campo);
       const aplicar = ()=>{
+        /* Pega o item do STATE AGORA, não a referência de quando a tela foi
+           desenhada. Se a nuvem baixou uma versão do outro computador no meio
+           da digitação, o objeto antigo virou órfão: gravar nele gravava no
+           nada e o valor voltava zerado ao redesenhar. */
+        const alvo = licAchar(l.id);
+        const item = alvo ? (alvo.itens||[]).find(x=>x.id===itemId) : null;
+        if(!item){
+          showToast('Este item mudou enquanto você digitava — confira o valor.','error');
+          renderPortalLicitacoes();
+          return;
+        }
         const antes = JSON.stringify(item);
         item[campo] = numerico ? licNumDireto(inp2.value)
                    : campo==='unidade' ? licUnidadeLimpa(inp2.value)
@@ -32732,11 +32745,14 @@ function licLigarDetalhe(){
         inp2.addEventListener('input', ()=>{
           clearTimeout(t);
           t = setTimeout(()=>{
+            const alvo = licAchar(l.id);
+            const item = alvo ? (alvo.itens||[]).find(x=>x.id===itemId) : null;
+            if(!item) return;
             item[campo] = inp2.value;
             saveState();
             const pos = inp2.selectionStart;
             renderPortalLicitacoes();
-            const novo = document.querySelector(`.lic-item[data-item="${item.id}"] [data-campo="descricaoProposta"]`);
+            const novo = document.querySelector(`.lic-item[data-item="${itemId}"] [data-campo="descricaoProposta"]`);
             if(novo){ novo.focus(); try{ novo.setSelectionRange(pos,pos); }catch(e){} }
           }, 500);
         });
@@ -44269,6 +44285,11 @@ function armazBarra(usado, limite, cor){
   </div>`;
 }
 
+/* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
+   se o navegador está mesmo com a versão nova: se a data aqui não for a
+   que eu disse, é cache — Ctrl+Shift+R resolve. */
+const SISTEMA_VERSAO = '20/10/2026 23:31';
+
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
   if(!box) return;
@@ -44286,6 +44307,18 @@ async function renderArmazenamento(){
   const outrasChaves = m.local.porChave.filter(k=>k.chave !== STORAGE_KEY);
 
   box.innerHTML = `
+    <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div>
+          <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);">Versão do sistema</div>
+          <div style="font-size:15px;font-weight:600;font-family:var(--font-num);">${SISTEMA_VERSAO}</div>
+          <div class="help-text" style="margin:2px 0 0;">Se esta data for mais antiga que a da última atualização,
+            o navegador está com uma cópia velha: segure <b>Ctrl + Shift + R</b> pra recarregar de verdade.</div>
+        </div>
+        <button class="btn btn-sm" onclick="location.reload(true)">↻ Recarregar</button>
+      </div>
+    </div>
+
     ${pct >= 70 ? `<div class="lic-doc ${pct>=85?'falta':'aviso'}" style="display:block;margin-bottom:12px;">
       <b>${pct>=85?'⛔':'⚠️'} O armazenamento deste navegador está em ${pct.toFixed(0)}%</b>
       <small>Quando ele enche, o sistema para de salvar — e você perde o que digitou sem aviso. Limpe algo abaixo.</small>
@@ -44800,6 +44833,9 @@ function nuvemTrabalhoEmAndamento(){
     // o cursor está dentro de um campo: ela está digitando AGORA
     const foco = document.activeElement;
     if(foco && ['INPUT','SELECT','TEXTAREA'].includes(foco.tagName)) return true;
+    // licitação aberta pra trabalhar: precificar, montar proposta, analisar.
+    // Se a nuvem trocar o registro aqui, o que ela está digitando se perde.
+    if(typeof licAberta !== 'undefined' && licAberta) return true;
     // cliente já escolhido num formulário aberto, mesmo sem item ainda
     const orcCli = document.getElementById('orc-cliente');
     if(orcCli && orcCli.value) return true;
