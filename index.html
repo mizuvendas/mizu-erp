@@ -1374,14 +1374,18 @@ table.data-table{ width:100%; font-size:13px; }
       <div class="page-header">
         <div>
           <h2>Licitações</h2>
-          <p class="subtitle">Funil completo: do potencial até a entrega</p>
+          <p class="subtitle">Da dispensa baixada no PNCP até a entrega — tudo aqui dentro</p>
         </div>
         <div class="header-actions">
           <button class="btn" id="btn-config-licitacoes" title="Área de atendimento e modalidades">⚙️</button>
-          <button class="btn" id="btn-buscar-oportunidades">🔎 Buscar Oportunidades</button>
-          <button class="btn btn-primary" id="btn-nova-licitacao">+ Nova Licitação</button>
+          <button class="btn" id="btn-buscar-oportunidades" style="display:none;">🔎 Buscar Oportunidades</button>
+          <button class="btn" id="btn-nova-licitacao" style="display:none;">+ Nova Licitação</button>
         </div>
       </div>
+      <!-- Bloco antigo (busca online + revisão em tabela). O portal novo
+           desenha tudo em #licitacoes-content; estes elementos continuam no
+           DOM só porque buscarOportunidadesPNCP() escreve neles. -->
+      <div id="lic-legado" style="display:none;">
       <div class="card" style="padding:12px 16px;margin-bottom:10px;">
         <div style="display:flex;gap:16px;flex-wrap:wrap;align-items:flex-end;">
           <div class="field" style="margin:0;">
@@ -1424,6 +1428,7 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
         <div id="rev-tabela-body"></div>
       </div>
+      </div><!-- /lic-legado -->
       <div id="licitacoes-busca-status" style="font-size:12.5px;color:var(--ink-faint);text-align:right;margin:-6px 0 8px;"></div>
       <div id="licitacoes-busca-resumo" style="display:none;"></div>
       <div id="licitacoes-content"></div>
@@ -26668,6 +26673,2370 @@ document.getElementById('btn-nova-licitacao').addEventListener('click', ()=>abri
 document.getElementById('btn-config-licitacoes').addEventListener('click', abrirConfigLicitacoes);
 document.getElementById('btn-buscar-oportunidades').addEventListener('click', buscarOportunidadesPNCP);
 RENDERERS.licitacoes = renderLicitacoes;
+
+
+/* =========================================================
+   MÓDULO: PORTAL DE LICITAÇÕES  (reformulação completa)
+
+   Um menu só. Cinco abas, nessa ordem, que é a ordem do trabalho:
+
+     Oportunidades → Em análise → Precificação → Propostas → Produtos
+
+   O que o portal NÃO faz, de propósito:
+   - não cadastra produto de licitação no estoque da loja. O item
+     vive dentro da licitação (lic.itens) e só aparece no orçamento
+     gerado e no histórico de Produtos de licitação. Ver licItemParaCarrinho().
+   - não busca sozinho no PNCP. Ela baixa o arquivo lá e importa aqui
+     (o botão "Buscar no PNCP" continua existindo, mas é opcional).
+   ========================================================= */
+
+const LIC_ABAS = [
+  { id:'oportunidades', rotulo:'Oportunidades' },
+  { id:'analise',       rotulo:'Em análise' },
+  { id:'precificacao',  rotulo:'Precificação' },
+  { id:'propostas',     rotulo:'Propostas' },
+  { id:'produtos',      rotulo:'Produtos de licitação' }
+];
+
+/* Etapa de cada licitação dentro do portal. A aba onde ela aparece sai
+   daqui — não existe um segundo campo de status pra desencontrar. */
+const LIC_ETAPAS = {
+  analise:      { aba:'analise',      n:1, rotulo:'Em análise' },
+  precificacao: { aba:'precificacao', n:2, rotulo:'Precificação' },
+  proposta:     { aba:'propostas',    n:3, rotulo:'Montando a proposta' },
+  enviada:      { aba:'propostas',    n:3, rotulo:'Enviada — aguardando retorno' },
+  ganhou:       { aba:'propostas',    n:3, rotulo:'Ganhamos' },
+  perdeu:       { aba:'propostas',    n:3, rotulo:'Perdemos' },
+  entregue:     { aba:'propostas',    n:3, rotulo:'Entregue' }
+};
+
+let licAba = 'oportunidades';
+let licAberta = null;   // id da licitação aberta (tela de processo/precificação/proposta)
+let licTela = null;     // null = lista da aba | 'processo' | 'precificar' | 'proposta'
+let licSelecionadas = new Set();
+
+/* ---------------------------------------------------------
+   Estilo do portal. Injetado uma vez, usa os tokens do sistema.
+   As cores por item da precificação vivem aqui (lic-faixa-1..6) —
+   ela pediu pra conseguir enxergar onde um item acaba e o outro
+   começa sem ter que ler.
+   --------------------------------------------------------- */
+function licInjetarEstilo(){
+  if(document.getElementById('estilo-portal-licitacoes')) return;
+  const st = document.createElement('style');
+  st.id = 'estilo-portal-licitacoes';
+  st.textContent = `
+  .lic-abas{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin:0 0 14px;}
+  .lic-abas button{background:none;border:none;border-bottom:3px solid transparent;padding:9px 14px;
+    font:inherit;font-size:13.5px;color:var(--ink-soft);cursor:pointer;border-radius:0;}
+  .lic-abas button:hover{color:var(--ink);}
+  .lic-abas button.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600;}
+  .lic-abas .n{display:inline-block;min-width:18px;padding:1px 5px;margin-left:5px;border-radius:9px;
+    background:var(--border);color:var(--ink-soft);font-size:11px;font-weight:600;text-align:center;}
+  .lic-abas button.on .n{background:var(--primary-soft);color:var(--primary);}
+
+  .lic-topo{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;
+    background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;}
+  .lic-topo .etapa{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);}
+  .lic-topo h3{margin:2px 0 2px;font-size:16px;}
+  .lic-topo .sub{font-size:12.5px;color:var(--ink-soft);}
+  .lic-topo .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+
+  .lic-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:12px 14px;margin-bottom:10px;}
+  .lic-card.sel{border-color:var(--primary);box-shadow:inset 0 0 0 1px var(--primary);}
+  .lic-card .obj{font-weight:600;font-size:14px;line-height:1.35;margin:2px 0 3px;}
+  .lic-card .meta{font-size:12.5px;color:var(--ink-soft);}
+  .lic-card .ctrl{font-size:11px;color:var(--ink-faint);font-family:var(--font-num);}
+  .lic-linha{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap;}
+  .lic-linha .esq{flex:1;min-width:260px;}
+  .lic-linha .dir{display:flex;flex-direction:column;gap:6px;align-items:flex-end;min-width:150px;}
+  .lic-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px;}
+  .lic-tag{font-size:11px;padding:2px 8px;border-radius:20px;border:1px solid var(--border);color:var(--ink-soft);}
+  .lic-tag.perto{border-color:var(--positive);color:var(--positive);background:var(--positive-soft);}
+  .lic-links{display:flex;gap:12px;flex-wrap:wrap;margin-top:6px;font-size:12px;}
+  .lic-links a{color:var(--primary);text-decoration:none;}
+  .lic-links a:hover{text-decoration:underline;}
+  .lic-prazo{font-size:12.5px;color:var(--ink-soft);text-align:right;}
+  .lic-prazo b{color:var(--ink);}
+  .lic-cron{display:inline-block;font-size:11px;padding:2px 8px;border-radius:20px;
+    background:var(--warning-soft);color:var(--warning);}
+  .lic-cron.urg{background:var(--negative-soft);color:var(--negative);}
+  .lic-cron.fim{background:var(--border);color:var(--ink-faint);}
+  .lic-valor{font-size:17px;font-weight:600;font-family:var(--font-num);}
+
+  .lic-vazio{text-align:center;color:var(--ink-faint);font-size:13px;padding:28px 10px;}
+
+  /* ---- precificação: um tom por item ---- */
+  .lic-item{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;}
+  .lic-item > .cab{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;
+    flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);}
+  .lic-item > .corpo{padding:12px 14px;}
+  .lic-item .selo{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;
+    padding:3px 9px;border-radius:5px;color:#fff;}
+  .lic-item .teto{text-align:right;font-size:12px;color:var(--ink-soft);}
+  .lic-item .teto b{display:block;font-size:16px;font-family:var(--font-num);color:var(--ink);}
+  .lic-f1{border-left:5px solid #0081A7;} .lic-f1 .cab{background:#EAF6F9;} .lic-f1 .selo{background:#0081A7;}
+  .lic-f2{border-left:5px solid #2E7D5B;} .lic-f2 .cab{background:#E7F4EE;} .lic-f2 .selo{background:#2E7D5B;}
+  .lic-f3{border-left:5px solid #8A5BB8;} .lic-f3 .cab{background:#F1EAF8;} .lic-f3 .selo{background:#8A5BB8;}
+  .lic-f4{border-left:5px solid #C98A2C;} .lic-f4 .cab{background:#FBF1E2;} .lic-f4 .selo{background:#C98A2C;}
+  .lic-f5{border-left:5px solid #C4483D;} .lic-f5 .cab{background:#FBEAE8;} .lic-f5 .selo{background:#C4483D;}
+  .lic-f6{border-left:5px solid #1B4B5A;} .lic-f6 .cab{background:#E8EEF0;} .lic-f6 .selo{background:#1B4B5A;}
+
+  .lic-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:12px;}
+  .lic-grade label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:3px;}
+  .lic-grade input,.lic-grade select{width:100%;padding:7px 9px;border:1px solid var(--border);
+    border-radius:var(--radius-sm);font:inherit;font-size:13px;background:#fff;color:var(--ink);}
+  .lic-grade .dica{font-size:11px;color:var(--ink-faint);margin-top:3px;}
+  .lic-conta{display:grid;grid-template-columns:1fr 1fr;gap:12px;}
+  @media(max-width:860px){ .lic-conta{grid-template-columns:1fr;} }
+  .lic-conta table{width:100%;border-collapse:collapse;font-size:13px;}
+  .lic-conta td{padding:6px 9px;border-bottom:1px solid var(--border);}
+  .lic-conta td:last-child{text-align:right;font-family:var(--font-num);}
+  .lic-conta tr:last-child td{border-bottom:none;font-weight:600;background:#FAFBFC;}
+  .lic-res{border-radius:var(--radius);padding:12px 14px;font-size:13px;}
+  .lic-res.ok{background:var(--positive-soft);border:1px solid var(--positive);}
+  .lic-res.nao{background:var(--negative-soft);border:1px solid var(--negative);}
+  .lic-res .big{font-size:24px;font-weight:700;font-family:var(--font-num);margin:2px 0 6px;}
+  .lic-res.ok .big{color:var(--positive);} .lic-res.nao .big{color:var(--negative);}
+
+  .lic-achado{background:var(--primary-soft);border:1px solid var(--primary);border-radius:var(--radius-sm);
+    padding:9px 12px;font-size:12.5px;margin:-4px 0 12px;}
+  .lic-achado b{color:var(--primary-escuro);}
+  .lic-achado .hist{margin-top:5px;color:var(--ink-soft);}
+
+  .lic-passo{font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);
+    margin:18px 0 6px;padding-top:14px;border-top:1px solid var(--border);}
+  .lic-passo:first-child{border-top:none;padding-top:0;margin-top:0;}
+
+  .lic-doc{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;
+    border:1px solid var(--border);border-left-width:4px;border-radius:var(--radius-sm);
+    padding:8px 12px;margin-bottom:6px;font-size:13px;}
+  .lic-doc.ok{border-left-color:var(--positive);background:var(--positive-soft);}
+  .lic-doc.aviso{border-left-color:var(--warning);background:var(--warning-soft);}
+  .lic-doc.falta{border-left-color:var(--negative);background:var(--negative-soft);}
+  .lic-doc small{display:block;color:var(--ink-soft);font-size:11.5px;}
+
+  .lic-solta{border:2px dashed var(--primary);border-radius:var(--radius);background:var(--primary-soft);
+    padding:22px;text-align:center;font-size:13px;color:var(--ink-soft);margin-bottom:10px;}
+  .lic-solta.hover{background:#D7EDF4;}
+
+  .lic-comp{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .lic-comp th{background:var(--primary-escuro);color:#fff;text-align:left;padding:8px 10px;font-size:11px;
+    letter-spacing:.04em;text-transform:uppercase;font-weight:600;}
+  .lic-comp td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top;}
+  .lic-comp .atende{color:var(--positive);font-weight:600;}
+  .lic-comp .naoatende{color:var(--negative);font-weight:600;}
+  .lic-comp .confirmar{color:var(--warning);font-weight:600;}
+  .lic-comp tr.par td{background:#FAFBFC;}
+  `;
+  document.head.appendChild(st);
+}
+
+/* ---------------------------------------------------------
+   Normalização — campos novos entram sem quebrar licitação antiga
+   --------------------------------------------------------- */
+function licNormalizar(l){
+  if(!l) return l;
+  if(!l.etapa){
+    /* vindo do funil antigo: traduz o status do kanban pra etapa nova */
+    const mapa = { 'Potencial':'analise', 'Participando':'proposta', 'Aguardando Resultado':'enviada',
+      'Ganhamos':'ganhou', 'Comprando Itens':'ganhou', 'Entregue':'entregue', 'Perdemos':'perdeu' };
+    l.etapa = mapa[l.status] || 'analise';
+  }
+  if(!Array.isArray(l.itens)) l.itens = [];
+  if(!Array.isArray(l.arquivos)) l.arquivos = [];
+  if(!Array.isArray(l.exigencias)) l.exigencias = [];
+  if(!Array.isArray(l.historico)) l.historico = [];
+  if(!l.leitura || typeof l.leitura !== 'object') l.leitura = {};
+  if(!l.propostaCampos || typeof l.propostaCampos !== 'object') l.propostaCampos = {};
+  if(!l.certidoes || typeof l.certidoes !== 'object') l.certidoes = {};
+  if(!l.criterio) l.criterio = 'item';
+  if(l.comparacaoTexto === undefined) l.comparacaoTexto = '';
+  if(!l.comparacao) l.comparacao = null;
+  return l;
+}
+function licTodas(){ (STATE.licitacoes||[]).forEach(licNormalizar); return STATE.licitacoes||[]; }
+function licPorEtapa(etapas){ return licTodas().filter(l=>etapas.includes(l.etapa)); }
+function licAchar(id){ return licNormalizar((STATE.licitacoes||[]).find(l=>l.id===id)); }
+
+function licRegistrar(l, texto){
+  l.historico.unshift({ quando:new Date().toISOString(), texto });
+  if(l.historico.length>200) l.historico.length = 200;
+}
+
+/* ---------------------------------------------------------
+   Números
+   --------------------------------------------------------- */
+function licNum(v){ const n = parseFloat(String(v==null?'':v).replace(/\./g,'').replace(',','.')); return isNaN(n)?0:n; }
+function licNumDireto(v){ const n = parseFloat(v); return isNaN(n)?0:n; }
+
+/* Custo total de UM item, com tudo o que ela mandou entrar na conta:
+   produto, acessórios obrigatórios, frete até nós, frete até o cliente,
+   imposto (% sobre a venda) e comissão do vendedor (% sobre a venda). */
+function licCustoItem(it){
+  const qtd = Math.max(1, licNumDireto(it.qtd) || 1);
+  const produto = licNumDireto(it.custo) * qtd;
+  const acessorios = licNumDireto(it.acessorios);
+  const freteNos = licNumDireto(it.freteNos);
+  const freteCliente = licNumDireto(it.freteCliente);
+  const venda = licNumDireto(it.precoVenda);
+  const imposto = venda * (licNumDireto(it.impostoPct)/100);
+  const comissao = venda * (licNumDireto(it.comissaoPct)/100);
+  const total = produto + acessorios + freteNos + freteCliente + imposto + comissao;
+  return { qtd, produto, acessorios, freteNos, freteCliente, imposto, comissao, total,
+           lucro: venda - total,
+           margem: venda>0 ? ((venda-total)/venda*100) : 0,
+           /* custo que não depende do preço de venda — serve pra dizer o piso */
+           fixo: produto + acessorios + freteNos + freteCliente,
+           percentual: (licNumDireto(it.impostoPct)+licNumDireto(it.comissaoPct))/100 };
+}
+/* Menor preço de venda que ainda não dá prejuízo, dado que imposto e
+   comissão saem do próprio preço: piso = fixo / (1 - %) */
+function licPisoItem(it){
+  const c = licCustoItem(it);
+  const resto = 1 - c.percentual;
+  if(resto <= 0) return Infinity;
+  return c.fixo / resto;
+}
+function licTotalLicitacao(l){
+  let venda=0, custo=0, teto=0;
+  (l.itens||[]).forEach(it=>{
+    venda += licNumDireto(it.precoVenda);
+    custo += licCustoItem(it).total;
+    teto  += licNumDireto(it.teto);
+  });
+  return { venda, custo, teto, lucro: venda-custo, margem: venda>0?((venda-custo)/venda*100):0 };
+}
+
+/* ---------------------------------------------------------
+   Prazo / cronômetro
+   --------------------------------------------------------- */
+function licPrazoInfo(l){
+  const iso = l.dataEncerramentoProposta || l.dataAbertura || null;
+  if(!iso) return { texto:'sem prazo informado', classe:'fim', encerrada:false, quando:null };
+  const d = new Date(iso);
+  if(isNaN(d.getTime())) return { texto:'sem prazo informado', classe:'fim', encerrada:false, quando:null };
+  const ms = d.getTime() - Date.now();
+  if(ms <= 0) return { texto:'encerrada', classe:'fim', encerrada:true, quando:d };
+  const horas = ms/3600000;
+  if(horas < 24) return { texto:`faltam ${Math.max(1,Math.round(horas))} h`, classe:'urg', encerrada:false, quando:d };
+  const dias = Math.round(horas/24);
+  return { texto:`faltam ${dias} dia${dias===1?'':'s'}`, classe: dias<=2?'urg':'', encerrada:false, quando:d };
+}
+function licDataHora(d){
+  if(!d) return '—';
+  return d.toLocaleDateString('pt-BR') + ', ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+}
+
+/* =========================================================
+   HISTÓRICO POR PRODUTO
+   Ela foi clara: quando perde, o que interessa não é o histórico
+   daquela prefeitura — é o histórico DAQUELE PRODUTO. "Tela
+   interativa Samsung: da última vez o custo foi R$ 15.690 e a
+   gente vendeu por tanto."
+   A chave é descrição normalizada + marca, não um id de cadastro,
+   porque esses produtos de propósito não ficam cadastrados.
+   ========================================================= */
+function licChaveProduto(descricao, marca){
+  const limpar = (s)=>String(s||'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
+  return limpar(descricao) + '|' + limpar(marca);
+}
+/* Palavras com peso: ignora as curtas e as que não dizem nada. */
+function licPalavras(txt){
+  const paradas = new Set(['DE','DA','DO','DOS','DAS','COM','SEM','PARA','POR','EM','UM','UMA','E','OU','NA','NO','AO']);
+  return String(txt||'').normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase().replace(/[^A-Z0-9 ]/g,' ').split(/\s+/)
+    .filter(p=>p.length>=3 && !paradas.has(p));
+}
+
+/* Varre TODAS as licitações e devolve uma entrada por produto, com o
+   histórico completo daquele produto em ordem (mais novo primeiro). */
+function licHistoricoProdutos(){
+  const mapa = new Map();
+  licTodas().forEach(l=>{
+    (l.itens||[]).forEach(it=>{
+      const desc = it.descricaoProposta || it.descricao || '';
+      if(!desc.trim()) return;
+      const chave = licChaveProduto(desc, it.marca);
+      if(!mapa.has(chave)){
+        mapa.set(chave, { chave, nome: desc, marca: it.marca||'', usos: [] });
+      }
+      const c = licCustoItem(it);
+      mapa.get(chave).usos.push({
+        licitacaoId: l.id,
+        itemId: it.id,
+        numero: l.numero || (l.propostaCampos && l.propostaCampos.numero) || '',
+        modalidade: (l.propostaCampos && l.propostaCampos.modalidade) || l.modalidadeNome || '',
+        data: l.dataProposta || l.dataAbertura || (l.criadoEm||'').slice(0,10) || '',
+        orgao: l.orgao || '',
+        cliente: l.clienteId ? ((STATE.clientes.find(c=>c.id===l.clienteId)||{}).nome || '') : '',
+        vendedor: l.vendedor || '',
+        qtd: c.qtd,
+        custoUnit: licNumDireto(it.custo),
+        custoTotal: c.total,
+        precoVenda: licNumDireto(it.precoVenda),
+        teto: licNumDireto(it.teto),
+        margem: c.margem,
+        fornecedor: it.contatoFornecedor || it.obsCompra || '',
+        link: it.linkFornecedor || '',
+        etapa: l.etapa,
+        resultado: l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
+                 : l.etapa==='perdeu' ? 'perdeu'
+                 : l.etapa==='enviada' ? 'enviado' : 'pendente'
+      });
+    });
+  });
+  const lista = [...mapa.values()];
+  lista.forEach(p=>p.usos.sort((a,b)=> String(b.data).localeCompare(String(a.data))));
+  lista.sort((a,b)=> String((b.usos[0]||{}).data||'').localeCompare(String((a.usos[0]||{}).data||'')));
+  return lista;
+}
+
+/* Procura, pela descrição digitada, produtos que já passaram por aqui
+   antes — e também produto da loja com nome parecido, só pra avisar.
+   É isso que aparece embaixo do campo de descrição na precificação. */
+function licProcurarParecidos(descricao, marca, ignorarItemId){
+  const alvo = licPalavras(descricao + ' ' + (marca||''));
+  if(alvo.length === 0) return { licitacao: [], loja: [] };
+  const alvoSet = new Set(alvo);
+
+  const pontuar = (texto)=>{
+    const p = licPalavras(texto);
+    if(p.length===0) return 0;
+    let batem = 0;
+    const vistas = new Set();
+    p.forEach(x=>{ if(alvoSet.has(x) && !vistas.has(x)){ vistas.add(x); batem++; } });
+    return batem / Math.max(alvo.length, 1);
+  };
+
+  /* O próprio item que está sendo digitado não conta como "já existe" —
+     ele acabou de ser salvo e apareceria sozinho no histórico. */
+  const emLicitacao = licHistoricoProdutos()
+    .map(p=>({ p: { ...p, usos: p.usos.filter(u=>u.itemId !== ignorarItemId) },
+               score: pontuar(p.nome + ' ' + p.marca) }))
+    .filter(x=>x.score >= 0.5 && x.p.usos.length > 0)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,3)
+    .map(x=>x.p);
+
+  const naLoja = (STATE.produtos||[])
+    .map(pr=>({ pr, score: pontuar(pr.nome + ' ' + (pr.marca||'')) }))
+    .filter(x=>x.score >= 0.6)
+    .sort((a,b)=>b.score-a.score)
+    .slice(0,2)
+    .map(x=>x.pr);
+
+  return { licitacao: emLicitacao, loja: naLoja };
+}
+
+/* =========================================================
+   RENDER PRINCIPAL
+   ========================================================= */
+function renderPortalLicitacoes(){
+  licInjetarEstilo();
+  inicializarFiltrosDataLicitacoes();
+  const box = document.getElementById('licitacoes-content');
+  if(!box) return;
+
+  /* Se a licitação aberta sumiu, volta pra lista */
+  if(licAberta && !licAchar(licAberta)){ licAberta = null; licTela = null; }
+
+  if(licTela && licAberta){
+    box.innerHTML = licTelaDetalhe();
+    licLigarDetalhe();
+    return;
+  }
+
+  const cont = {
+    oportunidades: (STATE.licitacoesRevisao||[]).length,
+    analise: licPorEtapa(['analise']).length,
+    precificacao: licPorEtapa(['precificacao']).length,
+    propostas: licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue']).length,
+    produtos: licHistoricoProdutos().length
+  };
+
+  const painel = {
+    oportunidades: licPainelOportunidades,
+    analise: licPainelAnalise,
+    precificacao: licPainelPrecificacao,
+    propostas: licPainelPropostas,
+    produtos: licPainelProdutos
+  }[licAba] || licPainelOportunidades;
+
+  box.innerHTML = `
+    ${licAvisoCertidoes()}
+    <div class="lic-abas">
+      ${LIC_ABAS.map(a=>`
+        <button class="${a.id===licAba?'on':''}" onclick="licIrAba('${a.id}')">
+          ${escapeHtml(a.rotulo)}<span class="n">${cont[a.id]}</span>
+        </button>`).join('')}
+    </div>
+    ${painel()}
+  `;
+  licLigarPainel();
+}
+
+function licIrAba(aba){
+  licAba = aba; licAberta = null; licTela = null; licSelecionadas = new Set();
+  renderPortalLicitacoes();
+}
+function licAbrir(id, tela){
+  licAberta = id; licTela = tela || 'processo';
+  renderPortalLicitacoes();
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+function licVoltarLista(){
+  const l = licAchar(licAberta);
+  licAba = l ? (LIC_ETAPAS[l.etapa]||{}).aba || 'analise' : licAba;
+  licAberta = null; licTela = null;
+  renderPortalLicitacoes();
+}
+
+/* ---- aviso de certidão vencendo, fica acima das abas ---- */
+const LIC_CERTIDOES = [
+  { id:'rfb',   nome:'Certidão conjunta RFB / PGFN' },
+  { id:'fgts',  nome:'CRF — FGTS' },
+  { id:'cndt',  nome:'CNDT — Justiça do Trabalho' },
+  { id:'est',   nome:'Certidão estadual' },
+  { id:'mun',   nome:'Certidão municipal' },
+  { id:'falen', nome:'Certidão de falência / concordata' }
+];
+function licCertidoesCfg(){
+  if(!STATE.config.certidoes) STATE.config.certidoes = {};
+  return STATE.config.certidoes;
+}
+function licCertidoesVencendo(){
+  const cfg = licCertidoesCfg();
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  let vencendo = 0;
+  LIC_CERTIDOES.forEach(c=>{
+    const val = cfg[c.id] && cfg[c.id].validade;
+    if(!val) return;
+    const d = new Date(val+'T00:00:00');
+    if(isNaN(d.getTime())) return;
+    const dias = Math.round((d-hoje)/86400000);
+    if(dias <= 15) vencendo++;
+  });
+  return vencendo;
+}
+function licAvisoCertidoes(){
+  const n = licCertidoesVencendo();
+  if(n===0) return '';
+  return `<div class="lic-doc aviso" style="margin-bottom:12px;">
+    <div><b>⚠️ ${n} certidão${n===1?'':'ões'} vencendo ou vencida${n===1?'':'s'}</b>
+      <small>Atualize antes de participar — a proposta cai na habilitação.</small></div>
+    <button class="btn btn-sm" onclick="licAbrirCertidoes()">Ver certidões</button>
+  </div>`;
+}
+
+/* =========================================================
+   ABA 1 — OPORTUNIDADES (triagem)
+   ========================================================= */
+function licDescartadas(){
+  if(!Array.isArray(STATE.licitacoesDescartadas)) STATE.licitacoesDescartadas = [];
+  return STATE.licitacoesDescartadas;
+}
+function licChaveOportunidade(o){
+  return o.numeroControlePNCP || ((o.orgao||'') + '|' + (o.numero||'') + '|' + (o.objeto||'').slice(0,60));
+}
+
+function licPainelOportunidades(){
+  const lista = (STATE.licitacoesRevisao||[]).slice();
+  const busca = (licFiltroBusca||'').toLowerCase();
+  const filtradas = busca ? lista.filter(o=>
+    ((o.objeto||'')+' '+(o.orgao||'')+' '+(o.municipioNome||'')+' '+(o.numero||'')).toLowerCase().includes(busca)) : lista;
+
+  filtradas.sort((a,b)=>{
+    if(licOrdem==='prazo') return String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9'));
+    if(licOrdem==='valor') return (b.valorEstimado||0)-(a.valorEstimado||0);
+    return (a.distanciaKm==null?99999:a.distanciaKm) - (b.distanciaKm==null?99999:b.distanciaKm);
+  });
+
+  const ate24 = lista.filter(o=>{ const p = licPrazoInfo(o); return !p.encerrada && p.classe==='urg'; }).length;
+  const cidade = (STATE.config.licitacoesArea && STATE.config.licitacoesArea.municipio) || 'Rio Verde/GO';
+
+  return `
+    <div class="lic-topo">
+      <div>
+        <div class="etapa">Passo 1 de 3</div>
+        <h3>Oportunidades</h3>
+        <div class="sub">Importe o arquivo que você baixou no PNCP e diga o que interessa. O que você descartar não volta.</div>
+      </div>
+      <div class="acoes">
+        <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
+        <button class="btn" onclick="licAbrirBuscaPNCP()">🔎 Buscar no PNCP</button>
+        <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
+        <input type="file" id="lic-arquivo-pncp" accept=".xlsx,.xls,.csv,.json" style="display:none;">
+      </div>
+    </div>
+
+    <div class="kpi-row">
+      <div class="kpi-card"><div class="kpi-label">Aguardando triagem</div><div class="kpi-value">${lista.length}</div><div class="kpi-sub">importadas, não decididas</div></div>
+      <div class="kpi-card"><div class="kpi-label">Encerra em até 24h</div><div class="kpi-value ${ate24?'negative':''}">${ate24}</div><div class="kpi-sub">decidir hoje ou perde</div></div>
+      <div class="kpi-card"><div class="kpi-label">Descartadas</div><div class="kpi-value">${licDescartadas().length}</div><div class="kpi-sub">não voltam na importação</div></div>
+      <div class="kpi-card"><div class="kpi-label">Referência de distância</div><div class="kpi-value" style="font-size:18px;">${escapeHtml(cidade)}</div><div class="kpi-sub">de onde medimos</div></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+        <input type="text" id="lic-busca" placeholder="🔎 Órgão, cidade, objeto ou nº da dispensa"
+          value="${escapeAttr(licFiltroBusca||'')}" style="flex:1;min-width:230px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+        <select id="lic-ordem" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+          <option value="distancia" ${licOrdem==='distancia'?'selected':''}>Ordenar: mais perto primeiro</option>
+          <option value="prazo" ${licOrdem==='prazo'?'selected':''}>Ordenar: encerra primeiro</option>
+          <option value="valor" ${licOrdem==='valor'?'selected':''}>Ordenar: maior valor</option>
+        </select>
+        ${licSelecionadas.size>0 ? `
+          <button class="btn btn-sm btn-primary" onclick="licTriarSelecionadas(true)">✓ Tenho interesse (${licSelecionadas.size})</button>
+          <button class="btn btn-sm" onclick="licTriarSelecionadas(false)">✕ Descartar (${licSelecionadas.size})</button>
+        ` : ''}
+      </div>
+
+      ${filtradas.length===0 ? `<div class="lic-vazio">
+          ${lista.length===0
+            ? 'Nenhuma oportunidade aguardando. Importe o arquivo que você baixou no PNCP pra começar.'
+            : 'Nenhuma oportunidade bate com essa busca.'}
+        </div>` : filtradas.map(o=>licCartaoOportunidade(o)).join('')}
+
+      ${licDescartadas().length>0 ? `
+        <div style="margin-top:12px;font-size:12.5px;color:var(--ink-faint);">
+          ${licDescartadas().length} descartada${licDescartadas().length===1?'':'s'} não aparecem aqui.
+          <button class="btn btn-sm" onclick="licRestaurarDescartadas()">↩ Limpar a lista de descartadas</button>
+        </div>` : ''}
+    </div>
+  `;
+}
+
+let licFiltroBusca = '';
+let licOrdem = 'distancia';
+
+function licCartaoOportunidade(o){
+  const p = licPrazoInfo(o);
+  const sel = licSelecionadas.has(o.id);
+  const perto = o.distanciaKm != null && o.distanciaKm <= 5;
+  return `
+  <div class="lic-card ${sel?'sel':''}">
+    <div class="lic-linha">
+      <div class="esq">
+        <label style="display:flex;gap:8px;align-items:flex-start;cursor:pointer;">
+          <input type="checkbox" ${sel?'checked':''} onchange="licMarcar('${o.id}', this.checked)" style="margin-top:4px;">
+          <span style="flex:1;">
+            <span class="ctrl">${escapeHtml(o.numeroControlePNCP || o.numero || '')}</span>
+            <div class="obj">${escapeHtml(o.objeto||'(sem descrição)')}</div>
+            <div class="meta">${escapeHtml(o.orgao||'')}${o.municipioNome?` · ${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`:''}</div>
+          </span>
+        </label>
+        <div class="lic-tags">
+          ${o.distanciaKm!=null ? `<span class="lic-tag ${perto?'perto':''}">📍 ${perto?'na nossa cidade':o.distanciaKm+' km'}</span>`:''}
+          ${o.plataforma ? `<span class="lic-tag">${escapeHtml(o.plataforma)}</span>`:''}
+          ${o.modalidadeNome ? `<span class="lic-tag">${escapeHtml(o.modalidadeNome)}</span>`:''}
+          ${o.dataPublicacao ? `<span class="lic-tag">Publicada ${fmtDate(o.dataPublicacao)}</span>`:''}
+        </div>
+        <div class="lic-links">
+          ${o.linkSistemaOrigem ? `<a href="${escapeAttr(o.linkSistemaOrigem)}" target="_blank" rel="noopener">🔗 Plataforma</a>`:''}
+          ${o.linkEdital ? `<a href="${escapeAttr(o.linkEdital)}" target="_blank" rel="noopener">🔗 Edital no PNCP</a>`:''}
+          ${o.linkProcesso ? `<a href="${escapeAttr(o.linkProcesso)}" target="_blank" rel="noopener">🔗 Processo eletrônico</a>`:''}
+        </div>
+      </div>
+      <div class="dir">
+        <div class="lic-prazo">
+          Encerra <b>${licDataHora(p.quando)}</b><br>
+          <span class="lic-cron ${p.classe}">${p.texto}</span>
+        </div>
+        <div class="lic-valor">${fmtMoney(o.valorEstimado||0)}</div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">valor estimado</div>
+        <button class="btn btn-sm btn-primary" onclick="licTriar('${o.id}', true)">✓ Tenho interesse</button>
+        <button class="btn btn-sm" onclick="licTriar('${o.id}', false)">✕ Não tenho interesse</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function licMarcar(id, marcado){
+  if(marcado) licSelecionadas.add(id); else licSelecionadas.delete(id);
+  renderPortalLicitacoes();
+}
+function licTriarSelecionadas(interesse){
+  const ids = [...licSelecionadas];
+  licSelecionadas = new Set();
+  ids.forEach(id=>licTriar(id, interesse, true));
+  saveState();
+  renderPortalLicitacoes();
+  showToast(interesse ? `${ids.length} foram para Em análise.` : `${ids.length} descartadas.`, 'success');
+}
+function licTriar(id, interesse, emLote){
+  const i = (STATE.licitacoesRevisao||[]).findIndex(o=>o.id===id);
+  if(i<0) return;
+  const o = STATE.licitacoesRevisao[i];
+  STATE.licitacoesRevisao.splice(i,1);
+  if(interesse){
+    licNormalizar(o);
+    o.etapa = 'analise';
+    o.status = 'Potencial';
+    o.criadoEm = o.criadoEm || new Date().toISOString();
+    licRegistrar(o, 'Marcada como "tenho interesse" — foi para análise.');
+    STATE.licitacoes.push(o);
+  }else{
+    licDescartadas().push(licChaveOportunidade(o));
+  }
+  if(emLote) return;
+  saveState();
+  renderPortalLicitacoes();
+  showToast(interesse ? 'Foi para Em análise.' : 'Descartada — não volta na próxima importação.', 'success');
+}
+function licRestaurarDescartadas(){
+  confirmAction('Limpar descartadas',
+    'As dispensas que você descartou voltam a aparecer na próxima vez que importar o arquivo do PNCP. Continuar?',
+    ()=>{ STATE.licitacoesDescartadas = []; saveState(); renderPortalLicitacoes(); showToast('Lista de descartadas limpa.','success'); });
+}
+
+/* ---- importação do arquivo baixado no PNCP ---- */
+function licCabecalhoPara(nome){
+  const n = String(nome||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z0-9]/g,'');
+  const tem = (...ps)=>ps.some(p=>n.includes(p));
+  if(tem('objeto','descricao','descricaodacompra')) return 'objeto';
+  if(tem('orgao','entidade','razaosocial','unidade')) return 'orgao';
+  if(tem('municipio','cidade')) return 'municipio';
+  if(n==='uf' || tem('estado','siglauf')) return 'uf';
+  if(tem('numerocontrole','controlepncp','idcompra')) return 'controle';
+  if(tem('numerocompra','numerodacompra','numeroprocesso','numeroedital','numero')) return 'numero';
+  if(tem('modalidade')) return 'modalidade';
+  if(tem('valortotalestimado','valorestimado','valortotal','valor')) return 'valor';
+  if(tem('encerramento','fimrecebimento','dataencerramento','prazofinal','datafinal')) return 'encerramento';
+  if(tem('abertura','iniciorecebimento','dataabertura')) return 'abertura';
+  if(tem('publicacao','datapublicacao','divulgacao')) return 'publicacao';
+  if(tem('linksistemaorigem','sistemaorigem','plataforma','portal')) return 'plataforma';
+  if(tem('linkedital','urledital','edital','linkpncp')) return 'edital';
+  if(tem('processoeletronico','linkprocesso')) return 'processo';
+  return null;
+}
+function licValorPlanilha(v){
+  if(v==null || v==='') return 0;
+  if(typeof v === 'number') return v;
+  const s = String(v).replace(/[R$\s]/g,'');
+  if(s.includes(',')) return licNum(s);
+  return licNumDireto(s);
+}
+function licDataPlanilha(v){
+  if(v==null || v==='') return null;
+  if(v instanceof Date && !isNaN(v.getTime())) return v.toISOString();
+  const s = String(v).trim();
+  let m = s.match(/^(\d{2})\/(\d{2})\/(\d{4})(?:[ T](\d{2}):(\d{2}))?/);
+  if(m) return new Date(+m[3], +m[2]-1, +m[1], +(m[4]||0), +(m[5]||0)).toISOString();
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{2}):(\d{2}))?/);
+  if(m) return new Date(+m[1], +m[2]-1, +m[3], +(m[4]||0), +(m[5]||0)).toISOString();
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+async function licImportarArquivoPNCP(file){
+  if(!file) return;
+  try{
+    let linhas = [];
+    const nome = (file.name||'').toLowerCase();
+    if(nome.endsWith('.json')){
+      const txt = await file.text();
+      const dado = JSON.parse(txt);
+      linhas = Array.isArray(dado) ? dado : (dado.data || dado.items || dado.resultado || []);
+    }else{
+      if(typeof XLSX === 'undefined'){ showToast('O leitor de planilha não carregou. Verifique a internet e recarregue a página.','error'); return; }
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type:'array', cellDates:true });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      linhas = XLSX.utils.sheet_to_json(ws, { defval:'' });
+    }
+    if(linhas.length===0){ showToast('O arquivo não tem nenhuma linha de dados.','error'); return; }
+
+    /* mapeia os cabeçalhos uma vez */
+    const mapa = {};
+    Object.keys(linhas[0]).forEach(k=>{ const campo = licCabecalhoPara(k); if(campo && !mapa[campo]) mapa[campo] = k; });
+    if(!mapa.objeto && !mapa.orgao){
+      showToast('Não reconheci as colunas desse arquivo. Ele precisa ter pelo menos o objeto e o órgão.','error');
+      return;
+    }
+
+    const jaTem = new Set();
+    (STATE.licitacoesRevisao||[]).forEach(o=>jaTem.add(licChaveOportunidade(o)));
+    licTodas().forEach(o=>jaTem.add(licChaveOportunidade(o)));
+    const descartadas = new Set(licDescartadas());
+
+    let novas=0, repetidas=0, puladas=0;
+    const area = STATE.config.licitacoesArea;
+
+    linhas.forEach(ln=>{
+      const v = (campo)=> mapa[campo] ? ln[mapa[campo]] : '';
+      const objeto = String(v('objeto')||'').trim();
+      const orgao = String(v('orgao')||'').trim();
+      if(!objeto && !orgao) return;
+
+      const o = {
+        id: uid('lic'),
+        orgao: orgao || '(órgão não informado)',
+        objeto: objeto || '(sem descrição)',
+        numero: String(v('numero')||'').trim(),
+        status: 'Potencial',
+        valorEstimado: licValorPlanilha(v('valor')),
+        obs: '', historico: [],
+        origem: 'pncp-arquivo',
+        numeroControlePNCP: String(v('controle')||'').trim() || null,
+        modalidadeNome: String(v('modalidade')||'').trim(),
+        municipioNome: String(v('municipio')||'').trim(),
+        uf: String(v('uf')||'').trim().toUpperCase().slice(0,2),
+        plataforma: String(v('plataforma')||'').trim().startsWith('http') ? '' : String(v('plataforma')||'').trim(),
+        linkSistemaOrigem: String(v('plataforma')||'').trim().startsWith('http') ? String(v('plataforma')).trim() : null,
+        linkEdital: String(v('edital')||'').trim() || null,
+        linkProcesso: String(v('processo')||'').trim() || null,
+        dataPublicacao: (licDataPlanilha(v('publicacao'))||'').slice(0,10) || null,
+        dataAbertura: (licDataPlanilha(v('abertura'))||'').slice(0,10) || null,
+        dataEncerramentoProposta: licDataPlanilha(v('encerramento')),
+        distanciaKm: null,
+        pdfLido: false, pdfErro: null
+      };
+      const chave = licChaveOportunidade(o);
+      if(descartadas.has(chave)){ puladas++; return; }
+      if(jaTem.has(chave)){ repetidas++; return; }
+      jaTem.add(chave);
+
+      /* distância: usa o cache de geocodificação que a busca do PNCP já alimenta */
+      if(area && area.lat!=null && o.municipioNome){
+        const cache = STATE.licitacoesGeocodeCache || {};
+        const achado = Object.values(cache).find(g=>
+          g && g.municipio && g.municipio.toLowerCase() === o.municipioNome.toLowerCase() &&
+          (!o.uf || !g.uf || g.uf.toUpperCase() === o.uf));
+        if(achado) o.distanciaKm = Math.round(distanciaKm(area.lat, area.lng, achado.lat, achado.lng));
+      }
+
+      STATE.licitacoesRevisao.push(o);
+      novas++;
+    });
+
+    saveState();
+    renderPortalLicitacoes();
+    const partes = [`${novas} nova${novas===1?'':'s'}`];
+    if(repetidas) partes.push(`${repetidas} já estava${repetidas===1?'':'m'} aqui`);
+    if(puladas) partes.push(`${puladas} você já tinha descartado`);
+    showToast(partes.join(' · '), novas>0?'success':'info');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui ler esse arquivo. Confira se é o arquivo que o PNCP exporta (.xlsx ou .csv).','error');
+  }
+}
+
+/* A busca online continua existindo — agora dentro de um modal, pra não
+   encher a tela de filtro. Os campos de verdade são os da seção antiga
+   (que ficou escondida); aqui a gente só copia os valores pra lá. */
+function licAbrirBuscaPNCP(){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,94vw);">
+      <h3 style="margin-top:0;">Buscar direto no PNCP</h3>
+      <p class="help-text">Opcional. O jeito normal é baixar o arquivo no PNCP e importar — essa busca usa a área de atendimento configurada no ⚙️ e pode demorar.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div class="field"><label>Publicado de</label><input type="date" id="licm-pub-de"></div>
+        <div class="field"><label>até</label><input type="date" id="licm-pub-ate"></div>
+      </div>
+      <div class="field"><label>Só trazer se o objeto contiver <span style="font-weight:400;color:var(--ink-faint);">(separe por vírgula)</span></label>
+        <input type="text" id="licm-incluir" placeholder="ex: material de limpeza, higienização"></div>
+      <div class="field"><label>Nunca trazer se contiver</label>
+        <input type="text" id="licm-excluir" placeholder="ex: obra, reforma"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn" onclick="abrirConfigLicitacoes()">⚙️ Área de atendimento</button>
+        <button class="btn btn-primary" id="licm-buscar">🔎 Buscar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const copiar = (de, para)=>{ const a=document.getElementById(de), b=document.getElementById(para); if(a&&b) b.value=a.value; };
+  copiar('lic-busca-pub-de','licm-pub-de'); copiar('lic-busca-pub-ate','licm-pub-ate');
+  copiar('lic-busca-palavras-incluir','licm-incluir'); copiar('lic-busca-palavras-excluir','licm-excluir');
+  m.querySelector('#licm-buscar').onclick = ()=>{
+    copiar('licm-pub-de','lic-busca-pub-de'); copiar('licm-pub-ate','lic-busca-pub-ate');
+    copiar('licm-incluir','lic-busca-palavras-incluir'); copiar('licm-excluir','lic-busca-palavras-excluir');
+    m.remove();
+    buscarOportunidadesPNCP();
+  };
+}
+
+/* =========================================================
+   ABA 2 — EM ANÁLISE (lista)
+   ========================================================= */
+function licPainelAnalise(){
+  const lista = licPorEtapa(['analise']);
+  return `
+    <div class="lic-topo">
+      <div>
+        <div class="etapa">Passo 2 de 3</div>
+        <h3>Em análise</h3>
+        <div class="sub">Aqui ainda não se monta proposta. Aqui se responde: temos os documentos e existe produto que atenda?</div>
+      </div>
+      <div class="acoes"><button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button></div>
+    </div>
+    ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nada em análise. Marque uma oportunidade com "tenho interesse".</div></div>'
+      : lista.map(l=>{
+        const p = licPrazoInfo(l);
+        return `<div class="lic-card">
+          <div class="lic-linha">
+            <div class="esq">
+              <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
+              <div class="obj">${escapeHtml(l.objeto||'')}</div>
+              <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}</div>
+              <div class="lic-tags">
+                <span class="lic-tag">${l.arquivos.length} arquivo${l.arquivos.length===1?'':'s'} anexado${l.arquivos.length===1?'':'s'}</span>
+                <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
+                ${p.encerrada ? '<span class="lic-tag" style="border-color:var(--negative);color:var(--negative);">encerrada</span>':''}
+              </div>
+            </div>
+            <div class="dir">
+              <div class="lic-prazo">Encerra <b>${licDataHora(p.quando)}</b><br><span class="lic-cron ${p.classe}">${p.texto}</span></div>
+              <div class="lic-valor">${fmtMoney(l.valorEstimado||0)}</div>
+              <button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','processo')">Abrir processo →</button>
+              <button class="btn btn-sm" onclick="licDescartarProcesso('${l.id}')">✕ Não tenho interesse</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+  `;
+}
+
+function licDescartarProcesso(id){
+  const l = licAchar(id);
+  if(!l) return;
+  confirmAction('Descartar esta licitação',
+    'Ela sai do portal e não volta na próxima importação do arquivo do PNCP. Continuar?',
+    ()=>{
+      licDescartadas().push(licChaveOportunidade(l));
+      STATE.licitacoes = STATE.licitacoes.filter(x=>x.id!==id);
+      saveState(); licAberta=null; licTela=null; renderPortalLicitacoes();
+      showToast('Descartada.','success');
+    });
+}
+
+/* =========================================================
+   ABA 3 — PRECIFICAÇÃO (lista)
+   ========================================================= */
+function licPainelPrecificacao(){
+  const lista = licPorEtapa(['precificacao']);
+  return `
+    <div class="lic-topo">
+      <div>
+        <div class="etapa">Passo 3 de 3</div>
+        <h3>Precificação</h3>
+        <div class="sub">Item por item: custo, fretes, imposto e comissão. O sistema diz se fecha.</div>
+      </div>
+    </div>
+    ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nada para precificar. Avance uma licitação da análise.</div></div>'
+      : lista.map(l=>{
+        const t = licTotalLicitacao(l);
+        const p = licPrazoInfo(l);
+        return `<div class="lic-card">
+          <div class="lic-linha">
+            <div class="esq">
+              <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
+              <div class="obj">${escapeHtml(l.objeto||'')}</div>
+              <div class="meta">${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · julgamento ${l.criterio==='global'?'por preço global':'por item'}</div>
+            </div>
+            <div class="dir">
+              <div class="lic-prazo">Encerra <b>${licDataHora(p.quando)}</b><br><span class="lic-cron ${p.classe}">${p.texto}</span></div>
+              <div class="lic-valor ${t.lucro<0?'negative':''}">${fmtMoney(t.venda)}</div>
+              <div style="font-size:11.5px;color:${t.lucro<0?'var(--negative)':'var(--ink-faint)'};margin-top:-4px;">
+                lucro ${fmtMoney(t.lucro)}${t.venda>0?` · ${t.margem.toFixed(1)}%`:''}</div>
+              <button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','precificar')">Abrir precificação →</button>
+              <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','analise')">‹ Voltar para análise</button>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+  `;
+}
+
+function licVoltarEtapa(id, etapa){
+  const l = licAchar(id); if(!l) return;
+  l.etapa = etapa;
+  licRegistrar(l, 'Voltou para ' + ((LIC_ETAPAS[etapa]||{}).rotulo || etapa) + '.');
+  saveState(); licAberta=null; licTela=null; licAba=(LIC_ETAPAS[etapa]||{}).aba||'analise';
+  renderPortalLicitacoes();
+}
+function licAvancarEtapa(id, etapa, tela){
+  const l = licAchar(id); if(!l) return;
+  if(etapa==='precificacao' && l.itens.length===0){
+    licNovoItem(id, true);
+  }
+  l.etapa = etapa;
+  licRegistrar(l, 'Avançou para ' + ((LIC_ETAPAS[etapa]||{}).rotulo || etapa) + '.');
+  saveState();
+  if(tela){ licAbrir(id, tela); }
+  else { licAberta=null; licTela=null; licAba=(LIC_ETAPAS[etapa]||{}).aba; renderPortalLicitacoes(); }
+}
+
+/* =========================================================
+   ABA 4 — PROPOSTAS (montando, enviadas, ganhou, perdeu)
+   ========================================================= */
+function licPainelPropostas(){
+  const lista = licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue']);
+  const grupos = [
+    { etapas:['proposta'], titulo:'Montando a proposta' },
+    { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
+    { etapas:['ganhou','entregue'], titulo:'Ganhamos' },
+    { etapas:['perdeu'],   titulo:'Perdemos' }
+  ];
+  return `
+    <div class="lic-topo">
+      <div>
+        <h3>Propostas</h3>
+        <div class="sub">Da proposta montada até o resultado. Quando ganha, aqui é onde começa a compra.</div>
+      </div>
+    </div>
+    ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nenhuma proposta ainda.</div></div>'
+      : grupos.map(g=>{
+        const doGrupo = lista.filter(l=>g.etapas.includes(l.etapa));
+        if(doGrupo.length===0) return '';
+        return `<div class="lic-passo">${escapeHtml(g.titulo)} (${doGrupo.length})</div>
+          ${doGrupo.map(l=>licCartaoProposta(l)).join('')}`;
+      }).join('')}
+  `;
+}
+
+function licCartaoProposta(l){
+  const t = licTotalLicitacao(l);
+  const cliente = l.clienteId ? STATE.clientes.find(c=>c.id===l.clienteId) : null;
+  const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+  return `<div class="lic-card">
+    <div class="lic-linha">
+      <div class="esq">
+        <span class="ctrl">${escapeHtml((l.propostaCampos.modalidade||'') + ' ' + (l.propostaCampos.numero || l.numero || ''))}</span>
+        <div class="obj">${escapeHtml(l.objeto||'')}</div>
+        <div class="meta">${escapeHtml(cliente ? cliente.nome : (l.orgao||''))}${l.vendedor?` · ${escapeHtml(l.vendedor)}`:''}${orc?` · orçamento nº ${orc.numero}`:''}</div>
+        <div class="lic-tags">
+          <span class="lic-tag">${(LIC_ETAPAS[l.etapa]||{}).rotulo||l.etapa}</span>
+          <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
+          ${l.dataEnvio?`<span class="lic-tag">Enviada ${fmtDate(String(l.dataEnvio).slice(0,10))}</span>`:''}
+        </div>
+      </div>
+      <div class="dir">
+        <div class="lic-valor">${fmtMoney(t.venda)}</div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">lucro ${fmtMoney(t.lucro)}</div>
+        ${l.etapa==='proposta' ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','proposta')">Abrir proposta →</button>
+            <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar</button>` : ''}
+        ${l.etapa==='enviada' ? `<button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+            <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>
+            <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>` : ''}
+        ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>` : ''}
+        ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>` : ''}
+      </div>
+    </div>
+  </div>`;
+}
+
+function licResultado(id, resultado){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(560px,94vw);">
+      <h3 style="margin-top:0;">${resultado==='ganhou'?'🏆 Ganhamos':'Perdemos'}</h3>
+      <div class="field"><label>${resultado==='ganhou'?'Valor homologado (se souber)':'Por quanto o vencedor fechou (se souber)'}</label>
+        <input type="number" step="0.01" id="lic-res-valor" placeholder="0,00"></div>
+      <div class="field"><label>Observação ${resultado==='perdeu'?'— o que deu pra aprender':''}</label>
+        <input type="text" id="lic-res-obs" placeholder="${resultado==='perdeu'?'ex: ficamos 8% acima; o vencedor tinha frete incluso':'ex: homologado integral'}"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-res-ok">Confirmar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-res-ok').onclick = ()=>{
+    l.etapa = resultado;
+    l.status = resultado==='ganhou' ? 'Ganhamos' : 'Perdemos';
+    l.dataResultado = todayISO();
+    l.valorResultado = licNumDireto(m.querySelector('#lic-res-valor').value) || null;
+    l.resultadoObs = m.querySelector('#lic-res-obs').value.trim();
+    licRegistrar(l, (resultado==='ganhou'?'Ganhamos':'Perdemos') + (l.valorResultado?` — ${fmtMoney(l.valorResultado)}`:'') + (l.resultadoObs?` · ${l.resultadoObs}`:''));
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast(resultado==='ganhou'?'Marcada como ganha.':'Marcada como perdida — fica no histórico do produto.','success');
+  };
+}
+
+/* =========================================================
+   ABA 5 — PRODUTOS DE LICITAÇÃO (histórico por produto)
+   ========================================================= */
+let licProdutoAberto = null;
+
+function licPainelProdutos(){
+  const produtos = licHistoricoProdutos();
+  const busca = (licFiltroProduto||'').toLowerCase();
+  const lista = busca ? produtos.filter(p=>(p.nome+' '+p.marca).toLowerCase().includes(busca)) : produtos;
+
+  return `
+    <div class="lic-topo">
+      <div>
+        <h3>Produtos de licitação</h3>
+        <div class="sub">Tudo o que já precificamos em licitação. Estes itens <b>não entram nos produtos da loja</b> — ficam só aqui e no orçamento.</div>
+      </div>
+    </div>
+    <div class="card">
+      <input type="text" id="lic-busca-produto" placeholder="🔎 Procurar produto ou marca"
+        value="${escapeAttr(licFiltroProduto||'')}"
+        style="width:100%;max-width:380px;padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;margin-bottom:12px;">
+      ${lista.length===0 ? '<div class="lic-vazio">Nenhum produto de licitação ainda. Eles aparecem aqui assim que você precificar o primeiro item.</div>' : `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Produto</th><th>Marca</th><th>Licitação</th><th>Data</th><th>Cliente</th>
+            <th>Vendedor</th><th style="text-align:right;">Valor de venda</th><th>Situação</th><th></th>
+          </tr></thead>
+          <tbody>
+            ${lista.map(p=>{
+              const u = p.usos[0] || {};
+              const sit = { ganhou:'🏆 Ganhou', perdeu:'Perdeu', enviado:'✈ Enviado', pendente:'Pendente' }[u.resultado] || '—';
+              const cor = u.resultado==='ganhou' ? 'var(--positive)' : u.resultado==='perdeu' ? 'var(--negative)' : 'var(--ink-soft)';
+              return `<tr>
+                <td>${escapeHtml(p.nome)}</td>
+                <td>${escapeHtml(p.marca||'—')}</td>
+                <td>${escapeHtml((u.modalidade?u.modalidade+' ':'') + (u.numero||'—'))}</td>
+                <td>${u.data?fmtDate(String(u.data).slice(0,10)):'—'}</td>
+                <td>${escapeHtml(u.cliente || u.orgao || '—')}</td>
+                <td>${escapeHtml(u.vendedor||'—')}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(u.precoVenda||0)}</td>
+                <td style="color:${cor};">${sit}</td>
+                <td style="text-align:right;"><button class="btn btn-sm" onclick="licVerProduto('${escapeAttr(p.chave)}')">Histórico (${p.usos.length})</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`}
+    </div>
+    ${licProdutoAberto ? licFichaProduto(licProdutoAberto) : ''}
+  `;
+}
+let licFiltroProduto = '';
+
+function licVerProduto(chave){
+  licProdutoAberto = (licProdutoAberto===chave) ? null : chave;
+  renderPortalLicitacoes();
+}
+
+function licFichaProduto(chave){
+  const p = licHistoricoProdutos().find(x=>x.chave===chave);
+  if(!p) return '';
+  const vendas = p.usos.filter(u=>u.precoVenda>0);
+  const ganhou = p.usos.filter(u=>u.resultado==='ganhou');
+  const melhorCusto = p.usos.filter(u=>u.custoUnit>0).sort((a,b)=>a.custoUnit-b.custoUnit)[0];
+  const ultimo = p.usos[0];
+  return `
+    <div class="card">
+      <h3 style="margin-top:0;">${escapeHtml(p.nome)}${p.marca?` — ${escapeHtml(p.marca)}`:''}</h3>
+      <p class="help-text">O histórico é deste produto, em todas as licitações onde ele apareceu — não o histórico do órgão.</p>
+      <div class="kpi-row">
+        <div class="kpi-card"><div class="kpi-label">Última vez que precificamos</div>
+          <div class="kpi-value" style="font-size:18px;">${ultimo && ultimo.data ? fmtDate(String(ultimo.data).slice(0,10)) : '—'}</div>
+          <div class="kpi-sub">${escapeHtml(ultimo ? (ultimo.cliente||ultimo.orgao||'') : '')}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Último custo total</div>
+          <div class="kpi-value">${fmtMoney(ultimo?ultimo.custoTotal:0)}</div>
+          <div class="kpi-sub">${ultimo && ultimo.custoUnit ? fmtMoney(ultimo.custoUnit)+' o produto' : ''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Último preço de venda</div>
+          <div class="kpi-value">${fmtMoney(ultimo?ultimo.precoVenda:0)}</div>
+          <div class="kpi-sub">${ultimo && ultimo.margem ? ultimo.margem.toFixed(1)+'% de margem' : ''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Menor custo que já conseguimos</div>
+          <div class="kpi-value">${melhorCusto?fmtMoney(melhorCusto.custoUnit):'—'}</div>
+          <div class="kpi-sub">${melhorCusto && melhorCusto.data ? fmtDate(String(melhorCusto.data).slice(0,10)) : ''}${melhorCusto && melhorCusto.fornecedor ? ' · '+escapeHtml(melhorCusto.fornecedor) : ''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Ganhamos</div>
+          <div class="kpi-value">${ganhou.length} de ${p.usos.length}</div>
+          <div class="kpi-sub">${vendas.length?'preço médio '+fmtMoney(vendas.reduce((s,u)=>s+u.precoVenda,0)/vendas.length):''}</div></div>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Data</th><th>Licitação</th><th>Órgão</th><th style="text-align:right;">Custo unit.</th>
+            <th style="text-align:right;">Custo total</th><th style="text-align:right;">Vendemos por</th>
+            <th style="text-align:right;">Teto</th><th>Resultado</th><th>Onde compramos</th></tr></thead>
+          <tbody>
+            ${p.usos.map(u=>`<tr>
+              <td>${u.data?fmtDate(String(u.data).slice(0,10)):'—'}</td>
+              <td>${escapeHtml((u.modalidade?u.modalidade+' ':'')+(u.numero||'—'))}</td>
+              <td>${escapeHtml(u.cliente||u.orgao||'—')}</td>
+              <td style="text-align:right;font-family:var(--font-num);">${u.custoUnit?fmtMoney(u.custoUnit):'—'}</td>
+              <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(u.custoTotal)}</td>
+              <td style="text-align:right;font-family:var(--font-num);"><b>${fmtMoney(u.precoVenda)}</b></td>
+              <td style="text-align:right;font-family:var(--font-num);color:var(--ink-faint);">${u.teto?fmtMoney(u.teto):'—'}</td>
+              <td style="color:${u.resultado==='ganhou'?'var(--positive)':u.resultado==='perdeu'?'var(--negative)':'var(--ink-soft)'};">
+                ${ {ganhou:'🏆 Ganhou',perdeu:'Perdeu',enviado:'✈ Enviado',pendente:'Pendente'}[u.resultado] }</td>
+              <td style="font-size:12px;">${escapeHtml(u.fornecedor||'—')}${u.link?` <a href="${escapeAttr(u.link)}" target="_blank" rel="noopener">🔗</a>`:''}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;"><button class="btn btn-sm" onclick="licVerProduto('${escapeAttr(chave)}')">Fechar</button></div>
+    </div>`;
+}
+
+/* =========================================================
+   TELAS DE DETALHE
+   ========================================================= */
+function licTelaDetalhe(){
+  const l = licAchar(licAberta);
+  if(!l) return '';
+  if(licTela==='processo')   return licTelaProcesso(l);
+  if(licTela==='precificar') return licTelaPrecificar(l);
+  if(licTela==='proposta')   return licTelaProposta(l);
+  if(licTela==='compra')     return licTelaCompra(l);
+  return '';
+}
+
+/* Cabeçalho único de todas as telas de detalhe. Uma linha só diz onde
+   você está — sem trilha dupla, sem stepper repetido. */
+function licCabecalho(l, titulo, sub, acoes){
+  const et = LIC_ETAPAS[l.etapa] || {};
+  const p = licPrazoInfo(l);
+  return `
+    <div class="lic-topo">
+      <div style="flex:1;min-width:260px;">
+        <div class="etapa">Passo ${et.n||1} de 3 · ${escapeHtml(et.rotulo||'')}
+          ${p.quando?` · encerra ${licDataHora(p.quando)}`:''}</div>
+        <h3>${escapeHtml(titulo)}</h3>
+        <div class="sub">${sub}</div>
+      </div>
+      <div class="acoes">
+        <button class="btn" onclick="licVoltarLista()">‹ Voltar</button>
+        ${acoes||''}
+      </div>
+    </div>`;
+}
+
+/* ---------------------------------------------------------
+   TELA: PROCESSO (em análise)
+   --------------------------------------------------------- */
+function licTelaProcesso(l){
+  return `
+    ${licCabecalho(l, l.objeto||'Processo',
+      `${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}
+       <div class="lic-links" style="margin-top:4px;">
+         ${l.linkEdital?`<a href="${escapeAttr(l.linkEdital)}" target="_blank" rel="noopener">🔗 Edital no PNCP</a>`:''}
+         ${l.linkSistemaOrigem?`<a href="${escapeAttr(l.linkSistemaOrigem)}" target="_blank" rel="noopener">🔗 Plataforma</a>`:''}
+         ${l.linkProcesso?`<a href="${escapeAttr(l.linkProcesso)}" target="_blank" rel="noopener">🔗 Processo eletrônico</a>`:''}
+       </div>`,
+      `<button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>`)}
+
+    <div class="card">
+      <div class="lic-passo">Passo 1 — anexar</div>
+      <h3 style="margin:0 0 4px;">O edital</h3>
+      <p class="help-text">Baixe tudo no PNCP e solte aqui. PDF, planilha ou .zip — vários de uma vez.</p>
+      <div class="lic-solta" id="lic-solta">
+        <div style="font-size:28px;">📄</div>
+        Arraste o edital e os anexos<br>
+        <span style="font-size:12px;">ou clique para escolher no computador</span><br>
+        <button class="btn btn-sm btn-primary" style="margin-top:8px;" onclick="document.getElementById('lic-arquivos').click()">Escolher arquivos</button>
+        <input type="file" id="lic-arquivos" multiple accept=".pdf,.xlsx,.xls,.csv,.txt,.zip" style="display:none;">
+      </div>
+      ${l.arquivos.map((a,i)=>`
+        <div class="lic-doc ${a.erro?'aviso':'ok'}">
+          <div><b>${escapeHtml(a.nome)}</b>
+            <small>${a.paginas?`${a.paginas} página${a.paginas===1?'':'s'} · `:''}${(a.tamanho/1024).toFixed(0)} KB${a.erro?' · '+escapeHtml(a.erro):''}</small></div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <span style="font-size:12px;color:${a.erro?'var(--warning)':'var(--positive)'};">${a.erro?'⚠️ não dá pra ler':'✓ lido'}</span>
+            <button class="btn btn-sm" onclick="licRemoverArquivo('${l.id}',${i})">✕</button>
+          </div>
+        </div>`).join('')}
+
+      <div class="lic-passo">Passo 2 — leitura automática, de graça</div>
+      <h3 style="margin:0 0 4px;">O que o edital diz</h3>
+      <p class="help-text">Sai da máquina, sem custo nenhum. Cada campo mostra de onde veio — confira sempre o que estiver marcado em amarelo.</p>
+      ${licLeituraHtml(l)}
+
+      <div class="lic-passo">Passo 3 — habilitação</div>
+      <h3 style="margin:0 0 4px;">Documentos que vão pedir</h3>
+      <p class="help-text">Conferindo contra as certidões que você guardou em 📎 Certidões.</p>
+      ${licChecklistHtml(l)}
+
+      <div class="lic-passo">Passo 4 — o produto</div>
+      <h3 style="margin:0 0 4px;">Exigências técnicas dos itens</h3>
+      <p class="help-text">Estas são as linhas do edital que descrevem o produto. É isso que o ChatGPT precisa receber.</p>
+      ${licExigenciasHtml(l)}
+
+      <div class="lic-passo">Passo 5 — pesquisa de modelos</div>
+      <h3 style="margin:0 0 4px;">A ida e volta com o ChatGPT</h3>
+      ${licChatGptHtml(l)}
+
+      ${l.comparacao ? licComparacaoHtml(l) : ''}
+
+      <div class="lic-passo">Decisão</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div><b>Vale a pena participar?</b>
+          <div class="help-text" style="margin:2px 0 0;">Se vale, a precificação já começa com os itens que o edital pediu.</div></div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn" onclick="licDescartarProcesso('${l.id}')">✕ Descartar esta dispensa</button>
+          <button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/* ---- leitura automática (palavras-chave, sem IA, sem custo) ---- */
+const LIC_CAMPOS_LEITURA = [
+  { id:'criterio',   rotulo:'Critério de julgamento' },
+  { id:'mepp',       rotulo:'Exclusiva ME/EPP' },
+  { id:'formaEnvio', rotulo:'Forma de envio' },
+  { id:'sessao',     rotulo:'Sessão' },
+  { id:'validade',   rotulo:'Validade da proposta' },
+  { id:'prazoEntrega', rotulo:'Prazo de entrega' },
+  { id:'prazoPagamento', rotulo:'Prazo de pagamento' },
+  { id:'garantia',   rotulo:'Garantia exigida' },
+  { id:'local',      rotulo:'Local de entrega' },
+  { id:'email',      rotulo:'E-mail para esclarecimento' },
+  { id:'subcontratacao', rotulo:'Subcontratação' },
+  { id:'quantidade', rotulo:'Quantidade do item' }
+];
+
+function licLerEdital(l){
+  const texto = l.arquivos.map(a=>a.texto||'').join('\n');
+  if(!texto.trim()){ showToast('Anexe pelo menos um arquivo que dê pra ler.','error'); return; }
+  const T = texto.replace(/\s+/g,' ');
+  const achar = (re)=>{ const m = T.match(re); return m ? (m[1]||m[0]).trim() : ''; };
+
+  const leitura = {};
+  if(/menor\s+pre[çc]o\s+(global|por\s+lote)/i.test(T)) leitura.criterio = 'Menor preço global';
+  else if(/menor\s+pre[çc]o\s+(por\s+)?item/i.test(T)) leitura.criterio = 'Menor preço por item';
+  else if(/maior\s+desconto/i.test(T)) leitura.criterio = 'Maior desconto';
+
+  if(/exclusiv[ao].{0,40}(ME|EPP|microempresa)/i.test(T)) leitura.mepp = 'SIM — podemos participar';
+  else if(/ampla\s+(participa[çc][ãa]o|concorr[êe]ncia)/i.test(T)) leitura.mepp = 'Ampla participação';
+
+  const email = achar(/[\w.+-]+@[\w-]+\.[\w]{2,}(?:\.[\w]{2,})*/);
+  if(email) leitura.email = email.replace(/[.,;]+$/,'');
+
+  if(/compras\.gov\.br/i.test(T)) leitura.formaEnvio = 'Portal compras.gov.br';
+  else if(/bnc\b|bolsa\s+nacional/i.test(T)) leitura.formaEnvio = 'BNC — Bolsa Nacional de Compras';
+  else if(/licitanet/i.test(T)) leitura.formaEnvio = 'Licitanet';
+  else if(/portal\s+de\s+compras\s+p[úu]blicas/i.test(T)) leitura.formaEnvio = 'Portal de Compras Públicas';
+  else if(email) leitura.formaEnvio = 'Por e-mail';
+
+  const validade = achar(/validade\s+d[ae]\s+proposta[^.]{0,60}?(\d{1,3})\s*\(?\s*\w*\s*\)?\s*dias/i);
+  if(validade) leitura.validade = `mínimo ${validade} dias`;
+
+  const entrega = achar(/prazo\s+d[ae]\s+entrega[^.]{0,80}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*dias[^.,;]{0,20})/i);
+  if(entrega) leitura.prazoEntrega = entrega;
+
+  const pagamento = achar(/pagamento[^.]{0,120}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*dias[^.,;]{0,40})/i);
+  if(pagamento) leitura.prazoPagamento = pagamento;
+
+  const garantia = achar(/garantia[^.]{0,80}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*(?:meses|anos)[^.,;]{0,30})/i);
+  if(garantia) leitura.garantia = garantia;
+
+  if(/n[ãa]o\s+(ser[áa]\s+)?admitid[ao]\s+(a\s+)?subcontrata/i.test(T)) leitura.subcontratacao = 'Não admitida';
+  else if(/subcontrata[çc][ãa]o/i.test(T)) leitura.subcontratacao = 'Mencionada — confira';
+
+  const sessao = achar(/(?:sess[ãa]o|abertura)[^.]{0,60}?(\d{2}\/\d{2}\/\d{4}(?:\s*[àa]s?\s*\d{1,2}[:h]\d{2})?)/i);
+  if(sessao) leitura.sessao = sessao;
+
+  const local = achar(/(?:local\s+de\s+entrega|entregue?\s+n[oa])[^.]{0,20}([A-ZÁÉÍÓÚÃÕÇ][^.;]{10,80})/);
+  if(local) leitura.local = local.trim();
+
+  const qtd = achar(/quantidade[^.\d]{0,20}(\d{1,6})/i);
+  if(qtd) leitura.quantidade = qtd;
+
+  l.leitura = leitura;
+
+  /* exigências técnicas: linhas que descrevem produto */
+  /* Quebra em pedaços do tamanho de uma exigência. Edital bem formatado
+     já vem em linhas; edital que veio tudo grudado é quebrado por ponto
+     final, ponto e vírgula e numeração de item. */
+  const linhas = texto
+    .split(/\n|;|•|(?=\d+\s*[-–)]\s)/)
+    .reduce((acc, p)=>{
+      const t = p.replace(/\s+/g,' ').trim();
+      if(t.length <= 260){ acc.push(t); return acc; }
+      t.split(/(?<=[.:])\s+(?=[A-Z0-9])/).forEach(x=>acc.push(x.trim()));
+      return acc;
+    }, [])
+    .map(s=>s.replace(/\s+/g,' ').trim())
+    .filter(s=>s.length>=25 && s.length<=260)
+    .filter(s=>/(polegada|"|cm|mm|kg|hz|watts?|w\b|volts?|v\b|gb|ram|hdmi|usb|resolu[çc][ãa]o|brilho|cd\/m|processador|android|tela|touch|garantia|vesa|bivolt|litros?|unidade|embalagem|fardo|pacote)/i.test(s))
+    .filter((s,i,arr)=>arr.indexOf(s)===i)
+    .slice(0,24);
+  l.exigencias = linhas.map((t,i)=>({ n:i+1, texto:t }));
+
+  saveState();
+  renderPortalLicitacoes();
+  const achados = Object.keys(leitura).length;
+  showToast(`Leitura pronta: ${achados} campo${achados===1?'':'s'} e ${l.exigencias.length} exigência${l.exigencias.length===1?'':'s'}. Confira o que ficou em amarelo.`, achados?'success':'info');
+}
+
+function licLeituraHtml(l){
+  const temTexto = l.arquivos.some(a=>a.texto);
+  if(!temTexto){
+    return `<div class="lic-doc aviso"><div><b>Nada lido ainda</b>
+      <small>Anexe o edital acima — a leitura roda sozinha assim que o arquivo entrar.</small></div></div>`;
+  }
+  const temAlgo = Object.keys(l.leitura||{}).length>0;
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:10px;">
+      ${LIC_CAMPOS_LEITURA.map(c=>{
+        const v = (l.leitura||{})[c.id];
+        return `<div>
+          <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);">${escapeHtml(c.rotulo)}</div>
+          <div style="font-size:13.5px;font-weight:600;color:${v?'var(--ink)':'var(--warning)'};">${v?escapeHtml(v):'não achei — confira'}</div>
+        </div>`;
+      }).join('')}
+    </div>
+    <button class="btn btn-sm" onclick="licLerEdital(licAchar('${l.id}'))">${temAlgo?'↻ Ler de novo':'Ler o edital'}</button>
+    <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">✎ Corrigir à mão</button>
+  `;
+}
+
+function licEditarLeitura(id){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Corrigir a leitura do edital</h3>
+      <p class="help-text">O que você escrever aqui é o que vai pra proposta.</p>
+      ${LIC_CAMPOS_LEITURA.map(c=>`
+        <div class="field"><label>${escapeHtml(c.rotulo)}</label>
+          <input type="text" data-campo="${c.id}" value="${escapeAttr((l.leitura||{})[c.id]||'')}"></div>`).join('')}
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-leitura-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-leitura-ok').onclick = ()=>{
+    const novo = {};
+    m.querySelectorAll('[data-campo]').forEach(i=>{ const v=i.value.trim(); if(v) novo[i.dataset.campo]=v; });
+    l.leitura = novo; saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Leitura corrigida.','success');
+  };
+}
+
+function licChecklistHtml(l){
+  const cfg = licCertidoesCfg();
+  const hoje = new Date(); hoje.setHours(0,0,0,0);
+  return LIC_CERTIDOES.map(c=>{
+    const dados = cfg[c.id] || {};
+    const val = dados.validade;
+    let classe='falta', estado='não temos este documento', nota='';
+    if(val){
+      const d = new Date(val+'T00:00:00');
+      const dias = Math.round((d-hoje)/86400000);
+      if(dias < 0){ classe='falta'; estado='vencida em '+fmtDate(val); }
+      else if(dias <= 15){ classe='aviso'; estado=`vence em ${dias} dia${dias===1?'':'s'}`; }
+      else { classe='ok'; estado='válida até '+fmtDate(val); }
+    }
+    if(dados.obs) nota = ' · ' + dados.obs;
+    return `<div class="lic-doc ${classe}">
+      <div><b>${escapeHtml(c.nome)}</b><small>${escapeHtml(estado+nota)}</small></div>
+      <button class="btn btn-sm" onclick="licAbrirCertidoes()">${classe==='ok'?'Ver':'Atualizar'}</button>
+    </div>`;
+  }).join('') + `<div class="help-text" style="margin-top:6px;">
+    Se pedirem documento que não está nessa lista, guarde junto em 📎 Certidões — ele entra na pasta da proposta automaticamente.</div>`;
+}
+
+function licExigenciasHtml(l){
+  if(l.exigencias.length===0){
+    return `<div class="help-text">Nada extraído ainda. Anexe o edital e rode a leitura acima — ou escreva as exigências à mão.</div>
+      <button class="btn btn-sm" style="margin-top:6px;" onclick="licEditarExigencias('${l.id}')">✎ Escrever à mão</button>`;
+  }
+  return `<ol style="margin:0 0 8px;padding-left:22px;font-size:13px;line-height:1.55;">
+      ${l.exigencias.map(e=>`<li>${escapeHtml(e.texto)}</li>`).join('')}
+    </ol>
+    <button class="btn btn-sm" onclick="licEditarExigencias('${l.id}')">✎ Ajustar a lista</button>`;
+}
+
+function licEditarExigencias(id){
+  const l = licAchar(id); if(!l) return;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,94vw);">
+      <h3 style="margin-top:0;">Exigências técnicas</h3>
+      <p class="help-text">Uma por linha. É exatamente isso que vai no texto para o ChatGPT.</p>
+      <textarea id="lic-exig-txt" style="width:100%;height:280px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">${escapeHtml(l.exigencias.map(e=>e.texto).join('\n'))}</textarea>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-exig-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-exig-ok').onclick = ()=>{
+    const linhas = m.querySelector('#lic-exig-txt').value.split('\n').map(s=>s.trim()).filter(Boolean);
+    l.exigencias = linhas.map((t,i)=>({n:i+1, texto:t}));
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Exigências salvas.','success');
+  };
+}
+
+/* ---- a ida e volta com o ChatGPT ---- */
+function licTextoParaChatGpt(l){
+  const ref = l.valorEstimado ? fmtMoney(l.valorEstimado) : '(não informado)';
+  const mod = (l.propostaCampos.modalidade || l.modalidadeNome || 'Dispensa');
+  const num = (l.propostaCampos.numero || l.numero || '');
+  const criterio = (l.leitura||{}).criterio || 'menor preço por item';
+  return [
+`Você é especialista em licitação pública. Vou participar da ${mod} ${num} de ${l.orgao||'um órgão público'}. Critério: ${criterio}. Valor de referência: ${ref}.`,
+``,
+`Procure no mínimo 5 produtos reais, à venda no Brasil, e confira CADA UM contra a especificação abaixo. Produto que falhe em uma única exigência me desclassifica.`,
+``,
+`EXIGÊNCIAS DO EDITAL:`,
+...(l.exigencias.length ? l.exigencias.map(e=>`${e.n}. ${e.texto}`) : ['(cole aqui as exigências)']),
+``,
+`RESPONDA EXATAMENTE NESTE FORMATO, uma linha por modelo, campos separados por | :`,
+`MODELO | FABRICANTE | PREÇO | LINK ONDE COMPRAR | ATENDE/NÃO ATENDE/A CONFIRMAR por exigência, na ordem de 1 a ${l.exigencias.length||'N'}, separadas por ponto e vírgula`,
+``,
+`Regras da resposta:`,
+`- Quando NÃO ATENDE, diga o valor do produto e o valor exigido ("350 cd/m², 50 abaixo dos 400").`,
+`- Quando a ficha não informar, escreva A CONFIRMAR — nunca chute.`,
+`- O link tem que ser de onde dá pra comprar de verdade, com o preço visível.`,
+`- No fim, liste as perguntas que eu preciso fazer ao distribuidor para fechar o que ficou A CONFIRMAR.`
+  ].join('\n');
+}
+
+function licChatGptHtml(l){
+  return `
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:12px;">
+      <div class="lic-card" style="margin:0;"><b>1 · Copiar</b>
+        <div class="meta">O botão copia as exigências e as instruções de resposta.</div></div>
+      <div class="lic-card" style="margin:0;"><b>2 · Colar no ChatGPT</b>
+        <div class="meta">Ele procura os modelos e devolve a tabela.</div></div>
+      <div class="lic-card" style="margin:0;"><b>3 · Colar a resposta aqui</b>
+        <div class="meta">O sistema lê e monta a comparação.</div></div>
+    </div>
+    <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:4px;">O que o botão copia</div>
+    <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px;font-size:11.5px;max-height:170px;overflow:auto;margin:0 0 8px;">${escapeHtml(licTextoParaChatGpt(l))}</pre>
+    <button class="btn btn-sm btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar pergunta</button>
+
+    <div class="field" style="margin-top:12px;">
+      <label>Cole aqui a resposta do ChatGPT</label>
+      <textarea id="lic-resposta-gpt" style="width:100%;height:120px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole a tabela que o ChatGPT devolveu">${escapeHtml(l.comparacaoTexto||'')}</textarea>
+    </div>
+    <button class="btn btn-sm btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler resposta e montar a comparação</button>
+    ${l.comparacao?`<button class="btn btn-sm" onclick="licLimparComparacao('${l.id}')">Desfazer</button>`:''}
+  `;
+}
+
+function licCopiarPergunta(id){
+  const l = licAchar(id); if(!l) return;
+  const txt = licTextoParaChatGpt(l);
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(txt)
+      .then(()=>showToast('Pergunta copiada. Cole no ChatGPT.','success'))
+      .catch(()=>licCopiarNaMao(txt));
+  }else licCopiarNaMao(txt);
+}
+function licCopiarNaMao(txt){
+  const ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position='fixed'; ta.style.left='-9999px';
+  document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); showToast('Pergunta copiada.','success'); }
+  catch(e){ showToast('Não consegui copiar — selecione o texto na caixa acima.','error'); }
+  ta.remove();
+}
+
+/* Lê a resposta colada. Aceita o formato pedido (campos separados por |)
+   e também tabela em markdown, que é como o ChatGPT costuma devolver. */
+function licLerRespostaGpt(id){
+  const l = licAchar(id); if(!l) return;
+  const el = document.getElementById('lic-resposta-gpt');
+  const txt = el ? el.value : '';
+  l.comparacaoTexto = txt;
+  if(!txt.trim()){ showToast('Cole a resposta do ChatGPT primeiro.','error'); saveState(); return; }
+
+  const linhas = txt.split('\n').map(s=>s.trim()).filter(s=>s.includes('|'));
+  const modelos = [];
+  linhas.forEach(ln=>{
+    const campos = ln.replace(/^\||\|$/g,'').split('|').map(s=>s.trim());
+    if(campos.length < 4) return;
+    if(/^-+$/.test(campos[0]) || /^modelo$/i.test(campos[0])) return;
+    const veredictos = (campos[4]||'').split(';').map(s=>s.trim()).filter(Boolean);
+    modelos.push({
+      modelo: campos[0], fabricante: campos[1],
+      preco: licValorPlanilha(campos[2]),
+      precoTexto: campos[2],
+      link: (campos[3].match(/https?:\/\/\S+/)||[''])[0] || campos[3],
+      veredictos
+    });
+  });
+  if(modelos.length===0){
+    showToast('Não achei nenhuma linha no formato pedido. Confira se a resposta tem os campos separados por | .','error');
+    saveState(); return;
+  }
+  l.comparacao = { modelos, quando: new Date().toISOString() };
+  licRegistrar(l, `Comparação montada com ${modelos.length} modelo${modelos.length===1?'':'s'}.`);
+  saveState(); renderPortalLicitacoes();
+  showToast(`Entendi ${modelos.length} modelo${modelos.length===1?'':'s'}. A comparação está logo abaixo.`,'success');
+}
+function licLimparComparacao(id){
+  const l = licAchar(id); if(!l) return;
+  l.comparacao = null; saveState(); renderPortalLicitacoes();
+}
+
+function licVeredictoClasse(v){
+  const s = String(v||'').toUpperCase();
+  if(s.startsWith('NÃO ATENDE')||s.startsWith('NAO ATENDE')) return 'naoatende';
+  if(s.startsWith('ATENDE')||s.startsWith('SUPERIOR')) return 'atende';
+  return 'confirmar';
+}
+function licComparacaoHtml(l){
+  const c = l.comparacao;
+  const nExig = Math.max(l.exigencias.length, ...c.modelos.map(m=>m.veredictos.length));
+  return `
+    <div class="lic-passo">Comparação dos modelos</div>
+    <p class="help-text">Uma linha por exigência, uma coluna por modelo. Vermelho desclassifica.</p>
+    <div class="table-wrap">
+      <table class="lic-comp">
+        <thead><tr><th style="min-width:200px;">Exigência do edital</th>
+          ${c.modelos.map(m=>`<th>${escapeHtml(m.modelo)}<br><span style="font-weight:400;opacity:.8;">${escapeHtml(m.fabricante||'')}</span></th>`).join('')}
+        </tr></thead>
+        <tbody>
+          ${Array.from({length:nExig}).map((_,i)=>{
+            const ex = l.exigencias[i];
+            return `<tr class="${i%2?'par':''}">
+              <td><b>${i+1}.</b> ${escapeHtml(ex?ex.texto:'(exigência '+(i+1)+')')}</td>
+              ${c.modelos.map(m=>{
+                const v = m.veredictos[i]||'';
+                return `<td class="${licVeredictoClasse(v)}">${escapeHtml(v||'—')}</td>`;
+              }).join('')}
+            </tr>`;
+          }).join('')}
+          <tr style="background:#FAFBFC;">
+            <td><b>Preço e onde comprar</b><br><span style="color:var(--ink-faint);">referência ${fmtMoney(l.valorEstimado||0)}</span></td>
+            ${c.modelos.map(m=>`<td>
+              <b style="font-family:var(--font-num);font-size:14px;">${m.preco?fmtMoney(m.preco):escapeHtml(m.precoTexto||'—')}</b><br>
+              ${m.link && m.link.startsWith('http') ? `<a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="color:var(--primary);font-size:12px;">🔗 abrir anúncio</a>` : escapeHtml(m.link||'')}<br>
+              <button class="btn btn-sm" style="margin-top:5px;" onclick="licUsarModelo('${l.id}',${c.modelos.indexOf(m)})">Usar este na precificação</button>
+            </td>`).join('')}
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/* Leva o modelo escolhido direto pro item 1 da precificação. */
+function licUsarModelo(id, idx){
+  const l = licAchar(id); if(!l || !l.comparacao) return;
+  const m = l.comparacao.modelos[idx]; if(!m) return;
+  if(l.itens.length===0) licNovoItem(id, true);
+  const it = l.itens[0];
+  it.marca = it.marca || m.fabricante || '';
+  it.modelo = m.modelo;
+  if(!it.custo) it.custo = m.preco || 0;
+  if(!it.linkFornecedor) it.linkFornecedor = m.link || '';
+  if(!it.descricaoProposta) it.descricaoProposta = `${(l.objeto||'').slice(0,80)} — ${m.fabricante||''} ${m.modelo}`.trim();
+  licRegistrar(l, `Modelo ${m.modelo} levado para a precificação.`);
+  saveState();
+  licAvancarEtapa(id, 'precificacao', 'precificar');
+}
+
+/* ---------------------------------------------------------
+   TELA: PRECIFICAR
+   Um tom de cor por item (lic-f1..lic-f6), campo de MARCA, e o
+   aviso de produto já usado antes.
+   --------------------------------------------------------- */
+function licNovoItem(id, silencioso){
+  const l = licAchar(id); if(!l) return;
+  l.itens.push({
+    id: uid('licit'),
+    descricao: l.itens.length===0 ? (l.objeto||'') : '',
+    descricaoProposta: l.itens.length===0 ? (l.objeto||'') : '',
+    marca:'', modelo:'', unidade:'UND', qtd:1, teto: l.itens.length===0 ? (l.valorEstimado||0) : 0,
+    custo:0, acessorios:0, freteNos:0, freteCliente:0, impostoPct:0,
+    comissaoVendedor:'', comissaoPct:0, precoVenda:0,
+    linkFornecedor:'', contatoFornecedor:'', obsCompra:''
+  });
+  if(!silencioso){ saveState(); renderPortalLicitacoes(); }
+}
+function licRemoverItem(id, itemId){
+  const l = licAchar(id); if(!l) return;
+  l.itens = l.itens.filter(i=>i.id!==itemId);
+  saveState(); renderPortalLicitacoes();
+}
+
+function licTelaPrecificar(l){
+  const t = licTotalLicitacao(l);
+  /* Item sem preço de venda ainda não é item no vermelho — é item que
+     falta precificar. Misturar os dois faz o resumo mentir. */
+  const semPreco = l.itens.filter(it=>licNumDireto(it.precoVenda)<=0);
+  const itensRuins = l.itens.filter(it=>licNumDireto(it.precoVenda)>0 && licCustoItem(it).lucro<0);
+  const precificados = l.itens.filter(it=>licNumDireto(it.precoVenda)>0);
+  const fecha = semPreco.length===0 && precificados.length>0 &&
+    (l.criterio==='global' ? t.lucro >= 0 : itensRuins.length===0);
+
+  return `
+    ${licCabecalho(l, l.objeto||'Precificação',
+      `${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'}`,
+      `<select id="lic-criterio" style="padding:7px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+         <option value="item" ${l.criterio==='item'?'selected':''}>Julgamento: por item</option>
+         <option value="global" ${l.criterio==='global'?'selected':''}>Julgamento: preço global</option>
+       </select>
+       <button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','proposta','proposta')">Avançar para Proposta ›</button>`)}
+
+    ${(l.leitura||{}).criterio ? `<div class="help-text" style="margin:-6px 0 10px;">
+      Lido do edital: <b>${escapeHtml(l.leitura.criterio)}</b>.
+      ${l.criterio==='global'?'Você marcou preço global — o que importa é o resultado somado no fim.':'Você marcou por item — cada item é uma disputa separada.'}</div>`:''}
+
+    ${itensRuins.length>0 ? `<div class="lic-res nao" style="margin-bottom:12px;">
+      <b>⛔ ${itensRuins.length} item${itensRuins.length===1?'':'ns'} não fecha${itensRuins.length===1?'':'m'} com o preço de hoje.</b>
+      ${l.criterio==='global'
+        ? ' Como o julgamento é global, o que vale é o resultado somado lá embaixo.'
+        : ' Como o julgamento é por item, dá pra simplesmente não disputar esse item.'}
+    </div>`:''}
+
+    <div class="card">
+      <h3 style="margin-top:0;">Precificação dos itens</h3>
+      <p class="help-text">Os itens já vieram do edital. Ajuste a descrição, informe custo e fretes — o resto o sistema calcula.</p>
+      ${l.itens.length===0 ? '<div class="lic-vazio">Nenhum item ainda.</div>' : l.itens.map((it,i)=>licItemHtml(l, it, i)).join('')}
+      <button class="btn btn-sm" onclick="licNovoItem('${l.id}')">+ Adicionar item</button>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Resumo${l.criterio==='global'?' — preço global':''}</h3>
+      <div class="kpi-row">
+        <div class="kpi-card"><div class="kpi-label">Teto do edital</div><div class="kpi-value">${fmtMoney(t.teto)}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Nossa proposta</div>
+          <div class="kpi-value">${t.venda>0?fmtMoney(t.venda):'—'}</div>
+          <div class="kpi-sub">${t.venda>0&&t.teto>0?((1-t.venda/t.teto)*100).toFixed(1)+'% abaixo do teto':''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Custo total</div><div class="kpi-value">${fmtMoney(t.custo)}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Lucro</div>
+          <div class="kpi-value ${t.venda<=0?'':(t.lucro<0?'negative':'positive')}">${t.venda>0?fmtMoney(t.lucro):'—'}</div>
+          <div class="kpi-sub">${t.venda>0?'':'falta precificar'}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Margem</div>
+          <div class="kpi-value ${t.venda>0&&t.margem<0?'negative':''}">${t.venda>0?t.margem.toFixed(1)+'%':'—'}</div></div>
+      </div>
+      <div class="lic-res ${fecha?'ok':(itensRuins.length?'nao':'')}"
+           ${(!fecha && !itensRuins.length)?'style="background:var(--warning-soft);border:1px solid var(--warning);"':''}>
+        ${semPreco.length>0
+          ? `Falta o preço de venda de ${semPreco.length} item${semPreco.length===1?'':'ns'}. Enquanto não tiver preço, não dá pra dizer se fecha.`
+          : fecha
+            ? `✓ ${l.criterio==='global'?'No somado, a proposta fecha com lucro.':'Todos os itens fecham com lucro.'}`
+            : l.criterio==='global'
+              ? `⛔ No somado, a proposta ainda não fecha. Precisa baixar custo ou subir preço.`
+              : `⚠️ Tem item no vermelho. Como o julgamento é por item, dá pra disputar só os que fecham.`}
+      </div>
+    </div>
+  `;
+}
+
+function licItemHtml(l, it, i){
+  const c = licCustoItem(it);
+  const faixa = 'lic-f' + ((i % 6) + 1);
+  const venda = licNumDireto(it.precoVenda);
+  const teto = licNumDireto(it.teto);
+  const piso = licPisoItem(it);
+  const fecha = venda > 0 && c.lucro >= 0;
+  const temVenda = venda > 0;
+  const parecidos = licProcurarParecidos(it.descricaoProposta || it.descricao, it.marca, it.id);
+
+  return `
+  <div class="lic-item ${faixa}" data-item="${it.id}">
+    <div class="cab">
+      <div style="flex:1;min-width:220px;">
+        <span class="selo">ITEM ${String(i+1).padStart(2,'0')}</span>
+        <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao || it.descricaoProposta || 'Item sem descrição')}</span>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
+          ${c.qtd} ${escapeHtml(it.unidade||'UND')}${it.modelo?` · modelo ${escapeHtml(it.modelo)}`:''}${it.marca?` · marca ${escapeHtml(it.marca)}`:''}
+        </div>
+      </div>
+      <div class="teto">
+        TETO DO EDITAL <b>${fmtMoney(teto)}</b>
+        <span style="font-size:11px;">acima disso, desclassifica</span>
+      </div>
+      ${l.itens.length>1?`<button class="btn btn-sm" onclick="licRemoverItem('${l.id}','${it.id}')">✕</button>`:''}
+    </div>
+    <div class="corpo">
+      <div class="field" style="margin-bottom:4px;">
+        <label style="font-size:11.5px;color:var(--ink-soft);">Descrição que vai na proposta</label>
+        <input type="text" data-campo="descricaoProposta" value="${escapeAttr(it.descricaoProposta||'')}"
+          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+        <div class="dica" style="font-size:11px;color:var(--ink-faint);margin-top:3px;">Edite como o órgão precisa ler. Este produto não entra no estoque da loja.</div>
+      </div>
+
+      ${licAvisoParecidos(parecidos, it)}
+
+      <div class="lic-grade">
+        <div><label>Marca</label>
+          <input type="text" data-campo="marca" value="${escapeAttr(it.marca||'')}" placeholder="ex: SAMSUNG">
+          <div class="dica">vai impressa na proposta</div></div>
+        <div><label>Modelo</label>
+          <input type="text" data-campo="modelo" value="${escapeAttr(it.modelo||'')}" placeholder="ex: WA65F"></div>
+        <div><label>Unidade</label>
+          <input type="text" data-campo="unidade" value="${escapeAttr(it.unidade||'UND')}"></div>
+        <div><label>Quantidade</label>
+          <input type="number" step="1" min="1" data-campo="qtd" value="${it.qtd||1}"></div>
+        <div><label>Teto do edital</label>
+          <input type="number" step="0.01" data-campo="teto" value="${teto||''}" placeholder="0,00"></div>
+      </div>
+
+      <div class="lic-grade">
+        <div><label>Custo do produto <span style="color:var(--ink-faint);">(unitário)</span></label>
+          <input type="number" step="0.01" data-campo="custo" value="${licNumDireto(it.custo)||''}" placeholder="0,00">
+          <div class="dica">o que o distribuidor cobra</div></div>
+        <div><label>Acessórios obrigatórios</label>
+          <input type="number" step="0.01" data-campo="acessorios" value="${licNumDireto(it.acessorios)||''}" placeholder="0,00">
+          <div class="dica">suporte, cabo, instalação</div></div>
+        <div><label>Frete até nós</label>
+          <input type="number" step="0.01" data-campo="freteNos" value="${licNumDireto(it.freteNos)||''}" placeholder="0,00"></div>
+        <div><label>Frete até o cliente</label>
+          <input type="number" step="0.01" data-campo="freteCliente" value="${licNumDireto(it.freteCliente)||''}" placeholder="0,00"></div>
+        <div><label>Impostos (%)</label>
+          <input type="number" step="0.01" data-campo="impostoPct" value="${licNumDireto(it.impostoPct)||''}" placeholder="0">
+          <div class="dica">você digita</div></div>
+        <div><label>Comissão</label>
+          <select data-campo="comissaoVendedor">
+            <option value="">sem comissão</option>
+            ${(typeof getVendedoresUnicos==='function'?getVendedoresUnicos():['NETO','GILBERTO','GERALDO']).map(v=>
+              `<option value="${escapeAttr(v)}" ${it.comissaoVendedor===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+          </select>
+          <input type="number" step="0.01" data-campo="comissaoPct" value="${licNumDireto(it.comissaoPct)||''}" placeholder="%" style="margin-top:5px;">
+          <div class="dica">sai do lucro</div></div>
+      </div>
+
+      <div class="lic-conta">
+        <table>
+          <tr><td>Produto${c.qtd>1?` (${c.qtd} × ${fmtMoney(licNumDireto(it.custo))})`:''}</td><td>${fmtMoney(c.produto)}</td></tr>
+          ${c.acessorios?`<tr><td>Acessórios obrigatórios</td><td>${fmtMoney(c.acessorios)}</td></tr>`:''}
+          ${c.freteNos?`<tr><td>Frete até nós</td><td>${fmtMoney(c.freteNos)}</td></tr>`:''}
+          ${c.freteCliente?`<tr><td>Frete até o cliente</td><td>${fmtMoney(c.freteCliente)}</td></tr>`:''}
+          <tr><td>Impostos${licNumDireto(it.impostoPct)?` (${licNumDireto(it.impostoPct)}%)`:''}</td><td>${fmtMoney(c.imposto)}</td></tr>
+          ${c.comissao?`<tr><td>Comissão ${escapeHtml(it.comissaoVendedor||'')} (${licNumDireto(it.comissaoPct)}%)</td><td>${fmtMoney(c.comissao)}</td></tr>`:''}
+          <tr><td>Custo total</td><td>${fmtMoney(c.total)}</td></tr>
+        </table>
+        <div class="lic-res ${fecha?'ok':'nao'}">
+          ${!temVenda
+            ? `<b>Falta o preço de venda</b><div style="margin-top:6px;">Com o custo de hoje, o menor preço que não dá prejuízo é <b>${isFinite(piso)?fmtMoney(piso):'—'}</b>.</div>`
+            : fecha
+              ? `<div><b>✓ Fecha</b></div><div class="big">${fmtMoney(c.lucro)}</div>
+                 <div>Margem de <b>${c.margem.toFixed(1)}%</b> vendendo a ${fmtMoney(venda)}${teto>0?` — <b>${((1-venda/teto)*100).toFixed(1)}% abaixo do teto</b>`:''}.</div>
+                 <div style="margin-top:6px;"><b>Seu piso no lance:</b> até ${isFinite(piso)?fmtMoney(piso):'—'} você ainda não perde dinheiro. Abaixo disso, pare — é prejuízo.</div>`
+              : `<div><b>⛔ Não fecha</b></div><div class="big">${fmtMoney(c.lucro)}</div>
+                 <div>Vendendo a ${fmtMoney(venda)} você perde ${fmtMoney(Math.abs(c.lucro))}.
+                 ${teto>0 && piso>teto ? `O menor preço sem prejuízo (${fmtMoney(piso)}) <b>já passa do teto de ${fmtMoney(teto)}</b> — não existe preço que dê lucro aqui.`
+                   : `Para fechar: vender a partir de <b>${isFinite(piso)?fmtMoney(piso):'—'}</b>, ou comprar por menos.`}</div>`}
+        </div>
+      </div>
+
+      <div class="lic-grade" style="margin-top:12px;">
+        <div style="grid-column:1/-1;"><label>Preço de venda — é o que vai na proposta</label>
+          <input type="number" step="0.01" data-campo="precoVenda" value="${venda||''}" placeholder="0,00"
+            style="font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}"></div>
+      </div>
+      <div class="lic-grade">
+        <div><label>Link do fornecedor</label>
+          <input type="text" data-campo="linkFornecedor" value="${escapeAttr(it.linkFornecedor||'')}" placeholder="https://..."></div>
+        <div><label>Contato</label>
+          <input type="text" data-campo="contatoFornecedor" value="${escapeAttr(it.contatoFornecedor||'')}" placeholder="nome · telefone"></div>
+        <div><label>Observação da compra</label>
+          <input type="text" data-campo="obsCompra" value="${escapeAttr(it.obsCompra||'')}" placeholder="ex: preço válido até 25/10"></div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* O aviso que ela pediu: "quando eu digitar TV 32 polegadas, ele vai me
+   mostrar que já tem um produto cadastrado" — com o preço da última vez
+   pra gente tentar ficar perto, e a diferença de custo do fornecedor. */
+function licAvisoParecidos(parecidos, it){
+  if(parecidos.licitacao.length===0 && parecidos.loja.length===0) return '';
+  const custoAtual = licNumDireto(it.custo);
+  const partes = [];
+
+  parecidos.licitacao.forEach(p=>{
+    const u = p.usos[0]; if(!u) return;
+    const dif = custoAtual>0 && u.custoUnit>0 ? custoAtual - u.custoUnit : null;
+    const difTxt = dif===null ? '' :
+      dif === 0 ? ' — mesmo custo da última vez'
+      : dif > 0 ? ` — hoje está <b>${fmtMoney(dif)} mais caro</b> que da última vez`
+      : ` — hoje está <b>${fmtMoney(Math.abs(dif))} mais barato</b> que da última vez`;
+    const res = {ganhou:'e ganhamos', perdeu:'e perdemos', enviado:'e está enviada', pendente:'(ainda pendente)'}[u.resultado]||'';
+    partes.push(`<div class="hist">
+      <b>${escapeHtml(p.nome)}${p.marca?' — '+escapeHtml(p.marca):''}</b><br>
+      Última vez (${u.data?fmtDate(String(u.data).slice(0,10)):'—'}, ${escapeHtml(u.cliente||u.orgao||'')}):
+      custo <b>${fmtMoney(u.custoUnit)}</b>, vendemos por <b>${fmtMoney(u.precoVenda)}</b> ${res}${difTxt}.
+      <button class="btn btn-sm" style="margin-left:6px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(p.chave)}')">Ver histórico</button>
+    </div>`);
+  });
+
+  parecidos.loja.forEach(pr=>{
+    partes.push(`<div class="hist">Na loja já existe <b>${escapeHtml(pr.nome)}</b>${pr.marca?' — '+escapeHtml(pr.marca):''} — custo ${fmtMoney(pr.custo||0)}, preço ${fmtMoney(pr.preco||0)}. <span style="color:var(--ink-faint);">(só referência: o item da licitação não mexe no estoque)</span></div>`);
+  });
+
+  return `<div class="lic-achado">
+    <b>📌 Esse produto já passou por aqui.</b> Dá pra ficar perto do preço da última vez.
+    ${partes.join('')}
+  </div>`;
+}
+function licVerProdutoDaPrecificacao(chave){
+  licProdutoAberto = chave;
+  licAba = 'produtos'; licAberta = null; licTela = null;
+  renderPortalLicitacoes();
+}
+
+/* ---------------------------------------------------------
+   TELA: PROPOSTA
+   --------------------------------------------------------- */
+function licTelaProposta(l){
+  const t = licTotalLicitacao(l);
+  const cliente = l.clienteId ? STATE.clientes.find(c=>c.id===l.clienteId) : null;
+  const pc = l.propostaCampos;
+  const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+  const publicos = (STATE.clientes||[]).filter(c=>['Público','Escola'].includes(tipoClienteDe(c)));
+
+  return `
+    ${licCabecalho(l, l.objeto||'Proposta', `${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · ${fmtMoney(t.venda)}`,
+      l.etapa==='proposta' ? `<button class="btn" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar à precificação</button>` : '')}
+
+    <div class="card">
+      <h3 style="margin-top:0;">1 · O cliente</h3>
+      ${cliente ? `<div class="lic-doc ok"><div><b>${escapeHtml(cliente.nome)}</b>
+          <small>${escapeHtml(cliente.documento||'')} · ${escapeHtml(tipoClienteDe(cliente))} — a proposta sai no modelo de órgão público</small></div></div>`
+        : `<div class="lic-doc aviso"><div><b>Ainda sem cliente</b>
+          <small>Escolha um órgão já cadastrado ou cadastre agora — ele passa a existir no sistema inteiro.</small></div></div>`}
+      <div class="lic-grade" style="margin-top:10px;">
+        <div style="grid-column:span 2;"><label>Cliente (órgão)</label>
+          <select id="lic-cliente">
+            <option value="">— selecione —</option>
+            ${publicos.map(c=>`<option value="${c.id}" ${l.clienteId===c.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('')}
+          </select></div>
+        <div style="display:flex;align-items:flex-end;">
+          <button class="btn btn-sm btn-primary" onclick="licCadastrarCliente('${l.id}')">+ Cadastrar órgão</button></div>
+        <div><label>Vendedor</label>
+          <select id="lic-vendedor">
+            ${typeof opcoesVendedorHtml==='function' ? opcoesVendedorHtml(l.vendedor||'')
+              : ['NETO','GILBERTO','GERALDO'].map(v=>`<option ${l.vendedor===v?'selected':''}>${v}</option>`).join('')}
+          </select></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">2 · Os campos da proposta</h3>
+      <p class="help-text">O que tem ✓ o sistema leu sozinho do edital. Pode corrigir qualquer um.</p>
+      <div class="lic-grade">
+        <div><label>Modalidade</label>
+          <select id="licp-modalidade">
+            ${MODALIDADES_LICITACAO.map(m=>`<option ${pc.modalidade===m?'selected':''}>${escapeHtml(m)}</option>`).join('')}
+          </select></div>
+        <div><label>Nº do processo</label>
+          <input type="text" id="licp-numero" value="${escapeAttr(pc.numero || l.numero || '')}" placeholder="339/2026"></div>
+        <div><label>Tipo</label>
+          <select id="licp-tipo">
+            <option value="MENOR PREÇO POR ITEM" ${pc.tipo==='MENOR PREÇO POR ITEM'?'selected':''}>Menor preço por item</option>
+            <option value="MENOR PREÇO GLOBAL" ${pc.tipo==='MENOR PREÇO GLOBAL'?'selected':''}>Menor preço global</option>
+          </select></div>
+        <div><label>Validade da proposta</label>
+          <select id="licp-validade">
+            ${VALIDADES_PROPOSTA.map(v=>`<option ${pc.validade===v?'selected':''}>${escapeHtml(v)}</option>`).join('')}
+          </select></div>
+        <div><label>Prazo de entrega</label>
+          <input type="text" id="licp-entrega" value="${escapeAttr(pc.prazoEntrega || (l.leitura||{}).prazoEntrega || '')}" placeholder="10 (DEZ) DIAS ÚTEIS"></div>
+        <div><label>Prazo de pagamento</label>
+          <input type="text" id="licp-pagamento" value="${escapeAttr(pc.prazoPagamento || (l.leitura||{}).prazoPagamento || PAGAMENTOS_PROPOSTA[0])}"></div>
+      </div>
+      <div class="field"><label>Objeto</label>
+        <textarea id="licp-objeto" style="width:100%;height:70px;padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">${escapeHtml(pc.objeto || l.objeto || '')}</textarea></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">3 · Os itens <span class="hint">vêm prontos da precificação</span></h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th>Descrição</th><th>Marca</th><th style="text-align:right;">Qtd</th>
+            <th style="text-align:right;">Valor unit.</th><th style="text-align:right;">Valor total</th></tr></thead>
+          <tbody>
+            ${l.itens.map((it,i)=>{
+              const c = licCustoItem(it);
+              const unit = c.qtd>0 ? licNumDireto(it.precoVenda)/c.qtd : 0;
+              return `<tr>
+                <td>${String(i+1).padStart(2,'0')}</td>
+                <td>${escapeHtml(it.descricaoProposta||it.descricao||'')}
+                  <div style="font-size:11px;color:var(--ink-faint);">custo ${fmtMoney(c.total)} · margem ${c.margem.toFixed(1)}%</div></td>
+                <td>${escapeHtml(it.marca||'—')}${it.modelo?`<div style="font-size:11px;color:var(--ink-faint);">${escapeHtml(it.modelo)}</div>`:''}</td>
+                <td style="text-align:right;">${c.qtd}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(unit)}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licNumDireto(it.precoVenda))}</td>
+              </tr>`;
+            }).join('')}
+            <tr><td colspan="5" style="text-align:right;font-weight:600;">Total da proposta</td>
+              <td style="text-align:right;font-weight:600;font-family:var(--font-num);">${fmtMoney(t.venda)}</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="licGerarProposta('${l.id}')">
+          ${orc?'↻ Atualizar o orçamento e gerar o PDF':'📄 Gerar proposta em PDF'}</button>
+        ${orc?`<button class="btn" onclick="gerarPdfOrcamento('${orc.id}')">Ver o PDF de novo</button>`:''}
+        ${orc?`<span style="align-self:center;font-size:12.5px;color:var(--ink-soft);">Orçamento nº ${orc.numero} criado no sistema, marcado como licitação.</span>`:''}
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">4 · A pasta para enviar</h3>
+      <p class="help-text">Só aqui, depois da proposta pronta. Baixa tudo junto: proposta + certidões.</p>
+      ${orc ? `<div class="lic-doc ok"><div><b>Proposta ${escapeHtml(pc.numero||l.numero||'')}.pdf</b><small>modelo de órgão público</small></div><span style="color:var(--positive);">✓</span></div>` : ''}
+      ${LIC_CERTIDOES.map(c=>{
+        const d = licCertidoesCfg()[c.id]||{};
+        return d.arquivo ? `<div class="lic-doc ok"><div><b>${escapeHtml(d.arquivo)}</b><small>${d.validade?'válida até '+fmtDate(d.validade):''}</small></div><span style="color:var(--positive);">✓</span></div>` : '';
+      }).join('')}
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;">
+        <button class="btn" onclick="licBaixarPasta('${l.id}')">📦 Baixar a pasta (.zip)</button>
+        ${l.etapa==='proposta'?`<button class="btn btn-primary" onclick="licMarcarEnviada('${l.id}')">✈ Marcar como enviada</button>`:''}
+        ${l.etapa==='enviada'?`<button class="btn btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+          <button class="btn" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>`:''}
+      </div>
+      <div class="help-text" style="margin-top:8px;">Você assina digital, envia pelo e-mail ou pela plataforma, e marca aqui que enviou. A partir daí o sistema conta os dias aguardando o retorno.</div>
+    </div>
+  `;
+}
+
+function licCadastrarCliente(id){
+  const l = licAchar(id); if(!l) return;
+  licSalvarCamposProposta(l);
+  abrirFormCliente(null, (novo)=>{
+    if(!novo) return;
+    l.clienteId = novo.id;
+    licRegistrar(l, `Cliente ${novo.nome} cadastrado pela proposta.`);
+    saveState(); renderPortalLicitacoes();
+    showToast('Cliente cadastrado no sistema e vinculado a esta proposta.','success');
+  });
+}
+
+function licSalvarCamposProposta(l){
+  const v = (id)=>{ const e = document.getElementById(id); return e ? String(e.value||'').trim() : undefined; };
+  const cli = v('lic-cliente'); if(cli !== undefined) l.clienteId = cli || null;
+  const vend = v('lic-vendedor'); if(vend !== undefined) l.vendedor = vend;
+  const pc = l.propostaCampos;
+  const set = (campo, id)=>{ const x = v(id); if(x !== undefined) pc[campo] = x; };
+  set('modalidade','licp-modalidade'); set('numero','licp-numero'); set('tipo','licp-tipo');
+  set('validade','licp-validade'); set('prazoEntrega','licp-entrega');
+  set('prazoPagamento','licp-pagamento'); set('objeto','licp-objeto');
+}
+
+/* Gera (ou atualiza) o orçamento do sistema e abre o PDF.
+   O item vai com produtoId NULO de propósito: produto de licitação
+   não existe no estoque da loja. */
+function licItemParaCarrinho(it){
+  const c = licCustoItem(it);
+  const qtd = c.qtd;
+  const total = licNumDireto(it.precoVenda);
+  return {
+    produtoId: null,
+    licitacao: true,
+    nome: it.descricaoProposta || it.descricao || '',
+    marca: it.marca || '',
+    fornecedor: it.contatoFornecedor || '',
+    custoUnit: qtd>0 ? (c.fixo/qtd) : 0,
+    precoUnit: qtd>0 ? (total/qtd) : total,
+    qtd,
+    origem: '', origemTipo: null, origemId: null, origemEndereco: ''
+  };
+}
+
+function licGerarProposta(id){
+  const l = licAchar(id); if(!l) return;
+  licSalvarCamposProposta(l);
+  if(!l.clienteId){ showToast('Escolha ou cadastre o cliente antes de gerar a proposta.','error'); return; }
+  if(l.itens.length===0){ showToast('Não tem item nenhum para colocar na proposta.','error'); return; }
+  if(licTotalLicitacao(l).venda <= 0){ showToast('Falta o preço de venda dos itens — volte à precificação.','error'); return; }
+
+  const pc = l.propostaCampos;
+  const dados = {
+    clienteId: l.clienteId,
+    data: todayISO(),
+    validadeDias: 30,
+    observacoes: '',
+    vendedor: l.vendedor || '',
+    prazoEntrega: pc.prazoEntrega || '',
+    numeroPesquisa: '', responsavel: '', cargoResponsavel: '',
+    publico: {
+      modalidade: pc.modalidade || 'DISPENSA',
+      numero: pc.numero || l.numero || '',
+      tipo: pc.tipo || 'MENOR PREÇO POR ITEM',
+      objeto: pc.objeto || l.objeto || '',
+      validade: pc.validade || VALIDADES_PROPOSTA[0],
+      prazoPagamento: pc.prazoPagamento || PAGAMENTOS_PROPOSTA[0]
+    },
+    temComissao: false, pagadorId: null, repassePct: null,
+    condicaoPagamento: 'vista', vencimentoReceber: null,
+    prazosBoleto: [], crediarioParcelas: null, crediarioDia: null,
+    itens: l.itens.map(licItemParaCarrinho),
+    licitacaoId: l.id,
+    origemLicitacao: true
+  };
+
+  let orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+  if(orc){
+    Object.assign(orc, dados);
+  }else{
+    orc = { id: uid('orc'), numero: proximoNumeroOrcamento(), ...dados,
+            status:'pendente', criadoEm: new Date().toISOString() };
+    STATE.orcamentos.push(orc);
+    l.orcamentoId = orc.id;
+    licRegistrar(l, `Orçamento nº ${orc.numero} gerado a partir da licitação.`);
+  }
+  l.dataProposta = todayISO();
+  saveState();
+  renderPortalLicitacoes();
+  showToast(`Orçamento nº ${orc.numero} pronto — abrindo o PDF.`,'success');
+  setTimeout(()=>{ try{ gerarPdfOrcamento(orc.id); }catch(e){ console.error(e); } }, 150);
+}
+
+async function licBaixarPasta(id){
+  const l = licAchar(id); if(!l) return;
+  if(typeof JSZip === 'undefined'){ showToast('O compactador não carregou. Verifique a internet e recarregue.','error'); return; }
+  const cfg = licCertidoesCfg();
+  const zip = new JSZip();
+  let n = 0;
+  LIC_CERTIDOES.forEach(c=>{
+    const d = cfg[c.id];
+    if(d && d.conteudo && d.arquivo){
+      zip.file(d.arquivo, d.conteudo.split(',').pop(), {base64:true});
+      n++;
+    }
+  });
+  const resumo = [
+    `PASTA DA PROPOSTA`,
+    `${(l.propostaCampos.modalidade||'')} ${(l.propostaCampos.numero||l.numero||'')}`,
+    `${l.orgao||''}`,
+    ``,
+    `Objeto: ${l.propostaCampos.objeto || l.objeto || ''}`,
+    `Total da proposta: ${fmtMoney(licTotalLicitacao(l).venda)}`,
+    `Vendedor: ${l.vendedor||''}`,
+    ``,
+    `ITENS:`,
+    ...l.itens.map((it,i)=>`${i+1}. ${it.descricaoProposta||it.descricao} ${it.marca?'('+it.marca+')':''} — ${licCustoItem(it).qtd} ${it.unidade||'UND'} — ${fmtMoney(licNumDireto(it.precoVenda))}`),
+    ``,
+    `O PDF da proposta é gerado pelo botão "Gerar proposta em PDF" e salvo por você na pasta.`
+  ].join('\n');
+  zip.file('RESUMO DA PROPOSTA.txt', resumo);
+
+  try{
+    const blob = await zip.generateAsync({type:'blob'});
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `Proposta ${(l.propostaCampos.numero||l.numero||'').replace(/\//g,'-')||'licitacao'}.zip`;
+    document.body.appendChild(a); a.click();
+    setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+    showToast(n>0 ? `Pasta baixada com ${n} certidão${n===1?'':'ões'}.` : 'Pasta baixada. Guarde as certidões em 📎 Certidões pra elas virem junto.', 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui montar o .zip.','error');
+  }
+}
+
+function licMarcarEnviada(id){
+  const l = licAchar(id); if(!l) return;
+  if(!l.orcamentoId){ showToast('Gere a proposta antes de marcar como enviada.','error'); return; }
+  l.etapa = 'enviada';
+  l.status = 'Aguardando Resultado';
+  l.dataEnvio = new Date().toISOString();
+  const orc = (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId);
+  if(orc) orc.status = 'enviado';
+  licRegistrar(l, 'Proposta enviada ao órgão.');
+  saveState(); licAberta=null; licTela=null; licAba='propostas';
+  renderPortalLicitacoes();
+  showToast('Marcada como enviada. Agora é aguardar o retorno.','success');
+}
+
+/* ---------------------------------------------------------
+   TELA: COMPRA (ganhamos) / o que aconteceu (perdemos)
+   --------------------------------------------------------- */
+function licTelaCompra(l){
+  const t = licTotalLicitacao(l);
+  const ganhou = l.etapa==='ganhou' || l.etapa==='entregue';
+  return `
+    ${licCabecalho(l, l.objeto||'', `${escapeHtml(l.orgao||'')} · ${fmtMoney(t.venda)}`,
+      ganhou && l.etapa!=='entregue' ? `<button class="btn btn-primary" onclick="licMarcarEntregue('${l.id}')">✓ Marcar como entregue</button>` : '')}
+
+    ${ganhou ? `
+    <div class="card">
+      <h3 style="margin-top:0;">O que comprar</h3>
+      <p class="help-text">Os fornecedores que você anotou na precificação.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th>Marca</th><th style="text-align:right;">Qtd</th>
+            <th style="text-align:right;">Custo previsto</th><th style="text-align:right;">Vendemos por</th>
+            <th>Onde comprar</th></tr></thead>
+          <tbody>
+            ${l.itens.map((it,i)=>{
+              const c = licCustoItem(it);
+              return `<tr>
+                <td>${String(i+1).padStart(2,'0')}. ${escapeHtml(it.descricaoProposta||it.descricao||'')}</td>
+                <td>${escapeHtml(it.marca||'—')}</td>
+                <td style="text-align:right;">${c.qtd}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(c.fixo)}</td>
+                <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(licNumDireto(it.precoVenda))}</td>
+                <td style="font-size:12px;">${escapeHtml(it.contatoFornecedor||it.obsCompra||'—')}
+                  ${it.linkFornecedor?`<br><a href="${escapeAttr(it.linkFornecedor)}" target="_blank" rel="noopener" style="color:var(--primary);">🔗 abrir</a>`:''}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="lic-res ok" style="margin-top:12px;">
+        Lucro previsto nesta licitação: <b>${fmtMoney(t.lucro)}</b>${t.venda>0?` (${t.margem.toFixed(1)}%)`:''}.
+        ${l.valorResultado?` Homologado em ${fmtMoney(l.valorResultado)}.`:''}
+      </div>
+    </div>` : `
+    <div class="card">
+      <h3 style="margin-top:0;">O que aconteceu</h3>
+      <div class="lic-res nao">
+        Perdemos esta licitação${l.dataResultado?` em ${fmtDate(l.dataResultado)}`:''}.
+        ${l.valorResultado?`<div style="margin-top:6px;">O vencedor fechou em <b>${fmtMoney(l.valorResultado)}</b> — nossa proposta era ${fmtMoney(t.venda)}
+          (${t.venda>0?((l.valorResultado/t.venda-1)*100).toFixed(1):'—'}% de diferença).</div>`:''}
+        ${l.resultadoObs?`<div style="margin-top:6px;">${escapeHtml(l.resultadoObs)}</div>`:''}
+      </div>
+      <p class="help-text" style="margin-top:12px;">O que interessa pra próxima vez é o histórico <b>do produto</b>, não o desta prefeitura. Veja por produto:</p>
+      ${l.itens.map(it=>{
+        const chave = licChaveProduto(it.descricaoProposta||it.descricao, it.marca);
+        return `<div class="lic-doc"><div><b>${escapeHtml(it.descricaoProposta||it.descricao||'')}</b>
+          <small>${escapeHtml(it.marca||'')} · custo ${fmtMoney(licCustoItem(it).total)} · propusemos ${fmtMoney(licNumDireto(it.precoVenda))}</small></div>
+          <button class="btn btn-sm" onclick="licVerProdutoDaPrecificacao('${escapeAttr(chave)}')">Histórico deste produto</button></div>`;
+      }).join('')}
+    </div>`}
+
+    ${l.historico.length?`<div class="card">
+      <h3 style="margin-top:0;">Linha do tempo</h3>
+      ${l.historico.map(h=>`<div style="font-size:12.5px;padding:5px 0;border-bottom:1px solid var(--border);">
+        <span style="color:var(--ink-faint);">${new Date(h.quando).toLocaleString('pt-BR')}</span> — ${escapeHtml(h.texto)}</div>`).join('')}
+    </div>`:''}
+  `;
+}
+
+function licMarcarEntregue(id){
+  const l = licAchar(id); if(!l) return;
+  l.etapa = 'entregue'; l.status = 'Entregue';
+  licRegistrar(l, 'Entregue.');
+  saveState(); renderPortalLicitacoes();
+  showToast('Marcada como entregue.','success');
+}
+
+/* =========================================================
+   CERTIDÕES E MODELOS
+   ========================================================= */
+function licAbrirCertidoes(){
+  const cfg = licCertidoesCfg();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">📎 Certidões e modelos</h3>
+      <p class="help-text">Guarde aqui as certidões atualizadas. Elas entram na pasta da proposta e o sistema avisa quando estiverem perto de vencer.</p>
+      ${LIC_CERTIDOES.map(c=>{
+        const d = cfg[c.id]||{};
+        return `<div class="lic-doc" style="display:block;" data-cert="${c.id}">
+          <b>${escapeHtml(c.nome)}</b>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:6px;">
+            <div><label style="font-size:11.5px;color:var(--ink-soft);">Válida até</label>
+              <input type="date" data-cv="${c.id}" value="${escapeAttr(d.validade||'')}" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;"></div>
+            <div><label style="font-size:11.5px;color:var(--ink-soft);">Arquivo</label>
+              <input type="file" data-cf="${c.id}" accept=".pdf" style="width:100%;font-size:12px;">
+              ${d.arquivo?`<div style="font-size:11.5px;color:var(--positive);margin-top:3px;">✓ ${escapeHtml(d.arquivo)}</div>`:''}</div>
+          </div>
+        </div>`;
+      }).join('')}
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="lic-cert-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  const pendentes = {};
+  m.querySelectorAll('[data-cf]').forEach(inp=>{
+    inp.addEventListener('change', ()=>{
+      const f = inp.files && inp.files[0];
+      if(!f) return;
+      if(f.size > 3*1024*1024){ showToast('Esse PDF passa de 3 MB — guarde um menor, senão o navegador não aguenta.','error'); inp.value=''; return; }
+      const fr = new FileReader();
+      fr.onload = ()=>{ pendentes[inp.dataset.cf] = { arquivo:f.name, conteudo: fr.result }; };
+      fr.readAsDataURL(f);
+    });
+  });
+  m.querySelector('#lic-cert-ok').onclick = ()=>{
+    m.querySelectorAll('[data-cv]').forEach(inp=>{
+      const id = inp.dataset.cv;
+      if(!cfg[id]) cfg[id] = {};
+      cfg[id].validade = inp.value || '';
+    });
+    Object.keys(pendentes).forEach(id=>{
+      if(!cfg[id]) cfg[id] = {};
+      cfg[id].arquivo = pendentes[id].arquivo;
+      cfg[id].conteudo = pendentes[id].conteudo;
+    });
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Certidões salvas.','success');
+  };
+}
+
+/* =========================================================
+   ANEXOS DO EDITAL — leitura de PDF com o pdf.js que já está na página
+   ========================================================= */
+async function licLerPdf(file){
+  if(typeof pdfjsLib === 'undefined') return { erro:'leitor de PDF não carregou' };
+  try{
+    const buf = await file.arrayBuffer();
+    const doc = await pdfjsLib.getDocument({ data: buf }).promise;
+    let texto = '';
+    const limite = Math.min(doc.numPages, 60);
+    for(let p=1; p<=limite; p++){
+      const pagina = await doc.getPage(p);
+      const c = await pagina.getTextContent();
+      texto += c.items.map(i=>i.str).join(' ') + '\n';
+    }
+    if(texto.replace(/\s/g,'').length < 40){
+      return { paginas: doc.numPages, texto:'', erro:'escaneado — é imagem, não tem texto' };
+    }
+    return { paginas: doc.numPages, texto };
+  }catch(e){
+    console.error(e);
+    return { erro:'não consegui abrir' };
+  }
+}
+
+async function licAnexar(id, files){
+  const l = licAchar(id); if(!l || !files || files.length===0) return;
+  showToast(`Lendo ${files.length} arquivo${files.length===1?'':'s'}...`,'info');
+  for(const f of files){
+    const registro = { nome:f.name, tamanho:f.size, texto:'', erro:null };
+    const nome = f.name.toLowerCase();
+    if(nome.endsWith('.pdf')){
+      const r = await licLerPdf(f);
+      registro.texto = r.texto||''; registro.paginas = r.paginas; registro.erro = r.erro||null;
+    }else if(nome.endsWith('.txt') || nome.endsWith('.csv')){
+      try{ registro.texto = await f.text(); }catch(e){ registro.erro = 'não consegui ler'; }
+    }else if(nome.endsWith('.xlsx') || nome.endsWith('.xls')){
+      try{
+        const wb = XLSX.read(await f.arrayBuffer(), {type:'array'});
+        registro.texto = wb.SheetNames.map(n=>XLSX.utils.sheet_to_csv(wb.Sheets[n])).join('\n');
+      }catch(e){ registro.erro = 'não consegui ler a planilha'; }
+    }else{
+      registro.erro = 'guardado, mas não dá pra ler o conteúdo';
+    }
+    l.arquivos.push(registro);
+  }
+  saveState();
+  const temTexto = l.arquivos.some(a=>a.texto);
+  if(temTexto && Object.keys(l.leitura||{}).length===0){ licLerEdital(l); return; }
+  renderPortalLicitacoes();
+  showToast('Arquivos anexados.','success');
+}
+
+function licRemoverArquivo(id, i){
+  const l = licAchar(id); if(!l) return;
+  l.arquivos.splice(i,1);
+  saveState(); renderPortalLicitacoes();
+}
+
+/* =========================================================
+   LIGAÇÕES DE EVENTO (depois de cada render)
+   ========================================================= */
+function licLigarPainel(){
+  const arq = document.getElementById('lic-arquivo-pncp');
+  if(arq) arq.onchange = ()=>{ const f = arq.files && arq.files[0]; arq.value=''; licImportarArquivoPNCP(f); };
+
+  const busca = document.getElementById('lic-busca');
+  if(busca){
+    busca.oninput = ()=>{
+      licFiltroBusca = busca.value;
+      clearTimeout(licLigarPainel._t);
+      licLigarPainel._t = setTimeout(()=>{
+        const foco = document.activeElement === busca;
+        renderPortalLicitacoes();
+        if(foco){ const n = document.getElementById('lic-busca'); if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); } }
+      }, 260);
+    };
+  }
+  const ordem = document.getElementById('lic-ordem');
+  if(ordem) ordem.onchange = ()=>{ licOrdem = ordem.value; renderPortalLicitacoes(); };
+
+  const bp = document.getElementById('lic-busca-produto');
+  if(bp){
+    bp.oninput = ()=>{
+      licFiltroProduto = bp.value;
+      clearTimeout(licLigarPainel._tp);
+      licLigarPainel._tp = setTimeout(()=>{
+        renderPortalLicitacoes();
+        const n = document.getElementById('lic-busca-produto');
+        if(n){ n.focus(); n.setSelectionRange(n.value.length,n.value.length); }
+      }, 260);
+    };
+  }
+}
+
+function licLigarDetalhe(){
+  const l = licAchar(licAberta);
+  if(!l) return;
+
+  /* anexos */
+  const inp = document.getElementById('lic-arquivos');
+  if(inp) inp.onchange = ()=>{ const fs = [...(inp.files||[])]; inp.value=''; licAnexar(l.id, fs); };
+  const solta = document.getElementById('lic-solta');
+  if(solta){
+    ['dragenter','dragover'].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.add('hover'); }));
+    ['dragleave','drop'].forEach(ev=>solta.addEventListener(ev, e=>{ e.preventDefault(); solta.classList.remove('hover'); }));
+    solta.addEventListener('drop', e=>{ const fs = [...(e.dataTransfer.files||[])]; if(fs.length) licAnexar(l.id, fs); });
+  }
+
+  /* critério de julgamento */
+  const crit = document.getElementById('lic-criterio');
+  if(crit) crit.onchange = ()=>{ l.criterio = crit.value; saveState(); renderPortalLicitacoes(); };
+
+  /* campos dos itens da precificação — salva ao sair do campo e redesenha
+     só quando o número muda (pra não roubar o foco a cada tecla) */
+  document.querySelectorAll('.lic-item').forEach(caixa=>{
+    const item = l.itens.find(x=>x.id===caixa.dataset.item);
+    if(!item) return;
+    caixa.querySelectorAll('[data-campo]').forEach(inp2=>{
+      const campo = inp2.dataset.campo;
+      const numerico = ['qtd','teto','custo','acessorios','freteNos','freteCliente','impostoPct','comissaoPct','precoVenda'].includes(campo);
+      const aplicar = ()=>{
+        const antes = JSON.stringify(item);
+        item[campo] = numerico ? licNumDireto(inp2.value) : inp2.value;
+        if(campo==='comissaoVendedor' && inp2.value && !licNumDireto(item.comissaoPct)) item.comissaoPct = 3;
+        if(JSON.stringify(item)===antes) return;
+        saveState();
+        renderPortalLicitacoes();
+      };
+      inp2.addEventListener('change', aplicar);
+      if(campo==='descricaoProposta'){
+        let t;
+        inp2.addEventListener('input', ()=>{
+          clearTimeout(t);
+          t = setTimeout(()=>{
+            item[campo] = inp2.value;
+            saveState();
+            const pos = inp2.selectionStart;
+            renderPortalLicitacoes();
+            const novo = document.querySelector(`.lic-item[data-item="${item.id}"] [data-campo="descricaoProposta"]`);
+            if(novo){ novo.focus(); try{ novo.setSelectionRange(pos,pos); }catch(e){} }
+          }, 500);
+        });
+      }
+    });
+  });
+
+  /* campos da proposta — salvam ao sair, sem redesenhar */
+  ['lic-cliente','lic-vendedor','licp-modalidade','licp-numero','licp-tipo',
+   'licp-validade','licp-entrega','licp-pagamento','licp-objeto'].forEach(id=>{
+    const e = document.getElementById(id);
+    if(e) e.addEventListener('change', ()=>{ licSalvarCamposProposta(l); saveState(); });
+  });
+}
+
+/* =========================================================
+   LIGAÇÃO COM O SISTEMA
+   ========================================================= */
+RENDERERS.licitacoes = renderPortalLicitacoes;
+
+/* A busca do PNCP antiga chamava renderLicitacoes() direto; agora o
+   portal é quem desenha. Mantém o nome funcionando pra não quebrar
+   nenhuma chamada antiga espalhada pelo módulo de busca. */
+const renderLicitacoesAntigo = renderLicitacoes;
+renderLicitacoes = function(){
+  if(document.getElementById('licitacoes-content')) renderPortalLicitacoes();
+};
+
 
 /* =========================================================
    MÓDULO: DASHBOARD PRINCIPAL
