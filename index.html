@@ -28245,6 +28245,30 @@ function licGerarUmaDeclaracao(id, qual, local){
   saveState();
 }
 
+/* Ao abrir a pasta, confere em silêncio se tem arquivo guardado sem
+   ficha. Se tiver, oferece recuperar — não recupera sozinha, porque
+   ela precisa conferir a validade de cada um. */
+async function licConferirOrfaos(){
+  const caixa = document.getElementById('lic-docs-orfaos');
+  if(!caixa) return;
+  let chaves = [];
+  try{ chaves = await licArquivoIdb('chaves'); }catch(e){ return; }
+  const orfaos = (chaves||[]).map(k=>String(k))
+    .filter(k=>k.indexOf('certidao:')===0)
+    .map(k=>k.slice('certidao:'.length))
+    .filter(id=>{ const d = licDoc(id); return !d || !d.arquivo; });
+  if(orfaos.length === 0) return;
+  caixa.innerHTML = `
+    <div class="lic-doc aviso" style="display:block;margin-bottom:10px;">
+      <b>⚠️ ${orfaos.length} arquivo${orfaos.length===1?'':'s'} guardado${orfaos.length===1?'':'s'} neste navegador sem ficha na pasta</b>
+      <small>Acontecia quando a outra máquina sincronizava uma configuração mais antiga: o arquivo
+        ficava aqui, a ficha sumia, e a tela dizia "não temos". Já está corrigido — isto aqui remonta as fichas.</small>
+      <button class="btn btn-sm btn-primary" style="margin-top:7px;"
+        onclick="licRecuperarPasta().then(()=>{document.getElementById('modal-docs-licitacao')?.remove(); licAbrirCertidoes();})">
+        ↩️ Recuperar ${orfaos.length} documento${orfaos.length===1?'':'s'}</button>
+    </div>`;
+}
+
 function licAbrirCertidoes(nomeNovo){
   licMigrarCertidoesAntigas();
   const m = document.createElement('div');
@@ -28252,6 +28276,7 @@ function licAbrirCertidoes(nomeNovo){
   m.id = 'modal-docs-licitacao';
   document.body.appendChild(m);
   licDesenharDocs(m, nomeNovo);
+  licConferirOrfaos();
 }
 
 function licDesenharDocs(m, nomeNovo){
@@ -28260,6 +28285,7 @@ function licDesenharDocs(m, nomeNovo){
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(760px,95vw);max-height:90vh;overflow-y:auto;">
       <h3 style="margin-top:0;">📎 Pasta de documentos</h3>
+      <div id="lic-docs-orfaos"></div>
       <p class="help-text">Tudo que você precisa ter à mão para participar. <b>Um arquivo por documento</b> —
         documento com foto não pode vir grudado no contrato social, cada edital pede separado.
         Alguns vencem, outros não; marque em cada um.</p>
@@ -30666,18 +30692,13 @@ function licTelaProcesso(l){
 const LIC_BLOCOS_LEITURA = [
   { titulo:'As regras do jogo', campos:[
     { id:'criterio',        rotulo:'Critério de julgamento', trava:true },
-    { id:'aceitaParcial',   rotulo:'Pode propor só alguns itens' },
-    { id:'mepp',            rotulo:'Exclusiva ME/EPP' },
     { id:'modoDisputa',     rotulo:'Modo de disputa' },
     { id:'orcamentoSigiloso', rotulo:'Orçamento sigiloso' }
   ]},
   { titulo:'Como se envia a proposta', campos:[
     { id:'meioEnvio',       rotulo:'Por onde envia', trava:true },
-    { id:'comoEnviarProposta', rotulo:'O que o edital diz, na letra' },
-    { id:'portal',          rotulo:'Qual portal' },
     { id:'emailProposta',   rotulo:'E-mail da proposta' },
     { id:'emailEsclarecimento', rotulo:'E-mail de dúvidas' },
-    { id:'exigeCadastro',   rotulo:'Exige cadastro prévio' },
     { id:'dataHoraLimite',  rotulo:'Limite para enviar', trava:true },
     { id:'dataHoraSessao',  rotulo:'Sessão de disputa' }
   ]},
@@ -30686,24 +30707,23 @@ const LIC_BLOCOS_LEITURA = [
     { id:'prazoEntrega',    rotulo:'Prazo de entrega', trava:true },
     { id:'prazoPagamento',  rotulo:'Prazo de pagamento', trava:true },
     { id:'localEntrega',    rotulo:'Local de entrega' },
-    { id:'garantia',        rotulo:'Garantia exigida' },
-    { id:'exigeMarcaModelo',rotulo:'Exige marca e modelo' },
-    { id:'exigeExtenso',    rotulo:'Exige valor por extenso' },
-    { id:'exigeDadosBancarios', rotulo:'Exige dados bancários' }
+    { id:'garantia',        rotulo:'Garantia exigida' }
   ]},
-  { titulo:'Habilitação e contrato', campos:[
-    { id:'exigeAmostra',    rotulo:'Exige amostra' },
-    { id:'prazoAmostra',    rotulo:'Prazo da amostra' },
-    { id:'exigeAtestado',   rotulo:'Atestado de capacidade' },
-    { id:'exigeVisita',     rotulo:'Visita técnica' },
-    { id:'exigeBalanco',    rotulo:'Balanço / qualificação econômica' },
-    { id:'subcontratacao',  rotulo:'Subcontratação' },
-    { id:'exigeGarantiaContratual', rotulo:'Garantia contratual (caução)' },
-    { id:'prazoAssinatura', rotulo:'Prazo para assinar o contrato' },
-    { id:'multas',          rotulo:'Multas e penalidades' }
+  { titulo:'Habilitação', campos:[
+    { id:'exigeAmostra',    rotulo:'Exige amostra' }
   ]}
 ];
-const LIC_CAMPOS_LEITURA = LIC_BLOCOS_LEITURA.reduce((a,b)=>a.concat(b.campos), []);
+
+/* Campos que a IA continua respondendo porque o sistema usa em outro
+   lugar — a faixa "A proposta vai para" é montada com eles — mas que
+   não viram linha na lista: lá em cima já está escrito, e repetir aqui
+   só enchia a tela. */
+const LIC_CAMPOS_LEITURA_EXTRA = [
+  { id:'comoEnviarProposta', rotulo:'O que o edital diz, na letra' },
+  { id:'portal',             rotulo:'Qual portal' }
+];
+const LIC_CAMPOS_LEITURA = LIC_BLOCOS_LEITURA.reduce((a,b)=>a.concat(b.campos), [])
+  .concat(LIC_CAMPOS_LEITURA_EXTRA);
 function licCampoLeitura(id){ return LIC_CAMPOS_LEITURA.find(c=>c.id===id); }
 
 /* =========================================================
@@ -30716,15 +30736,7 @@ function licCampoLeitura(id){ return LIC_CAMPOS_LEITURA.find(c=>c.id===id); }
    ========================================================= */
 const LIC_CAMPOS_LEITURA_ESSENCIAIS = ['criterio','meioEnvio','emailProposta',
   'dataHoraLimite','validade','prazoEntrega','prazoPagamento','localEntrega'];
-
-/* Escondidos de saída. São os que ela disse que nunca usa, ou que já
-   aparecem em outro lugar da tela: o texto literal do envio e o portal
-   vivem na faixa "A proposta vai para", logo acima. Nada some de vez —
-   é só desmarcar em "O que mostrar aqui" pra trazer de volta. */
-const LIC_CAMPOS_LEITURA_OCULTOS = ['aceitaParcial','mepp','comoEnviarProposta','portal',
-  'exigeCadastro','exigeMarcaModelo','exigeExtenso','exigeDadosBancarios','prazoAmostra',
-  'exigeAtestado','exigeVisita','exigeBalanco','subcontratacao','exigeGarantiaContratual',
-  'prazoAssinatura','multas'];
+const LIC_CAMPOS_LEITURA_OCULTOS = [];   /* nada mais nasce escondido: o que não serve saiu de vez */
 
 /* A lista de campos escondidos mudou depois que ela já tinha usado o
    sistema uma vez: a configuração salva dizia "mostrar tudo", e sem
@@ -30808,6 +30820,7 @@ function licAbrirCamposLeitura(id){
     const novo = licCamposLeituraCfg();
     m.querySelectorAll('[data-cl]').forEach(i=>{ novo[i.dataset.cl] = i.checked; });
     LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{ novo[c.id] = true; });
+    LIC_CAMPOS_LEITURA_EXTRA.forEach(c=>{ delete novo[c.id]; });
     STATE.config.camposLeituraEsconderVazios = m.querySelector('#lic-cl-vazios').checked;
     STATE.config.camposLeituraV = LIC_CAMPOS_LEITURA_PADRAO_V;
     saveState();
@@ -30842,8 +30855,6 @@ function licLerEdital(l){
   else if(/menor\s+pre[çc]o\s+(por\s+)?item/i.test(T)) por('criterio','Menor preço por item');
   else if(/maior\s+desconto/i.test(T)) por('criterio','Maior desconto');
 
-  if(/exclusiv[ao].{0,40}(ME|EPP|microempresa)/i.test(T)) por('mepp','Sim — podemos participar');
-  else if(/ampla\s+(participa[çc][ãa]o|concorr[êe]ncia)/i.test(T)) por('mepp','Ampla participação');
 
   const email = achar(/[\w.+-]+@[\w-]+\.[\w]{2,}(?:\.[\w]{2,})*/);
   if(email) por('emailEsclarecimento', email.replace(/[.,;]+$/,''));
@@ -30861,7 +30872,6 @@ function licLerEdital(l){
   if(pagamento) por('prazoPagamento', pagamento);
   const garantia = achar(/garantia[^.]{0,80}?(\d{1,3}\s*\(?[^)]{0,20}\)?\s*(?:meses|anos)[^.,;]{0,30})/i);
   if(garantia) por('garantia', garantia);
-  if(/n[ãa]o\s+(ser[áa]\s+)?admitid[ao]\s+(a\s+)?subcontrata/i.test(T)) por('subcontratacao','Não admitida');
   const sessao = achar(/(?:sess[ãa]o|abertura)[^.]{0,60}?(\d{2}\/\d{2}\/\d{4}(?:\s*[àa]s?\s*\d{1,2}[:h]\d{2})?)/i);
   if(sessao) por('dataHoraSessao', sessao);
 
@@ -31017,19 +31027,12 @@ Use ponto como separador decimal nos números e não escreva "R$".
     "cnpjOrgao": "", "cidade": "", "uf": "",
     "objeto": "",
     "criterio": "",
-    "aceitaParcial": "", "mepp": "", "modoDisputa": "",
-    "orcamentoSigiloso": "",
+    "modoDisputa": "", "orcamentoSigiloso": "",
     "meioEnvio": "", "comoEnviarProposta": "", "portal": "",
     "emailProposta": "", "emailEsclarecimento": "",
-    "exigeCadastro": "",
     "dataHoraLimite": "", "dataHoraSessao": "",
     "validade": "", "prazoEntrega": "", "prazoPagamento": "",
-    "localEntrega": "", "garantia": "",
-    "exigeMarcaModelo": "", "exigeExtenso": "", "exigeDadosBancarios": "",
-    "exigeAmostra": "", "prazoAmostra": "",
-    "exigeAtestado": "", "exigeVisita": "", "exigeBalanco": "",
-    "subcontratacao": "", "exigeGarantiaContratual": "",
-    "prazoAssinatura": "", "multas": ""
+    "localEntrega": "", "garantia": "", "exigeAmostra": ""
   },
 
   "fontes": {
@@ -31358,7 +31361,6 @@ function licTextoCurtoParaIA(l){
 '    "meioEnvio": "email | portal | presencial",',
 '    "emailProposta": "",',
 '    "portal": "nome do portal, se for pelo portal",',
-'    "exigeCadastro": "sim | não",',
 '    "dataHoraLimite": "",',
 '    "dataHoraSessao": "",',
 '    "criterio": "menor preço por item | menor preço global | maior desconto",',
@@ -31367,8 +31369,8 @@ function licTextoCurtoParaIA(l){
 '    "prazoPagamento": "",',
 '    "localEntrega": "",',
 '    "garantia": "",',
-'    "multas": "",',
-'    "mepp": "o que o edital diz sobre ME/EPP"',
+'    "garantia": "",',
+'    "exigeAmostra": ""',
 '  },',
 '  "fontes": { "campo": "cláusula e página de onde tirou" },',
 '  "emails": [ { "endereco": "", "para": "", "fonte": "" } ],',
@@ -31966,11 +31968,9 @@ const LIC_ONDE_COSTUMA_ESTAR = {
   prazoEntrega:'no termo de referência, na cláusula de entrega',
   prazoPagamento:'no termo de referência ou na minuta do contrato',
   localEntrega:'no termo de referência',
-  exigeCadastro:'no aviso, nas condições de participação',
-  mepp:'no aviso, nas condições de participação',
   criterio:'no objeto, no aviso e no termo de referência — confira os dois',
   garantia:'no termo de referência',
-  multas:'na minuta do contrato'
+  exigeAmostra:'no termo de referência'
 };
 
 function licPedirOQueFaltou(id){
@@ -33747,11 +33747,69 @@ function licArquivoIdb(modo, chave, valor){
       const store = tx.objectStore('certidoes');
       const op = modo==='get' ? store.get(chave)
                : modo==='del' ? store.delete(chave)
+               : modo==='chaves' ? store.getAllKeys()
                : store.put(valor, chave);
       op.onsuccess = ()=>resolve(op.result);
       op.onerror = ()=>reject(op.error);
     };
   });
+}
+
+/* =========================================================
+   RECUPERAR A PASTA DE DOCUMENTOS
+
+   Os arquivos moram no IndexedDB deste navegador; a ficha de cada um
+   (nome, validade) morava no config, que ia pra nuvem como bloco único
+   e era substituído inteiro pela outra máquina. Resultado: os PDFs
+   continuavam aqui e as fichas sumiam — a tela dizia "não temos" com o
+   arquivo guardado do lado.
+
+   A causa já foi tapada (o config agora é mesclado, não substituído).
+   Isto aqui é o conserto do estrago: varre o IndexedDB e remonta a
+   ficha de todo arquivo que ficou órfão.
+   ========================================================= */
+async function licRecuperarPasta(silencioso){
+  let chaves = [];
+  try{ chaves = await licArquivoIdb('chaves'); }
+  catch(e){ if(!silencioso) showToast('Não consegui abrir os arquivos guardados neste navegador.','error'); return 0; }
+
+  const orfaos = (chaves||[])
+    .map(k=>String(k))
+    .filter(k=>k.indexOf('certidao:')===0)
+    .map(k=>k.slice('certidao:'.length))
+    .filter(id=>{
+      const d = licDoc(id);
+      return !d || !d.arquivo;   /* sem ficha, ou ficha sem arquivo */
+    });
+
+  if(orfaos.length === 0){
+    if(!silencioso) showToast('Nada pra recuperar — a pasta está igual aos arquivos guardados.','info');
+    return 0;
+  }
+
+  const docs = licDocs();
+  let refeitos = 0;
+  for(const id of orfaos){
+    let blob = null;
+    try{ blob = await licArquivoIdb('get', 'certidao:'+id); }catch(e){}
+    if(!blob) continue;
+    const padrao = LIC_DOCS_PADRAO.find(x=>x.id===id);
+    let d = docs.find(x=>x.id===id);
+    if(!d){
+      d = { id, nome: padrao ? padrao.nome : ('Documento '+id), vence: padrao ? padrao.vence : true,
+            termos: padrao ? (padrao.termos||[]) : [], validade:'', arquivo:'', tamanho:0 };
+      docs.push(d);
+    }
+    d.arquivo = d.arquivo || ((padrao ? padrao.nome : id) + '.pdf');
+    d.tamanho = blob.size || d.tamanho || 0;
+    refeitos++;
+  }
+  if(refeitos){
+    saveState();
+    renderPortalLicitacoes();
+    showToast(`${refeitos} documento${refeitos===1?'':'s'} de volta na pasta. Confira a validade de cada um — essa parte não dá pra adivinhar.`,'success');
+  }
+  return refeitos;
 }
 
 /* Tira do STATE qualquer PDF guardado em base64 pelo formato anterior e
@@ -45599,7 +45657,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 14:34';
+const SISTEMA_VERSAO = '21/10/2026 14:47';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -46102,7 +46160,28 @@ function nuvemAplicar(linhas){
          como analiseST ou carrinhoCompra) também entra — senão a máquina
          nova nasceria sem ela. */
       if(!linha.dados || !('valor' in linha.dados)) return;
-      STATE[linha.id] = linha.dados.valor;
+
+      /* O "config" é um bloco só, e vinha substituindo o local inteiro.
+         Bastava a outra máquina subir um config mais velho — sem a pasta
+         de documentos, sem o representante — pra essas coisas sumirem
+         aqui sem aviso. Foi o que aconteceu com as certidões dela.
+         Agora o que chega de fora COMPLETA o que existe aqui: chave que
+         a outra máquina não tem não apaga a daqui. */
+      if(linha.id === 'config' && linha.dados.valor && typeof linha.dados.valor === 'object'
+         && STATE.config && typeof STATE.config === 'object'){
+        const deFora = linha.dados.valor;
+        const juntos = Object.assign({}, STATE.config, deFora);
+        /* listas e objetos que só existem aqui ficam */
+        Object.keys(STATE.config).forEach(k=>{
+          const meu = STATE.config[k], dele = deFora[k];
+          const meuTem = Array.isArray(meu) ? meu.length>0 : (meu && typeof meu==='object' ? Object.keys(meu).length>0 : false);
+          const deleTem = Array.isArray(dele) ? dele.length>0 : (dele && typeof dele==='object' ? Object.keys(dele).length>0 : false);
+          if(meuTem && !deleTem) juntos[k] = meu;
+        });
+        STATE.config = juntos;
+      }else{
+        STATE[linha.id] = linha.dados.valor;
+      }
       espelho[chave] = nuvemDigital(JSON.stringify({ valor: STATE[linha.id] }));
       mudou++;
       return;
