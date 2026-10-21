@@ -26875,6 +26875,7 @@ const LIC_ABAS = [
   { id:'analise',       rotulo:'Em análise' },
   { id:'precificacao',  rotulo:'Precificação' },
   { id:'propostas',     rotulo:'Propostas' },
+  { id:'perdidas',      rotulo:'Não ganhamos' },
   { id:'produtos',      rotulo:'Produtos de licitação' }
 ];
 
@@ -26886,9 +26887,9 @@ const LIC_ETAPAS = {
   proposta:     { aba:'propostas',    n:3, rotulo:'Montando a proposta' },
   enviada:      { aba:'propostas',    n:3, rotulo:'Enviada — aguardando retorno' },
   ganhou:       { aba:'propostas',    n:3, rotulo:'Ganhamos' },
-  perdeu:       { aba:'propostas',    n:3, rotulo:'Perdemos' },
+  perdeu:       { aba:'perdidas',    n:3, rotulo:'Perdemos' },
   entregue:     { aba:'propostas',    n:3, rotulo:'Entregue' },
-  desistiu:     { aba:'propostas',    n:3, rotulo:'Desistimos' }
+  desistiu:     { aba:'perdidas',    n:3, rotulo:'Desistimos' }
 };
 
 let licAba = 'oportunidades';
@@ -27106,6 +27107,15 @@ function licInjetarEstilo(){
   .lic-leitura-bloco .nachei .estado{color:var(--warning);}
   .lic-leitura-bloco .nli{border-left-color:var(--negative);}
   .lic-leitura-bloco .nli .estado{color:var(--negative);}
+
+  .lic-chips{display:flex;gap:5px;flex-wrap:wrap;}
+  .lic-chips button{font-size:12px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);
+    background:#fff;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
+  .lic-chips button:hover{border-color:var(--primary);}
+  .lic-chips button.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600;}
+
+  .lic-captou{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  .lic-captou b{color:var(--primary);}
 
   .lic-legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink-soft);}
   .lic-legenda span{display:flex;align-items:center;gap:5px;}
@@ -27563,6 +27573,10 @@ function licHistoricoProdutos(){
         etapa: l.etapa,
         valorResultado: l.valorResultado || null,
         resultadoObs: l.resultadoObs || '',
+        /* o preço do vencedor DESTE item, que é o número que serve */
+        vencedorUnit: (it.vencedor && it.vencedor.precoUnit) || null,
+        vencedorTotal: (it.vencedor && it.vencedor.total) || null,
+        vencedorQuem: (it.vencedor && it.vencedor.empresa) || '',
         resultado: l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
                  : l.etapa==='perdeu' ? 'perdeu'
                  : l.etapa==='desistiu' ? 'desistiu'
@@ -27645,7 +27659,8 @@ function renderPortalLicitacoes(){
     oportunidades: (STATE.licitacoesRevisao||[]).length,
     analise: licPorEtapa(['analise']).length,
     precificacao: licPorEtapa(['precificacao']).length,
-    propostas: licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue','desistiu']).length,
+    propostas: licPorEtapa(['proposta','enviada','ganhou','entregue']).length,
+    perdidas: licPorEtapa(['perdeu','desistiu']).length,
     produtos: licHistoricoProdutos().length
   };
 
@@ -27654,6 +27669,7 @@ function renderPortalLicitacoes(){
     analise: licPainelAnalise,
     precificacao: licPainelPrecificacao,
     propostas: licPainelPropostas,
+    perdidas: licPainelPerdidas,
     produtos: licPainelProdutos
   }[licAba] || licPainelOportunidades;
 
@@ -28500,6 +28516,205 @@ function licDescartadas(){
   if(!Array.isArray(STATE.licitacoesDescartadas)) STATE.licitacoesDescartadas = [];
   return STATE.licitacoesDescartadas;
 }
+/* =========================================================
+   QUEM CAPTOU A OPORTUNIDADE
+
+   Duas pessoas usam o sistema, cada uma na sua máquina, e as duas
+   triam o arquivo do PNCP. Quando uma marca "tenho interesse", fica
+   registrado que foi ela — assim, em análise, dá pra saber de quem é
+   aquela dispensa sem ter que perguntar.
+
+   O login da nuvem é quem diz o nome. Como o nome de usuário não é o
+   nome da pessoa, a tabela abaixo traduz; qualquer outro usuário
+   aparece com o nome que estiver cadastrado.
+   ========================================================= */
+const LIC_NOMES_USUARIO = {
+  'mizuvendas':   'GILBERTO',
+  'mizuvendas01': 'NETO'
+};
+
+function licFiltrarCaptou(quem){
+  licFiltroCaptou = quem || '';
+  renderPortalLicitacoes();
+}
+
+function licQuemSouEu(){
+  const u = (typeof nuvemUsuario !== 'undefined' && nuvemUsuario) ? nuvemUsuario : null;
+  if(!u) return null;
+  const chaves = [u.usuario, u.login, u.email, u.nome]
+    .filter(Boolean)
+    .map(x=>String(x).split('@')[0].trim().toLowerCase());
+  for(const c of chaves){
+    if(LIC_NOMES_USUARIO[c]) return LIC_NOMES_USUARIO[c];
+  }
+  return (u.nome || chaves[0] || '').toUpperCase() || null;
+}
+
+/* =========================================================
+   TRAZER UMA DISPENSA PELO LINK
+
+   Nem toda dispensa vem na planilha: às vezes alguém manda o link no
+   WhatsApp, ou ela acha uma navegando no PNCP. Aqui ela cola o link
+   (ou o número de controle) e o sistema busca o resto na API pública
+   do PNCP. Se não conseguir falar com o PNCP — rede da loja caiu, o
+   site saiu do ar —, cria a oportunidade com o que dá pra tirar do
+   próprio link e avisa o que falta conferir.
+   ========================================================= */
+
+/* Aceita: a URL do edital, a URL de /compras, ou o número de controle
+   "14991337000156-1-000247/2026". Devolve {cnpj, ano, seq}. */
+function licPedacosDoLink(txt){
+  const t = String(txt||'').trim();
+  if(!t) return null;
+  let m = t.match(/(\d{14})[^\d]{1,3}(\d{4})[^\d]{1,3}(\d{1,7})(?!\d)/);
+  /* /app/editais/{cnpj}/{ano}/{seq} e também /orgaos/{cnpj}/compras/{ano}/{seq} */
+  const url = t.match(/\/(?:editais|contratacoes)\/(\d{14})\/(\d{4})\/(\d{1,7})/)
+           || t.match(/\/(\d{14})\/compras\/(\d{4})\/(\d{1,7})/);
+  if(url) return { cnpj:url[1], ano:url[2], seq:String(Number(url[3])) };
+  const controle = t.match(/(\d{14})-\d+-(\d{1,7})\/(\d{4})/);
+  if(controle) return { cnpj:controle[1], ano:controle[3], seq:String(Number(controle[2])) };
+  if(m) return { cnpj:m[1], ano:m[2], seq:String(Number(m[3])) };
+  return null;
+}
+
+async function licBuscarNoPncp(p){
+  const url = `https://pncp.gov.br/api/pncp/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`;
+  const r = await fetch(url, { headers:{ 'Accept':'application/json' } });
+  if(!r.ok) throw new Error('o PNCP respondeu ' + r.status);
+  return await r.json();
+}
+
+/* A resposta da API tem nomes um pouco diferentes dos da planilha.
+   Lê os dois, pra não depender de um formato só. */
+function licDaApiPncp(d, p){
+  const pega = (...nomes)=>{ for(const n of nomes){ const v = n.split('.').reduce((o,k)=>o&&o[k], d); if(v!=null && v!=='') return v; } return ''; };
+  const municipio = pega('unidadeOrgao.municipioNome','unidadeOrgaoNome','municipioNome');
+  const uf = pega('unidadeOrgao.ufSigla','ufSigla','uf');
+  const o = {
+    id: uid('licop'),
+    numeroControlePNCP: pega('numeroControlePNCP') || `${p.cnpj}-1-${String(p.seq).padStart(6,'0')}/${p.ano}`,
+    numero: String(pega('numeroCompra') || p.seq) + '/' + (pega('anoCompra') || p.ano),
+    orgao: pega('orgaoEntidade.razaoSocial','orgaoEntidadeRazaoSocial','razaoSocial'),
+    unidade: pega('unidadeOrgao.nomeUnidade','unidadeOrgaoNome'),
+    cnpjOrgao: pega('orgaoEntidade.cnpj','cnpjOrgao') || p.cnpj,
+    municipioNome: municipio, uf: uf,
+    codigoIbge: String(pega('unidadeOrgao.codigoIbge','codigoIbge')||''),
+    objeto: pega('objetoCompra','objeto','descricaoObjeto'),
+    complemento: pega('informacaoComplementar','complemento'),
+    modalidadeNome: pega('modalidadeNome','modalidade'),
+    modoDisputa: pega('modoDisputaNome','modoDisputa'),
+    situacao: pega('situacaoCompraNome','situacao'),
+    amparoLegal: pega('amparoLegal.nome','amparoLegalNome'),
+    srp: !!pega('srp'),
+    valorEstimado: licNumDireto(pega('valorTotalEstimado','valorEstimado')),
+    dataAbertura: pega('dataAberturaProposta','dataAbertura') || null,
+    dataEncerramentoProposta: pega('dataEncerramentoProposta','dataEncerramento') || null,
+    dataPublicacao: (pega('dataPublicacaoPncp','dataPublicacao')||'').slice(0,10) || null,
+    plataforma: pega('usuarioNome','plataforma'),
+    linkSistemaOrigem: pega('linkSistemaOrigem') || null,
+    linkProcesso: pega('linkProcessoEletronico','linkProcesso') || null,
+    linkPncp: linkEditalPNCP(p.cnpj, p.ano, p.seq),
+    historico: [],
+    origem: 'link'
+  };
+  o.linkEdital = o.linkPncp;
+  return o;
+}
+
+function licAbrirPorLink(){
+  const antigo = document.getElementById('modal-lic-link');
+  if(antigo) antigo.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-link';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,95vw);">
+      <h3 style="margin-top:0;">🔗 Trazer dispensa pelo link</h3>
+      <p class="help-text">Cole o endereço da dispensa no PNCP — ou o número de controle. Pode colar
+        várias, uma por linha. O sistema busca o objeto, o órgão, o prazo e o valor direto no PNCP
+        e põe na triagem, junto com as que vieram da planilha.</p>
+      <textarea id="lic-link-txt" style="width:100%;height:110px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;"
+        placeholder="https://pncp.gov.br/app/editais/14991337000156/2026/247&#10;ou 14991337000156-1-000247/2026"></textarea>
+      <div id="lic-link-res" style="margin-top:10px;"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="lic-link-ok">Buscar no PNCP</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#lic-link-ok').onclick = ()=>licTrazerPorLink();
+  const ta = m.querySelector('#lic-link-txt');
+  ta.focus();
+  ta.addEventListener('paste', ()=>setTimeout(()=>{ if(ta.value.trim()) licTrazerPorLink(); }, 60));
+}
+
+async function licTrazerPorLink(){
+  const ta = document.getElementById('lic-link-txt');
+  const caixa = document.getElementById('lic-link-res');
+  if(!ta || !caixa) return;
+  const linhas = ta.value.split(/\n+/).map(x=>x.trim()).filter(Boolean);
+  if(linhas.length === 0){ caixa.innerHTML = '<div class="help-text">Cole pelo menos um link.</div>'; return; }
+
+  caixa.innerHTML = '<div class="help-text">Procurando no PNCP...</div>';
+  if(!Array.isArray(STATE.licitacoesRevisao)) STATE.licitacoesRevisao = [];
+
+  const jaTem = new Set();
+  (STATE.licitacoesRevisao||[]).forEach(o=>jaTem.add(licChaveOportunidade(o)));
+  licTodas().forEach(o=>jaTem.add(licChaveOportunidade(o)));
+
+  const linhasRes = [];
+  let novas = 0;
+  for(const linha of linhas){
+    const p = licPedacosDoLink(linha);
+    if(!p){
+      linhasRes.push(`<div class="lic-doc falta"><div><b>${escapeHtml(linha.slice(0,60))}</b>
+        <small>não reconheci — preciso do link do PNCP ou do número de controle</small></div></div>`);
+      continue;
+    }
+    let o = null, aviso = '';
+    try{
+      o = licDaApiPncp(await licBuscarNoPncp(p), p);
+    }catch(e){
+      /* sem internet, ou o PNCP fora do ar: cria com o que o link diz */
+      o = { id: uid('licop'),
+            numeroControlePNCP: `${p.cnpj}-1-${String(p.seq).padStart(6,'0')}/${p.ano}`,
+            numero: `${p.seq}/${p.ano}`, orgao:'', objeto:'(sem descrição — não consegui falar com o PNCP)',
+            cnpjOrgao:p.cnpj, valorEstimado:0, historico:[], origem:'link',
+            linkPncp: linkEditalPNCP(p.cnpj, p.ano, p.seq) };
+      o.linkEdital = o.linkPncp;
+      aviso = 'não consegui falar com o PNCP (' + (e.message||'sem resposta') + '). Trouxe só o link — abra e confira.';
+    }
+
+    const chave = licChaveOportunidade(o);
+    if(jaTem.has(chave)){
+      linhasRes.push(`<div class="lic-doc aviso"><div><b>${escapeHtml((o.objeto||'').slice(0,60))}</b>
+        <small>já está no sistema — não dupliquei</small></div></div>`);
+      continue;
+    }
+    jaTem.add(chave);
+    STATE.licitacoesRevisao.push(o);
+    novas++;
+    linhasRes.push(`<div class="lic-doc ${aviso?'aviso':'ok'}"><div>
+      <b>${escapeHtml((o.objeto||'').slice(0,70))}</b>
+      <small>${escapeHtml(o.orgao||'')}${o.municipioNome?` · ${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`:''}${o.valorEstimado>0?` · ${fmtMoney(o.valorEstimado)}`:''}</small>
+      ${aviso?`<small style="color:var(--warning);">${escapeHtml(aviso)}</small>`:''}</div></div>`);
+  }
+
+  if(novas){
+    saveState();
+    if(typeof licCalcularDistancias === 'function') licCalcularDistancias();
+    licAba = 'oportunidades';
+    renderPortalLicitacoes();
+    const m = document.getElementById('modal-lic-link');
+    if(m) m.querySelector('#lic-link-res').innerHTML = linhasRes.join('') +
+      `<div class="help-text" style="margin-top:8px;">${novas} na triagem. Pode fechar e decidir.</div>`;
+    showToast(`${novas} dispensa${novas===1?'':'s'} trazida${novas===1?'':'s'} pelo link.`,'success');
+  }else{
+    caixa.innerHTML = linhasRes.join('');
+  }
+  ta.value = '';
+}
+
 function licChaveOportunidade(o){
   return o.numeroControlePNCP || ((o.orgao||'') + '|' + (o.numero||'') + '|' + (o.objeto||'').slice(0,60));
 }
@@ -28530,7 +28745,8 @@ function licPainelOportunidades(){
       <div>
         <div class="etapa">Passo 1 de 3</div>
         <h3>Oportunidades</h3>
-        <div class="sub">Importe o arquivo que você baixou no PNCP e diga o que interessa. O que você descartar não volta.</div>
+        <div class="sub">Importe o arquivo que você baixou no PNCP, ou cole o link de uma dispensa avulsa.
+          Depois diga o que interessa — o que você descartar não volta.</div>
       </div>
       <div class="acoes">
         ${(lista.length + licTodas().length + licDescartadas().length) > 0
@@ -28539,6 +28755,7 @@ function licPainelOportunidades(){
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirRepresentante()" title="Quem assina pela empresa — preenche uma vez">✍️ Representante</button>
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
+        <button class="btn" onclick="licAbrirPorLink()" title="Colar o endereço de uma dispensa do PNCP">🔗 Trazer pelo link</button>
         <button class="btn" onclick="licNovaCotacao()">✏️ Cotação sem edital</button>
         <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
         <input type="file" id="lic-arquivo-pncp" accept=".xlsx,.xls,.csv,.json" style="display:none;">
@@ -28969,9 +29186,12 @@ function licAnaliseDados(l){
     const c = licCustoItem(it, l);
     const venda = licPrecoTotal(it);
     const teto = licNumDireto(it.teto);
+    const venc = it.vencedor || {};
     return {
       n: i+1,
       nome: it.descricaoProposta || it.descricao || `Item ${i+1}`,
+      vencedorUnit: licNumDireto(venc.precoUnit),
+      vencedorQuem: venc.empresa || '',
       marca: it.marca || '',
       qtd: c.qtd,
       unidade: it.unidade || 'UND',
@@ -29086,6 +29306,7 @@ function licAnaliseHtml(l){
             <th class="num">Venda un.</th><th class="num">Venda total</th>
             <th class="num">Lucro</th><th class="num">Margem</th>
             <th class="num">Teto un.</th><th class="num">Teto total</th><th class="num">Abaixo do teto</th>
+            ${d.itens.some(x=>x.vencedorUnit>0)?'<th class="num">Vencedor un.</th>':''}
           </tr></thead>
           <tbody>
             ${d.itens.map(x=>`<tr>
@@ -29103,6 +29324,10 @@ function licAnaliseHtml(l){
               <td class="num">${x.teto>0?fmtMoney(x.teto):'—'}</td>
               <td class="num" style="color:${x.passaDoTeto?'var(--negative)':'var(--ink)'};">
                 ${x.passaDoTeto?'PASSOU DO TETO':(x.abaixoDoTeto!=null?x.abaixoDoTeto.toFixed(1)+'%':'—')}</td>
+              ${d.itens.some(y=>y.vencedorUnit>0) ? `<td class="num" style="color:var(--negative);">
+                ${x.vencedorUnit>0
+                  ? `${fmtMoney(x.vencedorUnit)}${x.vendaUnit>0?`<div style="font-size:10.5px;">${(((x.vencedorUnit/x.vendaUnit)-1)*100).toFixed(1)}% do nosso</div>`:''}`
+                  : '—'}</td>`:''}
             </tr>`).join('')}
           </tbody>
           <tfoot><tr style="font-weight:700;background:#F6F8FA;">
@@ -29115,6 +29340,7 @@ function licAnaliseHtml(l){
             <td class="num">—</td>
             <td class="num">${t.teto>0?fmtMoney(t.teto):'—'}</td>
             <td class="num">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'%':'—'}</td>
+            ${d.itens.some(x=>x.vencedorUnit>0)?'<td class="num">—</td>':''}
           </tr></tfoot>
         </table>
       </div>
@@ -29392,7 +29618,10 @@ function licTriar(id, interesse, emLote){
     o.etapa = 'analise';
     o.status = 'Potencial';
     o.criadoEm = o.criadoEm || new Date().toISOString();
-    licRegistrar(o, 'Marcada como "tenho interesse" — foi para análise.');
+    /* quem viu a oportunidade primeiro */
+    const quem = licQuemSouEu();
+    if(quem && !o.captadoPor){ o.captadoPor = quem; o.captadoEm = new Date().toISOString(); }
+    licRegistrar(o, 'Marcada como "tenho interesse"' + (quem?` por ${quem}`:'') + ' — foi para análise.');
     STATE.licitacoes.push(o);
   }else{
     licDescartadas().push(licChaveOportunidade(o));
@@ -30055,8 +30284,14 @@ function licOrdenarLista(lista){
   return copia;
 }
 
+let licFiltroCaptou = '';   /* '' = todas */
+
 function licPainelAnalise(){
-  const lista = licOrdenarLista(licPorEtapa(['analise']));
+  const todas = licPorEtapa(['analise']);
+  const captadores = [...new Set(todas.map(l=>l.captadoPor).filter(Boolean))].sort();
+  if(licFiltroCaptou && !captadores.includes(licFiltroCaptou)) licFiltroCaptou = '';
+  const lista = licOrdenarLista(
+    licFiltroCaptou ? todas.filter(l=>l.captadoPor===licFiltroCaptou) : todas);
   return `
     <div class="lic-topo">
       <div>
@@ -30065,6 +30300,10 @@ function licPainelAnalise(){
         <div class="sub">Aqui ainda não se monta proposta. Aqui se responde: temos os documentos e existe produto que atenda?</div>
       </div>
       <div class="acoes">
+        ${captadores.length>1 ? `<div class="lic-chips">
+          <button class="${licFiltroCaptou?'':'on'}" onclick="licFiltrarCaptou('')">Todas (${todas.length})</button>
+          ${captadores.map(c=>`<button class="${licFiltroCaptou===c?'on':''}" onclick="licFiltrarCaptou(${JSON.stringify(c).replace(/"/g,'&quot;')})">${escapeHtml(c)} (${todas.filter(l=>l.captadoPor===c).length})</button>`).join('')}
+        </div>`:''}
         ${lista.length>1 ? `<select id="lic-ordem-analise" style="min-width:210px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
           <option value="prazo" ${licOrdemAnalise==='prazo'?'selected':''}>Ordenar: encerra primeiro</option>
           <option value="distancia" ${licOrdemAnalise==='distancia'?'selected':''}>Ordenar: mais perto primeiro</option>
@@ -30082,6 +30321,7 @@ function licPainelAnalise(){
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
               <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}${l.distanciaKm!=null?` · ${l.distanciaKm} km`:''}</div>
+              ${l.captadoPor?`<div class="lic-captou">👤 captada por <b>${escapeHtml(l.captadoPor)}</b>${l.captadoEm?` · ${fmtDate(String(l.captadoEm).slice(0,10))}`:''}</div>`:''}
               ${licTarjasComoParticipar(l, true)}
               ${licLinksHtml(l)}
               <div class="lic-tags">
@@ -30177,14 +30417,142 @@ function licAvancarEtapa(id, etapa, tela){
 /* =========================================================
    ABA 4 — PROPOSTAS (montando, enviadas, ganhou, perdeu)
    ========================================================= */
+/* =========================================================
+   NÃO GANHAMOS
+
+   Perder faz parte; perder sem aprender nada é que não pode. Esta aba
+   junta o que não fechou e responde uma pergunta só: por quanto a gente
+   teria ganhado? Cada preço de vencedor anotado aqui vira referência na
+   próxima vez que o produto aparecer na precificação.
+   ========================================================= */
+function licPainelPerdidas(){
+  const perdidas = licPorEtapa(['perdeu']);
+  const desistidas = licPorEtapa(['desistiu']);
+
+  /* o número que ensina: quanto, em média, ficamos acima do vencedor */
+  const comparaveis = [];
+  perdidas.forEach(l=>{
+    (l.itens||[]).forEach(it=>{
+      const nosso = licPrecoUnit(it);
+      const venc = licNumDireto((it.vencedor||{}).precoUnit);
+      if(nosso > 0 && venc > 0) comparaveis.push(((nosso/venc)-1)*100);
+    });
+  });
+  const mediaAcima = comparaveis.length
+    ? comparaveis.reduce((a,b)=>a+b,0)/comparaveis.length : null;
+
+  const semPreco = perdidas.filter(l=>!(l.itens||[]).some(it=>licNumDireto((it.vencedor||{}).precoUnit)>0));
+  const valorPerdido = perdidas.reduce((s,l)=>s+licTotalLicitacao(l).venda, 0);
+
+  const ganhas = licPorEtapa(['ganhou','entregue']).length;
+  const decididas = ganhas + perdidas.length;
+
+  return `
+    <div class="lic-topo">
+      <div>
+        <h3>Não ganhamos</h3>
+        <div class="sub">O que não fechou, e por quanto. Cada preço de vencedor anotado aqui
+          volta sozinho na precificação, da próxima vez que o produto aparecer.</div>
+      </div>
+    </div>
+
+    ${perdidas.length + desistidas.length === 0
+      ? '<div class="card"><div class="lic-vazio">Nada aqui ainda — e tomara que demore.</div></div>'
+      : `
+      <div class="kpi-row" style="margin-bottom:12px;">
+        <div class="kpi-card"><div class="kpi-label">Perdemos</div>
+          <div class="kpi-value ${perdidas.length?'negative':''}">${perdidas.length}</div>
+          <div class="kpi-sub">${decididas?`${((ganhas/decididas)*100).toFixed(0)}% de aproveitamento nas decididas`:''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Valor que não veio</div>
+          <div class="kpi-value" style="font-size:19px;">${fmtMoney(valorPerdido)}</div>
+          <div class="kpi-sub">somando as propostas que não fecharam</div></div>
+        <div class="kpi-card"><div class="kpi-label">Quanto ficamos acima</div>
+          <div class="kpi-value ${mediaAcima!=null && mediaAcima>0?'negative':''}">${mediaAcima!=null?`${mediaAcima>0?'+':''}${mediaAcima.toFixed(1)}%`:'—'}</div>
+          <div class="kpi-sub">${comparaveis.length?`média de ${comparaveis.length} ite${comparaveis.length===1?'m':'ns'} comparados`:'anote o preço do vencedor'}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Desistimos</div>
+          <div class="kpi-value">${desistidas.length}</div>
+          <div class="kpi-sub">${desistidas.length?'saíram antes de enviar':''}</div></div>
+      </div>
+
+      ${semPreco.length ? `<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+        <b>⚠️ ${semPreco.length} dispensa${semPreco.length===1?'':'s'} perdida${semPreco.length===1?'':'s'} sem o preço do vencedor</b>
+        <small>Sem esse número, perder não ensina nada. Ele costuma sair no resultado publicado no
+          PNCP ou no portal — anote item por item e ele volta sozinho na próxima precificação.</small>
+      </div>`:''}
+
+      ${perdidas.length ? `<div class="lic-passo">Perdemos (${perdidas.length})</div>
+        ${perdidas.map(l=>licCartaoPerdida(l)).join('')}`:''}
+      ${desistidas.length ? `<div class="lic-passo">Desistimos (${desistidas.length})</div>
+        ${desistidas.map(l=>licCartaoProposta(l)).join('')}`:''}
+    `}
+  `;
+}
+
+/* O cartão de uma perdida mostra o placar: o nosso, o do vencedor e a
+   diferença — item por item, que é como ela precifica. */
+function licCartaoPerdida(l){
+  const t = licTotalLicitacao(l);
+  const itens = l.itens || [];
+  const comVencedor = itens.filter(it=>licNumDireto((it.vencedor||{}).precoUnit) > 0);
+  const quem = [...new Set(itens.map(it=>(it.vencedor||{}).empresa).filter(Boolean))];
+
+  return `<div class="lic-card">
+    <div class="lic-linha">
+      <div class="esq">
+        <span class="ctrl">${escapeHtml((l.propostaCampos.modalidade||'') + ' ' + (l.propostaCampos.numero || l.numero || ''))}</span>
+        <div class="obj">${escapeHtml(l.objeto||'')}</div>
+        <div class="meta">${escapeHtml(l.orgao||'')}${l.dataResultado?` · resultado em ${fmtDate(l.dataResultado)}`:''}${quem.length?` · venceu ${escapeHtml(quem.join(', '))}`:''}</div>
+        ${licLinksHtml(l)}
+        ${l.resultadoObs?`<div class="help-text" style="margin-top:6px;">“${escapeHtml(l.resultadoObs)}”</div>`:''}
+      </div>
+      <div class="dir">
+        <div class="lic-valor">${fmtMoney(t.venda)}</div>
+        <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">nossa proposta</div>
+        ${l.valorResultado>0?`<div style="font-size:13px;color:var(--negative);font-family:var(--font-num);font-weight:600;margin-top:4px;">${fmtMoney(l.valorResultado)}</div>
+          <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-2px;">o vencedor</div>`:''}
+        <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','perdeu')">${comVencedor.length?'✎ Corrigir o preço do vencedor':'✎ Anotar o preço do vencedor'}</button>
+        <button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')">📊 Análise</button>
+        <button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>
+      </div>
+    </div>
+
+    ${comVencedor.length ? `
+      <div class="table-wrap" style="margin-top:10px;">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th class="num">Qtd</th><th class="num">Nosso un.</th>
+            <th class="num">Vencedor un.</th><th class="num">Diferença</th><th>Quem venceu</th></tr></thead>
+          <tbody>
+            ${itens.map((it,i)=>{
+              const v = it.vencedor || {};
+              const venc = licNumDireto(v.precoUnit);
+              const nosso = licPrecoUnit(it);
+              const dif = (venc>0 && nosso>0) ? ((nosso/venc)-1)*100 : null;
+              return `<tr>
+                <td>${String(i+1).padStart(2,'0')} — ${escapeHtml((it.descricaoProposta||it.descricao||'').slice(0,50))}</td>
+                <td class="num">${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'UND')}</td>
+                <td class="num">${nosso>0?fmtMoney(nosso):'—'}</td>
+                <td class="num" style="color:var(--negative);">${venc>0?fmtMoney(venc):'—'}</td>
+                <td class="num" style="color:${dif!=null && dif>0?'var(--negative)':'var(--positive)'};">
+                  ${dif!=null?`${dif>0?'+':''}${dif.toFixed(1)}%`:'—'}</td>
+                <td>${escapeHtml(v.empresa||'—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="help-text" style="margin-top:6px;">Positivo quer dizer que estávamos acima do vencedor —
+        é de quanto você precisaria ter baixado. Negativo quer dizer que o seu preço era melhor e
+        a perda foi por outro motivo: habilitação, prazo, ou proposta que não chegou.</div>
+    `:''}
+  </div>`;
+}
+
 function licPainelPropostas(){
-  const lista = licPorEtapa(['proposta','enviada','ganhou','perdeu','entregue','desistiu']);
+  const lista = licPorEtapa(['proposta','enviada','ganhou','entregue']);
   const grupos = [
     { etapas:['proposta'], titulo:'Montando a proposta' },
     { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
-    { etapas:['ganhou','entregue'], titulo:'Ganhamos' },
-    { etapas:['perdeu'],   titulo:'Perdemos' },
-    { etapas:['desistiu'], titulo:'Desistimos' }
+    { etapas:['ganhou','entregue'], titulo:'Ganhamos' }
   ];
   return `
     <div class="lic-topo">
@@ -30303,7 +30671,8 @@ function licCartaoProposta(l){
             <button class="btn btn-sm" onclick="licApagarDeVez('${l.id}')">🗑 Apagar de vez</button>` : ''}
         ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
             ${licNotaPendente(l)>0?`<div style="font-size:11.5px;color:var(--negative);text-align:right;">falta dado da nota em ${licNotaPendente(l)} ite${licNotaPendente(l)===1?'m':'ns'}</div>`:''}` : ''}
-        ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>` : ''}
+        ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>
+            <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')" title="Anotar por quanto o vencedor fechou cada item">✎ Preço do vencedor</button>` : ''}
       </div>
     </div>
   </div>`;
@@ -30375,28 +30744,102 @@ function licApagarDeVez(id){
 
 function licResultado(id, resultado){
   const l = licAchar(id); if(!l) return;
+  const perdeu = resultado === 'perdeu';
+  const itens = l.itens || [];
+
+  /* Perder sem anotar por quanto o vencedor fechou é perder duas vezes:
+     da segunda, ela não sabe de quanto precisa baixar. E "o vencedor
+     fechou em X" quase nunca é um número só — é um por item, porque
+     cada item teve um vencedor e um preço. */
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
   m.innerHTML = `
-    <div class="modal-box" style="max-width:min(560px,94vw);">
-      <h3 style="margin-top:0;">${resultado==='ganhou'?'🏆 Ganhamos':'Perdemos'}</h3>
-      <div class="field"><label>${resultado==='ganhou'?'Valor homologado (se souber)':'Por quanto o vencedor fechou (se souber)'}</label>
-        <input type="number" step="0.01" id="lic-res-valor" placeholder="0,00"></div>
-      <div class="field"><label>Observação ${resultado==='perdeu'?'— o que deu pra aprender':''}</label>
-        <input type="text" id="lic-res-obs" placeholder="${resultado==='perdeu'?'ex: ficamos 8% acima; o vencedor tinha frete incluso':'ex: homologado integral'}"></div>
+    <div class="modal-box" style="max-width:min(820px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">${perdeu?'Perdemos':'🏆 Ganhamos'}</h3>
+      ${perdeu
+        ? `<p class="help-text">Anote por quanto o vencedor fechou. Da próxima vez que este produto
+             aparecer, o sistema mostra esse preço do lado do seu — é o que diz de quanto você
+             precisa baixar, ou se não valia a pena mesmo.</p>`
+        : `<p class="help-text">Se souber o valor homologado, anote — ele fica no histórico do produto.</p>`}
+
+      ${perdeu && itens.length ? `
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin:12px 0 6px;">
+          Item por item — preencha o que souber</div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>Item</th><th class="num">Qtd</th>
+              <th class="num">Nosso preço un.</th>
+              <th class="num">Vencedor un.</th>
+              <th>Quem ganhou / marca</th>
+            </tr></thead>
+            <tbody>
+              ${itens.map((it,i)=>{
+                const nosso = licPrecoUnit(it);
+                const v = it.vencedor || {};
+                return `<tr>
+                  <td>${String(i+1).padStart(2,'0')} — ${escapeHtml((it.descricaoProposta||it.descricao||'').slice(0,46))}</td>
+                  <td class="num">${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'UND')}</td>
+                  <td class="num" style="font-family:var(--font-num);">${nosso>0?fmtMoney(nosso):'—'}</td>
+                  <td class="num" style="width:130px;">
+                    ${licCampoMoeda('vencedorUnit_'+it.id, v.precoUnit)}</td>
+                  <td style="width:210px;">
+                    <input type="text" data-venc-quem="${it.id}" value="${escapeAttr(v.empresa||'')}"
+                      placeholder="empresa ou marca"
+                      style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;"></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+        <div class="help-text" style="margin-top:6px;">Deixe em branco o que você não souber. Nada aqui é obrigatório.</div>
+      `:''}
+
+      <div class="field" style="margin-top:12px;"><label>${perdeu?'Valor total do vencedor (se souber, ou deixe que eu somo os itens)':'Valor homologado (se souber)'}</label>
+        ${licCampoMoeda('resTotal', l.valorResultado)}</div>
+      <div class="field"><label>Observação ${perdeu?'— o que deu pra aprender':''}</label>
+        <input type="text" id="lic-res-obs" value="${escapeAttr(l.resultadoObs||'')}"
+          placeholder="${perdeu?'ex: ficamos 8% acima; o vencedor tinha frete incluso':'ex: homologado integral'}"></div>
+
       <div class="modal-actions">
         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
         <button class="btn btn-primary" id="lic-res-ok">Confirmar</button>
       </div>
     </div>`;
   document.body.appendChild(m);
+
   m.querySelector('#lic-res-ok').onclick = ()=>{
     l.etapa = resultado;
     l.status = resultado==='ganhou' ? 'Ganhamos' : 'Perdemos';
     l.dataResultado = todayISO();
-    l.valorResultado = licNumDireto(m.querySelector('#lic-res-valor').value) || null;
+
+    let somaItens = 0, comPreco = 0;
+    if(perdeu){
+      itens.forEach(it=>{
+        const campo = m.querySelector(`[data-campo="vencedorUnit_${it.id}"]`);
+        const quem = m.querySelector(`[data-venc-quem="${it.id}"]`);
+        const unit = campo ? licNumDireto(campo.value) : 0;
+        const empresa = quem ? quem.value.trim() : '';
+        if(unit > 0 || empresa){
+          const qtd = Math.max(1, licNumDireto(it.qtd)||1);
+          it.vencedor = { precoUnit: unit || null, total: unit>0 ? +(unit*qtd).toFixed(2) : null,
+                          empresa: empresa || '', quando: todayISO() };
+          if(unit > 0){ somaItens += unit*qtd; comPreco++; }
+        }else{
+          delete it.vencedor;
+        }
+      });
+    }
+
+    const campoTotal = m.querySelector('[data-campo="resTotal"]');
+    const digitado = campoTotal ? licNumDireto(campoTotal.value) : 0;
+    l.valorResultado = digitado > 0 ? digitado : (somaItens > 0 ? +somaItens.toFixed(2) : null);
     l.resultadoObs = m.querySelector('#lic-res-obs').value.trim();
-    licRegistrar(l, (resultado==='ganhou'?'Ganhamos':'Perdemos') + (l.valorResultado?` — ${fmtMoney(l.valorResultado)}`:'') + (l.resultadoObs?` · ${l.resultadoObs}`:''));
+
+    licRegistrar(l, (resultado==='ganhou'?'Ganhamos':'Perdemos')
+      + (l.valorResultado?` — ${fmtMoney(l.valorResultado)}`:'')
+      + (comPreco?` · preço do vencedor em ${comPreco} ite${comPreco===1?'m':'ns'}`:'')
+      + (l.resultadoObs?` · ${l.resultadoObs}`:''));
 
     const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
     if(orc) orc.status = resultado==='ganhou' ? 'aprovado' : 'recusado';
@@ -30413,7 +30856,10 @@ function licResultado(id, resultado){
         `o orçamento nº ${orc.numero} fica aprovado esperando por você em Orçamentos.`,
         ()=>{ converterOrcamentoEmVenda(orc.id); }, 'Lançar venda');
     }else{
-      showToast(resultado==='ganhou'?'Marcada como ganha.':'Marcada como perdida — fica no histórico do produto.','success');
+      showToast(perdeu
+        ? (comPreco ? `Anotado. O preço do vencedor de ${comPreco} ite${comPreco===1?'m fica':'ns fica'} no histórico do produto.`
+                    : 'Marcada como perdida — fica no histórico do produto.')
+        : 'Marcada como ganha.','success');
     }
   };
 }
@@ -30592,7 +31038,7 @@ function licTelaProcesso(l){
 
   return `
     ${licCabecalho(l, l.objeto||'Processo',
-      `${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}`,
+      `${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}${l.captadoPor?` · captada por ${escapeHtml(l.captadoPor)}`:''}`,
       `<button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>`)}
 
     <div class="card" style="padding:12px 16px;">
@@ -32348,8 +32794,9 @@ function licHistoricoDoItem(item){
   const p = achados.licitacao[0];
   if(!p) return null;
   const u = p.usos[0];
-  const perdido = p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
-  return { produto:p, ultimo:u, perdido };
+  const porItem = p.usos.find(x=>x.resultado==='perdeu' && x.vencedorUnit>0);
+  const perdido = porItem || p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
+  return { produto:p, ultimo:u, perdido, porItem };
 }
 
 /* Ela mandou o texto completo, veio o edital lido e os itens — e
@@ -32458,7 +32905,9 @@ function licComparacaoHtml(l){
         <div class="hist">Em ${u.data?fmtDate(String(u.data).slice(0,10)):'—'}, para ${escapeHtml(u.cliente||u.orgao||'')}:
           custo <b>${fmtMoney(u.custoUnit)}</b>, vendemos por <b>${fmtMoney(u.precoVenda)}</b>
           ${ {ganhou:'e ganhamos', perdeu:'e perdemos', desistiu:'e desistimos', enviado:'e está enviada', pendente:'(pendente)'}[u.resultado]||'' }.</div>
-        ${h.perdido?`<div class="hist" style="color:var(--negative);">O vencedor daquela vez fechou em <b>${fmtMoney(h.perdido.valorResultado)}</b>${h.perdido.resultadoObs?` · ${escapeHtml(h.perdido.resultadoObs)}`:''}</div>`:''}
+        ${h.porItem
+          ? `<div class="hist" style="color:var(--negative);">O vencedor daquela vez fechou a <b>${fmtMoney(h.porItem.vencedorUnit)}</b> por unidade${h.porItem.vencedorQuem?` (${escapeHtml(h.porItem.vencedorQuem)})`:''}${h.porItem.resultadoObs?` · ${escapeHtml(h.porItem.resultadoObs)}`:''}</div>`
+          : (h.perdido?`<div class="hist" style="color:var(--negative);">O vencedor daquela vez fechou em <b>${fmtMoney(h.perdido.valorResultado)}</b> no total${h.perdido.resultadoObs?` · ${escapeHtml(h.perdido.resultadoObs)}`:''}</div>`:'')}
         <button class="btn btn-sm" style="margin-top:5px;" onclick="licVerProdutoDaPrecificacao('${escapeAttr(h.produto.chave)}')">Ver histórico deste produto</button>
       </div>`;
     })()}
@@ -33055,11 +33504,22 @@ function licAvisoParecidos(parecidos, it){
     /* O número mais útil que existe pra decidir o próximo lance: por
        quanto o vencedor fechou da última vez que perdemos este produto. */
     let vencedor = '';
-    const perdido = p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
-    if(perdido){
+    /* Primeiro procura o preço do vencedor DAQUELE item — é o número
+       que serve pra decidir o lance. Só na falta dele cai no total da
+       dispensa inteira, que é mais grosseiro. */
+    const porItem = p.usos.find(x=>x.resultado==='perdeu' && x.vencedorUnit>0);
+    const perdido = porItem || p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
+    if(porItem){
+      const dif = porItem.precoUnit>0 ? ((porItem.vencedorUnit/porItem.precoUnit)-1)*100 : null;
+      vencedor = `<div style="margin-top:4px;color:var(--negative);">
+        Quando perdemos, o vencedor fechou a <b>${fmtMoney(porItem.vencedorUnit)}</b> por unidade` +
+        (porItem.vencedorQuem?` (${escapeHtml(porItem.vencedorQuem)})`:'') +
+        (dif!=null?` — <b>${Math.abs(dif).toFixed(1)}% ${dif<0?'abaixo':'acima'}</b> do nosso preço`:'') +
+        (porItem.resultadoObs?` · ${escapeHtml(porItem.resultadoObs)}`:'') + `</div>`;
+    }else if(perdido){
       const dif = perdido.precoVenda>0 ? ((perdido.valorResultado/perdido.precoVenda)-1)*100 : null;
       vencedor = `<div style="margin-top:4px;color:var(--negative);">
-        Quando perdemos, o vencedor fechou em <b>${fmtMoney(perdido.valorResultado)}</b>` +
+        Quando perdemos, o vencedor fechou em <b>${fmtMoney(perdido.valorResultado)}</b> no total` +
         (dif!=null?` — <b>${Math.abs(dif).toFixed(1)}% ${dif<0?'abaixo':'acima'}</b> do que propusemos`:'') +
         (perdido.resultadoObs?` · ${escapeHtml(perdido.resultadoObs)}`:'') + `</div>`;
     }
@@ -45657,7 +46117,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 14:47';
+const SISTEMA_VERSAO = '21/10/2026 17:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
