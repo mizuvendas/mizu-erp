@@ -26987,6 +26987,12 @@ function licInjetarEstilo(){
   .lic-op .compl summary{cursor:pointer;color:var(--primary);}
   .lic-op .compl div{margin-top:5px;color:var(--ink-soft);line-height:1.5;
     background:#FAFBFC;border-radius:var(--radius-sm);padding:8px 10px;max-height:150px;overflow:auto;}
+  .lic-card .links, .lic-op .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .lic-card .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
+    color:var(--primary);text-decoration:none;background:#fff;}
+  .lic-card .links a:hover{border-color:var(--primary);background:var(--primary-soft);}
+  .lic-card .links .semlink{font-size:11.5px;padding:4px 10px;border-radius:20px;
+    border:1px dashed var(--border);color:var(--ink-faint);text-decoration:line-through;cursor:help;}
   .lic-op .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
   .lic-op .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
     color:var(--primary);text-decoration:none;background:#fff;}
@@ -29896,6 +29902,25 @@ function licAbrirBuscaPNCP(){
 /* =========================================================
    ABA 2 — EM ANÁLISE (lista)
    ========================================================= */
+/* Os três links do PNCP, do jeito que já aparecem na triagem. Ela
+   precisa deles aqui também: é daqui que ela abre a dispensa pra baixar
+   o edital. O que o órgão não publicou aparece riscado, pra ficar claro
+   que faltou lá e não aqui. */
+function licLinksHtml(l){
+  const links = [
+    { t: licNomeDoPortal(l), u: l.linkSistemaOrigem || l.linkPlataforma,
+      falta: 'o órgão não publicou o link da plataforma' },
+    { t: 'Edital no PNCP', u: l.linkPncp || l.linkEdital,
+      falta: 'sem o nº de controle não dá pra montar o endereço' },
+    { t: 'Processo eletrônico', u: l.linkProcesso,
+      falta: 'o órgão não publicou o processo eletrônico' }
+  ];
+  if(links.every(x=>!x.u)) return '';
+  return `<div class="links">${links.map(x=> x.u
+    ? `<a href="${escapeAttr(x.u)}" target="_blank" rel="noopener">${escapeHtml(x.t)} ↗</a>`
+    : `<span class="semlink" title="${escapeAttr(x.falta)}">${escapeHtml(x.t)}</span>`).join('')}</div>`;
+}
+
 /* A mesma ordenação da triagem, agora também aqui: o que vence primeiro
    e o que está mais perto são as duas perguntas que decidem por onde
    começar quando tem várias em análise ao mesmo tempo. */
@@ -29943,6 +29968,7 @@ function licPainelAnalise(){
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
               <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}${l.distanciaKm!=null?` · ${l.distanciaKm} km`:''}</div>
               ${licTarjasComoParticipar(l, true)}
+              ${licLinksHtml(l)}
               <div class="lic-tags">
                 <span class="lic-tag">${l.arquivos.length} arquivo${l.arquivos.length===1?'':'s'} anexado${l.arquivos.length===1?'':'s'}</span>
                 <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
@@ -29998,6 +30024,7 @@ function licPainelPrecificacao(){
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
               <div class="meta">${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · julgamento ${l.criterio==='global'?'por preço global':'por item'}</div>
+              ${licLinksHtml(l)}
             </div>
             <div class="dir">
               <div class="lic-prazo">Encerra <b>${licDataHora(p.quando)}</b><br><span class="lic-cron ${p.classe}">${p.texto}</span></div>
@@ -30143,6 +30170,7 @@ function licCartaoProposta(l){
           ${l.dataEnvio?`<span class="lic-tag">Enviada ${fmtDate(String(l.dataEnvio).slice(0,10))}</span>`:''}
           ${licAvisoCobrar(l, true)}
         </div>
+        ${licLinksHtml(l)}
         ${licAvisoCobrar(l, false)}
       </div>
       <div class="dir">
@@ -30567,6 +30595,101 @@ const LIC_BLOCOS_LEITURA = [
 ];
 const LIC_CAMPOS_LEITURA = LIC_BLOCOS_LEITURA.reduce((a,b)=>a.concat(b.campos), []);
 function licCampoLeitura(id){ return LIC_CAMPOS_LEITURA.find(c=>c.id===id); }
+
+/* =========================================================
+   O QUE APARECE NOS CAMPOS DA DISPENSA
+
+   São 30 campos. Numa dispensa simples a maioria volta "não achei —
+   confira" e enche a tela de amarelo, escondendo os cinco que
+   realmente importam. Ela escolhe aqui o que quer ver — e o que trava
+   a proposta (*) nunca some, porque sem ele não dá pra enviar nada.
+   ========================================================= */
+const LIC_CAMPOS_LEITURA_ESSENCIAIS = ['criterio','mepp','meioEnvio','comoEnviarProposta',
+  'portal','emailProposta','dataHoraLimite','validade','prazoEntrega','prazoPagamento','localEntrega'];
+
+function licCamposLeituraCfg(){
+  const cfg = STATE.config;
+  if(!cfg.camposLeitura || typeof cfg.camposLeitura !== 'object'){
+    cfg.camposLeitura = {};
+    LIC_CAMPOS_LEITURA.forEach(c=>{ cfg.camposLeitura[c.id] = true; });
+    cfg.camposLeituraEsconderVazios = false;
+  }
+  LIC_CAMPOS_LEITURA.forEach(c=>{
+    if(cfg.camposLeitura[c.id] === undefined) cfg.camposLeitura[c.id] = true;
+  });
+  return cfg.camposLeitura;
+}
+function licMostraCampoLeitura(c, temValor){
+  const cfg = licCamposLeituraCfg();
+  if(c.trava) return true;                       /* o que segura a proposta nunca some */
+  if(cfg[c.id] === false) return false;
+  if(STATE.config.camposLeituraEsconderVazios && !temValor) return false;
+  return true;
+}
+
+function licAbrirCamposLeitura(id){
+  const cfg = licCamposLeituraCfg();
+  const antigo = document.getElementById('modal-lic-campos-leitura');
+  if(antigo) antigo.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-campos-leitura';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(760px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">⚙️ O que mostrar nos campos da dispensa</h3>
+      <p class="help-text">Desmarque o que você nunca usa — some da tela em todas as dispensas.
+        Os marcados com <b>*</b> seguram a proposta e não podem ser escondidos.</p>
+
+      <label class="lic-doc" style="display:flex;gap:9px;align-items:flex-start;cursor:pointer;">
+        <input type="checkbox" id="lic-cl-vazios" ${STATE.config.camposLeituraEsconderVazios?'checked':''} style="width:auto;margin-top:3px;">
+        <div><b>Esconder o que o edital não trouxe</b>
+          <small>Os "não achei — confira" somem, menos os que travam a proposta. A tela fica só com o que foi lido.</small></div>
+      </label>
+
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin:12px 0 6px;">
+        <button class="btn btn-sm" onclick="licPresetCamposLeitura('tudo')">Marcar tudo</button>
+        <button class="btn btn-sm" onclick="licPresetCamposLeitura('essencial')">Só o essencial</button>
+      </div>
+
+      ${LIC_BLOCOS_LEITURA.map(bloco=>`
+        <div style="margin-top:12px;">
+          <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">${escapeHtml(bloco.titulo)}</div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:4px;">
+            ${bloco.campos.map(c=>`
+              <label style="display:flex;gap:8px;align-items:center;font-size:12.5px;cursor:${c.trava?'not-allowed':'pointer'};${c.trava?'opacity:.65;':''}">
+                <input type="checkbox" data-cl="${c.id}" ${c.trava||cfg[c.id]!==false?'checked':''} ${c.trava?'disabled':''} style="width:auto;">
+                ${escapeHtml(c.rotulo)}${c.trava?' <b>*</b>':''}
+              </label>`).join('')}
+          </div>
+        </div>`).join('')}
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-cl-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  m.querySelector('#lic-cl-ok').onclick = ()=>{
+    const novo = licCamposLeituraCfg();
+    m.querySelectorAll('[data-cl]').forEach(i=>{ novo[i.dataset.cl] = i.checked; });
+    LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{ novo[c.id] = true; });
+    STATE.config.camposLeituraEsconderVazios = m.querySelector('#lic-cl-vazios').checked;
+    saveState();
+    m.remove();
+    renderPortalLicitacoes();
+    showToast('Pronto. Vale para todas as dispensas.','success');
+  };
+}
+
+function licPresetCamposLeitura(qual){
+  const m = document.getElementById('modal-lic-campos-leitura');
+  if(!m) return;
+  m.querySelectorAll('[data-cl]').forEach(i=>{
+    if(i.disabled) return;
+    i.checked = (qual==='tudo') ? true : LIC_CAMPOS_LEITURA_ESSENCIAIS.includes(i.dataset.cl);
+  });
+}
 
 /* ---------------------------------------------------------
    Caminho de reserva: leitor por palavra-chave
@@ -31507,11 +31630,20 @@ function licLeituraHtml(l){
         <small style="display:block;margin-top:6px;">Decida qual vale antes de precificar — e, na dúvida, peça esclarecimento ao órgão.</small>
       </div>`:''}
 
-    ${LIC_BLOCOS_LEITURA.map(bloco=>`
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+      <button class="btn btn-sm" onclick="licAbrirCamposLeitura('${l.id}')"
+        title="Escolher quais campos aparecem aqui">⚙️ O que mostrar aqui</button>
+    </div>
+
+    ${LIC_BLOCOS_LEITURA.map(bloco=>{
+      const visiveis = bloco.campos.filter(c=>licMostraCampoLeitura(c, !!leitura[c.id]));
+      if(visiveis.length === 0) return '';
+      const escondidos = bloco.campos.length - visiveis.length;
+      return `
       <div style="margin-bottom:14px;">
-        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">${escapeHtml(bloco.titulo)}</div>
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">${escapeHtml(bloco.titulo)}${escondidos?` <span style="text-transform:none;letter-spacing:0;">· ${escondidos} escondido${escondidos===1?'':'s'}</span>`:''}</div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:12px;">
-          ${bloco.campos.map(c=>{
+          ${visiveis.map(c=>{
             const v = leitura[c.id];
             const fonte = fontes[c.id];
             let cor = 'var(--ink)', extra = '';
@@ -31526,7 +31658,8 @@ function licLeituraHtml(l){
             </div>`;
           }).join('')}
         </div>
-      </div>`).join('')}
+      </div>`;
+    }).join('')}
 
     ${(l.emails||[]).length ? `
       <div style="margin-bottom:12px;">
@@ -45241,7 +45374,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 01:07';
+const SISTEMA_VERSAO = '21/10/2026 13:52';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
