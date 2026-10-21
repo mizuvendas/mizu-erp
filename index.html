@@ -31375,16 +31375,23 @@ volte ao documento três vezes.
 
 COMO LER — isto é o que separa uma resposta útil de uma inútil
 
-1. A planilha de itens é só o começo. Boa parte da especificação está
+1. LISTE TODOS OS ITENS DO EDITAL, um por um, do primeiro ao último.
+   Eles estão na planilha do Termo de Referência, ou numa tabela do
+   aviso. Se o edital tem 12 itens, o JSON tem 12 itens. Nunca agrupe
+   dois num só, nunca pule o que parecer repetido, nunca devolva a
+   lista vazia sem dizer em "resumoDaDecisao" por que não achou a
+   planilha. Traga também a quantidade, a unidade e o valor unitário
+   estimado de cada um — é com esse valor que eu decido o preço.
+2. A planilha de itens é só o começo. Boa parte da especificação está
    solta no corpo do texto, no Termo de Referência, em nota de rodapé,
    em tabela de anexo ou numa cláusula do contrato. Leia tudo e junte.
-2. Para CADA item, varra o documento inteiro atrás de qualquer linha que
+3. Para CADA item, varra o documento inteiro atrás de qualquer linha que
    fale dele, mesmo longe da planilha. Junte tudo numa lista única de
    exigências daquele item.
-3. Se a planilha disser uma coisa e o Termo de Referência disser outra,
+4. Se a planilha disser uma coisa e o Termo de Referência disser outra,
    NÃO escolha: me aponte a contradição com as duas versões e as duas
    fontes.
-4. Diferencie três situações, porque elas pedem reação diferente. Para
+5. Diferencie três situações, porque elas pedem reação diferente. Para
    TODO campo que você não preencher, diga qual é o caso em
    "situacaoCampos", usando exatamente uma destas palavras:
    - "nao_consta" -> você LEU e o edital realmente não trata disso, ou
@@ -31400,9 +31407,9 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    e modelo" e marcar o campo como "nao_achei". Se você leu e o edital
    não exige, é "nao_consta".
    Nunca invente, nunca deduza "o normal é 30 dias".
-5. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
+6. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
    ilegível, diga qual em "trechosIlegiveis".
-6. PRESTE CONTAS DO QUE VOCÊ LEU. Preencha "arquivosLidos" com uma
+7. PRESTE CONTAS DO QUE VOCÊ LEU. Preencha "arquivosLidos" com uma
    linha por arquivo que eu anexei: o nome, quantas páginas tem, se é
    texto ou imagem escaneada, QUAIS PÁGINAS você realmente abriu, e o
    que você não conseguiu ler.
@@ -31410,7 +31417,7 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    diga quais. "Não li" é uma resposta aceitável e útil; "não achei",
    quando na verdade você não leu, não é — me faz confiar num buraco.
    Na dúvida entre as duas, diga "não li".
-7. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
+8. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
    Se eu errar isso, não adianta nada o resto estar certo. Procure em
    TODO o documento — no aviso, no termo de referência, nos anexos, em
    parágrafo solto no meio do texto — a frase que diz para onde mandar a
@@ -31421,13 +31428,13 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    outra, dá um e-mail para onde mandar a proposta assinada. As duas
    coisas podem ser verdade ao mesmo tempo. Se achar as duas, descreva
    as duas.
-8. Varra o documento inteiro atrás de endereços de e-mail e diga para
+9. Varra o documento inteiro atrás de endereços de e-mail e diga para
    que serve cada um. Perder o e-mail certo me faz perder a dispensa.
    Se o edital tiver um único e-mail e não disser claramente para que
    serve, diga isso em vez de chutar a finalidade.
-9. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
+10. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
    página ("Aviso, item 6.2, p. 4"). Sem isso eu não consigo conferir.
-10. Antes de fechar a resposta, confira item por item desta lista:
+11. Antes de fechar a resposta, confira item por item desta lista:
    - o número de itens bate com o do edital?
    - o número de documentos de habilitação bate com a cláusula de
      habilitação?
@@ -31438,27 +31445,67 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
      preenchidos ou registrados como não encontrados?
    Se faltar qualquer um, volte ao documento e complete antes de
    responder. É melhor demorar do que me entregar resposta vaga.
-11. Se o que eu anexei não for o edital completo, diga isso logo no
+12. Se o que eu anexei não for o edital completo, diga isso logo no
    "resumoDaDecisao", diga QUAL parte falta, e marque como
    "não encontrado" tudo que dependeria dela — não deduza.
 
 PESQUISA DE PRODUTOS
+
+O QUE EU QUERO AQUI, em uma frase: o produto MAIS BARATO que atenda
+100% das exigências daquele item. Não é uma lista de opções bonitas —
+é o produto que eu vou comprar e revender dentro do valor do edital.
+
 ATENÇÃO: esta parte exige NAVEGAR NA INTERNET. Se você estiver sem
 acesso à internet nesta conversa, ou se não for navegar, NÃO omita a
 pesquisa em silêncio: devolva "modelos": [] e escreva em
 "resumoDaDecisao" a frase "não pesquisei produtos porque estou sem
 acesso à internet". Omitir sem avisar é o pior resultado possível,
 porque eu fico esperando uma coisa que não vem.
-Para cada item, procure no mínimo 5 produtos reais, à venda no Brasil
-hoje, de marcas diferentes, com link de onde comprar e preço visível.
-Confira cada produto contra CADA exigência daquele item:
-- ATENDE: a ficha técnica comprova.
+
+Para CADA item:
+a) PROCURE PELA ESPECIFICAÇÃO, não pelo nome genérico do produto.
+   Antes de buscar, releia as exigências daquele item e monte a busca
+   com elas: material, medida, capacidade, voltagem, norma técnica,
+   numeração, cor, composição, o que estiver escrito. Buscar só
+   "sandália" ou só "nobreak" devolve qualquer coisa — e qualquer
+   coisa me desclassifica. Busque "sandália PVC solado antiderrapante
+   numeração 38 ao 44", "nobreak 1200VA bivolt 8 tomadas".
+   Se o edital citar uma marca como referência ("tipo Havaianas"),
+   procure ESSA marca E as equivalentes, e diga em "observacao" qual é
+   a de referência e qual é a equivalente.
+b) Produtos reais, à venda no Brasil HOJE, com link e preço visível na
+   página. Nada de preço "a partir de", nada de produto esgotado, nada
+   de página de marketplace sem estoque.
+c) Me dê pelo menos 3 que atendam 100% das exigências. Se não existirem
+   3, traga quantos existirem e diga em "observacao" que o mercado não
+   tem mais do que isso — isso também é informação.
+d) Traga ainda os que chegam perto e reprovam, para eu saber o que
+   descartei e por quê. No mínimo 5 produtos no total.
+e) ORDENE a lista do mais barato para o mais caro, contando só os que
+   atendem 100%. O primeiro da lista tem que ser o mais barato que
+   serve.
+f) Prefira preço de atacado/distribuidor quando existir, e diga qual é
+   qual em "fornecedor". Loja de varejo serve como referência, mas eu
+   compro melhor no distribuidor — se achar os dois, traga os dois.
+g) Compare o preço com o VALOR UNITÁRIO ESTIMADO daquele item (o que
+   você extraiu do edital). Em "observacao" do modelo, escreva se cabe:
+   "custa 12,40 contra 21,60 do edital — sobra 42%". Se TODOS os
+   produtos que atendem custarem mais que o valor do edital, diga isso
+   com todas as letras em "resumoDaDecisao": é o aviso de que não vale
+   a pena participar deste item.
+
+Depois de achar, CONFIRA um por um contra CADA exigência daquele item.
+A prova tem que vir da ficha técnica da página — não da sua impressão
+nem do nome do produto. Se a página não mostra a medida, a norma ou a
+composição que o edital pede, aquilo não é ATENDE:
+- ATENDE: a ficha técnica comprova, e você diz onde leu.
 - NAO_ATENDE: diga o número do produto E o número exigido
   ("brilho 350 cd/m², o edital exige 400 — 50 abaixo").
 - A_CONFIRMAR: a ficha é omissa. Diga exatamente o que falta.
-Ficha omissa NUNCA é ATENDE. Um único NAO_ATENDE reprova o produto
-inteiro, porque me desclassifica. Para tudo que ficar A_CONFIRMAR,
-escreva a pergunta que eu devo fazer ao distribuidor, por escrito.
+Ficha omissa NUNCA é ATENDE — quero 100% comprovado, não 100%
+presumido. Um único NAO_ATENDE reprova o produto inteiro, porque me
+desclassifica. Para tudo que ficar A_CONFIRMAR, escreva a pergunta que
+eu devo fazer ao distribuidor, por escrito.
 
 FORMATO
 Responda SOMENTE com o bloco JSON abaixo preenchido. Sem introdução,
@@ -33022,9 +33069,30 @@ jaVistos.length ? `JÁ PESQUISADOS — não repita estes:` : '',
   return `- ${m.marca||''} ${m.modelo||''} — ${motivo}`;
 }),
 ``,
-`Procure mais 5 produtos DIFERENTES destes, reais, à venda no Brasil hoje,`,
-`de marcas diferentes, com link de compra e preço visível.`,
-`Priorize os que atendem 100% das exigências acima.`,
+`O QUE EU QUERO: o produto MAIS BARATO que atenda 100% das exigências`,
+`acima. Não é uma lista de opções bonitas — é o que eu vou comprar.`,
+``,
+`BUSQUE PELA ESPECIFICAÇÃO acima, não pelo nome genérico do produto:`,
+`monte a busca com material, medida, capacidade, norma, numeração, cor,`,
+`o que estiver nas exigências. Buscar só o nome devolve qualquer coisa,`,
+`e qualquer coisa me desclassifica.`,
+``,
+`Procure mais 5 produtos DIFERENTES destes, reais, à venda no Brasil`,
+`HOJE, com link e preço visível na página (nada de "a partir de", nada`,
+`de esgotado). Pelo menos 3 têm que atender 100%; se o mercado não`,
+`tiver 3, diga isso.`,
+`A prova de que atende tem que vir da ficha técnica da página, não do`,
+`nome do produto.`,
+`ORDENE do mais barato para o mais caro, contando só os que atendem`,
+`100% — o primeiro da lista é o mais barato que serve.`,
+`Prefira preço de atacado/distribuidor e diga qual é qual em`,
+`"fornecedor". Se achar varejo e distribuidor, traga os dois.`,
+licNumDireto(item.teto)>0
+  ? `Em "observacao" de cada modelo, compare com o teto acima e diga se cabe ` +
+    `(ex.: "custa 12,40 contra 21,60 do edital — sobra 42%"). Se nenhum que ` +
+    `atende couber no teto, diga isso com todas as letras.`
+  : `Em "observacao" de cada modelo, diga o preço por unidade.`,
+`Ficha omissa NUNCA é ATENDE — quero 100% comprovado, não presumido.`,
 ``,
 `Responda SOMENTE com este JSON, sem texto em volta:`,
 `{ "modelos": [ { "item": ${numItem}, "marca": "", "modelo": "", "fabricante": "",`,
@@ -46117,7 +46185,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 17:10';
+const SISTEMA_VERSAO = '21/10/2026 19:09';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
