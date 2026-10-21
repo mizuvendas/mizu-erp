@@ -2024,9 +2024,17 @@ function atualizarBadgesMenu(){
   }
   const badgeLic = document.getElementById('nav-badge-licitacoes');
   if(badgeLic){
-    /* dispensa que encerra em menos de 2 dias e ainda não foi enviada */
+    /* dispensa que encerra em menos de 2 dias e ainda não foi enviada,
+       mais proposta enviada que já passou do prazo de cobrar o resultado */
     const urgentes = (typeof licPrazoApertado==='function') ? licPrazoApertado().length : 0;
-    if(urgentes>0){ badgeLic.textContent = urgentes; badgeLic.style.display = ''; badgeLic.title = 'encerra em menos de 2 dias'; }
+    const cobrar = (typeof licQuantasPraCobrar==='function') ? licQuantasPraCobrar() : 0;
+    const total = urgentes + cobrar;
+    if(total>0){
+      badgeLic.textContent = total; badgeLic.style.display = '';
+      badgeLic.title = [urgentes?`${urgentes} encerra${urgentes===1?'':'m'} em menos de 2 dias`:'',
+                        cobrar?`${cobrar} sem resposta há ${LIC_DIAS_PRA_COBRAR} dias ou mais`:'']
+                       .filter(Boolean).join(' · ');
+    }
     else{ badgeLic.style.display = 'none'; }
   }
   const badgeMargem = document.getElementById('nav-badge-margem');
@@ -11871,11 +11879,6 @@ function renderOrcamentos(){
       <div id="orc-relatorio-separacao"></div>
     </div>
 
-    <div class="card" id="card-orc-licitacao" style="display:none;">
-      <h3>⚖️ Propostas de licitação <span class="hint">dispensa, pregão e cotação escolar — marque aqui se ganhou ou perdeu</span></h3>
-      <div id="orc-licitacao-conteudo"></div>
-    </div>
-
     <div class="card">
       <h3>Orçamentos Lançados</h3>
       <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
@@ -11915,6 +11918,13 @@ function renderOrcamentos(){
           <tbody id="orc-em-andamento-body"></tbody>
         </table>
       </div>
+    </div>
+
+    <!-- Propostas de licitação ficam por ÚLTIMO de propósito: quando ela está
+         fazendo orçamento de cliente, não precisa rolar por cima deste quadro. -->
+    <div class="card" id="card-orc-licitacao" style="display:none;">
+      <h3>⚖️ Propostas de licitação <span class="hint">dispensa, pregão e cotação escolar — marque aqui se ganhou ou perdeu</span></h3>
+      <div id="orc-licitacao-conteudo"></div>
     </div>
   `;
 
@@ -13351,6 +13361,16 @@ function renderOrcamentosLicitacao(){
         <div class="kpi-sub">em disputa agora</div></div>
     </div>
 
+    ${(()=>{
+      const cobrar = lista.map(o=>licDoOrcamento(o)).filter(l=>l && licPrecisaCobrar(l));
+      if(cobrar.length===0) return '';
+      return `<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+        <b>⏰ ${cobrar.length} proposta${cobrar.length===1?'':'s'} sem resposta há ${LIC_DIAS_PRA_COBRAR} dias ou mais</b>
+        <small>${cobrar.map(l=>`${escapeHtml(l.orgao||'')}${l.numero?` (nº ${escapeHtml(l.numero)})`:''} — ${licDiasEsperando(l)} dias`).join(' · ')}</small>
+        <small>Vale ligar ou mandar e-mail pro órgão e perguntar se já homologaram.</small>
+      </div>`;
+    })()}
+
     <div class="table-wrap">
       <table class="data-table">
         <thead><tr>
@@ -13377,7 +13397,14 @@ function renderOrcamentosLicitacao(){
               <td>${escapeHtml(o.vendedor||'—')}</td>
               <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(valor)}</td>
               <td><span class="badge" style="background:${sit.fundo};color:${sit.cor};">${sit.t}</span>
-                ${virouVenda?'<div style="font-size:11px;color:var(--positive);">✅ virou venda</div>':''}</td>
+                ${virouVenda?'<div style="font-size:11px;color:var(--positive);">✅ virou venda</div>':''}
+                ${l && etapa==='enviada' ? (()=>{
+                  const dias = licDiasEsperando(l);
+                  if(dias == null) return '';
+                  return licPrecisaCobrar(l)
+                    ? `<div style="font-size:11px;color:var(--warning);font-weight:600;margin-top:2px;">⏰ ${dias} dias — cobre o resultado</div>`
+                    : `<div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">${dias===0?'desde hoje':`há ${dias} dia${dias===1?'':'s'}`}</div>`;
+                })() : ''}</td>
               <td>${decidida && l && l.valorResultado
                     ? `<span style="font-size:12px;">${etapa==='perdeu'?'vencedor: ':'homologado: '}${fmtMoney(l.valorResultado)}</span>`
                     : '<span style="color:var(--ink-faint);font-size:12px;">—</span>'}</td>
@@ -13387,6 +13414,7 @@ function renderOrcamentosLicitacao(){
                   <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>` : ''}
                 ${l && etapa==='proposta' ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','proposta')">Abrir proposta</button>` : ''}
                 ${l && decidida ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','compra')">Ver</button>` : ''}
+                ${l ? `<button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Custo x venda, item por item">📊 Análise</button>` : ''}
                 ${!l ? `<span style="font-size:11.5px;color:var(--ink-faint);">licitação removida</span>` : ''}
                 <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
               </td>
@@ -26944,6 +26972,12 @@ function licInjetarEstilo(){
   .lic-op .onde b{color:var(--ink);} .lic-op .onde .aqui{color:var(--positive);}
   .lic-op .onde .medindo{color:var(--ink-faint);font-style:italic;}
 
+  /* As duas tarjas que respondem "dá pra mandar por e-mail?" e
+     "vai ter lance?" — as perguntas que decidem se vale participar. */
+  .lic-participar{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px;}
+  .lic-participar .tag{font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:20px;
+    border:1.5px solid;background:#fff;white-space:nowrap;cursor:help;}
+
   .lic-op .etiquetas{display:flex;gap:5px;flex-wrap:wrap;margin-top:9px;}
   .lic-op .etiquetas span{font-size:11px;padding:2px 9px;border-radius:20px;
     background:#F2F5F7;color:var(--ink-soft);}
@@ -27144,13 +27178,12 @@ function licSubirTaxas(l){
     const v = (l.itens||[]).map(x=>x.comissaoVendedor).find(x=>x);
     l.comissaoVendedor = v || '';
   }
-  if(l.freteFinal == null){
-    l.freteFinal = (l.itens||[]).reduce((a,x)=>a+licNumDireto(x.freteCliente), 0);
-  }
-  /* os campos antigos saem do item pra não voltarem pela nuvem */
+  if(l.freteFinal == null) l.freteFinal = 0;
+  /* imposto e comissão saem do item (valem pra dispensa inteira);
+     o frete até o cliente FICA no item — ela precisa por item mesmo. */
   (l.itens||[]).forEach(it=>{
-    delete it.impostoPct; delete it.comissaoPct;
-    delete it.comissaoVendedor; delete it.freteCliente;
+    delete it.impostoPct; delete it.comissaoPct; delete it.comissaoVendedor;
+    if(it.freteCliente == null) it.freteCliente = 0;
   });
   return l;
 }
@@ -27279,14 +27312,21 @@ function licCustoItem(it, l){
      Se algum item antigo ainda tiver, continua entrando na conta. */
   const acessorios = licNumDireto(it.acessorios);
   const freteNos = licNumDireto(it.freteNos);
-  const freteCliente = licFreteFinalDoItem(it, l);
+  /* dois fretes por item, porque um item tem e o outro não: o que o
+     distribuidor cobra pra trazer, e o que custa levar até o órgão.
+     Se além deles houver um frete geral da entrega, a parte deste item
+     entra também. */
+  const freteItemCliente = licNumDireto(it.freteCliente);
+  const freteRateado = licFreteFinalDoItem(it, l);
+  const freteCliente = freteItemCliente + freteRateado;
   const venda = licPrecoUnit(it) * qtd;
   const impostoPct = licNumDireto(l && l.impostoPct);
   const comissaoPct = licNumDireto(l && l.comissaoPct);
   const imposto = venda * (impostoPct/100);
   const comissao = venda * (comissaoPct/100);
   const total = produto + acessorios + freteNos + freteCliente + imposto + comissao;
-  return { qtd, produto, acessorios, freteNos, freteCliente, imposto, comissao, total,
+  return { qtd, produto, acessorios, freteNos, freteCliente,
+           freteItemCliente, freteRateado, imposto, comissao, total,
            impostoPct, comissaoPct,
            lucro: venda - total,
            margem: venda>0 ? ((venda-total)/venda*100) : 0,
@@ -28385,6 +28425,7 @@ function licPainelOportunidades(){
 
 let licFiltroBusca = '';
 let licOrdem = 'distancia';
+let licOrdemAnalise = 'prazo';   /* em análise o prazo manda — é o que faz perder */
 
 /* Zera o portal inteiro: nada de dispensa herdada do funil antigo nem de
    busca antiga do PNCP. Só o portal — cliente, produto da loja, orçamento,
@@ -28557,6 +28598,8 @@ function licCartaoOportunidade(o){
         ${lugar.length ? `<div class="onde">📍 ${lugar.join(' · ')}</div>` : ''}
       </header>
 
+      ${licTarjasComoParticipar(o, true)}
+
       ${etiquetas.length ? `<div class="etiquetas">${etiquetas.map(e=>`<span>${escapeHtml(e.t)}</span>`).join('')}</div>` : ''}
 
       ${ver.abertura && aindaNaoAbriu ? `<div class="abre">Propostas só a partir de <b>${licDataHora(abre)}</b></div>` : ''}
@@ -28611,6 +28654,423 @@ function licNomeDoPortal(o){
   const u = String(o.linkSistemaOrigem||'').toLowerCase();
   const achado = LIC_PORTAIS.find(p=>u.includes(p.dominio));
   return achado ? achado.nome : 'Plataforma de origem';
+}
+
+/* =========================================================
+   COMO SE PARTICIPA — as duas perguntas que decidem se vale a pena
+
+   1) DÁ PRA MANDAR POR E-MAIL ou tem que ir pelo portal?
+      Dispensa de pequeno valor em prefeitura pequena costuma ser por
+      e-mail. Quando o órgão publica num portal de pregão (Megasoft,
+      BNC, Compras.gov...), quase sempre é lá dentro, com cadastro e
+      certificado. Isso muda tudo: por e-mail ela participa hoje; pelo
+      portal ela precisa de cadastro antes.
+
+   2) É SÓ MANDAR A PROPOSTA ou vai ter disputa de lance?
+      O PNCP traz isso na coluna "Modo de Disputa". Se for ABERTO,
+      ABERTO-FECHADO ou FECHADO-ABERTO, tem sessão de lances e alguém
+      tem que estar na frente do computador na hora. Se for DISPENSA
+      ELETRÔNICA sem disputa, ou "não se aplica", é mandar e esperar.
+
+   Nada disso é chute do sistema: é o que está escrito no arquivo do
+   PNCP. O que ele não diz, o portal diz pelo nome. E a palavra final é
+   sempre a do edital — por isso a tela diz "confirme no edital".
+   ========================================================= */
+
+/* Portais onde a proposta é enviada DENTRO do sistema, com cadastro
+   prévio. Se a dispensa está num destes, não adianta mandar e-mail. */
+const LIC_PORTAIS_COM_DISPUTA = [
+  'megasoft','bnc','bll','licitanet','comprasnet','compras.gov','compras gov',
+  'portal de compras','portaldecompras','licitacoes-e','licitações-e','banco do brasil',
+  'centi','sigep','prodata','fiorilli','sislog','syslog','slicx','publinexo','ammlicita',
+  'licitar digital','licitardigital','bolsa','peintegrado','portal nacional'
+];
+
+function licComoEnviar(o){
+  const portal = String(licNomeDoPortal(o)||'').toLowerCase();
+  const links = [o.linkSistemaOrigem, o.linkPlataforma, o.linkProcesso].map(x=>String(x||'').toLowerCase()).join(' ');
+  const temPortal = !!(o.plataforma || o.linkSistemaOrigem || o.linkPlataforma);
+  const nomeado = LIC_PORTAIS_COM_DISPUTA.find(n => portal.includes(n) || links.includes(n.replace(/[^a-z]/g,'')));
+
+  if(nomeado){
+    return { classe:'portal', curto:'Pelo portal',
+      texto:`Vai pelo ${licNomeDoPortal(o)} — precisa de cadastro lá, e-mail não resolve`,
+      email:false };
+  }
+  const modalidade = String(o.modalidadeNome||'').toLowerCase();
+  const ehDispensa = /dispensa|inexigibilidade/.test(modalidade);
+  if(ehDispensa && !temPortal){
+    return { classe:'email', curto:'Provavelmente por e-mail',
+      texto:'Dispensa sem portal de disputa — costuma ser proposta por e-mail. Confirme no edital',
+      email:true };
+  }
+  if(ehDispensa){
+    return { classe:'talvez', curto:'E-mail ou portal',
+      texto:`Dispensa publicada no ${licNomeDoPortal(o)} — pode ser por e-mail ou lá dentro. Confirme no edital`,
+      email:null };
+  }
+  return { classe:'portal', curto:'Pelo portal',
+    texto:'Pregão/concorrência vai pelo portal, com cadastro e certificado',
+    email:false };
+}
+
+function licComoDisputa(o){
+  const d = String(o.modoDisputa||'').toLowerCase();
+  const modalidade = String(o.modalidadeNome||'').toLowerCase();
+
+  if(/aberto[\s-]*e[\s-]*fechado|aberto[\s-]*fechado/.test(d))
+    return { classe:'lance', curto:'Tem lance', texto:'Aberto e fechado: tem sessão de lances e depois proposta final fechada — alguém precisa estar na hora' };
+  if(/fechado[\s-]*e[\s-]*aberto|fechado[\s-]*aberto/.test(d))
+    return { classe:'lance', curto:'Tem lance', texto:'Fechado e aberto: manda a proposta e depois tem disputa de lances' };
+  if(/aberto/.test(d))
+    return { classe:'lance', curto:'Tem lance', texto:'Modo aberto: disputa de lances ao vivo — alguém precisa estar na frente do computador' };
+  if(/fechado/.test(d))
+    return { classe:'proposta', curto:'Só proposta', texto:'Modo fechado: manda a proposta e espera o resultado, sem lance' };
+  if(/nao se aplica|não se aplica|n[aã]o aplic/.test(d) || (!d && /dispensa|inexigibilidade/.test(modalidade)))
+    return { classe:'proposta', curto:'Só proposta', texto:'Sem modo de disputa no PNCP — dispensa assim costuma ser só mandar a proposta. Confirme no edital' };
+  if(d)
+    return { classe:'talvez', curto:escapeHtml(o.modoDisputa), texto:`O PNCP diz "${o.modoDisputa}" — confira no edital se tem sessão de lances` };
+  return { classe:'talvez', curto:'Não informado', texto:'O arquivo do PNCP não trouxe o modo de disputa — confira no edital' };
+}
+
+/* =========================================================
+   PARA ONDE VAI A PROPOSTA
+
+   Ela pediu: "em todos os lugares precisa aparecer o e-mail para onde a
+   gente vai enviar". Então esta faixa entra na análise, na precificação,
+   na montagem da proposta e na hora de enviar — sempre igual, sempre com
+   o botão de copiar, pra não ter que voltar procurar.
+   ========================================================= */
+function licParaOndeVai(l){
+  const leitura = l.leitura || {};
+  const email = leitura.emailProposta || '';
+  const meio = leitura.comoEnviarProposta || leitura.meioEnvio || '';
+  const portal = leitura.portal || '';
+  const fonte = (l.fontes||{}).emailProposta || (l.fontes||{}).comoEnviarProposta || '';
+  return { email, meio, portal, fonte };
+}
+
+function licFaixaEnvio(l){
+  if(l.semEdital) return '';
+  const e = licParaOndeVai(l);
+  if(!e.email && !e.meio && !e.portal){
+    return `<div class="lic-doc falta" style="display:block;margin-bottom:12px;">
+      <b>⚠️ Ainda não sabemos para onde mandar esta proposta</b>
+      <small>Nem e-mail, nem portal. Isso tem que sair do edital antes de precificar —
+        proposta pronta que não chega no lugar certo é trabalho perdido.</small>
+      <button class="btn btn-sm" style="margin-top:6px;" onclick="licAbrir('${l.id}','processo')">Ver a análise do edital</button>
+    </div>`;
+  }
+  return `
+    <div class="lic-doc ok" style="display:block;margin-bottom:12px;border-left:3px solid var(--positive);">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div style="flex:1;min-width:250px;">
+          <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);">A proposta vai para</div>
+          ${e.email
+            ? `<div style="font-size:15px;font-weight:700;font-family:var(--font-num);color:var(--ink);word-break:break-all;">${escapeHtml(e.email)}</div>`
+            : `<div style="font-size:14px;font-weight:600;">${escapeHtml(e.portal || e.meio)}</div>`}
+          ${e.email && e.portal ? `<small>ou pelo portal ${escapeHtml(e.portal)}</small>` : ''}
+          ${e.meio ? `<small>${escapeHtml(String(e.meio).slice(0,160))}</small>` : ''}
+          ${e.fonte ? `<small style="color:var(--ink-faint);">${escapeHtml(e.fonte)}</small>` : ''}
+        </div>
+        ${e.email ? `<button class="btn btn-sm" onclick="licCopiarNaMao(${JSON.stringify(e.email).replace(/"/g,'&quot;')});showToast('E-mail copiado.','success');">📋 Copiar e-mail</button>` : ''}
+      </div>
+    </div>`;
+}
+
+/* =========================================================
+   ANÁLISE: CUSTO × VENDA
+
+   "Em vez de eu baixar só o edital, eu vou conseguir abrir pra ver essas
+   informações." É a foto da proposta inteira: por item, quanto custa,
+   por quanto vamos vender, quanto sobra, e o quanto estamos abaixo do
+   teto. O gráfico é SVG escrito aqui mesmo — não depende de internet
+   nem de biblioteca, e por isso abre também no computador da loja
+   quando a internet cai.
+   ========================================================= */
+function licAnaliseDados(l){
+  const itens = (l.itens||[]).map((it,i)=>{
+    const c = licCustoItem(it, l);
+    const venda = licPrecoTotal(it);
+    const teto = licNumDireto(it.teto);
+    return {
+      n: i+1,
+      nome: it.descricaoProposta || it.descricao || `Item ${i+1}`,
+      marca: it.marca || '',
+      qtd: c.qtd,
+      unidade: it.unidade || 'UND',
+      custoUnit: licNumDireto(it.custo),
+      produto: c.produto,
+      freteNos: c.freteNos,
+      freteCliente: c.freteCliente,
+      imposto: c.imposto,
+      comissao: c.comissao,
+      custo: c.total,
+      vendaUnit: licPrecoUnit(it),
+      venda, teto,
+      lucro: c.lucro,
+      margem: c.margem,
+      piso: licPisoItem(it, l),
+      abaixoDoTeto: (teto>0 && venda>0) ? (1 - venda/teto)*100 : null,
+      passaDoTeto: teto>0 && venda>teto
+    };
+  });
+  const soma = (f)=>itens.reduce((a,x)=>a+(x[f]||0),0);
+  const venda = soma('venda'), custo = soma('custo'), teto = soma('teto');
+  return {
+    itens,
+    total: { venda, custo, teto, lucro: venda-custo,
+             margem: venda>0 ? ((venda-custo)/venda*100) : 0,
+             abaixoDoTeto: (teto>0 && venda>0) ? (1 - venda/teto)*100 : null },
+    partes: { produto: soma('produto'), freteNos: soma('freteNos'),
+              freteCliente: soma('freteCliente'), imposto: soma('imposto'),
+              comissao: soma('comissao') }
+  };
+}
+
+/* O gráfico: uma faixa por item, com custo, venda e o teto marcado.
+   Escrito em SVG na mão, pra não depender de biblioteca nenhuma. */
+function licAnaliseGrafico(d){
+  const itens = d.itens;
+  if(itens.length === 0) return '<div class="lic-vazio">Sem itens pra desenhar.</div>';
+  const maior = Math.max(...itens.map(x=>Math.max(x.venda, x.custo, x.teto)), 1);
+  const alturaLinha = 46, topo = 24, largura = 760, esquerda = 168, direita = 86;
+  const util = largura - esquerda - direita;
+  const altura = topo + itens.length*alturaLinha + 18;
+  const px = v => Math.max(0, (v/maior) * util);
+
+  const barras = itens.map((x,i)=>{
+    const y = topo + i*alturaLinha;
+    const corVenda = x.lucro < 0 ? 'var(--negative)' : 'var(--positive)';
+    const nome = x.nome.length > 24 ? x.nome.slice(0,23)+'…' : x.nome;
+    return `
+      <g>
+        <text x="${esquerda-8}" y="${y+13}" text-anchor="end" font-size="11.5" fill="var(--ink)">${escapeHtml(nome)}</text>
+        <text x="${esquerda-8}" y="${y+27}" text-anchor="end" font-size="10" fill="var(--ink-faint)">${x.qtd} ${escapeHtml(x.unidade)}</text>
+
+        <rect x="${esquerda}" y="${y+2}" width="${px(x.custo)}" height="13" rx="2.5" fill="var(--ink-soft)" opacity=".55"></rect>
+        <rect x="${esquerda}" y="${y+18}" width="${px(x.venda)}" height="13" rx="2.5" fill="${corVenda}"></rect>
+
+        ${x.teto>0 ? `<line x1="${esquerda+px(x.teto)}" y1="${y-1}" x2="${esquerda+px(x.teto)}" y2="${y+35}"
+            stroke="var(--warning)" stroke-width="2" stroke-dasharray="3 3"></line>` : ''}
+
+        <text x="${esquerda+px(x.custo)+6}" y="${y+12}" font-size="10" fill="var(--ink-faint)">${fmtMoney(x.custo)}</text>
+        <text x="${esquerda+px(x.venda)+6}" y="${y+28}" font-size="10.5" font-weight="600" fill="${corVenda}">${fmtMoney(x.venda)}</text>
+      </g>`;
+  }).join('');
+
+  return `
+    <div style="overflow-x:auto;">
+      <svg viewBox="0 0 ${largura} ${altura}" style="width:100%;min-width:620px;height:auto;font-family:inherit;">
+        <text x="${esquerda}" y="13" font-size="10.5" fill="var(--ink-faint)">cinza = custo · colorido = nossa venda · tracejado = teto do edital</text>
+        ${barras}
+      </svg>
+    </div>`;
+}
+
+function licAnaliseHtml(l){
+  const d = licAnaliseDados(l);
+  const t = d.total;
+  const semPreco = d.itens.filter(x=>x.venda<=0).length;
+
+  const linha = (rot, val, destaque)=>`
+    <tr><td>${rot}</td><td style="text-align:right;${destaque||''}">${fmtMoney(val)}</td></tr>`;
+
+  return `
+    <div class="kpi-row" style="margin-bottom:12px;">
+      <div class="kpi-card"><div class="kpi-label">Teto do edital</div>
+        <div class="kpi-value">${t.teto>0?fmtMoney(t.teto):'—'}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Nossa proposta</div>
+        <div class="kpi-value">${t.venda>0?fmtMoney(t.venda):'—'}</div>
+        <div class="kpi-sub">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'% abaixo do teto':''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Custo total</div>
+        <div class="kpi-value">${fmtMoney(t.custo)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Lucro</div>
+        <div class="kpi-value ${t.venda<=0?'':(t.lucro<0?'negative':'positive')}">${t.venda>0?fmtMoney(t.lucro):'—'}</div>
+        <div class="kpi-sub">${t.venda>0?t.margem.toFixed(1)+'% de margem':'falta precificar'}</div></div>
+    </div>
+
+    ${semPreco>0?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+      <b>${semPreco} ite${semPreco===1?'m ainda está':'ns ainda estão'} sem preço de venda.</b>
+      <small>Os números abaixo ficam incompletos até precificar tudo.</small></div>`:''}
+
+    <div class="card" style="margin-bottom:12px;">
+      <h3 style="margin-top:0;">Item por item</h3>
+      ${licAnaliseGrafico(d)}
+    </div>
+
+    <div class="card" style="margin-bottom:12px;">
+      <h3 style="margin-top:0;">A tabela</h3>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>#</th><th>Item</th><th class="num">Qtd</th>
+            <th class="num">Custo un.</th><th class="num">Custo total</th>
+            <th class="num">Venda un.</th><th class="num">Venda total</th>
+            <th class="num">Lucro</th><th class="num">Margem</th>
+            <th class="num">Teto</th><th class="num">Abaixo do teto</th>
+          </tr></thead>
+          <tbody>
+            ${d.itens.map(x=>`<tr>
+              <td>${x.n}</td>
+              <td>${escapeHtml(x.nome.slice(0,60))}${x.marca?`<br><small style="color:var(--ink-faint);">${escapeHtml(x.marca)}</small>`:''}</td>
+              <td class="num">${x.qtd} ${escapeHtml(x.unidade)}</td>
+              <td class="num">${fmtMoney(x.custoUnit)}</td>
+              <td class="num">${fmtMoney(x.custo)}</td>
+              <td class="num">${x.vendaUnit>0?fmtMoney(x.vendaUnit):'—'}</td>
+              <td class="num">${x.venda>0?fmtMoney(x.venda):'—'}</td>
+              <td class="num" style="color:${x.venda<=0?'var(--ink-faint)':(x.lucro<0?'var(--negative)':'var(--positive)')};font-weight:600;">
+                ${x.venda>0?fmtMoney(x.lucro):'—'}</td>
+              <td class="num">${x.venda>0?x.margem.toFixed(1)+'%':'—'}</td>
+              <td class="num">${x.teto>0?fmtMoney(x.teto):'—'}</td>
+              <td class="num" style="color:${x.passaDoTeto?'var(--negative)':'var(--ink)'};">
+                ${x.passaDoTeto?'PASSOU DO TETO':(x.abaixoDoTeto!=null?x.abaixoDoTeto.toFixed(1)+'%':'—')}</td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot><tr style="font-weight:700;background:#F6F8FA;">
+            <td colspan="4">Total</td>
+            <td class="num">${fmtMoney(t.custo)}</td>
+            <td class="num">—</td>
+            <td class="num">${fmtMoney(t.venda)}</td>
+            <td class="num" style="color:${t.lucro<0?'var(--negative)':'var(--positive)'};">${fmtMoney(t.lucro)}</td>
+            <td class="num">${t.venda>0?t.margem.toFixed(1)+'%':'—'}</td>
+            <td class="num">${t.teto>0?fmtMoney(t.teto):'—'}</td>
+            <td class="num">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'%':'—'}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-top:0;">Onde o dinheiro vai</h3>
+      <p class="help-text">O custo total aberto — é aqui que se vê se o frete ou o imposto está comendo a margem.</p>
+      <div class="lic-conta">
+        <table>
+          ${linha('Produto (o que pagamos ao distribuidor)', d.partes.produto)}
+          ${d.partes.freteNos?linha('Frete do fornecedor até nós', d.partes.freteNos):''}
+          ${d.partes.freteCliente?linha('Frete daqui até o cliente', d.partes.freteCliente):''}
+          ${d.partes.imposto?linha(`Impostos (${licPctCampo(l.impostoPct)}%)`, d.partes.imposto):''}
+          ${d.partes.comissao?linha(`Comissão ${escapeHtml(l.comissaoVendedor||'')} (${licPctCampo(l.comissaoPct)}%)`, d.partes.comissao):''}
+          ${linha('Custo total', t.custo, 'font-weight:700;')}
+          ${linha('Nossa proposta', t.venda, 'font-weight:700;')}
+          ${linha('Sobra', t.lucro, `font-weight:700;color:${t.lucro<0?'var(--negative)':'var(--positive)'};`)}
+        </table>
+      </div>
+    </div>`;
+}
+
+function licAbrirAnalise(id){
+  const l = licAchar(id); if(!l) return;
+  const antigo = document.getElementById('modal-lic-analise');
+  if(antigo) antigo.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-analise';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(1100px,96vw);max-height:92vh;overflow-y:auto;">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;">
+        <div>
+          <h3 style="margin:0 0 2px;">📊 Custo × venda</h3>
+          <div class="help-text" style="margin:0;">${escapeHtml(l.orgao||'')}${l.numero?` · nº ${escapeHtml(l.numero)}`:''}</div>
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-sm" onclick="licImprimirAnalise('${l.id}')">🖨️ Imprimir / salvar PDF</button>
+          <button class="btn btn-sm" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        </div>
+      </div>
+      <div style="margin-top:12px;">${licAnaliseHtml(l)}</div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+function licImprimirAnalise(id){
+  const l = licAchar(id); if(!l) return;
+  const d = licAnaliseDados(l);
+  const janela = window.open('', '_blank');
+  if(!janela){ showToast('O navegador bloqueou a janela. Libere os pop-ups para este site.','error'); return; }
+  const E = dadosProposta();
+  janela.document.write(`
+    <!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>Custo x venda - ${escapeHtml(String(l.numero||l.id))}</title>
+    <style>
+      *{box-sizing:border-box;}
+      body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;margin:22px;}
+      h1{font-size:15px;margin:0 0 2px;} h2{font-size:12px;margin:18px 0 6px;}
+      .sub{color:#555;font-size:10.5px;margin-bottom:14px;}
+      table{width:100%;border-collapse:collapse;margin-bottom:10px;}
+      th,td{border:1px solid #ccc;padding:4px 6px;}
+      th{background:#eef2f4;text-align:left;font-size:10px;}
+      td.n{text-align:right;white-space:nowrap;}
+      tfoot td{font-weight:bold;background:#f6f8fa;}
+      .neg{color:#b3261e;} .pos{color:#1d6b4b;}
+    </style></head><body>
+    <h1>${escapeHtml(E.nomeFantasia||E.razaoSocial||'Mizu Materiais de Limpeza')} — custo × venda</h1>
+    <div class="sub">${escapeHtml(l.orgao||'')}${l.numero?` · nº ${escapeHtml(l.numero)}`:''}
+      · gerado em ${fmtDate(todayISO())}</div>
+
+    <table>
+      <thead><tr><th>#</th><th>Item</th><th>Qtd</th><th>Custo un.</th><th>Custo total</th>
+        <th>Venda un.</th><th>Venda total</th><th>Lucro</th><th>Margem</th><th>Teto</th></tr></thead>
+      <tbody>
+        ${d.itens.map(x=>`<tr>
+          <td>${x.n}</td><td>${escapeHtml(x.nome.slice(0,70))}</td>
+          <td class="n">${x.qtd} ${escapeHtml(x.unidade)}</td>
+          <td class="n">${fmtMoney(x.custoUnit)}</td><td class="n">${fmtMoney(x.custo)}</td>
+          <td class="n">${x.vendaUnit>0?fmtMoney(x.vendaUnit):'-'}</td>
+          <td class="n">${x.venda>0?fmtMoney(x.venda):'-'}</td>
+          <td class="n ${x.lucro<0?'neg':'pos'}">${x.venda>0?fmtMoney(x.lucro):'-'}</td>
+          <td class="n">${x.venda>0?x.margem.toFixed(1)+'%':'-'}</td>
+          <td class="n">${x.teto>0?fmtMoney(x.teto):'-'}</td>
+        </tr>`).join('')}
+      </tbody>
+      <tfoot><tr><td colspan="4">Total</td>
+        <td class="n">${fmtMoney(d.total.custo)}</td><td class="n">-</td>
+        <td class="n">${fmtMoney(d.total.venda)}</td>
+        <td class="n ${d.total.lucro<0?'neg':'pos'}">${fmtMoney(d.total.lucro)}</td>
+        <td class="n">${d.total.venda>0?d.total.margem.toFixed(1)+'%':'-'}</td>
+        <td class="n">${d.total.teto>0?fmtMoney(d.total.teto):'-'}</td>
+      </tr></tfoot>
+    </table>
+
+    <h2>Onde o dinheiro vai</h2>
+    <table>
+      <tr><td>Produto</td><td class="n">${fmtMoney(d.partes.produto)}</td></tr>
+      <tr><td>Frete do fornecedor até nós</td><td class="n">${fmtMoney(d.partes.freteNos)}</td></tr>
+      <tr><td>Frete daqui até o cliente</td><td class="n">${fmtMoney(d.partes.freteCliente)}</td></tr>
+      <tr><td>Impostos</td><td class="n">${fmtMoney(d.partes.imposto)}</td></tr>
+      <tr><td>Comissão</td><td class="n">${fmtMoney(d.partes.comissao)}</td></tr>
+      <tr><td><b>Custo total</b></td><td class="n"><b>${fmtMoney(d.total.custo)}</b></td></tr>
+      <tr><td><b>Nossa proposta</b></td><td class="n"><b>${fmtMoney(d.total.venda)}</b></td></tr>
+      <tr><td><b>Sobra</b></td><td class="n"><b>${fmtMoney(d.total.lucro)}</b></td></tr>
+    </table>
+
+    <div class="sub">Uso interno — não enviar ao órgão.</div>
+    </body></html>`);
+  janela.document.close();
+  setTimeout(()=>{ try{ janela.print(); }catch(e){} }, 400);
+}
+
+/* As duas tarjas, do jeito que entram no cartão e na tela da dispensa. */
+function licTarjasComoParticipar(o, compacto){
+  const env = licComoEnviar(o);
+  const dis = licComoDisputa(o);
+  const cor = c => c==='email' ? 'var(--positive)' : c==='portal' ? 'var(--primary)' : c==='lance' ? 'var(--warning)' : c==='proposta' ? 'var(--positive)' : 'var(--ink-soft)';
+  const icone = c => c==='email' ? '✉️' : c==='portal' ? '🔒' : c==='lance' ? '⚡' : c==='proposta' ? '📄' : '•';
+  if(compacto){
+    return `<div class="lic-participar">
+      <span class="tag" style="color:${cor(env.classe)};border-color:${cor(env.classe)};" title="${escapeAttr(env.texto)}">${icone(env.classe)} ${escapeHtml(env.curto)}</span>
+      <span class="tag" style="color:${cor(dis.classe)};border-color:${cor(dis.classe)};" title="${escapeAttr(dis.texto)}">${icone(dis.classe)} ${escapeHtml(dis.curto)}</span>
+    </div>`;
+  }
+  return `
+    <div class="lic-doc" style="display:block;border-left:3px solid ${cor(env.classe)};">
+      <b>${icone(env.classe)} ${escapeHtml(env.curto)}</b>
+      <small>${escapeHtml(env.texto)}</small>
+    </div>
+    <div class="lic-doc" style="display:block;border-left:3px solid ${cor(dis.classe)};">
+      <b>${icone(dis.classe)} ${escapeHtml(dis.curto)}</b>
+      <small>${escapeHtml(dis.texto)}</small>
+    </div>`;
 }
 
 /* =========================================================
@@ -29375,8 +29835,27 @@ function licAbrirBuscaPNCP(){
 /* =========================================================
    ABA 2 — EM ANÁLISE (lista)
    ========================================================= */
+/* A mesma ordenação da triagem, agora também aqui: o que vence primeiro
+   e o que está mais perto são as duas perguntas que decidem por onde
+   começar quando tem várias em análise ao mesmo tempo. */
+function licOrdenarLista(lista){
+  const copia = lista.slice();
+  copia.sort((a,b)=>{
+    if(licOrdemAnalise==='prazo')
+      return String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9'));
+    if(licOrdemAnalise==='valor')
+      return (b.valorEstimado||0)-(a.valorEstimado||0);
+    /* distância: quem não tem medida vai pro fim, não pro começo */
+    const da = a.distanciaKm == null ? Infinity : a.distanciaKm;
+    const db = b.distanciaKm == null ? Infinity : b.distanciaKm;
+    if(da !== db) return da - db;
+    return String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9'));
+  });
+  return copia;
+}
+
 function licPainelAnalise(){
-  const lista = licPorEtapa(['analise']);
+  const lista = licOrdenarLista(licPorEtapa(['analise']));
   return `
     <div class="lic-topo">
       <div>
@@ -29384,7 +29863,14 @@ function licPainelAnalise(){
         <h3>Em análise</h3>
         <div class="sub">Aqui ainda não se monta proposta. Aqui se responde: temos os documentos e existe produto que atenda?</div>
       </div>
-      <div class="acoes"><button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button></div>
+      <div class="acoes">
+        ${lista.length>1 ? `<select id="lic-ordem-analise" style="min-width:210px;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+          <option value="prazo" ${licOrdemAnalise==='prazo'?'selected':''}>Ordenar: encerra primeiro</option>
+          <option value="distancia" ${licOrdemAnalise==='distancia'?'selected':''}>Ordenar: mais perto primeiro</option>
+          <option value="valor" ${licOrdemAnalise==='valor'?'selected':''}>Ordenar: maior valor</option>
+        </select>` : ''}
+        <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
+      </div>
     </div>
     ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nada em análise. Marque uma oportunidade com "tenho interesse".</div></div>'
       : lista.map(l=>{
@@ -29394,7 +29880,8 @@ function licPainelAnalise(){
             <div class="esq">
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
-              <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}</div>
+              <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}${l.distanciaKm!=null?` · ${l.distanciaKm} km`:''}</div>
+              ${licTarjasComoParticipar(l, true)}
               <div class="lic-tags">
                 <span class="lic-tag">${l.arquivos.length} arquivo${l.arquivos.length===1?'':'s'} anexado${l.arquivos.length===1?'':'s'}</span>
                 <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
@@ -29513,6 +30000,72 @@ function licPainelPropostas(){
   `;
 }
 
+/* =========================================================
+   COBRAR O RESULTADO
+
+   "O prazo pra enviar era até amanhã. Enviei hoje. A partir de amanhã
+   ele conta 1, 2, 3, 4, 5 dias — e aí me avisa pra correr atrás."
+
+   A contagem começa no FIM do prazo de envio (é quando o órgão passa a
+   julgar), não no dia em que ela mandou. Se o edital não trouxe prazo,
+   conta a partir do envio, que é o que resta.
+   ========================================================= */
+const LIC_DIAS_PRA_COBRAR = 5;
+
+function licDesdeQuandoEspera(l){
+  const fim = l.dataEncerramentoProposta || l.dataAbertura || null;
+  if(fim){
+    const d = new Date(fim);
+    if(!isNaN(d.getTime())) return { quando:d, base:'o prazo de envio encerrou' };
+  }
+  if(l.dataEnvio){
+    const d = new Date(l.dataEnvio);
+    if(!isNaN(d.getTime())) return { quando:d, base:'enviamos a proposta' };
+  }
+  return null;
+}
+
+/* Dias inteiros já passados desde o marco. O dia do marco é o dia zero:
+   amanhã é 1. */
+function licDiasEsperando(l){
+  const m = licDesdeQuandoEspera(l);
+  if(!m) return null;
+  const zera = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dias = Math.floor((zera(new Date()) - zera(m.quando)) / 86400000);
+  return dias < 0 ? 0 : dias;
+}
+
+function licPrecisaCobrar(l){
+  if(l.etapa !== 'enviada') return false;
+  const d = licDiasEsperando(l);
+  return d != null && d >= LIC_DIAS_PRA_COBRAR;
+}
+
+function licQuantasPraCobrar(){
+  return licTodas().filter(licPrecisaCobrar).length;
+}
+
+function licAvisoCobrar(l, compacto){
+  if(l.etapa !== 'enviada') return '';
+  const dias = licDiasEsperando(l);
+  if(dias == null) return '';
+  const m = licDesdeQuandoEspera(l);
+  const falta = LIC_DIAS_PRA_COBRAR - dias;
+
+  if(dias < LIC_DIAS_PRA_COBRAR){
+    const txt = dias === 0 ? 'desde hoje' : `há ${dias} dia${dias===1?'':'s'}`;
+    if(compacto) return `<span class="lic-tag">aguardando ${txt}</span>`;
+    return `<div class="help-text" style="margin:6px 0 0;">Aguardando ${txt} — ${escapeHtml(m.base)}.
+      Em ${falta} dia${falta===1?'':'s'} eu te lembro de correr atrás do resultado.</div>`;
+  }
+  if(compacto) return `<span class="lic-tag" style="background:var(--warning-soft);color:var(--warning);font-weight:600;">⏰ cobrar — ${dias} dias</span>`;
+  return `<div class="lic-doc aviso" style="display:block;margin:8px 0 0;">
+    <b>⏰ Já são ${dias} dias desde que ${escapeHtml(m.base)} — vale correr atrás do resultado.</b>
+    <small>Ligue ou mande e-mail pro órgão e pergunte se já homologaram. Quando souber, marque aqui
+      ganhamos ou perdemos — é isso que alimenta o histórico de preço pra próxima.</small>
+  </div>`;
+}
+
 function licCartaoProposta(l){
   const t = licTotalLicitacao(l);
   const cliente = l.clienteId ? STATE.clientes.find(c=>c.id===l.clienteId) : null;
@@ -29527,7 +30080,9 @@ function licCartaoProposta(l){
           <span class="lic-tag">${(LIC_ETAPAS[l.etapa]||{}).rotulo||l.etapa}</span>
           <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
           ${l.dataEnvio?`<span class="lic-tag">Enviada ${fmtDate(String(l.dataEnvio).slice(0,10))}</span>`:''}
+          ${licAvisoCobrar(l, true)}
         </div>
+        ${licAvisoCobrar(l, false)}
       </div>
       <div class="dir">
         <div class="lic-valor">${fmtMoney(t.venda)}</div>
@@ -29539,6 +30094,7 @@ function licCartaoProposta(l){
             <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>
             <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>
             <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
+        <button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Custo x venda, item por item">📊 Análise</button>
         ${l.etapa==='desistiu' ? `<button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','proposta')">↩ Voltar a participar</button>
             <button class="btn btn-sm" onclick="licApagarDeVez('${l.id}')">🗑 Apagar de vez</button>` : ''}
         ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
@@ -30720,6 +31276,8 @@ function licLeituraHtml(l){
 
     ${licAvisoNaoLeu(l)}
 
+    ${licFaixaEnvio(l)}
+
     ${licPendenciasHtml(l)}
 
     ${(l.contradicoes||[]).length ? `
@@ -30975,8 +31533,79 @@ function licResumoHabilitacao(l){
         : `✓ Você tem os ${pedidos.length} documentos que este edital pede.`}
     </div>
     <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-primary" onclick="licAbrirExigenciaDocs('${l.id}')">
+        📋 Ver os ${pedidos.length} documentos que ESTE edital pede</button>
       <button class="btn btn-sm" onclick="licAbrirCertidoes()">📎 Minha pasta (${temos} de ${pedidos.length} prontos)</button>
     </div>`;
+}
+
+/* Ela clicava em "minha pasta" esperando ver o que o edital pediu, e via
+   a pasta dela — que tem documento de outros editais e por isso o número
+   não batia. Agora tem uma janela só com a lista DESTE edital, cada
+   documento com a cláusula de onde saiu e se já temos. */
+function licAbrirExigenciaDocs(id){
+  const l = licAchar(id); if(!l) return;
+  const pedidos = l.documentosHabilitacao || [];
+  const antigo = document.getElementById('modal-lic-exig-docs');
+  if(antigo) antigo.remove();
+
+  const linhas = pedidos.map((d,i)=>{
+    const daPasta = licDocDaPasta(d.documento);
+    const e = daPasta ? licEstadoDoc(daPasta) : null;
+    const classe = !daPasta ? 'falta' : e.classe;
+    const situacao = !daPasta ? 'não está na sua pasta'
+                   : e.temos ? `você tem — ${e.estado}`
+                   : `você guarda esta, mas ${e.estado}`;
+    return `<div class="lic-doc ${classe}" style="display:block;">
+      <div style="display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;">
+        <div style="flex:1;min-width:230px;">
+          <b>${i+1}. ${escapeHtml(d.documento)}</b>
+          <small>${escapeHtml(situacao)}</small>
+          ${d.fonte?`<small style="color:var(--ink-faint);">${escapeHtml(d.fonte)}</small>`:''}
+          ${d.obrigatorio===false?`<small style="color:var(--ink-faint);">o edital marca como opcional</small>`:''}
+        </div>
+        ${classe==='ok'
+          ? '<span style="color:var(--positive);font-size:15px;">✓</span>'
+          : `<button class="btn btn-sm" onclick="licAbrirCertidoes(${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📎 ${daPasta?'Atualizar':'Guardar'}</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  const faltam = pedidos.filter(d=>{
+    const c = licDocDaPasta(d.documento);
+    return !c || !licEstadoDoc(c).temos;
+  }).length;
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-exig-docs';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(800px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">📋 O que ESTE edital pede</h3>
+      <p class="help-text">${escapeHtml(l.orgao||'')}${l.numero?` · nº ${escapeHtml(l.numero)}`:''} —
+        ${pedidos.length} documento${pedidos.length===1?'':'s'} de habilitação, com a cláusula de onde cada um saiu.
+        Esta é a lista do edital, não a sua pasta.</p>
+
+      ${pedidos.length === 0
+        ? `<div class="lic-vazio">O edital ainda não foi lido. Traga a resposta do ChatGPT na análise
+             e a lista aparece aqui.</div>`
+        : `<div class="lic-res ${faltam?'nao':'ok'}" style="margin-bottom:10px;">
+             ${faltam ? `<b>Faltam ${faltam} de ${pedidos.length}.</b> O resto você já tem guardado.`
+                      : `✓ Você tem os ${pedidos.length} documentos que este edital pede.`}
+           </div>
+           ${linhas}`}
+
+      ${(l.documentosNaoExigidos||[]).length ? `
+        <div class="help-text" style="margin-top:10px;">
+          <b>Este edital NÃO pede:</b> ${l.documentosNaoExigidos.map(d=>escapeHtml(typeof d==='string'?d:(d.documento||''))).join(' · ')}.
+          Não precisa juntar esses papéis.</div>`:''}
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove();licAbrirCertidoes();">📎 Abrir minha pasta</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 function licChecklistHtml(l){
@@ -31061,7 +31690,23 @@ function licExigenciasHtml(l){
             ${it.exigeAmostra && /sim/i.test(it.exigeAmostra)?' · <b style="color:var(--warning);">exige amostra</b>':''}
           </div>
         </div>
-        <div class="teto">TETO <b>${fmtMoney(licNumDireto(it.teto))}</b></div>
+        ${(()=>{
+          /* O edital dá o teto. Ela precisa ver os dois: quanto é por
+             unidade (é esse que vai no lance) e quanto é no total. */
+          const total = licNumDireto(it.teto);
+          const qtd = Math.max(1, licNumDireto(it.qtd) || 1);
+          if(!(total > 0)) return `<div class="teto">TETO <b>não informado</b>
+            <span style="font-size:11px;">o edital não deu valor de referência</span></div>`;
+          const unit = total / qtd;
+          return `<div class="teto">
+            REFERÊNCIA DO EDITAL
+            <b>${fmtMoney(unit)}</b>
+            <span style="font-size:11px;">por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</span>
+            <div style="margin-top:4px;font-size:12px;color:var(--ink-soft);">
+              ${qtd} × ${fmtMoney(unit)} = <b style="color:var(--ink);">${fmtMoney(total)}</b> no total</div>
+            <span style="font-size:11px;">acima disso, desclassifica</span>
+          </div>`;
+        })()}
       </div>
       <div class="corpo">
         ${(it.exigencias||[]).length
@@ -31462,7 +32107,7 @@ function licNovoItem(id, silencioso){
     descricao: l.itens.length===0 ? (l.objeto||'') : '',
     descricaoProposta: l.itens.length===0 ? (l.objeto||'') : '',
     marca:'', modelo:'', unidade:'UND', qtd:1, teto: l.itens.length===0 ? (l.valorEstimado||0) : 0,
-    custo:0, freteNos:0, precoUnit:0,
+    custo:0, freteNos:0, freteCliente:0, precoUnit:0,
     linkFornecedor:'', contatoFornecedor:'', obsCompra:''
   });
   if(!silencioso){ saveState(); renderPortalLicitacoes(); }
@@ -31503,12 +32148,14 @@ function licTelaPrecificar(l){
         : ' Como o julgamento é por item, dá pra simplesmente não disputar esse item.'}
     </div>`:''}
 
+    ${licFaixaEnvio(l)}
+
     ${licTaxasHtml(l)}
 
     <div class="card">
       <h3 style="margin-top:0;">Precificação dos itens</h3>
-      <p class="help-text">Por item você informa só o <b>custo do produto</b>, o <b>preço de venda</b> e o
-        <b>frete até nós</b>. Imposto e comissão você marcou uma vez lá em cima; o frete da entrega fica no fim.</p>
+      <p class="help-text">Por item: <b>custo do produto</b>, <b>preço de venda</b> e os <b>dois fretes deste item</b>
+        — o do fornecedor até nós e o nosso até o cliente. Imposto e comissão você marcou uma vez lá em cima.</p>
       ${l.itens.length===0 ? '<div class="lic-vazio">Nenhum item ainda.</div>' : l.itens.map((it,i)=>licItemHtml(l, it, i)).join('')}
       <button class="btn btn-sm" onclick="licNovoItem('${l.id}')">+ Adicionar item</button>
     </div>
@@ -31686,13 +32333,16 @@ function licItemHtml(l, it, i){
       <div style="margin-top:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:var(--radius-sm);">
         <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
           Agora o frete deste item — depois que o preço do produto já está de pé</div>
-        <div class="lic-grade" style="margin:0;max-width:420px;">
-          <div><label>Frete até nós</label>
+        <div class="lic-grade" style="margin:0;">
+          <div><label>Frete do fornecedor até nós</label>
             ${licCampoMoeda('freteNos', it.freteNos)}
             <div class="dica">o que o distribuidor cobra pra trazer este item</div></div>
+          <div><label>Frete daqui até o cliente</label>
+            ${licCampoMoeda('freteCliente', it.freteCliente)}
+            <div class="dica">a entrega deste item no órgão</div></div>
         </div>
-        <div class="dica" style="margin-top:6px;">Só o frete até nós entra aqui. O frete da entrega no órgão
-          é um valor só, no fim da tela. Se ainda não sabe, deixe em branco e volte quando o distribuidor responder.</div>
+        <div class="dica" style="margin-top:6px;">Os dois são deste item só — tem item com frete e item sem.
+          Se ainda não sabe, deixe em branco e volte quando o distribuidor responder.</div>
       </div>
 
       <div class="lic-conta">
@@ -31700,7 +32350,8 @@ function licItemHtml(l, it, i){
           <tr><td>Produto${c.qtd>1?` (${c.qtd} × ${fmtMoney(licNumDireto(it.custo))})`:''}</td><td>${fmtMoney(c.produto)}</td></tr>
           ${c.acessorios?`<tr><td>Acessórios obrigatórios</td><td>${fmtMoney(c.acessorios)}</td></tr>`:''}
           ${c.freteNos?`<tr><td>Frete até nós</td><td>${fmtMoney(c.freteNos)}</td></tr>`:''}
-          ${c.freteCliente?`<tr><td>Parte do frete da entrega</td><td>${fmtMoney(c.freteCliente)}</td></tr>`:''}
+          ${c.freteItemCliente?`<tr><td>Frete até o cliente</td><td>${fmtMoney(c.freteItemCliente)}</td></tr>`:''}
+          ${c.freteRateado?`<tr><td>Parte do frete geral da entrega</td><td>${fmtMoney(c.freteRateado)}</td></tr>`:''}
           ${c.imposto?`<tr><td>Impostos (${licPctCampo(c.impostoPct)}%)</td><td>${fmtMoney(c.imposto)}</td></tr>`:''}
           ${c.comissao?`<tr><td>Comissão ${escapeHtml(l.comissaoVendedor||'')} (${licPctCampo(c.comissaoPct)}%)</td><td>${fmtMoney(c.comissao)}</td></tr>`:''}
           <tr><td>Custo total</td><td>${fmtMoney(c.total)}</td></tr>
@@ -31824,6 +32475,8 @@ function licTelaProposta(l){
       </div>
     </div>
 
+    ${licFaixaEnvio(l)}
+
     <div class="card">
       <h3 style="margin-top:0;">2 · Os campos da proposta</h3>
       <p class="help-text">O que tem ✓ o sistema leu sozinho do edital. Pode corrigir qualquer um.</p>
@@ -31853,7 +32506,10 @@ function licTelaProposta(l){
     </div>
 
     <div class="card">
-      <h3 style="margin-top:0;">3 · Os itens <span class="hint">vêm prontos da precificação</span></h3>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <h3 style="margin:0;">3 · Os itens <span class="hint">vêm prontos da precificação</span></h3>
+        <button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Gráfico e tabela de custo x venda">📊 Ver custo × venda</button>
+      </div>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr><th>Item</th><th>Descrição</th><th>Marca</th><th style="text-align:right;">Qtd</th>
@@ -32625,6 +33281,8 @@ function licLigarPainel(){
   }
   const ordem = document.getElementById('lic-ordem');
   if(ordem) ordem.onchange = ()=>{ licOrdem = ordem.value; renderPortalLicitacoes(); };
+  const ordemAn = document.getElementById('lic-ordem-analise');
+  if(ordemAn) ordemAn.onchange = ()=>{ licOrdemAnalise = ordemAn.value; renderPortalLicitacoes(); };
 
   const bp = document.getElementById('lic-busca-produto');
   if(bp){
@@ -32711,7 +33369,7 @@ function licLigarDetalhe(){
     if(!(l.itens||[]).some(x=>x.id===itemId)) return;
     caixa.querySelectorAll('[data-campo]').forEach(inp2=>{
       const campo = inp2.dataset.campo;
-      const numerico = ['qtd','teto','custo','freteNos','precoUnit'].includes(campo);
+      const numerico = ['qtd','teto','custo','freteNos','freteCliente','precoUnit'].includes(campo);
       const aplicar = ()=>{
         /* Pega o item do STATE AGORA, não a referência de quando a tela foi
            desenhada. Se a nuvem baixou uma versão do outro computador no meio
@@ -44288,7 +44946,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '20/10/2026 23:31';
+const SISTEMA_VERSAO = '21/10/2026 00:34';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -45281,6 +45939,114 @@ async function nuvemIniciar(){
 
 
 /* =========================================================
+   AVISO DE VERSÃO NOVA
+
+   Ela publica, atualiza a página e não sabe se o navegador pegou a
+   versão nova ou a velha do cache — e fica atualizando às cegas. O
+   sistema agora responde isso sozinho:
+
+   1) Ao abrir, compara a versão deste arquivo com a última que ela já
+      viu (guardada aqui no navegador). Mudou? Avisa que atualizou e
+      diz o que mudou.
+   2) De dez em dez minutos, e sempre que a aba volta pra frente, lê o
+      versao.json publicado junto do sistema. Se lá tiver uma versão
+      mais nova que a que está rodando, aparece a tarja com o botão de
+      atualizar — que recarrega furando o cache.
+
+   Custo zero: o versao.json tem umas poucas centenas de bytes e mora
+   no mesmo GitHub Pages do sistema.
+   ========================================================= */
+const VERSAO_CHAVE_VISTA = 'mizu_versao_vista';
+let versaoNovaAvisada = false;
+
+function versaoLerVista(){
+  try{ return localStorage.getItem(VERSAO_CHAVE_VISTA) || ''; }catch(e){ return ''; }
+}
+function versaoGravarVista(v){
+  try{ localStorage.setItem(VERSAO_CHAVE_VISTA, v); }catch(e){}
+}
+
+/* Ao abrir: mudou de versão desde a última vez que ela usou? */
+function versaoAvisarSeAtualizou(){
+  const vista = versaoLerVista();
+  versaoGravarVista(SISTEMA_VERSAO);
+  if(!vista || vista === SISTEMA_VERSAO) return;
+  setTimeout(()=>{
+    showToast(`✅ Sistema atualizado — versão ${SISTEMA_VERSAO}. A anterior era ${vista}.`, 'success');
+  }, 1200);
+}
+
+function versaoMaisNova(doServidor, daPagina){
+  /* as duas são "dd/mm/aaaa hh:mm" — compara como data mesmo */
+  const parse = t => {
+    const m = String(t||'').match(/(\d{2})\/(\d{2})\/(\d{4})\s+(\d{2}):(\d{2})/);
+    return m ? new Date(+m[3], +m[2]-1, +m[1], +m[4], +m[5]).getTime() : 0;
+  };
+  const a = parse(doServidor), b = parse(daPagina);
+  if(!a || !b) return String(doServidor||'') !== String(daPagina||'');
+  return a > b;
+}
+
+async function versaoProcurarNova(){
+  if(versaoNovaAvisada) return;
+  if(location.protocol === 'file:') return;   // aberto direto do arquivo, não há o que buscar
+  try{
+    const r = await fetch('versao.json?t=' + Date.now(), { cache:'no-store' });
+    if(!r.ok) return;
+    const dado = await r.json();
+    if(!dado || !dado.versao) return;
+    if(versaoMaisNova(dado.versao, SISTEMA_VERSAO)){
+      versaoNovaAvisada = true;
+      versaoMostrarTarja(dado);
+    }
+  }catch(e){ /* sem internet ou sem o arquivo: não atrapalha o trabalho */ }
+}
+
+function versaoMostrarTarja(dado){
+  const antigo = document.getElementById('versao-nova');
+  if(antigo) antigo.remove();
+  const d = document.createElement('div');
+  d.id = 'versao-nova';
+  d.style.cssText = `position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:9000;
+    background:var(--primary);color:#fff;border-radius:10px;padding:12px 16px;max-width:min(560px,94vw);
+    box-shadow:0 8px 30px rgba(0,0,0,.22);font-size:13.5px;line-height:1.5;
+    display:flex;gap:12px;align-items:center;flex-wrap:wrap;`;
+  d.innerHTML = `
+    <div style="flex:1;min-width:230px;">
+      <b>Tem uma versão nova do sistema</b>
+      <div style="opacity:.92;margin-top:2px;">${escapeHtml(dado.notas || 'Atualização publicada')}
+        <span style="opacity:.8;"> · ${escapeHtml(dado.versao)}</span></div>
+      <div style="opacity:.8;margin-top:2px;font-size:12px;">Você está na ${escapeHtml(SISTEMA_VERSAO)}. Salve o que está fazendo antes de atualizar.</div>
+    </div>
+    <div style="display:flex;gap:6px;">
+      <button class="btn btn-sm" style="background:#fff;color:var(--primary);border-color:#fff;font-weight:600;"
+        onclick="versaoAtualizarAgora()">↻ Atualizar agora</button>
+      <button class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.5);"
+        onclick="document.getElementById('versao-nova').remove()">Depois</button>
+    </div>`;
+  document.body.appendChild(d);
+}
+
+function versaoAtualizarAgora(){
+  /* furar o cache: querystring nova obriga o navegador a buscar o arquivo */
+  try{
+    const u = new URL(location.href);
+    u.searchParams.set('v', Date.now());
+    location.replace(u.toString());
+  }catch(e){ location.reload(true); }
+}
+
+let versaoVigiaLigado = false;
+function versaoIniciarVigia(){
+  if(versaoVigiaLigado) return;   // DOMContentLoaded e o fallback chamam os dois
+  versaoVigiaLigado = true;
+  versaoAvisarSeAtualizou();
+  setTimeout(versaoProcurarNova, 4000);
+  setInterval(versaoProcurarNova, 10*60*1000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) versaoProcurarNova(); });
+}
+
+/* =========================================================
    INICIALIZAÇÃO
    ========================================================= */
 document.addEventListener('DOMContentLoaded', ()=>{
@@ -45289,6 +46055,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   verificarBackupAoAbrirApp();
   verificarNovidadesAoAbrirApp();
   renderFaixaSimulacao();
+  versaoIniciarVigia();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
 });
@@ -45298,6 +46065,7 @@ atualizarBadgesMenu();
 verificarBackupAoAbrirApp();
 verificarNovidadesAoAbrirApp();
 renderFaixaSimulacao();
+versaoIniciarVigia();
 nuvemIniciar();
 </script>
 </body>
