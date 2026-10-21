@@ -30726,19 +30726,30 @@ const LIC_CAMPOS_LEITURA_OCULTOS = ['aceitaParcial','mepp','comoEnviarProposta',
   'exigeAtestado','exigeVisita','exigeBalanco','subcontratacao','exigeGarantiaContratual',
   'prazoAssinatura','multas'];
 
+/* A lista de campos escondidos mudou depois que ela já tinha usado o
+   sistema uma vez: a configuração salva dizia "mostrar tudo", e sem
+   isto aqui ela atualizaria o sistema e continuaria vendo os 30
+   campos. O número é a versão do padrão: quando eu mudo a lista,
+   subo o número e a mudança chega em quem já tinha configuração.
+   O que ELA tiver marcado à mão depois disso é respeitado. */
+const LIC_CAMPOS_LEITURA_PADRAO_V = 2;
+
 function licCamposLeituraCfg(){
   const cfg = STATE.config;
+  const padrao = c => !LIC_CAMPOS_LEITURA_OCULTOS.includes(c.id);
+
   if(!cfg.camposLeitura || typeof cfg.camposLeitura !== 'object'){
     cfg.camposLeitura = {};
-    LIC_CAMPOS_LEITURA.forEach(c=>{
-      cfg.camposLeitura[c.id] = !LIC_CAMPOS_LEITURA_OCULTOS.includes(c.id);
-    });
+    LIC_CAMPOS_LEITURA.forEach(c=>{ cfg.camposLeitura[c.id] = padrao(c); });
     cfg.camposLeituraEsconderVazios = false;
+    cfg.camposLeituraV = LIC_CAMPOS_LEITURA_PADRAO_V;
+  }else if((cfg.camposLeituraV||1) < LIC_CAMPOS_LEITURA_PADRAO_V){
+    /* configuração antiga: aplica o padrão novo uma vez só */
+    LIC_CAMPOS_LEITURA.forEach(c=>{ cfg.camposLeitura[c.id] = padrao(c); });
+    cfg.camposLeituraV = LIC_CAMPOS_LEITURA_PADRAO_V;
   }
   LIC_CAMPOS_LEITURA.forEach(c=>{
-    if(cfg.camposLeitura[c.id] === undefined){
-      cfg.camposLeitura[c.id] = !LIC_CAMPOS_LEITURA_OCULTOS.includes(c.id);
-    }
+    if(cfg.camposLeitura[c.id] === undefined) cfg.camposLeitura[c.id] = padrao(c);
   });
   return cfg.camposLeitura;
 }
@@ -30798,6 +30809,7 @@ function licAbrirCamposLeitura(id){
     m.querySelectorAll('[data-cl]').forEach(i=>{ novo[i.dataset.cl] = i.checked; });
     LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{ novo[c.id] = true; });
     STATE.config.camposLeituraEsconderVazios = m.querySelector('#lic-cl-vazios').checked;
+    STATE.config.camposLeituraV = LIC_CAMPOS_LEITURA_PADRAO_V;
     saveState();
     m.remove();
     renderPortalLicitacoes();
@@ -45587,7 +45599,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 14:23';
+const SISTEMA_VERSAO = '21/10/2026 14:34';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
