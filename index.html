@@ -26987,11 +26987,11 @@ function licInjetarEstilo(){
   .lic-op .compl summary{cursor:pointer;color:var(--primary);}
   .lic-op .compl div{margin-top:5px;color:var(--ink-soft);line-height:1.5;
     background:#FAFBFC;border-radius:var(--radius-sm);padding:8px 10px;max-height:150px;overflow:auto;}
-  .lic-card .links, .lic-op .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
-  .lic-card .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
+  .lic-card .links, .lic-op .links, .card > .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;}
+  .card > .links a, .lic-card .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
     color:var(--primary);text-decoration:none;background:#fff;}
-  .lic-card .links a:hover{border-color:var(--primary);background:var(--primary-soft);}
-  .lic-card .links .semlink{font-size:11.5px;padding:4px 10px;border-radius:20px;
+  .card > .links a:hover, .lic-card .links a:hover{border-color:var(--primary);background:var(--primary-soft);}
+  .card > .links .semlink, .lic-card .links .semlink{font-size:11.5px;padding:4px 10px;border-radius:20px;
     border:1px dashed var(--border);color:var(--ink-faint);text-decoration:line-through;cursor:help;}
   .lic-op .links{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px;}
   .lic-op .links a{font-size:11.5px;padding:4px 10px;border-radius:20px;border:1px solid var(--border);
@@ -27071,6 +27071,50 @@ function licInjetarEstilo(){
      item que já está resolvido fecha numa linha só — ela vê os cinco
      de uma vez e abre o que quiser mexer.
      --------------------------------------------------------- */
+  /* ---------------------------------------------------------
+     OS CAMPOS DA DISPENSA
+
+     Era uma grade de cartõezinhos onde rótulo e valor tinham o mesmo
+     peso, e um e-mail comprido passava por cima do vizinho. Agora é
+     uma lista de definição: rótulo pequeno em cima, valor em baixo
+     com destaque, fonte menor ainda, cada linha com um filete do
+     lado que diz num relance se aquilo foi lido, se o edital não
+     exige, se não foi achado ou se nem foi lido.
+     --------------------------------------------------------- */
+  .lic-leitura-bloco{margin:0 0 16px;}
+  .lic-leitura-bloco h4{font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;
+    color:var(--ink-soft);font-weight:700;margin:0 0 8px;padding-bottom:5px;
+    border-bottom:1px solid var(--border);display:flex;gap:8px;align-items:baseline;}
+  .lic-leitura-bloco h4 .esc{font-size:10.5px;letter-spacing:0;text-transform:none;
+    font-weight:400;color:var(--ink-faint);}
+  .lic-leitura-bloco dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:2px 18px;margin:0;}
+  .lic-leitura-bloco .linha{padding:6px 0 7px 11px;border-left:3px solid transparent;min-width:0;}
+  .lic-leitura-bloco dt{font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;
+    color:var(--ink-faint);margin:0 0 2px;}
+  .lic-leitura-bloco dt b{color:var(--negative);margin-left:2px;cursor:help;}
+  .lic-leitura-bloco dd{margin:0;display:flex;flex-direction:column;gap:1px;min-width:0;}
+  .lic-leitura-bloco .valor{font-size:13.5px;font-weight:600;color:var(--ink);line-height:1.4;
+    overflow-wrap:anywhere;}
+  .lic-leitura-bloco .estado{font-size:12.5px;font-weight:500;line-height:1.35;}
+  .lic-leitura-bloco .fonte{font-size:10.5px;color:var(--ink-faint);line-height:1.35;
+    overflow-wrap:anywhere;}
+  .lic-leitura-bloco .lido{border-left-color:var(--primary);}
+  .lic-leitura-bloco .nexige{border-left-color:var(--positive);}
+  .lic-leitura-bloco .nexige .estado{color:var(--positive);}
+  .lic-leitura-bloco .nachei{border-left-color:var(--warning);}
+  .lic-leitura-bloco .nachei .estado{color:var(--warning);}
+  .lic-leitura-bloco .nli{border-left-color:var(--negative);}
+  .lic-leitura-bloco .nli .estado{color:var(--negative);}
+
+  .lic-legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink-soft);}
+  .lic-legenda span{display:flex;align-items:center;gap:5px;}
+  .lic-legenda .p{width:9px;height:9px;border-radius:2px;display:inline-block;}
+  .lic-legenda .p.lido{background:var(--primary);}
+  .lic-legenda .p.nexige{background:var(--positive);}
+  .lic-legenda .p.nachei{background:var(--warning);}
+  .lic-legenda .p.nli{background:var(--negative);}
+
   .lic-linha-campos{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;}
   .lic-campo{display:flex;flex-direction:column;gap:3px;min-width:0;}
   .lic-campo > label{font-size:11px;color:var(--ink-soft);white-space:nowrap;}
@@ -27132,6 +27176,50 @@ function licInjetarEstilo(){
   .lic-solta{border:2px dashed var(--primary);border-radius:var(--radius);background:var(--primary-soft);
     padding:22px;text-align:center;font-size:13px;color:var(--ink-soft);margin-bottom:10px;}
   .lic-solta.hover{background:#D7EDF4;}
+  /* com arquivo já anexado, a área de soltar vira uma faixa fina: o que
+     importa passa a ser a lista de arquivos, não o convite. */
+  .lic-solta.compacta{padding:8px 12px;display:flex;gap:10px;align-items:center;
+    justify-content:center;flex-wrap:wrap;font-size:12.5px;margin-bottom:8px;}
+
+  /* ---------------------------------------------------------
+     AS ETAPAS DA ANÁLISE
+
+     Era um cartão só, muito comprido, com "Passo N" em cinza, título e
+     um parágrafo embaixo de cada um — tudo com o mesmo peso. Agora
+     cada etapa é um cartão com o número do lado, título e UMA linha.
+     Quem já foi resolvida ganha um tique e uma faixa verde: ela vê de
+     relance onde parou.
+     --------------------------------------------------------- */
+  .lic-etapa{position:relative;}
+  .lic-etapa > .cab{display:flex;gap:12px;align-items:flex-start;margin-bottom:12px;}
+  .lic-etapa > .cab .n{flex:0 0 28px;height:28px;border-radius:50%;display:flex;
+    align-items:center;justify-content:center;font-size:13px;font-weight:700;
+    background:var(--primary-soft);color:var(--primary);border:1.5px solid var(--primary);}
+  .lic-etapa > .cab h3{margin:0;font-size:15px;line-height:1.3;}
+  .lic-etapa > .cab p{margin:2px 0 0;font-size:12.5px;color:var(--ink-soft);line-height:1.45;}
+  .lic-etapa > .cab .acao{margin-left:auto;}
+  .lic-etapa.feito{border-left:3px solid var(--positive);}
+  .lic-etapa.feito > .cab .n{background:var(--positive-soft,#E7F4EE);color:var(--positive);
+    border-color:var(--positive);}
+  .lic-etapa.feito > .cab .n::after{content:'';}
+
+  .lic-decisao{display:flex;gap:14px;flex-wrap:wrap;align-items:center;justify-content:space-between;}
+  .lic-decisao h3{margin:0;font-size:15px;}
+  .lic-decisao p{margin:2px 0 0;font-size:12.5px;color:var(--ink-soft);}
+
+  /* O passo da IA: a escolha, os três passos numa linha, e a caixa. */
+  .lic-ia .escolha{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;}
+  .lic-ia .escolha label{flex:1;min-width:240px;display:flex;gap:9px;align-items:flex-start;
+    cursor:pointer;border:1px solid var(--border);border-radius:var(--radius-sm);padding:9px 11px;
+    background:#fff;}
+  .lic-ia .escolha label.on{border-color:var(--primary);background:var(--primary-soft);}
+  .lic-ia .escolha input{width:auto;margin-top:3px;}
+  .lic-ia .escolha b{font-size:13px;display:block;}
+  .lic-ia .escolha small{font-size:11.5px;color:var(--ink-soft);line-height:1.4;display:block;margin-top:1px;}
+  .lic-ia .passos{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-soft);margin-bottom:9px;}
+  .lic-ia .passos b{display:inline-flex;width:17px;height:17px;border-radius:50%;background:var(--primary);
+    color:#fff;align-items:center;justify-content:center;font-size:10.5px;margin-right:5px;}
+  .lic-ia .acoes{display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
 
   .lic-comp{width:100%;border-collapse:collapse;font-size:12.5px;}
   .lic-comp th{background:var(--primary-escuro);color:#fff;text-align:left;padding:8px 10px;font-size:11px;
@@ -27169,6 +27257,7 @@ function licNormalizar(l){
   if(!l.fontes || typeof l.fontes !== 'object') l.fontes = {};
   if(!Array.isArray(l.naoEncontrado)) l.naoEncontrado = [];
   if(!Array.isArray(l.editalSilente)) l.editalSilente = [];
+  if(!Array.isArray(l.naoLi)) l.naoLi = [];
   if(!Array.isArray(l.trechosIlegiveis)) l.trechosIlegiveis = [];
   if(!Array.isArray(l.contradicoes)) l.contradicoes = [];
   if(!Array.isArray(l.riscos)) l.riscos = [];
@@ -30452,30 +30541,56 @@ function licCabecalho(l, titulo, sub, acoes){
    TELA: PROCESSO (em análise)
    --------------------------------------------------------- */
 function licTelaProcesso(l){
+  /* Uma etapa por cartão, com um número grande do lado e UMA linha de
+     explicação. Antes era um cartão só, de cinco metros, com parágrafo
+     embaixo de cada título — ela não achava onde uma parte acabava e a
+     outra começava. */
+  const etapa = (n, titulo, linha, corpo, extra)=>`
+    <div class="card lic-etapa${extra&&extra.feito?' feito':''}">
+      <div class="cab">
+        <span class="n">${n}</span>
+        <div>
+          <h3>${titulo}</h3>
+          <p>${linha}</p>
+        </div>
+        ${extra && extra.acao ? `<div class="acao">${extra.acao}</div>` : ''}
+      </div>
+      ${corpo}
+    </div>`;
+
+  const arqs = l.arquivos || [];
+  const escaneados = arqs.filter(a=>/escaneado/i.test(a.erro||''));
+  const semTexto = arqs.filter(a=>!a.texto && !/escaneado/i.test(a.erro||'') && /\.pdf$/i.test(a.nome||''));
+  const temItens = (l.itens||[]).length > 0;
+  const temLeitura = Object.keys(l.leitura||{}).length > 0;
+
   return `
     ${licCabecalho(l, l.objeto||'Processo',
-      `${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}
-       <div class="lic-links" style="margin-top:4px;">
-         ${l.linkEdital?`<a href="${escapeAttr(l.linkEdital)}" target="_blank" rel="noopener">🔗 Edital no PNCP</a>`:''}
-         ${l.linkSistemaOrigem?`<a href="${escapeAttr(l.linkSistemaOrigem)}" target="_blank" rel="noopener">🔗 Plataforma</a>`:''}
-         ${l.linkProcesso?`<a href="${escapeAttr(l.linkProcesso)}" target="_blank" rel="noopener">🔗 Processo eletrônico</a>`:''}
-       </div>`,
+      `${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}`,
       `<button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>`)}
 
-    <div class="card">
-      <div class="lic-passo">Passo 1 — anexar</div>
-      <h3 style="margin:0 0 4px;">${l.semEdital?'A lista que eles mandaram':'O edital'}</h3>
-      <p class="help-text">${l.semEdital
-        ? 'Esta cotação não tem edital. Se eles mandaram uma planilha ou um print, guarde aqui — e adicione os itens direto na precificação.'
-        : 'Baixe tudo no PNCP e solte aqui. PDF, planilha ou .zip — vários de uma vez.'}</p>
-      <div class="lic-solta" id="lic-solta">
-        <div style="font-size:28px;">📄</div>
-        Arraste o edital e os anexos<br>
-        <span style="font-size:12px;">ou clique para escolher no computador</span><br>
-        <button class="btn btn-sm btn-primary" style="margin-top:8px;" onclick="document.getElementById('lic-arquivos').click()">Escolher arquivos</button>
+    <div class="card" style="padding:12px 16px;">
+      ${licTarjasComoParticipar(l, true)}
+      ${licLinksHtml(l)}
+    </div>
+
+    ${etapa(1, l.semEdital?'A lista que eles mandaram':'O edital',
+      arqs.length
+        ? `${arqs.length} arquivo${arqs.length===1?'':'s'} anexado${arqs.length===1?'':'s'}`
+        : (l.semEdital ? 'Guarde aqui a planilha ou o print que eles mandaram'
+                       : 'Baixe tudo no PNCP e solte aqui — PDF, planilha ou .zip'),
+      `
+      <div class="lic-solta ${arqs.length?'compacta':''}" id="lic-solta">
+        ${arqs.length
+          ? `<span>Arraste mais arquivos aqui</span>
+             <button class="btn btn-sm" onclick="document.getElementById('lic-arquivos').click()">Escolher arquivos</button>`
+          : `<div style="font-size:26px;">📄</div>
+             Arraste o edital e os anexos<br>
+             <span style="font-size:12px;">ou clique para escolher no computador</span><br>
+             <button class="btn btn-sm btn-primary" style="margin-top:8px;" onclick="document.getElementById('lic-arquivos').click()">Escolher arquivos</button>`}
         <input type="file" id="lic-arquivos" multiple accept=".pdf,.xlsx,.xls,.csv,.txt,.zip" style="display:none;">
       </div>
-      ${l.arquivos.map((a,i)=>`
+      ${arqs.map((a,i)=>`
         <div class="lic-doc ${a.erro?'aviso':'ok'}">
           <div><b>${escapeHtml(a.nome)}</b>
             <small>${a.dentroDe?`de ${escapeHtml(a.dentroDe)} · `:''}${a.paginas?`${a.paginas} página${a.paginas===1?'':'s'} · `:''}${a.tamanho?`${(a.tamanho/1024).toFixed(0)} KB · `:''}${a.erro?escapeHtml(a.erro):'texto lido'}</small></div>
@@ -30484,51 +30599,46 @@ function licTelaProcesso(l){
             <button class="btn btn-sm" onclick="licRemoverArquivo('${l.id}',${i})">✕</button>
           </div>
         </div>`).join('')}
+      ${(escaneados.length + semTexto.length) ? `
+        <div class="lic-doc aviso" style="display:block;margin-top:10px;">
+          <b>⚠️ ${escaneados.length+semTexto.length} arquivo${escaneados.length+semTexto.length===1?' é escaneado':'s são escaneados'} — só imagem, sem texto dentro</b>
+          <small>${escaneados.concat(semTexto).map(a=>escapeHtml(a.nome)).join(' · ')}</small>
+          <small>A IA lê imagem, mas em documento escaneado longo costuma pular página e depois dizer
+            "não achei" em vez de "não li". Confira no documento o que vier sobre envio, prazo e habilitação.</small>
+        </div>`:''}`,
+      { feito: arqs.length>0 })}
 
-      ${(()=>{
-        const esc = (l.arquivos||[]).filter(a=>/escaneado/i.test(a.erro||''));
-        const semTexto = (l.arquivos||[]).filter(a=>!a.texto && !/escaneado/i.test(a.erro||'') && /\.pdf$/i.test(a.nome||''));
-        if(esc.length===0 && semTexto.length===0) return '';
-        return `<div class="lic-doc aviso" style="display:block;margin-top:12px;">
-          <b>⚠️ ${esc.length+semTexto.length} arquivo${esc.length+semTexto.length===1?' é escaneado':'s são escaneados'} — só imagem, sem texto dentro</b>
-          <small>${esc.concat(semTexto).map(a=>escapeHtml(a.nome)).join(' · ')}</small>
-          <div style="margin-top:6px;font-size:12.5px;line-height:1.55;">
-            O ChatGPT consegue ler imagem, mas em documento escaneado longo é comum ele <b>pular página</b> —
-            e depois dizer "não achei" em vez de "não li". A pergunta já manda ele prestar contas de quais
-            páginas abriu. Mesmo assim, <b>confira no documento</b> o que vier sobre envio, prazo e habilitação.
-          </div>
-        </div>`;
-      })()}
+    ${etapa(2, 'A ida e volta com a IA',
+      'Você copia a pergunta, cola na IA com os PDFs, e traz o JSON de volta',
+      licChatGptHtml(l),
+      { feito: !!l.respostaIA })}
 
-      <div class="lic-passo">Passo 2 — a ida e volta com o ChatGPT</div>
-      <h3 style="margin:0 0 4px;">Onde a análise acontece de verdade</h3>
-      <p class="help-text">Você anexa o edital lá, ele lê e devolve tudo de uma vez: os campos da dispensa, os itens da precificação e a pesquisa de modelos. Aqui é só copiar e colar. O resto desta tela se preenche sozinho.</p>
-      ${licChatGptHtml(l)}
+    ${etapa(3, 'O que o edital diz',
+      'Cada campo mostra de onde veio. O que tem <b>*</b> segura a proposta',
+      licLeituraHtml(l),
+      { feito: temLeitura })}
 
-      <div class="lic-passo">Passo 3 — o que o edital diz</div>
-      <h3 style="margin:0 0 4px;">Os campos da dispensa</h3>
-      <p class="help-text">Cada campo mostra de onde veio. Amarelo é o que não foi encontrado — confira. O que tem * segura a proposta.</p>
-      ${licLeituraHtml(l)}
+    ${etapa(4, 'Os itens da dispensa',
+      temItens ? `${l.itens.length} item${l.itens.length===1?'':'ns'}, com a exigência de cada um`
+               : 'Aparecem aqui quando a resposta da IA chegar',
+      `${licExigenciasHtml(l)}
+       ${licFaltaModelosHtml(l)}
+       ${l.comparacao ? licComparacaoHtml(l) : ''}`,
+      { feito: temItens })}
 
-      <div class="lic-passo">Passo 4 — os itens</div>
-      <h3 style="margin:0 0 4px;">O que a dispensa pede, item por item</h3>
-      <p class="help-text">Estes são os itens que vão virar a precificação, com as exigências de cada um.</p>
-      ${licExigenciasHtml(l)}
+    ${etapa(5, 'Dá pra habilitar?',
+      'Os documentos que este edital exige, e quais você já tem guardados',
+      licResumoHabilitacao(l),
+      { feito: (l.documentosHabilitacao||[]).length>0 })}
 
-      ${l.comparacao ? licComparacaoHtml(l) : ''}
-
-      <div class="lic-passo">Passo 5 — habilitação</div>
-      <h3 style="margin:0 0 4px;">Dá pra habilitar?</h3>
-      ${licResumoHabilitacao(l)}
-
-      <div class="lic-passo">Decisão</div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
-        <div><b>Vale a pena participar?</b>
-          <div class="help-text" style="margin:2px 0 0;">Se vale, a precificação já começa com os itens que o edital pediu.</div></div>
-        <div style="display:flex;gap:8px;">
-          <button class="btn" onclick="licDescartarProcesso('${l.id}')">✕ Descartar esta dispensa</button>
-          <button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>
-        </div>
+    <div class="card lic-decisao">
+      <div>
+        <h3>Vale a pena participar?</h3>
+        <p>Se vale, a precificação já começa com os itens que o edital pediu.</p>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn" onclick="licDescartarProcesso('${l.id}')">✕ Descartar esta dispensa</button>
+        <button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Avançar para Precificação ›</button>
       </div>
     </div>
   `;
@@ -30563,7 +30673,7 @@ const LIC_BLOCOS_LEITURA = [
   ]},
   { titulo:'Como se envia a proposta', campos:[
     { id:'meioEnvio',       rotulo:'Por onde envia', trava:true },
-    { id:'comoEnviarProposta', rotulo:'O que o edital diz, na letra', trava:true },
+    { id:'comoEnviarProposta', rotulo:'O que o edital diz, na letra' },
     { id:'portal',          rotulo:'Qual portal' },
     { id:'emailProposta',   rotulo:'E-mail da proposta' },
     { id:'emailEsclarecimento', rotulo:'E-mail de dúvidas' },
@@ -30604,18 +30714,31 @@ function licCampoLeitura(id){ return LIC_CAMPOS_LEITURA.find(c=>c.id===id); }
    realmente importam. Ela escolhe aqui o que quer ver — e o que trava
    a proposta (*) nunca some, porque sem ele não dá pra enviar nada.
    ========================================================= */
-const LIC_CAMPOS_LEITURA_ESSENCIAIS = ['criterio','mepp','meioEnvio','comoEnviarProposta',
-  'portal','emailProposta','dataHoraLimite','validade','prazoEntrega','prazoPagamento','localEntrega'];
+const LIC_CAMPOS_LEITURA_ESSENCIAIS = ['criterio','meioEnvio','emailProposta',
+  'dataHoraLimite','validade','prazoEntrega','prazoPagamento','localEntrega'];
+
+/* Escondidos de saída. São os que ela disse que nunca usa, ou que já
+   aparecem em outro lugar da tela: o texto literal do envio e o portal
+   vivem na faixa "A proposta vai para", logo acima. Nada some de vez —
+   é só desmarcar em "O que mostrar aqui" pra trazer de volta. */
+const LIC_CAMPOS_LEITURA_OCULTOS = ['aceitaParcial','mepp','comoEnviarProposta','portal',
+  'exigeCadastro','exigeMarcaModelo','exigeExtenso','exigeDadosBancarios','prazoAmostra',
+  'exigeAtestado','exigeVisita','exigeBalanco','subcontratacao','exigeGarantiaContratual',
+  'prazoAssinatura','multas'];
 
 function licCamposLeituraCfg(){
   const cfg = STATE.config;
   if(!cfg.camposLeitura || typeof cfg.camposLeitura !== 'object'){
     cfg.camposLeitura = {};
-    LIC_CAMPOS_LEITURA.forEach(c=>{ cfg.camposLeitura[c.id] = true; });
+    LIC_CAMPOS_LEITURA.forEach(c=>{
+      cfg.camposLeitura[c.id] = !LIC_CAMPOS_LEITURA_OCULTOS.includes(c.id);
+    });
     cfg.camposLeituraEsconderVazios = false;
   }
   LIC_CAMPOS_LEITURA.forEach(c=>{
-    if(cfg.camposLeitura[c.id] === undefined) cfg.camposLeitura[c.id] = true;
+    if(cfg.camposLeitura[c.id] === undefined){
+      cfg.camposLeitura[c.id] = !LIC_CAMPOS_LEITURA_OCULTOS.includes(c.id);
+    }
   });
   return cfg.camposLeitura;
 }
@@ -30793,10 +30916,21 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
 3. Se a planilha disser uma coisa e o Termo de Referência disser outra,
    NÃO escolha: me aponte a contradição com as duas versões e as duas
    fontes.
-4. Diferencie três situações, porque elas pedem reação diferente:
-   - achei a informação  -> preencha e diga a fonte;
-   - procurei e não achei -> ponha o campo em "naoEncontrado";
-   - o edital não trata do assunto -> ponha em "editalSilente".
+4. Diferencie três situações, porque elas pedem reação diferente. Para
+   TODO campo que você não preencher, diga qual é o caso em
+   "situacaoCampos", usando exatamente uma destas palavras:
+   - "nao_consta" -> você LEU e o edital realmente não trata disso, ou
+     não exige aquilo. Exemplo: o edital não obriga a informar marca e
+     modelo. Isso NÃO é um erro nem um buraco: é uma resposta, e das
+     boas. Use esta palavra sempre que a sua conclusão for "o edital não
+     exige / não menciona / não obriga".
+   - "nao_li"    -> você não abriu a parte onde isso estaria. É uma
+     resposta honesta e eu prefiro ela a um palpite.
+   - "nao_achei" -> você leu tudo onde isso deveria estar e mesmo assim
+     não localizou. Use só quando leu de verdade.
+   Exemplo do que NÃO fazer: responder "não encontrei exigência de marca
+   e modelo" e marcar o campo como "nao_achei". Se você leu e o edital
+   não exige, é "nao_consta".
    Nunca invente, nunca deduza "o normal é 30 dias".
 5. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
    ilegível, diga qual em "trechosIlegiveis".
@@ -30841,6 +30975,12 @@ COMO LER — isto é o que separa uma resposta útil de uma inútil
    "não encontrado" tudo que dependeria dela — não deduza.
 
 PESQUISA DE PRODUTOS
+ATENÇÃO: esta parte exige NAVEGAR NA INTERNET. Se você estiver sem
+acesso à internet nesta conversa, ou se não for navegar, NÃO omita a
+pesquisa em silêncio: devolva "modelos": [] e escreva em
+"resumoDaDecisao" a frase "não pesquisei produtos porque estou sem
+acesso à internet". Omitir sem avisar é o pior resultado possível,
+porque eu fico esperando uma coisa que não vem.
 Para cada item, procure no mínimo 5 produtos reais, à venda no Brasil
 hoje, de marcas diferentes, com link de onde comprar e preço visível.
 Confira cada produto contra CADA exigência daquele item:
@@ -30889,6 +31029,7 @@ Use ponto como separador decimal nos números e não escreva "R$".
     { "endereco": "", "para": "", "fonte": "" }
   ],
 
+  "situacaoCampos": { "nomeDoCampo": "nao_consta | nao_li | nao_achei" },
   "naoEncontrado": [],
   "editalSilente": [],
   "trechosIlegiveis": [],
@@ -30973,6 +31114,8 @@ REGRAS DOS CAMPOS
   falência/concordata, balanço, atestado de capacidade técnica,
   contrato social), liste os que você procurou e o edital NÃO exige.
   Isso me evita juntar papel à toa.
+- "situacaoCampos": um por campo que ficou vazio, com nao_consta,
+  nao_li ou nao_achei. É o campo mais importante depois dos valores.
 - "naoEncontrado" e "editalSilente": use os nomes dos campos acima
   (ex: "prazoEntrega").
 - Campo sem informação: deixe "" e registre em "naoEncontrado" ou
@@ -30981,51 +31124,44 @@ REGRAS DOS CAMPOS
 
 function licChatGptHtml(l){
   const temResposta = !!l.respostaIA;
+  const curto = licModoPergunta(l) === 'curto';
   return `
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:12px;">
-      <div class="lic-card" style="margin:0;"><b>1 · Copiar a pergunta</b>
-        <div class="meta">Ela já vai com os dados desta dispensa. Na primeira vez, cole antes o
-          <b>contexto fixo</b> nas instruções do Projeto do ChatGPT.</div></div>
-      <div class="lic-card" style="margin:0;"><b>2 · Colar na IA</b>
-        <div class="meta">ChatGPT, Gemini ou outra — e anexar lá os PDFs do edital. Quem lê é ela.</div></div>
-      <div class="lic-card" style="margin:0;"><b>3 · Trazer a resposta</b>
-        <div class="meta">Cole o JSON aqui, ou arraste o arquivo.</div></div>
-    </div>
-
-    <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px;">
-      <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
-        O que você vai pedir pra ela</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;">
-        <label class="lic-doc ${licModoPergunta(l)==='completo'?'ok':''}" style="flex:1;min-width:230px;display:flex;gap:9px;align-items:flex-start;cursor:pointer;${licModoPergunta(l)==='completo'?'':'opacity:.7;'}">
-          <input type="radio" name="lic-modo-${l.id}" style="width:auto;margin-top:3px;"
-            ${licModoPergunta(l)==='completo'?'checked':''} onchange="licTrocarModoPergunta('${l.id}','completo')">
-          <div><b>Tudo</b><small>Os dados da dispensa + os itens, com exigência de cada um e
-            pesquisa de modelos que atendem. Para quando o produto é técnico.</small></div>
+    <div class="lic-ia">
+      <div class="escolha">
+        <label class="${curto?'':'on'}">
+          <input type="radio" name="lic-modo-${l.id}" ${curto?'':'checked'}
+            onchange="licTrocarModoPergunta('${l.id}','completo')">
+          <div><b>Tudo</b><small>Dados da dispensa + itens + pesquisa de produtos. Precisa da IA com internet ligada.</small></div>
         </label>
-        <label class="lic-doc ${licModoPergunta(l)==='curto'?'ok':''}" style="flex:1;min-width:230px;display:flex;gap:9px;align-items:flex-start;cursor:pointer;${licModoPergunta(l)==='curto'?'':'opacity:.7;'}">
-          <input type="radio" name="lic-modo-${l.id}" style="width:auto;margin-top:3px;"
-            ${licModoPergunta(l)==='curto'?'checked':''} onchange="licTrocarModoPergunta('${l.id}','curto')">
-          <div><b>Só os dados da dispensa</b><small>Para onde mandar, até quando, prazos,
-            habilitação. Sem análise de produto. Responde rápido — e você mesma monta os itens.</small></div>
+        <label class="${curto?'on':''}">
+          <input type="radio" name="lic-modo-${l.id}" ${curto?'checked':''}
+            onchange="licTrocarModoPergunta('${l.id}','curto')">
+          <div><b>Só os dados da dispensa</b><small>Para onde mandar, prazos, habilitação. Responde rápido, sem análise de produto.</small></div>
         </label>
       </div>
-      <div class="help-text" style="margin:8px 0 0;">Serve em qualquer IA que leia PDF — ChatGPT, Gemini,
-        Copilot. O que importa é ela devolver o JSON; o sistema entende as variações de formato.</div>
-    </div>
 
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-      <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar ${licModoPergunta(l)==='curto'?'a pergunta curta':'a pergunta completa'}</button>
-      <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
-      <button class="btn btn-sm" onclick="licVerContextoFixo()">⚙️ Contexto fixo (cole uma vez)</button>
-    </div>
+      <div class="passos">
+        <span><b>1</b> copie a pergunta</span>
+        <span><b>2</b> cole na IA com os PDFs</span>
+        <span><b>3</b> traga o JSON de volta</span>
+      </div>
 
-    <div class="field">
-      <label>Cole aqui a resposta da IA</label>
-      <textarea id="lic-resposta-gpt" style="width:100%;height:110px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole o bloco JSON inteiro — ou arraste aqui o arquivo que ele te deu">${escapeHtml(l.respostaIATexto||'')}</textarea>
-      <div class="dica" style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;">Pode arrastar um arquivo .json ou .txt direto pra cima desta caixa.</div>
+      <div class="acoes">
+        <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar ${curto?'a pergunta curta':'a pergunta completa'}</button>
+        <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
+        <button class="btn btn-sm" onclick="licVerContextoFixo()">⚙️ Contexto fixo (cole uma vez)</button>
+      </div>
+
+      <div class="field" style="margin:10px 0 0;">
+        <label style="font-size:11.5px;color:var(--ink-soft);">Cole aqui a resposta da IA</label>
+        <textarea id="lic-resposta-gpt" style="width:100%;height:90px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole o bloco JSON inteiro — ou arraste aqui o arquivo que ela te deu">${escapeHtml(l.respostaIATexto||'')}</textarea>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
+        <button class="btn btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler a resposta e preencher</button>
+        ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')">Desfazer</button>`:''}
+        <span class="dica" style="font-size:11.5px;color:var(--ink-faint);">serve ChatGPT, Gemini ou outra — pode arrastar um .json ou .txt na caixa</span>
+      </div>
     </div>
-    <button class="btn btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler a resposta e preencher</button>
-    ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')">Desfazer</button>`:''}
   `;
 }
 
@@ -31190,9 +31326,17 @@ function licTextoCurtoParaIA(l){
 '   resposta aceitável e útil. "Não achei", quando a página não foi lida,',
 '   não é.',
 '',
-'6. Para cada campo que o edital realmente não trata, coloque o nome dele',
-'   em "editalSilente" e deixe o campo vazio. Não invente, não presuma e',
-'   não escreva observação dentro do valor — observação vai em "fontes".',
+'6. Para TODO campo que ficar vazio, diga o porquê em "situacaoCampos",',
+'   com uma destas palavras:',
+'   - "nao_consta": você leu e o edital nao trata disso, ou nao exige',
+'     aquilo (ex.: nao obriga informar marca e modelo). Isso e uma',
+'     resposta boa, nao um buraco.',
+'   - "nao_li": voce nao abriu a parte onde isso estaria. Prefiro isso',
+'     a um palpite.',
+'   - "nao_achei": voce leu tudo onde estaria e mesmo assim nao achou.',
+'   Se a sua conclusao for "o edital nao exige", use "nao_consta" — nunca',
+'   "nao_achei". Nao invente, nao presuma e nao escreva observacao dentro',
+'   do valor: observacao vai em "fontes".',
 '',
 'RESPONDA SOMENTE COM ESTE JSON, sem texto antes nem depois:',
 '',
@@ -31219,6 +31363,7 @@ function licTextoCurtoParaIA(l){
 '  "documentosHabilitacao": [ { "documento": "", "obrigatorio": true, "fonte": "" } ],',
 '  "documentosNaoExigidos": [ "" ],',
 '  "riscos": [ { "risco": "", "impacto": "", "fonte": "" } ],',
+'  "situacaoCampos": { "nomeDoCampo": "nao_consta | nao_li | nao_achei" },',
 '  "editalSilente": [ "" ],',
 '  "naoEncontrado": [ "" ],',
 '  "trechosIlegiveis": [ "" ],',
@@ -31430,6 +31575,32 @@ function licAplicarRespostaIA(l, dado){
   l.naoEncontrado = manter(l.naoEncontrado, dado.naoEncontrado);
   faltaram.forEach(id=>{ if(!l.naoEncontrado.includes(id)) l.naoEncontrado.push(id); });
   l.editalSilente = manter(l.editalSilente, dado.editalSilente);
+  l.naoLi = manter(l.naoLi, dado.naoLi);
+
+  /* "situacaoCampos" é a resposta por campo: nao_consta, nao_li ou
+     nao_achei. Ela vale mais do que as três listas soltas, porque é
+     onde a IA diz POR QUE o campo ficou vazio. Sem isso, "o edital não
+     exige marca e modelo" aparecia na tela como "não achei — confira",
+     e ela ia procurar no edital uma exigência que não existe. */
+  const sit = (dado && typeof dado.situacaoCampos === 'object' && dado.situacaoCampos) || null;
+  if(sit){
+    const tira = (lista, id)=> (lista||[]).filter(x=>x!==id);
+    Object.keys(sit).forEach(id=>{
+      if(!licCampoLeitura(id)) return;
+      if(leitura[id]) return;                    /* preenchido: situação não interessa */
+      const q = String(sit[id]||'').toLowerCase().replace(/[\s-]/g,'_');
+      l.naoEncontrado = tira(l.naoEncontrado, id);
+      l.editalSilente = tira(l.editalSilente, id);
+      l.naoLi = tira(l.naoLi, id);
+      if(/nao_consta|n[aã]o_consta|silente|nao_exige|n[aã]o_exige|nao_menciona/.test(q)){
+        l.editalSilente.push(id);
+      }else if(/nao_li|n[aã]o_li|nao_abri|nao_consegui/.test(q)){
+        l.naoLi.push(id);
+      }else{
+        l.naoEncontrado.push(id);
+      }
+    });
+  }
   l.trechosIlegiveis = manter(l.trechosIlegiveis, dado.trechosIlegiveis);
   l.arquivosLidos = manter(l.arquivosLidos, dado.arquivosLidos, x=>x && x.arquivo);
   l.emails = manter(l.emails, dado.emails, x=>x && x.endereco);
@@ -31556,7 +31727,7 @@ function licLimparRespostaIA(id){
     'Isso apaga os modelos pesquisados e as marcações de fonte. Os itens e o que você digitou à mão continuam. Continuar?',
     ()=>{
       l.comparacao = null; l.respostaIA = false;
-      l.fontes = {}; l.naoEncontrado = []; l.editalSilente = [];
+      l.fontes = {}; l.naoEncontrado = []; l.editalSilente = []; l.naoLi = [];
       l.contradicoes = []; l.riscos = []; l.perguntasDistribuidor = [];
       l.resumoDaDecisao = null;
       saveState(); renderPortalLicitacoes();
@@ -31593,6 +31764,7 @@ function licLeituraHtml(l){
   const fontes = l.fontes || {};
   const naoAchou = new Set(l.naoEncontrado || []);
   const silente = new Set(l.editalSilente || []);
+  const naoLeu = new Set(l.naoLi || []);
   const temAlgo = Object.keys(leitura).length > 0;
 
   if(!temAlgo && !l.respostaIA){
@@ -31630,7 +31802,13 @@ function licLeituraHtml(l){
         <small style="display:block;margin-top:6px;">Decida qual vale antes de precificar — e, na dúvida, peça esclarecimento ao órgão.</small>
       </div>`:''}
 
-    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;margin-bottom:10px;">
+      <div class="lic-legenda">
+        <span><i class="p lido"></i>lido no edital</span>
+        <span><i class="p nexige"></i>o edital não exige</span>
+        <span><i class="p nachei"></i>não achei</span>
+        <span><i class="p nli"></i>não leu essa parte</span>
+      </div>
       <button class="btn btn-sm" onclick="licAbrirCamposLeitura('${l.id}')"
         title="Escolher quais campos aparecem aqui">⚙️ O que mostrar aqui</button>
     </div>
@@ -31640,25 +31818,28 @@ function licLeituraHtml(l){
       if(visiveis.length === 0) return '';
       const escondidos = bloco.campos.length - visiveis.length;
       return `
-      <div style="margin-bottom:14px;">
-        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">${escapeHtml(bloco.titulo)}${escondidos?` <span style="text-transform:none;letter-spacing:0;">· ${escondidos} escondido${escondidos===1?'':'s'}</span>`:''}</div>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(195px,1fr));gap:12px;">
+      <section class="lic-leitura-bloco">
+        <h4>${escapeHtml(bloco.titulo)}${escondidos?`<span class="esc">${escondidos} escondido${escondidos===1?'':'s'}</span>`:''}</h4>
+        <dl>
           ${visiveis.map(c=>{
             const v = leitura[c.id];
             const fonte = fontes[c.id];
-            let cor = 'var(--ink)', extra = '';
+            let classe = 'lido', estado = '';
             if(!v){
-              if(silente.has(c.id)){ cor='var(--ink-faint)'; extra='o edital não trata disso — você escolhe'; }
-              else { cor='var(--warning)'; extra='não achei — confira'; }
+              if(silente.has(c.id)){ classe='nexige'; estado='o edital não exige — você escolhe'; }
+              else if(naoLeu.has(c.id)){ classe='nli'; estado='não leu esta parte — confira você'; }
+              else { classe='nachei'; estado='não achei — confira'; }
             }
-            return `<div>
-              <div style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink-faint);">${escapeHtml(c.rotulo)}${c.trava?' *':''}</div>
-              <div style="font-size:13.5px;font-weight:600;color:${cor};line-height:1.35;">${v?escapeHtml(v):escapeHtml(extra)}</div>
-              ${fonte?`<div style="font-size:10.5px;color:var(--ink-faint);margin-top:1px;">${escapeHtml(fonte)}</div>`:''}
+            return `<div class="linha ${classe}">
+              <dt>${escapeHtml(c.rotulo)}${c.trava?'<b title="sem isto a proposta não sai">*</b>':''}</dt>
+              <dd>${v
+                ? `<span class="valor">${escapeHtml(v)}</span>`
+                : `<span class="estado">${escapeHtml(estado)}</span>`}
+                ${fonte?`<span class="fonte">${escapeHtml(fonte)}</span>`:''}</dd>
             </div>`;
           }).join('')}
-        </div>
-      </div>`;
+        </dl>
+      </section>`;
     }).join('')}
 
     ${(l.emails||[]).length ? `
@@ -32157,6 +32338,38 @@ function licHistoricoDoItem(item){
   const u = p.usos[0];
   const perdido = p.usos.find(x=>x.resultado==='perdeu' && x.valorResultado>0);
   return { produto:p, ultimo:u, perdido };
+}
+
+/* Ela mandou o texto completo, veio o edital lido e os itens — e
+   nenhum modelo. Quase sempre é porque a IA não navegou na internet:
+   ela não tinha como achar produto à venda hoje, e simplesmente pulou
+   a parte em vez de avisar. Em vez de deixar a tela em branco e ela
+   sem entender, o sistema diz o que houve e entrega o pedido pronto,
+   item por item — que é curto, cabe numa resposta e funciona melhor. */
+function licFaltaModelosHtml(l){
+  if(!l.respostaIA) return '';
+  if(l.semEdital) return '';
+  const temItens = (l.itens||[]).length > 0;
+  const temModelos = !!(l.comparacao && l.comparacao.modelos && l.comparacao.modelos.length);
+  if(!temItens || temModelos) return '';
+  if(licModoPergunta(l) === 'curto') return '';   /* ela pediu sem pesquisa, está certo */
+
+  return `
+    <div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+      <b>⚠️ Vieram os ${l.itens.length} iten${l.itens.length===1?'':'s'}, mas nenhuma sugestão de produto</b>
+      <small>Quase sempre é a IA sem acesso à internet: sem navegar, ela não acha produto à venda
+        hoje com link e preço, e pula a parte sem avisar. Também acontece quando a resposta fica
+        longa demais e ela corta o fim.</small>
+      <div style="margin-top:8px;font-size:12.5px;line-height:1.6;">
+        O caminho que funciona é pedir <b>um item por vez</b>, numa mensagem curta:
+      </div>
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        ${l.itens.map((it,i)=>`<button class="btn btn-sm" onclick="licCopiarPerguntasItem('${l.id}',${Number(it.numero)||i+1})">
+          📋 Pedir produtos do item ${String(Number(it.numero)||i+1).padStart(2,'0')}</button>`).join('')}
+      </div>
+      <small style="display:block;margin-top:8px;">Antes de colar, confira se a IA está com a busca na
+        internet ligada — no ChatGPT, a opção de pesquisa na web; no Gemini, ela já navega por padrão.</small>
+    </div>`;
 }
 
 function licComparacaoHtml(l){
@@ -45374,7 +45587,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 13:52';
+const SISTEMA_VERSAO = '21/10/2026 14:23';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
