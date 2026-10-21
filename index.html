@@ -27108,6 +27108,14 @@ function licInjetarEstilo(){
   .lic-leitura-bloco .nli{border-left-color:var(--negative);}
   .lic-leitura-bloco .nli .estado{color:var(--negative);}
 
+  /* Em análise: a cor diz em que pé está, sem abrir o cartão. */
+  .lic-card.lic-an-pronta{border-left:4px solid var(--positive);background:#F6FBF8;}
+  .lic-card.lic-an-anexada{border-left:4px solid var(--warning);}
+  .lic-card.lic-an-nova{border-left:4px solid var(--border);}
+  .lic-tag.selo-pronta{background:var(--positive);border-color:var(--positive);color:#fff;font-weight:600;}
+  .lic-tag.selo-anexada{border-color:var(--warning);color:var(--warning);font-weight:600;}
+  .lic-tag.selo-nova{border-color:var(--border);color:var(--ink-faint);}
+
   .lic-chips{display:flex;gap:5px;flex-wrap:wrap;}
   .lic-chips button{font-size:12px;padding:6px 12px;border-radius:20px;border:1px solid var(--border);
     background:#fff;color:var(--ink-soft);cursor:pointer;font-family:inherit;}
@@ -30315,7 +30323,12 @@ function licPainelAnalise(){
     ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nada em análise. Marque uma oportunidade com "tenho interesse".</div></div>'
       : lista.map(l=>{
         const p = licPrazoInfo(l);
-        return `<div class="lic-card">
+        /* Três estados, de relance: a análise já voltou da IA, o edital
+           está anexado esperando, ou ainda não começou. Com dez em
+           análise, ela precisa saber onde parou sem abrir uma por uma. */
+        const pronta = !!l.respostaIA;
+        const soArquivo = !pronta && (l.arquivos||[]).length > 0;
+        return `<div class="lic-card lic-an-${pronta?'pronta':(soArquivo?'anexada':'nova')}">
           <div class="lic-linha">
             <div class="esq">
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
@@ -30325,15 +30338,22 @@ function licPainelAnalise(){
               ${licTarjasComoParticipar(l, true)}
               ${licLinksHtml(l)}
               <div class="lic-tags">
+                ${pronta
+                  ? `<span class="lic-tag selo-pronta">✓ análise pronta</span>`
+                  : soArquivo
+                    ? `<span class="lic-tag selo-anexada">edital anexado — falta a análise</span>`
+                    : `<span class="lic-tag selo-nova">ainda não analisada</span>`}
                 <span class="lic-tag">${l.arquivos.length} arquivo${l.arquivos.length===1?'':'s'} anexado${l.arquivos.length===1?'':'s'}</span>
                 <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
+                ${pronta && (l.documentosHabilitacao||[]).length ? `<span class="lic-tag">${l.documentosHabilitacao.length} documento${l.documentosHabilitacao.length===1?'':'s'} de habilitação</span>`:''}
                 ${p.encerrada ? '<span class="lic-tag" style="border-color:var(--negative);color:var(--negative);">encerrada</span>':''}
               </div>
             </div>
             <div class="dir">
               <div class="lic-prazo">Encerra <b>${licDataHora(p.quando)}</b><br><span class="lic-cron ${p.classe}">${p.texto}</span></div>
               <div class="lic-valor">${fmtMoney(l.valorEstimado||0)}</div>
-              <button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','processo')">Abrir processo →</button>
+              <button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','processo')">${pronta?'Ver a análise →':'Abrir processo →'}</button>
+              ${pronta?`<button class="btn btn-sm" onclick="licAvancarEtapa('${l.id}','precificacao','precificar')">Precificar ›</button>`:''}
               <button class="btn btn-sm" onclick="licDescartarProcesso('${l.id}')">✕ Não tenho interesse</button>
             </div>
           </div>
@@ -46185,7 +46205,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 19:09';
+const SISTEMA_VERSAO = '21/10/2026 19:23';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
