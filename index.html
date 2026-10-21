@@ -27040,11 +27040,13 @@ function licInjetarEstilo(){
   .lic-item{border:1px solid var(--border);border-radius:var(--radius);margin-bottom:14px;overflow:hidden;}
   .lic-item > .cab{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;
     flex-wrap:wrap;padding:10px 14px;border-bottom:1px solid var(--border);}
-  .lic-item > .corpo{padding:12px 14px;}
+  .lic-item > .corpo{padding:10px 14px 12px;}
   .lic-item .selo{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;
     padding:3px 9px;border-radius:5px;color:#fff;}
   .lic-item .teto{text-align:right;font-size:12px;color:var(--ink-soft);}
   .lic-item .teto b{display:block;font-size:16px;font-family:var(--font-num);color:var(--ink);}
+  .lic-item .teto span b{display:inline;font-size:inherit;}
+  .lic-item .teto{line-height:1.45;}
   .lic-f1{border-left:5px solid #0081A7;} .lic-f1 .cab{background:#EAF6F9;} .lic-f1 .selo{background:#0081A7;}
   .lic-f2{border-left:5px solid #2E7D5B;} .lic-f2 .cab{background:#E7F4EE;} .lic-f2 .selo{background:#2E7D5B;}
   .lic-f3{border-left:5px solid #8A5BB8;} .lic-f3 .cab{background:#F1EAF8;} .lic-f3 .selo{background:#8A5BB8;}
@@ -27053,6 +27055,41 @@ function licInjetarEstilo(){
   .lic-f6{border-left:5px solid #1B4B5A;} .lic-f6 .cab{background:#E8EEF0;} .lic-f6 .selo{background:#1B4B5A;}
 
   .lic-grade{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:12px;}
+
+  /* ---------------------------------------------------------
+     O ITEM DA PRECIFICAÇÃO, ENXUTO
+
+     Antes um item ocupava a tela inteira: cada campo numa linha
+     própria, de ponta a ponta, pra guardar "UND" ou "1". Agora os
+     campos têm a largura do que guardam e vivem na mesma faixa, e o
+     item que já está resolvido fecha numa linha só — ela vê os cinco
+     de uma vez e abre o que quiser mexer.
+     --------------------------------------------------------- */
+  .lic-linha-campos{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-end;margin-bottom:8px;}
+  .lic-campo{display:flex;flex-direction:column;gap:3px;min-width:0;}
+  .lic-campo > label{font-size:11px;color:var(--ink-soft);white-space:nowrap;}
+  .lic-campo .dica{font-size:10.5px;color:var(--ink-faint);line-height:1.3;}
+  .lic-campo input, .lic-campo select{padding:7px 9px;border:1px solid var(--border);
+    border-radius:var(--radius-sm);font:inherit;font-size:13px;width:100%;}
+  .lic-campo.w-desc{flex:1 1 300px;}
+  .lic-campo.w-marca{flex:0 1 150px;}
+  .lic-campo.w-modelo{flex:0 1 170px;}
+  .lic-campo.w-und{flex:0 0 78px;}
+  .lic-campo.w-qtd{flex:0 0 82px;}
+  .lic-campo.w-dinheiro{flex:0 0 132px;}
+  .lic-campo.w-venda{flex:0 0 150px;}
+  .lic-campo.w-texto{flex:1 1 200px;}
+  .lic-campo input[type=number]{text-align:right;}
+
+  /* a linha fechada do item resolvido */
+  .lic-item-fechado{display:flex;gap:12px;align-items:center;flex-wrap:wrap;
+    padding:9px 14px;cursor:pointer;}
+  .lic-item-fechado:hover{background:#F7F9FA;}
+  .lic-item-fechado .nome{flex:1;min-width:180px;font-weight:600;font-size:13px;}
+  .lic-item-fechado .nome small{display:block;font-weight:400;font-size:11.5px;color:var(--ink-soft);}
+  .lic-item-fechado .cel{text-align:right;font-size:12px;color:var(--ink-soft);white-space:nowrap;}
+  .lic-item-fechado .cel b{display:block;font-size:13.5px;font-family:var(--font-num);color:var(--ink);}
+  .lic-item-fechado .abrir{font-size:12px;color:var(--primary);white-space:nowrap;}
   .lic-grade label{display:block;font-size:11.5px;color:var(--ink-soft);margin-bottom:3px;}
   .lic-grade input,.lic-grade select{width:100%;padding:7px 9px;border:1px solid var(--border);
     border-radius:var(--radius-sm);font:inherit;font-size:13px;background:#fff;color:var(--ink);}
@@ -27136,6 +27173,7 @@ function licNormalizar(l){
   if(!Array.isArray(l.documentosNaoExigidos)) l.documentosNaoExigidos = [];
   if(l.respostaIATexto === undefined) l.respostaIATexto = '';
   if(!l.leituraManual || typeof l.leituraManual !== 'object') l.leituraManual = {};
+  if(l.modoPergunta !== 'curto' && l.modoPergunta !== 'completo') l.modoPergunta = 'completo';
   l.itens.forEach((it,i)=>{
     if(it.numero == null) it.numero = i+1;
     if(!Array.isArray(it.exigencias)) it.exigencias = [];
@@ -28479,6 +28517,7 @@ const LIC_CAMPOS_CARTAO = [
   { id:'plataforma', rotulo:'Fonte da dispensa (CENTI, BNC, Megasoft, SISLOG…)', padrao:true },
   { id:'modalidade', rotulo:'Modalidade',              padrao:true  },
   { id:'disputa',    rotulo:'Modo de disputa',         padrao:false },
+  { id:'participar', rotulo:'Como se participa (por onde manda e se tem lance)', padrao:true },
   { id:'srp',        rotulo:'Registro de preços',      padrao:false },
   { id:'situacao',   rotulo:'Situação no PNCP',        padrao:false },
   { id:'publicacao', rotulo:'Data de publicação',      padrao:false },
@@ -28598,7 +28637,7 @@ function licCartaoOportunidade(o){
         ${lugar.length ? `<div class="onde">📍 ${lugar.join(' · ')}</div>` : ''}
       </header>
 
-      ${licTarjasComoParticipar(o, true)}
+      ${ver.participar !== false ? licTarjasComoParticipar(o, true) : ''}
 
       ${etiquetas.length ? `<div class="etiquetas">${etiquetas.map(e=>`<span>${escapeHtml(e.t)}</span>`).join('')}</div>` : ''}
 
@@ -28692,10 +28731,24 @@ function licComoEnviar(o){
   const temPortal = !!(o.plataforma || o.linkSistemaOrigem || o.linkPlataforma);
   const nomeado = LIC_PORTAIS_COM_DISPUTA.find(n => portal.includes(n) || links.includes(n.replace(/[^a-z]/g,'')));
 
+  /* O NOME do portal tem que aparecer na tarja. Ela não pode ter que
+     passar o mouse e esperar o balãozinho pra descobrir se é CENTI,
+     Megasoft ou Syslog — é isso que decide se ela já tem cadastro. */
+  const nomeCurto = p => {
+    const n = String(p||'').trim();
+    if(!n) return 'portal';
+    /* "Megasoft Informática Ltda" vira "Megasoft" */
+    const limpo = n.replace(/\b(informática|informatica|tecnologia|sistemas?|soluções|solucoes|serviços|servicos|ltda|me|epp|s\/?a|eireli)\b\.?/ig,'')
+                   .replace(/[.,\-–]+$/,'').replace(/\s{2,}/g,' ').trim();
+    const base = limpo || n;
+    return base.length > 22 ? base.slice(0,21)+'…' : base;
+  };
+
   if(nomeado){
-    return { classe:'portal', curto:'Pelo portal',
-      texto:`Vai pelo ${licNomeDoPortal(o)} — precisa de cadastro lá, e-mail não resolve`,
-      email:false };
+    const nome = licNomeDoPortal(o);
+    return { classe:'portal', curto: nomeCurto(nome),
+      texto:`Vai pelo ${nome} — precisa de cadastro lá, e-mail não resolve`,
+      email:false, portal:nome };
   }
   const modalidade = String(o.modalidadeNome||'').toLowerCase();
   const ehDispensa = /dispensa|inexigibilidade/.test(modalidade);
@@ -28705,13 +28758,15 @@ function licComoEnviar(o){
       email:true };
   }
   if(ehDispensa){
-    return { classe:'talvez', curto:'E-mail ou portal',
-      texto:`Dispensa publicada no ${licNomeDoPortal(o)} — pode ser por e-mail ou lá dentro. Confirme no edital`,
-      email:null };
+    const nome = licNomeDoPortal(o);
+    return { classe:'talvez', curto:`E-mail ou ${nomeCurto(nome)}`,
+      texto:`Dispensa publicada no ${nome} — pode ser por e-mail ou lá dentro. Confirme no edital`,
+      email:null, portal:nome };
   }
-  return { classe:'portal', curto:'Pelo portal',
-    texto:'Pregão/concorrência vai pelo portal, com cadastro e certificado',
-    email:false };
+  const nome = licNomeDoPortal(o);
+  return { classe:'portal', curto: nomeCurto(nome),
+    texto:`Pregão/concorrência vai pelo ${nome}, com cadastro e certificado`,
+    email:false, portal:nome };
 }
 
 function licComoDisputa(o){
@@ -28879,7 +28934,8 @@ function licAnaliseHtml(l){
   return `
     <div class="kpi-row" style="margin-bottom:12px;">
       <div class="kpi-card"><div class="kpi-label">Teto do edital</div>
-        <div class="kpi-value">${t.teto>0?fmtMoney(t.teto):'—'}</div></div>
+        <div class="kpi-value">${t.teto>0?fmtMoney(t.teto):'—'}</div>
+        <div class="kpi-sub">somando os ${d.itens.length} iten${d.itens.length===1?'':'s'}</div></div>
       <div class="kpi-card"><div class="kpi-label">Nossa proposta</div>
         <div class="kpi-value">${t.venda>0?fmtMoney(t.venda):'—'}</div>
         <div class="kpi-sub">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'% abaixo do teto':''}</div></div>
@@ -28908,7 +28964,7 @@ function licAnaliseHtml(l){
             <th class="num">Custo un.</th><th class="num">Custo total</th>
             <th class="num">Venda un.</th><th class="num">Venda total</th>
             <th class="num">Lucro</th><th class="num">Margem</th>
-            <th class="num">Teto</th><th class="num">Abaixo do teto</th>
+            <th class="num">Teto un.</th><th class="num">Teto total</th><th class="num">Abaixo do teto</th>
           </tr></thead>
           <tbody>
             ${d.itens.map(x=>`<tr>
@@ -28922,6 +28978,7 @@ function licAnaliseHtml(l){
               <td class="num" style="color:${x.venda<=0?'var(--ink-faint)':(x.lucro<0?'var(--negative)':'var(--positive)')};font-weight:600;">
                 ${x.venda>0?fmtMoney(x.lucro):'—'}</td>
               <td class="num">${x.venda>0?x.margem.toFixed(1)+'%':'—'}</td>
+              <td class="num">${x.teto>0?fmtMoney(x.teto/Math.max(1,x.qtd)):'—'}</td>
               <td class="num">${x.teto>0?fmtMoney(x.teto):'—'}</td>
               <td class="num" style="color:${x.passaDoTeto?'var(--negative)':'var(--ink)'};">
                 ${x.passaDoTeto?'PASSOU DO TETO':(x.abaixoDoTeto!=null?x.abaixoDoTeto.toFixed(1)+'%':'—')}</td>
@@ -28934,6 +28991,7 @@ function licAnaliseHtml(l){
             <td class="num">${fmtMoney(t.venda)}</td>
             <td class="num" style="color:${t.lucro<0?'var(--negative)':'var(--positive)'};">${fmtMoney(t.lucro)}</td>
             <td class="num">${t.venda>0?t.margem.toFixed(1)+'%':'—'}</td>
+            <td class="num">—</td>
             <td class="num">${t.teto>0?fmtMoney(t.teto):'—'}</td>
             <td class="num">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'%':'—'}</td>
           </tr></tfoot>
@@ -29010,7 +29068,8 @@ function licImprimirAnalise(id){
 
     <table>
       <thead><tr><th>#</th><th>Item</th><th>Qtd</th><th>Custo un.</th><th>Custo total</th>
-        <th>Venda un.</th><th>Venda total</th><th>Lucro</th><th>Margem</th><th>Teto</th></tr></thead>
+        <th>Venda un.</th><th>Venda total</th><th>Lucro</th><th>Margem</th>
+        <th>Teto un.</th><th>Teto total</th></tr></thead>
       <tbody>
         ${d.itens.map(x=>`<tr>
           <td>${x.n}</td><td>${escapeHtml(x.nome.slice(0,70))}</td>
@@ -29020,6 +29079,7 @@ function licImprimirAnalise(id){
           <td class="n">${x.venda>0?fmtMoney(x.venda):'-'}</td>
           <td class="n ${x.lucro<0?'neg':'pos'}">${x.venda>0?fmtMoney(x.lucro):'-'}</td>
           <td class="n">${x.venda>0?x.margem.toFixed(1)+'%':'-'}</td>
+          <td class="n">${x.teto>0?fmtMoney(x.teto/Math.max(1,x.qtd)):'-'}</td>
           <td class="n">${x.teto>0?fmtMoney(x.teto):'-'}</td>
         </tr>`).join('')}
       </tbody>
@@ -29028,6 +29088,7 @@ function licImprimirAnalise(id){
         <td class="n">${fmtMoney(d.total.venda)}</td>
         <td class="n ${d.total.lucro<0?'neg':'pos'}">${fmtMoney(d.total.lucro)}</td>
         <td class="n">${d.total.venda>0?d.total.margem.toFixed(1)+'%':'-'}</td>
+        <td class="n">-</td>
         <td class="n">${d.total.teto>0?fmtMoney(d.total.teto):'-'}</td>
       </tr></tfoot>
     </table>
@@ -30802,20 +30863,41 @@ function licChatGptHtml(l){
       <div class="lic-card" style="margin:0;"><b>1 · Copiar a pergunta</b>
         <div class="meta">Ela já vai com os dados desta dispensa. Na primeira vez, cole antes o
           <b>contexto fixo</b> nas instruções do Projeto do ChatGPT.</div></div>
-      <div class="lic-card" style="margin:0;"><b>2 · Colar no ChatGPT</b>
-        <div class="meta">E anexar lá os PDFs do edital. Quem lê é ele.</div></div>
+      <div class="lic-card" style="margin:0;"><b>2 · Colar na IA</b>
+        <div class="meta">ChatGPT, Gemini ou outra — e anexar lá os PDFs do edital. Quem lê é ela.</div></div>
       <div class="lic-card" style="margin:0;"><b>3 · Trazer a resposta</b>
         <div class="meta">Cole o JSON aqui, ou arraste o arquivo.</div></div>
     </div>
 
+    <div style="border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px;margin-bottom:10px;">
+      <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+        O que você vai pedir pra ela</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <label class="lic-doc ${licModoPergunta(l)==='completo'?'ok':''}" style="flex:1;min-width:230px;display:flex;gap:9px;align-items:flex-start;cursor:pointer;${licModoPergunta(l)==='completo'?'':'opacity:.7;'}">
+          <input type="radio" name="lic-modo-${l.id}" style="width:auto;margin-top:3px;"
+            ${licModoPergunta(l)==='completo'?'checked':''} onchange="licTrocarModoPergunta('${l.id}','completo')">
+          <div><b>Tudo</b><small>Os dados da dispensa + os itens, com exigência de cada um e
+            pesquisa de modelos que atendem. Para quando o produto é técnico.</small></div>
+        </label>
+        <label class="lic-doc ${licModoPergunta(l)==='curto'?'ok':''}" style="flex:1;min-width:230px;display:flex;gap:9px;align-items:flex-start;cursor:pointer;${licModoPergunta(l)==='curto'?'':'opacity:.7;'}">
+          <input type="radio" name="lic-modo-${l.id}" style="width:auto;margin-top:3px;"
+            ${licModoPergunta(l)==='curto'?'checked':''} onchange="licTrocarModoPergunta('${l.id}','curto')">
+          <div><b>Só os dados da dispensa</b><small>Para onde mandar, até quando, prazos,
+            habilitação. Sem análise de produto. Responde rápido — e você mesma monta os itens.</small></div>
+        </label>
+      </div>
+      <div class="help-text" style="margin:8px 0 0;">Serve em qualquer IA que leia PDF — ChatGPT, Gemini,
+        Copilot. O que importa é ela devolver o JSON; o sistema entende as variações de formato.</div>
+    </div>
+
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
-      <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar pergunta</button>
+      <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar ${licModoPergunta(l)==='curto'?'a pergunta curta':'a pergunta completa'}</button>
       <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
       <button class="btn btn-sm" onclick="licVerContextoFixo()">⚙️ Contexto fixo (cole uma vez)</button>
     </div>
 
     <div class="field">
-      <label>Cole aqui a resposta do ChatGPT</label>
+      <label>Cole aqui a resposta da IA</label>
       <textarea id="lic-resposta-gpt" style="width:100%;height:110px;padding:10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;" placeholder="Cole o bloco JSON inteiro — ou arraste aqui o arquivo que ele te deu">${escapeHtml(l.respostaIATexto||'')}</textarea>
       <div class="dica" style="font-size:11.5px;color:var(--ink-faint);margin-top:4px;">Pode arrastar um arquivo .json ou .txt direto pra cima desta caixa.</div>
     </div>
@@ -30912,6 +30994,134 @@ function licCopiarContextoFixo(){
   }else licCopiarNaMao(txt);
 }
 
+/* =========================================================
+   O TEXTO CURTO — só os dados da dispensa
+
+   Nem toda dispensa precisa da análise técnica. Quando o item é
+   simples, ou é serviço, ou ela já sabe o que vai ofertar, o que ela
+   precisa da IA é só o que o edital diz: para onde mandar, até quando,
+   prazo de entrega, prazo de pagamento, o que exigem de habilitação.
+   Este texto pede exatamente isso e nada mais — responde em segundos
+   e não gasta a paciência de ninguém com pesquisa de modelo.
+
+   Serve em qualquer IA que leia PDF: ChatGPT, Gemini, Copilot. O que
+   importa é o JSON de volta, e o leitor daqui aguenta as diferenças de
+   formatação de cada uma.
+   ========================================================= */
+function licTextoCurtoParaIA(l){
+  const d = [];
+  const campo = (rot, v)=>{ if(v) d.push(`${rot}: ${v}`); };
+  campo('Modalidade', l.modalidadeNome || (l.propostaCampos||{}).modalidade);
+  campo('Número', l.numero || (l.propostaCampos||{}).numero);
+  campo('Órgão', l.orgao);
+  campo('Unidade compradora', l.unidade);
+  campo('Cidade/UF', l.municipioNome ? `${l.municipioNome}/${l.uf||''}` : '');
+  campo('Objeto (como veio do PNCP)', l.objeto);
+
+  const arqs = (l.arquivos||[]).filter(a=>a && a.nome);
+  const escaneados = arqs.filter(a=>/escaneado/i.test(a.erro||''));
+
+  return [
+'Você é meu assistente de licitações. Vou anexar o edital de uma dispensa',
+'e preciso APENAS dos dados administrativos dela — NÃO quero análise',
+'técnica de produto, NÃO quero sugestão de marca ou modelo, NÃO quero',
+'pesquisa de preço. Só o que está escrito no edital sobre como participar.',
+'',
+'Serve qualquer IA que leia PDF (ChatGPT, Gemini, Copilot). O que importa',
+'é devolver o JSON do final, exatamente com esses nomes de campo.',
+'',
+'A DISPENSA:',
+...d,
+'',
+...(arqs.length ? [
+  `ARQUIVOS QUE ESTOU ANEXANDO (${arqs.length}):`,
+  ...arqs.map(a=>`- ${a.nome}${a.paginas?` (${a.paginas} páginas)`:''}${/escaneado/i.test(a.erro||'')?' — ESTE É ESCANEADO, só imagem':''}`),
+  ...(escaneados.length ? [
+    '',
+    `ATENÇÃO: ${escaneados.length} destes são escaneados (imagem, sem texto).`,
+    'Você vai precisar LER A IMAGEM de cada página. Não pule página.'
+  ] : []),
+  ''
+] : []),
+'COMO LER:',
+'',
+'1. ABRA TODOS OS ARQUIVOS, página por página. O aviso/edital e o termo de',
+'   referência dizem coisas diferentes — leia os dois.',
+'',
+'2. COMO SE ENVIA A PROPOSTA é a informação mais importante desta lista.',
+'   Procure a cláusula do envio (costuma se chamar "DA ENTREGA DA PROPOSTA",',
+'   "DO ENVIO", "DA PARTICIPAÇÃO"). Copie a frase LITERAL em',
+'   "comoEnviarProposta" e diga a cláusula e a página em "fontes".',
+'',
+'3. Varra o documento inteiro atrás de ENDEREÇOS DE E-MAIL — inclusive no',
+'   cabeçalho, no rodapé e em página escaneada. Liste TODOS em "emails",',
+'   dizendo para que serve cada um. Se um deles é o da proposta, repita em',
+'   "emailProposta".',
+'',
+'4. HABILITAÇÃO: liste em "documentosHabilitacao" SÓ o que ESTE edital',
+'   exige, com a cláusula de onde saiu. Não acrescente documento que',
+'   costuma ser pedido em outros editais.',
+'',
+'5. PRESTE CONTAS DO QUE LEU. Em "arquivosLidos" diga, para cada arquivo,',
+'   quantas páginas tem e quais você realmente leu. "Não li esta parte" é',
+'   resposta aceitável e útil. "Não achei", quando a página não foi lida,',
+'   não é.',
+'',
+'6. Para cada campo que o edital realmente não trata, coloque o nome dele',
+'   em "editalSilente" e deixe o campo vazio. Não invente, não presuma e',
+'   não escreva observação dentro do valor — observação vai em "fontes".',
+'',
+'RESPONDA SOMENTE COM ESTE JSON, sem texto antes nem depois:',
+'',
+'{',
+'  "dispensa": {',
+'    "comoEnviarProposta": "a frase literal do edital sobre como enviar",',
+'    "meioEnvio": "email | portal | presencial",',
+'    "emailProposta": "",',
+'    "portal": "nome do portal, se for pelo portal",',
+'    "exigeCadastro": "sim | não",',
+'    "dataHoraLimite": "",',
+'    "dataHoraSessao": "",',
+'    "criterio": "menor preço por item | menor preço global | maior desconto",',
+'    "validade": "validade da proposta",',
+'    "prazoEntrega": "",',
+'    "prazoPagamento": "",',
+'    "localEntrega": "",',
+'    "garantia": "",',
+'    "multas": "",',
+'    "mepp": "o que o edital diz sobre ME/EPP"',
+'  },',
+'  "fontes": { "campo": "cláusula e página de onde tirou" },',
+'  "emails": [ { "endereco": "", "para": "", "fonte": "" } ],',
+'  "documentosHabilitacao": [ { "documento": "", "obrigatorio": true, "fonte": "" } ],',
+'  "documentosNaoExigidos": [ "" ],',
+'  "riscos": [ { "risco": "", "impacto": "", "fonte": "" } ],',
+'  "editalSilente": [ "" ],',
+'  "naoEncontrado": [ "" ],',
+'  "trechosIlegiveis": [ "" ],',
+'  "arquivosLidos": [ { "arquivo": "", "paginas": 0, "tipo": "", "paginasLidas": "", "naoConsegui": "" } ],',
+'  "resumoDaDecisao": { "vale": "sim | não | depende", "porque": "" }',
+'}'
+  ].filter(x=>x!=null).join('\n');
+}
+
+/* Qual dos dois textos ela está usando nesta dispensa. */
+function licModoPergunta(l){
+  return (l && l.modoPergunta === 'curto') ? 'curto' : 'completo';
+}
+function licTrocarModoPergunta(id, modo){
+  const l = licAchar(id); if(!l) return;
+  l.modoPergunta = modo;
+  saveState();
+  renderPortalLicitacoes();
+  showToast(modo==='curto'
+    ? 'Texto curto: só os dados da dispensa, sem análise de produto.'
+    : 'Texto completo: dados da dispensa + itens + pesquisa de modelos.','info');
+}
+function licPerguntaDaVez(l){
+  return licModoPergunta(l)==='curto' ? licTextoCurtoParaIA(l) : licTextoParaChatGpt(l);
+}
+
 function licVerPergunta(id){
   const l = licAchar(id); if(!l) return;
   const m = document.createElement('div');
@@ -30919,7 +31129,10 @@ function licVerPergunta(id){
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(820px,95vw);max-height:88vh;overflow-y:auto;">
       <h3 style="margin-top:0;">A pergunta que vai pro ChatGPT</h3>
-      <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11.5px;line-height:1.5;">${escapeHtml(licTextoParaChatGpt(l))}</pre>
+      <div class="help-text" style="margin-top:0;">${licModoPergunta(l)==='curto'
+        ? 'Texto <b>curto</b> — só os dados da dispensa.'
+        : 'Texto <b>completo</b> — dados da dispensa, itens e pesquisa de modelos.'}</div>
+      <pre style="white-space:pre-wrap;background:#FAFBFC;border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;font-size:11.5px;line-height:1.5;">${escapeHtml(licPerguntaDaVez(l))}</pre>
       <div class="modal-actions">
         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
         <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar</button>
@@ -30930,10 +31143,13 @@ function licVerPergunta(id){
 
 function licCopiarPergunta(id){
   const l = licAchar(id); if(!l) return;
-  const txt = licTextoParaChatGpt(l);
+  const txt = licPerguntaDaVez(l);
+  const aviso = licModoPergunta(l)==='curto'
+    ? 'Pergunta curta copiada. Cole na IA e anexe os PDFs do edital.'
+    : 'Pergunta completa copiada. Cole na IA e anexe os PDFs do edital.';
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt)
-      .then(()=>showToast('Pergunta copiada. Cole no ChatGPT e anexe os PDFs do edital.','success'))
+      .then(()=>showToast(aviso,'success'))
       .catch(()=>licCopiarNaMao(txt));
   }else licCopiarNaMao(txt);
 }
@@ -31865,7 +32081,15 @@ function licComparacaoHtml(l){
             ${confirmar?` · ${confirmar} a confirmar`:''}${reprovam?` · ${reprovam} reprova${reprovam===1?'':'m'}`:''}
           </div>
         </div>
-        <div class="teto">TETO <b>${fmtMoney(licNumDireto(item.teto))}</b></div>
+        ${(()=>{
+          const t = licNumDireto(item.teto);
+          const q = Math.max(1, licNumDireto(item.qtd)||1);
+          if(!(t>0)) return `<div class="teto">REFERÊNCIA <b>não informada</b></div>`;
+          return `<div class="teto">REFERÊNCIA DO EDITAL <b>${fmtMoney(t)}</b>
+            <span style="display:block;font-size:11.5px;">${q>1
+              ? `no total · <b style="color:var(--ink);">${fmtMoney(t/q)}</b> por ${escapeHtml((item.unidade||'unidade').toLowerCase())}`
+              : `por ${escapeHtml((item.unidade||'unidade').toLowerCase())} e no total`}</span></div>`;
+        })()}
       </div>
     </div>`:''}
 
@@ -31973,7 +32197,12 @@ function licPedirMaisModelos(id, numItem){
 ``,
 `ITEM ${numItem}: ${item.descricao||item.descricaoProposta||''}`,
 `Quantidade: ${licNumDireto(item.qtd)||1} ${item.unidade||'UND'}`,
-licNumDireto(item.teto)>0 ? `Teto do edital: ${fmtMoney(licNumDireto(item.teto))} no total` : '',
+licNumDireto(item.teto)>0
+  ? `Teto do edital: ${fmtMoney(licNumDireto(item.teto))} no total` +
+    ((licNumDireto(item.qtd)||1) > 1
+      ? ` — ${fmtMoney(licNumDireto(item.teto)/(licNumDireto(item.qtd)||1))} por ${item.unidade||'UND'}`
+      : '')
+  : '',
 ``,
 `EXIGÊNCIAS:`,
 ...((item.exigencias||[]).map((e,i)=>`${i+1}. ${e}`)),
@@ -32156,6 +32385,11 @@ function licTelaPrecificar(l){
       <h3 style="margin-top:0;">Precificação dos itens</h3>
       <p class="help-text">Por item: <b>custo do produto</b>, <b>preço de venda</b> e os <b>dois fretes deste item</b>
         — o do fornecedor até nós e o nosso até o cliente. Imposto e comissão você marcou uma vez lá em cima.</p>
+      ${l.itens.length>1 ? `<div style="display:flex;gap:6px;margin-bottom:10px;">
+        <button class="btn btn-sm" onclick="licAbrirTodosItens(true)">▾ Abrir todos</button>
+        <button class="btn btn-sm" onclick="licAbrirTodosItens(false)">▴ Fechar todos</button>
+        <span class="help-text" style="margin:0;align-self:center;">item com custo e preço preenchidos fecha sozinho — clique na linha pra abrir</span>
+      </div>`:''}
       ${l.itens.length===0 ? '<div class="lic-vazio">Nenhum item ainda.</div>' : l.itens.map((it,i)=>licItemHtml(l, it, i)).join('')}
       <button class="btn btn-sm" onclick="licNovoItem('${l.id}')">+ Adicionar item</button>
     </div>
@@ -32256,6 +32490,77 @@ function licFreteFinalHtml(l){
     </div>`;
 }
 
+/* O ITEM DA PRECIFICAÇÃO
+
+   Antes cada campo tinha uma linha só pra ele, de ponta a ponta da tela:
+   um item ocupava a tela inteira pra guardar "UND" e "1". Agora os campos
+   têm a largura do que guardam e dividem a mesma faixa, e o item que já
+   está resolvido (tem custo e tem preço) fecha numa linha — ela vê os
+   cinco de uma vez e abre o que quiser mexer. */
+let licItensAbertos = null;   /* Set de ids abertos à força; null = automático */
+
+function licItemAberto(it){
+  const resolvido = licNumDireto(it.custo) > 0 && licPrecoUnit(it) > 0;
+  if(licItensAbertos && licItensAbertos.has(it.id)) return true;
+  if(licItensAbertos && licItensAbertos.has('!'+it.id)) return false;
+  return !resolvido;
+}
+function licAlternarItem(id){
+  if(!licItensAbertos) licItensAbertos = new Set();
+  if(licItensAbertos.has(id)){ licItensAbertos.delete(id); licItensAbertos.add('!'+id); }
+  else if(licItensAbertos.has('!'+id)){ licItensAbertos.delete('!'+id); licItensAbertos.add(id); }
+  else {
+    const it = (STATE.licitacoes||[]).flatMap(l=>l.itens||[]).find(x=>x.id===id);
+    if(it && licItemAberto(it)) licItensAbertos.add('!'+id); else licItensAbertos.add(id);
+  }
+  renderPortalLicitacoes();
+}
+function licAbrirTodosItens(abrir){
+  licItensAbertos = new Set();
+  (STATE.licitacoes||[]).flatMap(l=>l.itens||[]).forEach(it=>{
+    licItensAbertos.add(abrir ? it.id : '!'+it.id);
+  });
+  renderPortalLicitacoes();
+}
+
+/* O cabeçalho do item: nome, quantidade e a referência do edital —
+   por unidade E no total, que é como ela pensa o lance. */
+function licCabecalhoItem(l, it, i, c, aberto){
+  const teto = licNumDireto(it.teto);
+  const tetoUnit = teto > 0 ? teto / Math.max(1, c.qtd) : 0;
+  return `
+    <div class="cab">
+      <div style="flex:1;min-width:200px;">
+        <span class="selo">ITEM ${String(i+1).padStart(2,'0')}</span>
+        <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao || it.descricaoProposta || 'Item sem descrição')}</span>
+        <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
+          ${c.qtd} ${escapeHtml(it.unidade||'UND')}${it.modelo?` · ${escapeHtml(it.modelo)}`:''}${it.marca?` · ${escapeHtml(it.marca)}`:''}
+        </div>
+      </div>
+      <div class="teto">
+        REFERÊNCIA DO EDITAL
+        <b><input type="text" inputmode="decimal" data-campo="teto" data-moeda="1"
+          value="${escapeAttr(licMoedaCampo(teto))}" placeholder="0,00"
+          title="O teto TOTAL deste item, como veio do edital. Corrija aqui se vier errado."
+          style="width:116px;text-align:right;border:1px solid transparent;background:transparent;
+                 font:inherit;font-size:16px;font-weight:700;font-family:var(--font-num);color:var(--ink);
+                 padding:1px 3px;border-radius:4px;"
+          onfocus="this.style.borderColor='var(--border)';this.style.background='#fff';"
+          onblur="this.style.borderColor='transparent';this.style.background='transparent';"></b>
+        ${teto > 0
+          ? `<span style="display:block;font-size:11.5px;">${c.qtd > 1
+                ? `no total · <b style="color:var(--ink);">${fmtMoney(tetoUnit)}</b> por ${escapeHtml((it.unidade||'unidade').toLowerCase())}`
+                : `por ${escapeHtml((it.unidade||'unidade').toLowerCase())} e no total`}</span>
+             <span style="display:block;font-size:11px;">acima disso, desclassifica</span>`
+          : `<span style="display:block;font-size:11px;">o edital não deu valor de referência</span>`}
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button class="btn btn-sm" onclick="licAlternarItem('${it.id}')" title="${aberto?'Fechar este item':'Abrir para editar'}">${aberto?'▴ Fechar':'▾ Abrir'}</button>
+        ${l.itens.length>1?`<button class="btn btn-sm" onclick="licRemoverItem('${l.id}','${it.id}')" title="Tirar este item">✕</button>`:''}
+      </div>
+    </div>`;
+}
+
 function licItemHtml(l, it, i){
   const c = licCustoItem(it, l);
   const faixa = 'lic-f' + ((i % 6) + 1);
@@ -32265,84 +32570,71 @@ function licItemHtml(l, it, i){
   const piso = licPisoItem(it, l);
   const fecha = venda > 0 && c.lucro >= 0;
   const temVenda = venda > 0;
-  const parecidos = licProcurarParecidos(it.descricaoProposta || it.descricao, it.marca, it.id);
+  const aberto = licItemAberto(it);
 
+  /* FECHADO: uma linha só, com o que ela precisa ver de relance. */
+  if(!aberto){
+    return `
+    <div class="lic-item lic-item-prec ${faixa}" data-item="${it.id}">
+      <div class="lic-item-fechado" onclick="licAlternarItem('${it.id}')">
+        <span class="selo">${String(i+1).padStart(2,'0')}</span>
+        <div class="nome">${escapeHtml((it.descricaoProposta || it.descricao || 'Item').slice(0,70))}
+          <small>${c.qtd} ${escapeHtml(it.unidade||'UND')}${it.marca?` · ${escapeHtml(it.marca)}`:''}${it.modelo?` ${escapeHtml(it.modelo)}`:''}</small></div>
+        <div class="cel">custo<b>${fmtMoney(c.total)}</b></div>
+        <div class="cel">venda<b>${fmtMoney(venda)}</b></div>
+        <div class="cel" style="color:${fecha?'var(--positive)':'var(--negative)'};">
+          ${fecha?'lucro':'prejuízo'}<b style="color:${fecha?'var(--positive)':'var(--negative)'};">${fmtMoney(c.lucro)}</b></div>
+        <div class="cel">margem<b>${c.margem.toFixed(1)}%</b></div>
+        ${teto>0?`<div class="cel">${venda>teto?'<span style="color:var(--negative);">passou do teto</span>':'abaixo do teto'}<b>${venda>teto?'—':((1-venda/teto)*100).toFixed(1)+'%'}</b></div>`:''}
+        <span class="abrir">▾ abrir</span>
+      </div>
+    </div>`;
+  }
+
+  /* ABERTO: os campos, em faixas que aproveitam a largura. */
+  const parecidos = licProcurarParecidos(it.descricaoProposta || it.descricao, it.marca, it.id);
   return `
   <div class="lic-item lic-item-prec ${faixa}" data-item="${it.id}">
-    <div class="cab">
-      <div style="flex:1;min-width:220px;">
-        <span class="selo">ITEM ${String(i+1).padStart(2,'0')}</span>
-        <span style="font-weight:600;margin-left:8px;">${escapeHtml(it.descricao || it.descricaoProposta || 'Item sem descrição')}</span>
-        <div style="font-size:12px;color:var(--ink-soft);margin-top:3px;">
-          ${c.qtd} ${escapeHtml(it.unidade||'UND')}${it.modelo?` · modelo ${escapeHtml(it.modelo)}`:''}${it.marca?` · marca ${escapeHtml(it.marca)}`:''}
-        </div>
-      </div>
-      <div class="teto">
-        TETO DO EDITAL
-        <b><input type="text" inputmode="decimal" data-campo="teto" data-moeda="1"
-          value="${escapeAttr(licMoedaCampo(teto))}" placeholder="0,00"
-          title="O teto do edital. Corrija aqui se vier errado."
-          style="width:120px;text-align:right;border:1px solid transparent;background:transparent;
-                 font:inherit;font-size:16px;font-weight:700;font-family:var(--font-num);color:var(--ink);
-                 padding:1px 3px;border-radius:4px;"
-          onfocus="this.style.borderColor='var(--border)';this.style.background='#fff';"
-          onblur="this.style.borderColor='transparent';this.style.background='transparent';"></b>
-        <span style="font-size:11px;">${teto>0 && c.qtd>1 ? fmtMoney(teto/c.qtd)+' por '+escapeHtml((it.unidade||'unidade').toLowerCase())+' · ' : ''}acima disso, desclassifica</span>
-      </div>
-      ${l.itens.length>1?`<button class="btn btn-sm" onclick="licRemoverItem('${l.id}','${it.id}')">✕</button>`:''}
-    </div>
+    ${licCabecalhoItem(l, it, i, c, true)}
     <div class="corpo">
-      <div class="field" style="margin-bottom:4px;">
-        <label style="font-size:11.5px;color:var(--ink-soft);">Descrição que vai na proposta</label>
-        <input type="text" data-campo="descricaoProposta" value="${escapeAttr(it.descricaoProposta||'')}"
-          style="width:100%;padding:8px 10px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
-        <div class="dica" style="font-size:11px;color:var(--ink-faint);margin-top:3px;">Edite como o órgão precisa ler. Este produto não entra no estoque da loja.</div>
+
+      <div class="lic-linha-campos">
+        <div class="lic-campo w-desc">
+          <label>Descrição que vai na proposta</label>
+          <input type="text" data-campo="descricaoProposta" value="${escapeAttr(it.descricaoProposta||'')}">
+        </div>
+        <div class="lic-campo w-marca"><label>Marca</label>
+          <input type="text" data-campo="marca" value="${escapeAttr(it.marca||'')}" placeholder="ex: SAMSUNG"></div>
+        <div class="lic-campo w-modelo"><label>Modelo</label>
+          <input type="text" data-campo="modelo" value="${escapeAttr(it.modelo||'')}" placeholder="ex: WA65F"></div>
+        <div class="lic-campo w-und"><label>Unidade</label>
+          <input type="text" data-campo="unidade" value="${escapeAttr(it.unidade||'UND')}"></div>
+        <div class="lic-campo w-qtd"><label>Qtd</label>
+          <input type="number" step="1" min="1" data-campo="qtd" value="${it.qtd||1}"></div>
       </div>
+      <div class="dica" style="margin:-6px 0 10px;font-size:10.5px;color:var(--ink-faint);">
+        A descrição vai impressa como o órgão precisa ler. Este produto não entra no estoque da loja.</div>
 
       ${licAvisoParecidos(parecidos, it)}
 
-      <div class="lic-grade">
-        <div><label>Marca</label>
-          <input type="text" data-campo="marca" value="${escapeAttr(it.marca||'')}" placeholder="ex: SAMSUNG">
-          <div class="dica">vai impressa na proposta</div></div>
-        <div><label>Modelo</label>
-          <input type="text" data-campo="modelo" value="${escapeAttr(it.modelo||'')}" placeholder="ex: WA65F"></div>
-        <div><label>Unidade</label>
-          <input type="text" data-campo="unidade" value="${escapeAttr(it.unidade||'UND')}"></div>
-        <div><label>Quantidade</label>
-          <input type="number" step="1" min="1" data-campo="qtd" value="${it.qtd||1}"></div>
-      </div>
-
-      <div class="lic-grade">
-        <div><label>Custo do produto <span style="color:var(--ink-faint);">(unitário)</span></label>
+      <div class="lic-linha-campos">
+        <div class="lic-campo w-dinheiro"><label>Custo un.</label>
           ${licCampoMoeda('custo', it.custo)}
-          <div class="dica">o que o distribuidor cobra, sem o frete</div></div>
-      </div>
-
-      <div class="lic-grade" style="margin-top:10px;">
-        <div><label>Preço de venda <b>por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</b></label>
+          <div class="dica">sem o frete</div></div>
+        <div class="lic-campo w-venda"><label>Preço de venda <b>por ${escapeHtml((it.unidade||'unidade').toLowerCase())}</b></label>
           ${licCampoMoeda('precoUnit', it.precoUnit, '0,00',
-            `font-size:17px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}`)}
-          <div class="dica">é o valor unitário que vai na proposta</div></div>
-        <div><label>Valor total do item</label>
-          <div style="padding:7px 0;font-size:17px;font-weight:600;font-family:var(--font-num);color:${temVenda?(fecha?'var(--positive)':'var(--negative)'):'var(--ink-faint)'};">
+            `font-size:15px;font-weight:600;${temVenda && !fecha?'border-color:var(--negative);background:var(--negative-soft);':''}`)}
+          <div class="dica">vai na proposta</div></div>
+        <div class="lic-campo w-dinheiro"><label>Frete até nós</label>
+          ${licCampoMoeda('freteNos', it.freteNos)}
+          <div class="dica">do fornecedor</div></div>
+        <div class="lic-campo w-dinheiro"><label>Frete ao cliente</label>
+          ${licCampoMoeda('freteCliente', it.freteCliente)}
+          <div class="dica">entrega no órgão</div></div>
+        <div class="lic-campo" style="flex:0 0 140px;"><label>Valor total do item</label>
+          <div style="padding:7px 0;font-size:16px;font-weight:600;font-family:var(--font-num);text-align:right;color:${temVenda?(fecha?'var(--positive)':'var(--negative)'):'var(--ink-faint)'};">
             ${temVenda?fmtMoney(venda):'—'}</div>
-          <div class="dica">${c.qtd} × ${vendaUnit?fmtMoney(vendaUnit):'preço unitário'}</div></div>
-      </div>
-
-      <div style="margin-top:12px;padding:10px 12px;border:1px dashed var(--border);border-radius:var(--radius-sm);">
-        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
-          Agora o frete deste item — depois que o preço do produto já está de pé</div>
-        <div class="lic-grade" style="margin:0;">
-          <div><label>Frete do fornecedor até nós</label>
-            ${licCampoMoeda('freteNos', it.freteNos)}
-            <div class="dica">o que o distribuidor cobra pra trazer este item</div></div>
-          <div><label>Frete daqui até o cliente</label>
-            ${licCampoMoeda('freteCliente', it.freteCliente)}
-            <div class="dica">a entrega deste item no órgão</div></div>
-        </div>
-        <div class="dica" style="margin-top:6px;">Os dois são deste item só — tem item com frete e item sem.
-          Se ainda não sabe, deixe em branco e volte quando o distribuidor responder.</div>
+          <div class="dica" style="text-align:right;">${c.qtd} × ${vendaUnit?fmtMoney(vendaUnit):'preço un.'}</div></div>
       </div>
 
       <div class="lic-conta">
@@ -32370,14 +32662,17 @@ function licItemHtml(l, it, i){
         </div>
       </div>
 
-      <div class="lic-grade" style="margin-top:12px;">
-        <div><label>Link do fornecedor</label>
-          <input type="text" data-campo="linkFornecedor" value="${escapeAttr(it.linkFornecedor||'')}" placeholder="https://..."></div>
-        <div><label>Contato</label>
-          <input type="text" data-campo="contatoFornecedor" value="${escapeAttr(it.contatoFornecedor||'')}" placeholder="nome · telefone"></div>
-        <div><label>Observação da compra</label>
-          <input type="text" data-campo="obsCompra" value="${escapeAttr(it.obsCompra||'')}" placeholder="ex: preço válido até 25/10"></div>
-      </div>
+      <details style="margin-top:10px;">
+        <summary style="cursor:pointer;font-size:12px;color:var(--primary);">De onde veio este preço — fornecedor, contato e observação</summary>
+        <div class="lic-linha-campos" style="margin-top:8px;">
+          <div class="lic-campo w-texto"><label>Link do fornecedor</label>
+            <input type="text" data-campo="linkFornecedor" value="${escapeAttr(it.linkFornecedor||'')}" placeholder="https://..."></div>
+          <div class="lic-campo w-texto"><label>Contato</label>
+            <input type="text" data-campo="contatoFornecedor" value="${escapeAttr(it.contatoFornecedor||'')}" placeholder="nome · telefone"></div>
+          <div class="lic-campo w-texto"><label>Observação da compra</label>
+            <input type="text" data-campo="obsCompra" value="${escapeAttr(it.obsCompra||'')}" placeholder="ex: preço válido até 25/10"></div>
+        </div>
+      </details>
     </div>
   </div>`;
 }
@@ -44946,7 +45241,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 00:34';
+const SISTEMA_VERSAO = '21/10/2026 01:07';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -44973,7 +45268,10 @@ async function renderArmazenamento(){
           <div class="help-text" style="margin:2px 0 0;">Se esta data for mais antiga que a da última atualização,
             o navegador está com uma cópia velha: segure <b>Ctrl + Shift + R</b> pra recarregar de verdade.</div>
         </div>
-        <button class="btn btn-sm" onclick="location.reload(true)">↻ Recarregar</button>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm btn-primary" onclick="versaoConferirAgora()">🔎 Conferir atualização</button>
+          <button class="btn btn-sm" onclick="versaoAtualizarAgora()">↻ Recarregar sem cache</button>
+        </div>
       </div>
     </div>
 
@@ -45970,10 +46268,11 @@ function versaoGravarVista(v){
 function versaoAvisarSeAtualizou(){
   const vista = versaoLerVista();
   versaoGravarVista(SISTEMA_VERSAO);
-  if(!vista || vista === SISTEMA_VERSAO) return;
+  if(!vista || vista === SISTEMA_VERSAO) return false;
   setTimeout(()=>{
     showToast(`✅ Sistema atualizado — versão ${SISTEMA_VERSAO}. A anterior era ${vista}.`, 'success');
   }, 1200);
+  return true;
 }
 
 function versaoMaisNova(doServidor, daPagina){
@@ -45987,19 +46286,49 @@ function versaoMaisNova(doServidor, daPagina){
   return a > b;
 }
 
-async function versaoProcurarNova(){
-  if(versaoNovaAvisada) return;
+let versaoDoServidor = null;   /* o que está publicado agora */
+let versaoConferida = false;   /* já conseguimos perguntar ao servidor? */
+
+async function versaoProcurarNova(avisarIgual){
   if(location.protocol === 'file:') return;   // aberto direto do arquivo, não há o que buscar
   try{
     const r = await fetch('versao.json?t=' + Date.now(), { cache:'no-store' });
     if(!r.ok) return;
     const dado = await r.json();
     if(!dado || !dado.versao) return;
+    versaoDoServidor = dado;
+    versaoConferida = true;
     if(versaoMaisNova(dado.versao, SISTEMA_VERSAO)){
+      if(versaoNovaAvisada) return;
       versaoNovaAvisada = true;
       versaoMostrarTarja(dado);
+      return;
     }
+    /* Já está na mais nova. Ela pediu pra saber disso também: estava
+       atualizando às cegas, sem saber se tinha pegado a versão nova. */
+    versaoNovaAvisada = false;
+    const antigo = document.getElementById('versao-nova');
+    if(antigo) antigo.remove();
+    if(avisarIgual) versaoDizerQueEstaEmDia();
   }catch(e){ /* sem internet ou sem o arquivo: não atrapalha o trabalho */ }
+}
+
+function versaoDizerQueEstaEmDia(){
+  showToast(`✅ Você está na versão mais nova (${SISTEMA_VERSAO}).`, 'success');
+}
+
+/* O botão "Conferir atualização", na tela de Armazenamento: pergunta ao
+   servidor e responde das duas formas — ou abre a tarja da versão nova,
+   ou diz que já está em dia. */
+async function versaoConferirAgora(){
+  if(location.protocol === 'file:'){
+    showToast('Este sistema está aberto direto do arquivo, não pela internet — não dá pra conferir atualização aqui.','info');
+    return;
+  }
+  showToast('Conferindo...','info');
+  versaoNovaAvisada = false;
+  await versaoProcurarNova(true);
+  if(!versaoConferida) showToast('Não consegui falar com o servidor agora. Tente de novo em um minuto.','error');
 }
 
 function versaoMostrarTarja(dado){
@@ -46040,10 +46369,12 @@ let versaoVigiaLigado = false;
 function versaoIniciarVigia(){
   if(versaoVigiaLigado) return;   // DOMContentLoaded e o fallback chamam os dois
   versaoVigiaLigado = true;
-  versaoAvisarSeAtualizou();
-  setTimeout(versaoProcurarNova, 4000);
-  setInterval(versaoProcurarNova, 10*60*1000);
-  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) versaoProcurarNova(); });
+  const mudou = versaoAvisarSeAtualizou();
+  /* Se ela acabou de atualizar a página e a versão NÃO mudou, ainda assim
+     ela precisa saber se é por já estar em dia ou por cache velho. */
+  setTimeout(()=>versaoProcurarNova(!mudou), 4000);
+  setInterval(()=>versaoProcurarNova(false), 10*60*1000);
+  document.addEventListener('visibilitychange', ()=>{ if(!document.hidden) versaoProcurarNova(false); });
 }
 
 /* =========================================================
