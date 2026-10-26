@@ -1,1 +1,1 @@
-{"versao":"26/10/2026 19:49","notas":"Botao 'Devolver o que sumiu': devolve registros apagados a partir de um backup, sem substituir nada. Freio nas exclusoes em massa: uma maquina nao apaga as outras sozinha. Exclusao nao apaga mais o conteudo no servidor."}
+{"versao":"26/10/2026 19:59","notas":"Freio de exclusao mais apertado: apagar o ultimo registro de um lugar agora para e pergunta, e o 'nao apaguei' busca de volta da nuvem."}

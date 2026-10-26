@@ -46674,7 +46674,10 @@ const ARMAZ_NOMES = {
   lembretes:'Lembretes', caixa:'Caixa', contasReceber:'Contas a receber',
   marcas:'Marcas', pagadores:'Pagadores de repasse', pagamentosRepasse:'Pagamentos de repasse',
   cobrancasRepasse:'Cobranças de repasse', anosArquivados:'Anos arquivados',
-  valeFuncionarios:'Vales de funcionário', haverClientes:'Haver de clientes',
+  valeFuncionarios:'Vales de funcionário', haveres:'Haver de clientes',
+  haverClientes:'Haver de clientes',
+  contasReceberManuais:'Contas a receber lançadas à mão',
+  gruposProdutos:'Grupos de produtos', planosCompra:'Planos de compra',
   simulacaoSemTemporarios:'Simulação de margem', planosEntrega:'Planos de entrega',
   usuarios:'Usuários', rotas:'Rotas de entrega'
 };
@@ -46748,7 +46751,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/10/2026 19:49';
+const SISTEMA_VERSAO = '26/10/2026 19:59';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47204,14 +47207,64 @@ function nuvemMudancas(){
 
    Apagar um ou dois registros é trabalho normal. Apagar meia dúzia de
    uma vez é quase sempre acidente — então o sistema para, mostra o que
-   ia apagar, e espera ela dizer. ========================================================= */
+   ia apagar, e espera ela dizer.
+
+   SÓ QUE O HAVER PASSOU POR BAIXO DESSE FREIO. Só existia UM haver no
+   sistema: o do Colégio do Sol. Uma exclusão sozinha é menos que o
+   limite, então subiu calada e levou R$ 4.264,76 de saldo junto. O
+   mesmo vale pras 10 contas a receber lançadas à mão e pras 4 notas.
+
+   Então o freio ganhou mais duas razões pra puxar, além da quantidade:
+   · ESVAZIAR uma coleção inteira. Apagar o último haver, a última nota,
+     a última conta — isso é acidente, seja um registro ou cem. As
+     listas de trabalho (triagem de licitação, lixeira, cache) ficam de
+     fora: encher e esvaziar é o uso normal delas.
+   · LOGO QUE O SISTEMA ABRE ninguém apagou nada ainda. Exclusão que
+     aparece na primeira rodada veio do estado, não da mão dela.
+
+   E o "não apaguei" agora conserta de verdade: tira essas chaves do
+   espelho e manda buscar tudo de novo na nuvem, em vez de só fechar a
+   janela e deixar o sistema perguntar outra vez amanhã.
+   ========================================================= */
 const NUVEM_LIMITE_EXCLUSAO = 4;
 let nuvemExclusoesSeguradas = null;   // {quando, linhas} enquanto ela não decide
 let nuvemExclusoesLiberadas = false;  // ela já disse "pode apagar" nesta sessão
+let nuvemPrimeiraRodada = true;       // ainda não subiu nada desde que abriu
 
-function nuvemNomeColecao(c){ return (typeof REPESCA_NOMES==='object' && REPESCA_NOMES[c]) || c; }
+/* Listas de trabalho: encher e esvaziar faz parte do uso. O resto do
+   sistema é cadastro e dinheiro — ali, zerar é acidente. */
+const NUVEM_LISTAS_DE_TRABALHO = ['licitacoesRevisao','licitacoesDescartadas','licitacoesLixeira',
+  'licitacoesGeocodeCache','auditoria','mesclagensProdutos','simulacaoSemTemporarios'];
 
-function nuvemAvisarExclusoes(linhas){
+function nuvemColecoesQueZeram(exclusoes){
+  const porColecao = {};
+  exclusoes.forEach(r=>{ porColecao[r.colecao] = (porColecao[r.colecao]||0) + 1; });
+  return Object.keys(porColecao).filter(c=>{
+    if(NUVEM_LISTAS_DE_TRABALHO.includes(c)) return false;
+    /* o que sobraria aqui depois de apagar: as exclusões SÃO o que já
+       não está no STATE, então "sobrar zero" é a coleção indo a zero */
+    const resta = Array.isArray(STATE[c]) ? STATE[c].length : 0;
+    return resta === 0;
+  });
+}
+
+/* Devolve null (pode subir) ou o motivo de segurar. */
+function nuvemMotivoDeSegurar(exclusoes){
+  if(nuvemExclusoesLiberadas || exclusoes.length === 0) return null;
+  if(exclusoes.length > NUVEM_LIMITE_EXCLUSAO) return { tipo:'muitas' };
+  const zeradas = nuvemColecoesQueZeram(exclusoes);
+  if(zeradas.length) return { tipo:'zerou', colecoes:zeradas };
+  if(nuvemPrimeiraRodada) return { tipo:'abertura' };
+  return null;
+}
+
+function nuvemNomeColecao(c){
+  return (typeof REPESCA_NOMES==='object' && REPESCA_NOMES[c])
+      || (typeof ARMAZ_NOMES==='object' && ARMAZ_NOMES[c])
+      || c;
+}
+
+function nuvemAvisarExclusoes(linhas, motivo){
   if(document.getElementById('modal-exclusao-massa')) return;
   const porColecao = {};
   linhas.forEach(r=>{ porColecao[r.colecao] = (porColecao[r.colecao]||0) + 1; });
@@ -47220,19 +47273,27 @@ function nuvemAvisarExclusoes(linhas){
   m.id = 'modal-exclusao-massa';
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(640px,95vw);">
-      <h3 style="margin-top:0;color:var(--negative);">⚠️ Segurei uma exclusão grande</h3>
+      <h3 style="margin-top:0;color:var(--negative);">⚠️ Segurei uma exclusão</h3>
       <p class="help-text">Esta máquina está prestes a mandar a nuvem apagar
         <b>${linhas.length} registro${linhas.length===1?'':'s'}</b> — e isso apagaria nas outras máquinas também.
-        Registro que some sozinho quase sempre é acidente (um backup antigo importado, um carregamento pela metade),
-        então parei antes de mandar.</p>
+        Parei antes de mandar.</p>
       <div class="lic-doc aviso" style="display:block;">
         ${Object.keys(porColecao).map(c=>`<div>· <b>${escapeHtml(nuvemNomeColecao(c))}</b> — ${porColecao[c]} registro${porColecao[c]===1?'':'s'}</div>`).join('')}
       </div>
-      <p class="help-text"><b>Se você não apagou essas coisas de propósito</b>, feche esta janela e não faça nada:
-        nada foi apagado da nuvem, e recarregando a página os registros voltam de lá.
-        Se você apagou mesmo, confirme.</p>
+      <p class="help-text">${
+        !motivo ? 'Registro que some sozinho quase sempre é acidente.'
+        : motivo.tipo==='zerou'
+          ? `Parei porque isso <b>esvaziaria por completo</b>: ${motivo.colecoes.map(c=>escapeHtml(nuvemNomeColecao(c))).join(', ')}.
+             Apagar o último registro de um lugar é quase sempre acidente — foi assim que o haver do
+             Colégio do Sol sumiu com R$ 4.264,76 de saldo.`
+        : motivo.tipo==='abertura'
+          ? 'Parei porque isso apareceu <b>assim que o sistema abriu</b>, antes de você mexer em qualquer coisa. Exclusão que nasce sozinha veio dos dados desta máquina, não da sua mão.'
+          : 'Parei porque é muita coisa de uma vez — um backup antigo importado ou um carregamento pela metade faz exatamente isso.'
+      }</p>
+      <p class="help-text"><b>Se você não apagou isso de propósito</b>, clique em buscar de volta:
+        eu desfaço o pedido de exclusão e trago o que está na nuvem. Nada foi apagado até agora.</p>
       <div class="modal-actions">
-        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Não apaguei — deixa quieto</button>
+        <button class="btn btn-primary" id="exc-buscar">Não apaguei — buscar de volta</button>
         <button class="btn btn-danger" id="exc-confirmar">Eu apaguei mesmo, pode mandar</button>
       </div>
     </div>`;
@@ -47243,19 +47304,47 @@ function nuvemAvisarExclusoes(linhas){
     showToast('Certo — as exclusões vão subir no próximo sincronismo.','info');
     nuvemSincronizar(true);
   };
+  /* Antes este botão só fechava a janela — e no dia seguinte o sistema
+     perguntava de novo, porque o espelho continuava dizendo que os
+     registros existiam. Agora ele conserta: tira essas chaves do
+     espelho (param de virar exclusão) e volta a marca pro começo, pra
+     o próximo baixar trazer tudo da nuvem de novo. */
+  m.querySelector('#exc-buscar').onclick = async ()=>{
+    const espelho = nuvemLerEspelho();
+    linhas.forEach(r=>{ if(r._chave) delete espelho[r._chave]; });
+    nuvemGravarEspelho(espelho);
+    try{ localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z'); }catch(e){}
+    nuvemExclusoesSeguradas = null;
+    m.remove();
+    showToast('Buscando de volta o que está na nuvem…','info');
+    try{
+      const n = await nuvemBaixar();
+      if(n){
+        showToast(`${n} registro${n===1?'':'s'} conferido${n===1?'':'s'} com a nuvem. Vou recarregar a tela.`,'success');
+        setTimeout(()=>location.reload(), 1600);
+      }else{
+        showToast('A nuvem também não tem esses registros. Use "🔎 Devolver o que sumiu" com um backup de quando eles existiam.','error');
+      }
+    }catch(e){
+      console.error(e);
+      showToast('Não consegui falar com a nuvem agora. Nada foi apagado — dá pra tentar de novo depois.','error');
+    }
+  };
 }
 
 async function nuvemSubir(){
   let fila = nuvemMudancas();
 
-  /* o freio: separa as exclusões e só deixa passar o que for pouco,
-     ou o que ela confirmou */
+  /* o freio: separa as exclusões e só deixa passar o que for mesmo
+     trabalho do dia, ou o que ela confirmou */
   const exclusoes = fila.filter(r=>r.excluido);
-  if(exclusoes.length > NUVEM_LIMITE_EXCLUSAO && !nuvemExclusoesLiberadas){
+  const motivo = nuvemMotivoDeSegurar(exclusoes);
+  if(motivo){
     fila = fila.filter(r=>!r.excluido);
-    nuvemExclusoesSeguradas = { quando:Date.now(), linhas:exclusoes };
-    nuvemAvisarExclusoes(exclusoes);
+    nuvemExclusoesSeguradas = { quando:Date.now(), linhas:exclusoes, motivo:motivo };
+    nuvemAvisarExclusoes(exclusoes, motivo);
   }
+  nuvemPrimeiraRodada = false;
 
   nuvemPendentes = fila.length;
   if(fila.length === 0) return 0;
