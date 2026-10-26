@@ -1,1 +1,1 @@
-{"versao":"26/10/2026 19:59","notas":"Freio de exclusao mais apertado: apagar o ultimo registro de um lugar agora para e pergunta, e o 'nao apaguei' busca de volta da nuvem."}
+{"versao":"26/10/2026 21:12","notas":"Procurar cliente ficou igual em todo o sistema: qualquer palavra, em qualquer ordem, sem acento - tambem pelo CNPJ, nome fantasia e cidade. Vale no haver, nas contas a receber e em todo campo de cliente."}

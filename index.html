@@ -4783,8 +4783,12 @@ function ligarSugestaoCliente(selectId, placeholder){
 
   function filtrar(termo){
     const palavras = normalizarBusca(termo).split(/[\s#\-\/]+/).filter(Boolean);
+    /* A opção sem valor ("— todos —", "— selecione —") só aparece com o
+       campo vazio. Sem isso, num filtro ela escolhia um cliente e não
+       tinha mais como voltar pra "todos". */
+    const vazias = [...select.options].filter(op => !op.value).map(dadosDaOpcao);
     const todas = [...select.options].filter(op => op.value).map(dadosDaOpcao);
-    if(!palavras.length) return todas.slice(0, 50);
+    if(!palavras.length) return vazias.concat(todas.slice(0, 50));
     return todas.filter(o => palavras.every(p => o.busca.includes(p))).slice(0, 50);
   }
 
@@ -4859,6 +4863,68 @@ function ligarSugestaoCliente(selectId, placeholder){
 
   return { sincronizar };
 }
+
+/* =========================================================
+   PROCURAR CLIENTE É IGUAL EM TODO LUGAR
+
+   "Em todos os lugares está dando aquele mesmo erro de procurar o
+   cliente. Um deles: quando vou cadastrar um haver, coloco o nome e
+   ele não aparece."
+
+   O orçamento e a venda já tinham o campo bom, que procura por
+   qualquer palavra. Os outros lugares ficaram com o <select> cru do
+   navegador, que só acha digitando o COMEÇO do nome — era por isso que
+   "colégio" nunca achava CONSELHO ESCOLAR DO SOL, e "sol" não achava
+   nada.
+
+   Em vez de ligar um por um e esquecer o próximo que aparecer, o
+   sistema fica de olho: assim que um desses campos nasce na tela —
+   inclusive dentro de janela que só existe depois de um clique — ele
+   ganha a busca boa sozinho.
+   ========================================================= */
+const CAMPOS_DE_CLIENTE = {
+  'orc-cliente':        'Digite o nome do cliente...',
+  'v-cliente':          'Digite o nome do cliente...',
+  'ev-cliente':         'Digite o nome do cliente...',
+  'hav-reg-cliente':    'Digite qualquer parte do nome do cliente...',
+  'ecrm-cliente':       'Digite o nome do cliente...',
+  'crm-cliente':        'Digite o nome do cliente...',
+  'pdf-cliente-manual': 'Digite o nome do cliente...',
+  'vc-filtro-cliente':  'Todos os clientes — ou digite um nome',
+  'lic-cliente':        'Digite qualquer parte do nome do órgão, o CNPJ ou a cidade...'
+};
+
+function ligarBuscaDeClientes(){
+  if(typeof ligarSugestaoCliente !== 'function') return;
+  Object.keys(CAMPOS_DE_CLIENTE).forEach(id=>{
+    const el = document.getElementById(id);
+    /* já ligado, ou ainda não existe: sai barato. É o caso da maioria
+       das passadas, porque isto roda a cada mudança de tela. */
+    if(!el || el.dataset.sugestaoLigada === '1') return;
+    try{ ligarSugestaoCliente(id, CAMPOS_DE_CLIENTE[id]); }
+    catch(e){ console.warn('busca de cliente', id, e); }
+  });
+}
+
+/* Uma passada por mudança de tela, não por elemento criado: a tela é
+   remontada o tempo todo e varrer a cada nó custaria caro à toa. */
+let __buscaClienteAgendada = null;
+function agendarBuscaDeClientes(){
+  if(__buscaClienteAgendada) return;
+  __buscaClienteAgendada = setTimeout(()=>{
+    __buscaClienteAgendada = null;
+    ligarBuscaDeClientes();
+  }, 120);
+}
+function iniciarBuscaDeClientes(){
+  ligarBuscaDeClientes();
+  try{
+    new MutationObserver(agendarBuscaDeClientes)
+      .observe(document.body, { childList:true, subtree:true });
+  }catch(e){ console.warn(e); }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarBuscaDeClientes);
+else iniciarBuscaDeClientes();
 
 function filtrarProdutosPorTexto(lista, texto){
   const palavras = normalizarBusca(texto).split(/[\s#\-\/]+/).filter(Boolean);
@@ -46751,7 +46817,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/10/2026 19:59';
+const SISTEMA_VERSAO = '26/10/2026 20:19';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
