@@ -26874,7 +26874,12 @@ const LIC_ABAS = [
   { id:'oportunidades', rotulo:'Oportunidades' },
   { id:'analise',       rotulo:'Em análise' },
   { id:'precificacao',  rotulo:'Precificação' },
-  { id:'propostas',     rotulo:'Propostas' },
+  /* Duas pastas, não uma. "Fizemos a proposta mas não enviamos" é um
+     estado de verdade: o trabalho está pronto e o prazo está correndo.
+     Quando ela envia pelo e-mail ou pela plataforma e marca aqui, a
+     dispensa muda de pasta. */
+  { id:'propostas',     rotulo:'Prontas pra enviar' },
+  { id:'enviadas',      rotulo:'Enviadas' },
   { id:'perdidas',      rotulo:'Não ganhamos' },
   { id:'produtos',      rotulo:'Produtos de licitação' }
 ];
@@ -26885,10 +26890,10 @@ const LIC_ETAPAS = {
   analise:      { aba:'analise',      n:1, rotulo:'Em análise' },
   precificacao: { aba:'precificacao', n:2, rotulo:'Precificação' },
   proposta:     { aba:'propostas',    n:3, rotulo:'Montando a proposta' },
-  enviada:      { aba:'propostas',    n:3, rotulo:'Enviada — aguardando retorno' },
-  ganhou:       { aba:'propostas',    n:3, rotulo:'Ganhamos' },
+  enviada:      { aba:'enviadas',     n:4, rotulo:'Enviada — aguardando retorno' },
+  ganhou:       { aba:'enviadas',     n:4, rotulo:'Ganhamos' },
   perdeu:       { aba:'perdidas',    n:3, rotulo:'Perdemos' },
-  entregue:     { aba:'propostas',    n:3, rotulo:'Entregue' },
+  entregue:     { aba:'enviadas',     n:4, rotulo:'Entregue' },
   desistiu:     { aba:'perdidas',    n:3, rotulo:'Desistimos' }
 };
 
@@ -27123,6 +27128,9 @@ function licInjetarEstilo(){
   .lic-chips button.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600;}
 
   .lic-captou{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  /* a linha da distância, igual nas cinco abas */
+  .lic-lugar{font-size:12px;color:var(--ink-soft);margin-top:4px;}
+  .lic-lugar b{color:var(--ink);}
   .lic-captou b{color:var(--primary);}
 
   .lic-legenda{display:flex;gap:14px;flex-wrap:wrap;font-size:11px;color:var(--ink-soft);}
@@ -27657,6 +27665,14 @@ function renderPortalLicitacoes(){
   /* Se a licitação aberta sumiu, volta pra lista */
   if(licAberta && !licAchar(licAberta)){ licAberta = null; licTela = null; }
 
+  /* A distância aparece em todas as abas agora, então se faltar medida em
+     alguma, mede sozinho em segundo plano. Uma vez por sessão: o serviço
+     de mapa é de graça mas só aceita uma consulta por segundo. */
+  if(!licJaMediuDistancia && !licCalculandoDistancia && licQuantosSemDistancia() > 0){
+    licJaMediuDistancia = true;
+    setTimeout(()=>{ try{ licCalcularDistancias(); }catch(e){} }, 600);
+  }
+
   if(licTela && licAberta){
     box.innerHTML = licTelaDetalhe();
     licLigarDetalhe();
@@ -27667,7 +27683,8 @@ function renderPortalLicitacoes(){
     oportunidades: (STATE.licitacoesRevisao||[]).length,
     analise: licPorEtapa(['analise']).length,
     precificacao: licPorEtapa(['precificacao']).length,
-    propostas: licPorEtapa(['proposta','enviada','ganhou','entregue']).length,
+    propostas: licPorEtapa(['proposta']).length,
+    enviadas: licPorEtapa(['enviada','ganhou','entregue']).length,
     perdidas: licPorEtapa(['perdeu','desistiu']).length,
     produtos: licHistoricoProdutos().length
   };
@@ -27677,6 +27694,7 @@ function renderPortalLicitacoes(){
     analise: licPainelAnalise,
     precificacao: licPainelPrecificacao,
     propostas: licPainelPropostas,
+    enviadas: licPainelEnviadas,
     perdidas: licPainelPerdidas,
     produtos: licPainelProdutos
   }[licAba] || licPainelOportunidades;
@@ -28300,6 +28318,14 @@ function licAbrirCertidoes(nomeNovo){
   m.id = 'modal-docs-licitacao';
   document.body.appendChild(m);
   licDesenharDocs(m, nomeNovo);
+  /* confere quais arquivos existem NESTA máquina e redesenha: é o que
+     mostra a linha vermelha "o arquivo não está nesta máquina". O aviso
+     de arquivo órfão é remontado depois, senão o redesenho o apagava. */
+  licConferirCertidoesLocais().then(()=>{
+    if(!document.getElementById('modal-docs-licitacao')) return;
+    licDesenharDocs(m, nomeNovo);
+    licConferirOrfaos();
+  });
   licConferirOrfaos();
 }
 
@@ -28349,6 +28375,9 @@ function licDesenharDocs(m, nomeNovo){
                   ${d.arquivo ? `✓ ${escapeHtml(d.arquivo)}${d.tamanho?` · ${(d.tamanho/1024).toFixed(0)} KB`:''}` : 'nenhum arquivo ainda'}
                   ${d.arquivo ? `<button class="btn btn-sm" style="margin-left:6px;" onclick="licBaixarDoc('${d.id}')">abrir</button>` : ''}
                 </div>
+                ${d.arquivo && licCertidoesLocais && !licCertidoesLocais.has(d.id)
+                  ? `<div style="font-size:11.5px;margin-top:3px;color:var(--negative);">
+                       ⚠️ o arquivo não está nesta máquina — use "Baixar da nuvem" ou anexe de novo aqui</div>` : ''}
               </div>
             </div>
             <div style="font-size:11.5px;color:${e.classe==='ok'?'var(--positive)':e.classe==='aviso'?'var(--warning)':'var(--negative)'};margin-top:5px;">
@@ -28372,6 +28401,18 @@ function licDesenharDocs(m, nomeNovo){
         <div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:8px;">
           ${LIC_DOCS_SUGESTOES.filter(s=>!licDocDaPasta(s)).map(s=>
             `<button class="btn btn-sm" style="font-size:11px;" onclick="licAdicionarDoc(${JSON.stringify(s).replace(/"/g,'&quot;')})">+ ${escapeHtml(s.length>38?s.slice(0,38)+'…':s)}</button>`).join('')}
+        </div>
+      </div>
+
+      <div style="border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+        <div style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:6px;">
+          As duas máquinas</div>
+        <p class="help-text" style="margin:0 0 8px;">Os nomes e as validades já andam junto sozinhos. Os <b>arquivos</b>
+          ficam guardados em cada navegador — por isso eles sobem e descem por aqui. Anexou um PDF nesta máquina?
+          Ele sobe na hora. Está na outra máquina e a linha está verde sem arquivo? Clique em baixar.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="licSubirCertidoesParaNuvem()">☁↑ Enviar os arquivos pra nuvem</button>
+          <button class="btn btn-sm" onclick="licPuxarCertidoesDaNuvem()">☁↓ Baixar os arquivos da nuvem</button>
         </div>
       </div>
 
@@ -28405,6 +28446,7 @@ function licDesenharDocs(m, nomeNovo){
 
   m.querySelector('#lic-cert-ok').onclick = async ()=>{
     const docs2 = licDocs();
+    const anexados = [];
     m.querySelectorAll('[data-dnome]').forEach(inp=>{
       const d = docs2.find(x=>x.id===inp.dataset.dnome);
       if(d && inp.value.trim()) d.nome = inp.value.trim();
@@ -28426,10 +28468,20 @@ function licDesenharDocs(m, nomeNovo){
         d.arquivo = pendentes[id].arquivo;
         d.tamanho = pendentes[id].tamanho;
         delete d.conteudo;
+        anexados.push(id);
       }catch(e){ console.error(e); falhou++; }
     }
     saveState(); m.remove(); renderPortalLicitacoes();
     showToast(falhou ? `${falhou} arquivo não coube — o resto foi salvo.` : 'Pasta salva.', falhou?'error':'success');
+    /* o arquivo sobe sozinho, sem travar a tela: é isso que faz ele
+       aparecer na máquina do Neto sem ninguém lembrar de mandar */
+    if(anexados.length){
+      (async ()=>{
+        let ok = 0;
+        for(const id of anexados){ if(await licSubirCertidao(id)) ok++; }
+        if(ok) showToast(`${ok} arquivo${ok===1?'':'s'} na nuvem — a outra máquina recebe no próximo sincronismo.`,'success');
+      })();
+    }
   };
 }
 
@@ -28954,7 +29006,7 @@ function licCartaoOportunidade(o){
   const lugar = [];
   if(ver.cidade && o.municipioNome) lugar.push(`${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`);
   if(ver.distancia){
-    if(o.distanciaKm != null) lugar.push(perto ? '<b class="aqui">na nossa cidade</b>' : `<b>${o.distanciaKm} km</b>`);
+    if(o.distanciaKm != null) lugar.push(perto ? '<b class="aqui">aqui na nossa cidade</b>' : `<b>${o.distanciaKm} km</b> de ${escapeHtml(licCidadeBase())}`);
     else if(licCalculandoDistancia) lugar.push('<span class="medindo">medindo…</span>');
   }
 
@@ -30165,16 +30217,23 @@ function licArrumarLinksAntigos(){
   if(mexeu>0) saveState();
 }
 
+/* A distância agora aparece nas cinco abas, então ela tem que ser medida
+   também pra quem já saiu da triagem — uma dispensa trazida por link, ou
+   captada antes de existir essa conta, chegava em "Em análise" sem km. */
+function licTodasComLugar(){
+  return (STATE.licitacoesRevisao||[]).concat(STATE.licitacoes||[]);
+}
 function licQuantosSemDistancia(){
   const area = STATE.config.licitacoesArea;
   if(!area || area.lat==null) return 0;
-  return (STATE.licitacoesRevisao||[]).filter(o=>o.distanciaKm==null && o.codigoIbge && o.municipioNome).length;
+  return licTodasComLugar().filter(o=>o.distanciaKm==null && o.codigoIbge && o.municipioNome).length;
 }
 
 /* Descobre a distância dos municípios que ainda não estão no cache.
    O Nominatim só permite 1 chamada por segundo — por isso a pausa e o
    aviso de progresso. Roda em segundo plano, sem travar a tela. */
 let licCalculandoDistancia = false;
+let licJaMediuDistancia = false;   // só uma rodada automática por sessão
 async function licCalcularDistancias(){
   if(licCalculandoDistancia) return;
   const area = STATE.config.licitacoesArea;
@@ -30183,7 +30242,7 @@ async function licCalcularDistancias(){
     return;
   }
   const pendentes = new Map();
-  (STATE.licitacoesRevisao||[]).forEach(o=>{
+  licTodasComLugar().forEach(o=>{
     if(o.distanciaKm!=null || !o.codigoIbge || !o.municipioNome) return;
     if(!pendentes.has(o.codigoIbge)) pendentes.set(o.codigoIbge, o);
   });
@@ -30197,7 +30256,7 @@ async function licCalcularDistancias(){
       const geo = await geocodificarMunicipioPNCP(ibge, exemplo.municipioNome, exemplo.uf);
       if(geo){
         const km = Math.round(distanciaKm(area.lat, area.lng, geo.lat, geo.lng));
-        (STATE.licitacoesRevisao||[]).forEach(o=>{ if(o.codigoIbge===ibge) o.distanciaKm = km; });
+        licTodasComLugar().forEach(o=>{ if(o.codigoIbge===ibge) o.distanciaKm = km; });
         feitos++;
       }else falhas++;
     }catch(e){ falhas++; }
@@ -30273,6 +30332,35 @@ function licLinksHtml(l){
     : `<span class="semlink" title="${escapeAttr(x.falta)}">${escapeHtml(x.t)}</span>`).join('')}</div>`;
 }
 
+/* =========================================================
+   DE ONDE A GENTE SAI E QUANTO FALTA PRA CHEGAR
+
+   "Em todo o menu — oportunidade, em análise, precificação, proposta,
+   não ganhamos — vai mostrar a distância de Rio Verde até o destino."
+
+   Um lugar só monta essa linha, então ela sai igual nas cinco abas. E
+   diz de onde é a distância: "277 km" sozinho não informa nada.
+   ========================================================= */
+function licCidadeBase(){
+  const a = STATE.config.licitacoesArea;
+  const nome = (a && a.municipio) || 'Rio Verde';
+  return String(nome).split('/')[0].trim() || 'Rio Verde';
+}
+function licLugarHtml(l){
+  if(!l) return '';
+  const partes = [];
+  if(l.municipioNome) partes.push(`${escapeHtml(l.municipioNome)}${l.uf?'/'+escapeHtml(l.uf):''}`);
+  if(l.distanciaKm != null){
+    partes.push(l.distanciaKm <= 5
+      ? `<b>aqui na nossa cidade</b>`
+      : `<b>${l.distanciaKm} km</b> de ${escapeHtml(licCidadeBase())}`);
+  }else if(licCalculandoDistancia){
+    partes.push('<span style="color:var(--ink-faint);">medindo a distância…</span>');
+  }
+  if(!partes.length) return '';
+  return `<div class="lic-lugar">📍 ${partes.join(' · ')}</div>`;
+}
+
 /* A mesma ordenação da triagem, agora também aqui: o que vence primeiro
    e o que está mais perto são as duas perguntas que decidem por onde
    começar quando tem várias em análise ao mesmo tempo. */
@@ -30333,7 +30421,8 @@ function licPainelAnalise(){
             <div class="esq">
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
-              <div class="meta">${escapeHtml(l.orgao||'')}${l.municipioNome?` · ${escapeHtml(l.municipioNome)}/${escapeHtml(l.uf||'')}`:''}${l.distanciaKm!=null?` · ${l.distanciaKm} km`:''}</div>
+              <div class="meta">${escapeHtml(l.orgao||'')}</div>
+              ${licLugarHtml(l)}
               ${l.captadoPor?`<div class="lic-captou">👤 captada por <b>${escapeHtml(l.captadoPor)}</b>${l.captadoEm?` · ${fmtDate(String(l.captadoEm).slice(0,10))}`:''}</div>`:''}
               ${licTarjasComoParticipar(l, true)}
               ${licLinksHtml(l)}
@@ -30399,6 +30488,7 @@ function licPainelPrecificacao(){
               <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
               <div class="obj">${escapeHtml(l.objeto||'')}</div>
               <div class="meta">${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · julgamento ${l.criterio==='global'?'por preço global':'por item'}</div>
+              ${licLugarHtml(l)}
               ${licLinksHtml(l)}
             </div>
             <div class="dir">
@@ -30522,6 +30612,7 @@ function licCartaoPerdida(l){
         <span class="ctrl">${escapeHtml((l.propostaCampos.modalidade||'') + ' ' + (l.propostaCampos.numero || l.numero || ''))}</span>
         <div class="obj">${escapeHtml(l.objeto||'')}</div>
         <div class="meta">${escapeHtml(l.orgao||'')}${l.dataResultado?` · resultado em ${fmtDate(l.dataResultado)}`:''}${quem.length?` · venceu ${escapeHtml(quem.join(', '))}`:''}</div>
+        ${licLugarHtml(l)}
         ${licLinksHtml(l)}
         ${l.resultadoObs?`<div class="help-text" style="margin-top:6px;">“${escapeHtml(l.resultadoObs)}”</div>`:''}
       </div>
@@ -30567,21 +30658,67 @@ function licCartaoPerdida(l){
   </div>`;
 }
 
+/* =========================================================
+   DUAS PASTAS: O QUE AINDA NÃO SAIU E O QUE JÁ SAIU
+
+   "Fizemos a proposta mas não enviamos, ele vai ficar como se não
+   tivesse enviado. E quando enviarmos a proposta no e-mail, ele vai
+   para outra pasta."
+
+   Antes as duas coisas moravam na mesma aba, uma embaixo da outra, e a
+   proposta pronta e não enviada ficava igual às outras. Agora ela tem
+   aba própria: é a lista do que falta FAZER hoje.
+   ========================================================= */
 function licPainelPropostas(){
-  const lista = licPorEtapa(['proposta','enviada','ganhou','entregue']);
-  const grupos = [
-    { etapas:['proposta'], titulo:'Montando a proposta' },
-    { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
-    { etapas:['ganhou','entregue'], titulo:'Ganhamos' }
-  ];
+  const lista = licOrdenarLista(licPorEtapa(['proposta']));
+  /* a mais urgente primeiro: aqui prazo é dinheiro */
+  lista.sort((a,b)=>String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9')));
+  const correndo = lista.filter(l=>{
+    const p = licPrazoInfo(l);
+    return !p.encerrada && p.quando && (p.quando.getTime() - Date.now()) < 48*3600000;
+  }).length;
+  const perdidoOPrazo = lista.filter(l=>licPrazoInfo(l).encerrada).length;
+
   return `
     <div class="lic-topo">
       <div>
-        <h3>Propostas</h3>
-        <div class="sub">Da proposta montada até o resultado. Quando ganha, aqui é onde começa a compra.</div>
+        <h3>Prontas pra enviar</h3>
+        <div class="sub">A proposta está montada e <b>ainda não saiu</b>. Esta aba é a lista do que falta enviar —
+          quando você mandar pelo e-mail ou pela plataforma, marque aqui e ela muda de pasta.</div>
       </div>
     </div>
-    ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nenhuma proposta ainda.</div></div>'
+    ${correndo>0 ? `<div class="lic-doc aviso" style="display:block;">
+      <b>⏰ ${correndo} proposta${correndo===1?'':'s'} pronta${correndo===1?'':'s'} e o prazo encerra em menos de 48h.</b>
+      <small>É assim que se perde uma dispensa com o trabalho todo feito.</small></div>`:''}
+    ${perdidoOPrazo>0 ? `<div class="lic-doc" style="display:block;border-color:var(--negative);">
+      <b style="color:var(--negative);">${perdidoOPrazo} proposta${perdidoOPrazo===1?'':'s'} com o prazo já encerrado.</b>
+      <small>Se você enviou e esqueceu de marcar, marque agora. Se não deu tempo, marque "Desistir" pra sair daqui.</small></div>`:''}
+    ${lista.length===0 ? `<div class="card"><div class="lic-vazio">Nenhuma proposta esperando pra sair.
+        O que você já enviou está na aba <b>Enviadas</b>.</div></div>`
+      : lista.map(l=>licCartaoProposta(l)).join('')}
+  `;
+}
+
+function licPainelEnviadas(){
+  const lista = licPorEtapa(['enviada','ganhou','entregue']);
+  const grupos = [
+    { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
+    { etapas:['ganhou','entregue'], titulo:'Ganhamos' }
+  ];
+  const cobrar = lista.filter(licPrecisaCobrar).length;
+  return `
+    <div class="lic-topo">
+      <div>
+        <h3>Enviadas</h3>
+        <div class="sub">A proposta já saiu. Daqui pra frente é aguardar o resultado — e quando ganha,
+          é aqui que começa a compra.</div>
+      </div>
+    </div>
+    ${cobrar>0 ? `<div class="lic-doc aviso" style="display:block;">
+      <b>⏰ ${cobrar} proposta${cobrar===1?'':'s'} passou dos ${LIC_DIAS_PRA_COBRAR} dias sem retorno.</b>
+      <small>Vale ligar ou mandar e-mail pro órgão e perguntar se já homologaram.</small></div>`:''}
+    ${lista.length===0 ? `<div class="card"><div class="lic-vazio">Nada enviado ainda.
+        O que está montado e esperando pra sair fica na aba <b>Prontas pra enviar</b>.</div></div>`
       : grupos.map(g=>{
         const doGrupo = lista.filter(l=>g.etapas.includes(l.etapa));
         if(doGrupo.length===0) return '';
@@ -30667,6 +30804,7 @@ function licCartaoProposta(l){
         <span class="ctrl">${escapeHtml((l.propostaCampos.modalidade||'') + ' ' + (l.propostaCampos.numero || l.numero || ''))}</span>
         <div class="obj">${escapeHtml(l.objeto||'')}</div>
         <div class="meta">${escapeHtml(cliente ? cliente.nome : (l.orgao||''))}${l.vendedor?` · ${escapeHtml(l.vendedor)}`:''}${orc?` · orçamento nº ${orc.numero}`:''}</div>
+        ${licLugarHtml(l)}
         <div class="lic-tags">
           <span class="lic-tag">${(LIC_ETAPAS[l.etapa]||{}).rotulo||l.etapa}</span>
           <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
@@ -30674,12 +30812,17 @@ function licCartaoProposta(l){
           ${licAvisoCobrar(l, true)}
         </div>
         ${licLinksHtml(l)}
+        ${l.etapa==='proposta' ? licFaixaEnvio(l) : ''}
         ${licAvisoCobrar(l, false)}
       </div>
       <div class="dir">
+        ${l.etapa==='proposta' ? (()=>{ const p = licPrazoInfo(l);
+          return `<div class="lic-prazo">Encerra <b>${licDataHora(p.quando)}</b><br><span class="lic-cron ${p.classe}">${p.texto}</span></div>`;
+        })() : ''}
         <div class="lic-valor">${fmtMoney(t.venda)}</div>
         <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-4px;">lucro ${fmtMoney(t.lucro)}</div>
-        ${l.etapa==='proposta' ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','proposta')">Abrir proposta →</button>
+        ${l.etapa==='proposta' ? `<button class="btn btn-sm btn-primary" onclick="licMarcarEnviada('${l.id}')">✈ Já enviei — marcar como enviada</button>
+            <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Abrir proposta →</button>
             <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar</button>
             <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
         ${l.etapa==='enviada' ? `<button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
@@ -30729,7 +30872,7 @@ function licDesistir(id){
       l.status = 'Perdemos';
       l.dataResultado = todayISO();
       licRegistrar(l, 'Desistimos — não vamos participar.');
-      saveState(); licAberta=null; licTela=null; licAba='propostas';
+      saveState(); licAberta=null; licTela=null; licAba='perdidas';
       renderPortalLicitacoes();
       showToast('Desistiu. Continua no histórico dos produtos.','success');
     }, 'Desistir');
@@ -31496,18 +31639,34 @@ a) PROCURE PELA ESPECIFICAÇÃO, não pelo nome genérico do produto.
 b) Produtos reais, à venda no Brasil HOJE, com link e preço visível na
    página. Nada de preço "a partir de", nada de produto esgotado, nada
    de página de marketplace sem estoque.
-c) Me dê pelo menos 3 que atendam 100% das exigências. Se não existirem
+c) UM REGISTRO POR MODELO, nunca um por loja. Se o mesmo produto do
+   mesmo fabricante está à venda em cinco lojas, isso é UM modelo:
+   traga uma linha só, com o MENOR preço que você achou, e diga a loja
+   em "fornecedor". Nada de repetir "Start Química Cera Master" três
+   vezes porque está no Mercado Livre, na Shopee e no Magalu.
+d) "marca" é o FABRICANTE e "modelo" é o nome do produto como está na
+   embalagem. Nunca ponha nome de loja, de distribuidor nem de
+   marketplace nesses dois campos — loja vai em "fornecedor".
+   Se você não sabe o fabricante, não invente: deixe "marca" vazia e
+   explique em "observacao".
+e) O "link" tem que abrir A PÁGINA DAQUELE PRODUTO, com o produto e o
+   preço visíveis. Não serve home de loja, não serve página de
+   categoria, não serve resultado de busca, não serve link que cai em
+   "produto não encontrado". ABRA o link antes de me mandar e confira
+   que o produto está lá. Se não conseguir abrir ou não for a página
+   certa, não mande aquele produto — prefiro 3 certos a 5 duvidosos.
+f) Me dê pelo menos 3 que atendam 100% das exigências. Se não existirem
    3, traga quantos existirem e diga em "observacao" que o mercado não
    tem mais do que isso — isso também é informação.
-d) Traga ainda os que chegam perto e reprovam, para eu saber o que
+g) Traga ainda os que chegam perto e reprovam, para eu saber o que
    descartei e por quê. No mínimo 5 produtos no total.
-e) ORDENE a lista do mais barato para o mais caro, contando só os que
+h) ORDENE a lista do mais barato para o mais caro, contando só os que
    atendem 100%. O primeiro da lista tem que ser o mais barato que
    serve.
-f) Prefira preço de atacado/distribuidor quando existir, e diga qual é
+i) Prefira preço de atacado/distribuidor quando existir, e diga qual é
    qual em "fornecedor". Loja de varejo serve como referência, mas eu
    compro melhor no distribuidor — se achar os dois, traga os dois.
-g) Compare o preço com o VALOR UNITÁRIO ESTIMADO daquele item (o que
+j) Compare o preço com o VALOR UNITÁRIO ESTIMADO daquele item (o que
    você extraiu do edital). Em "observacao" do modelo, escreva se cabe:
    "custa 12,40 contra 21,60 do edital — sobra 42%". Se TODOS os
    produtos que atendem custarem mais que o valor do edital, diga isso
@@ -32068,6 +32227,92 @@ function licLerRespostaGpt(id){
 
 /* Aplica no sistema. O que você já tinha escrito à mão manda — a IA
    preenche o que está vazio e o resto fica marcado como mudança. */
+/* =========================================================
+   UM MODELO DE CADA — NÃO UMA LOJA DE CADA
+
+   "Essa opção AGIPRO é uma loja, não produto. Clico pra abrir o anúncio
+   e não tem nada de cera. E outra coisa: ele mandou duas vezes Start.
+   Ele deve mostrar apenas um modelo de cada, não várias lojas com o
+   mesmo produto."
+
+   O pedido que vai pra IA já exige uma linha por modelo, mas IA nenhuma
+   obedece sempre — então o sistema junta aqui também. Mesmo item, mesma
+   marca e mesmo modelo = uma linha só, com o MENOR preço; as outras
+   lojas viram "também em". E o que chega sem nome de modelo, ou com um
+   link que não é página de produto, fica marcado pra ela conferir antes
+   de confiar no preço.
+   ========================================================= */
+function licTextoChave(t){
+  return String(t||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .replace(/[^a-z0-9]+/g,' ').trim();
+}
+function licChaveModelo(m){
+  /* marca e modelo juntos e em ordem alfabética: se numa das linhas a IA
+     trocou os dois campos de lugar, ainda cai na mesma chave */
+  const palavras = (licTextoChave(m.marca) + ' ' + licTextoChave(m.modelo))
+    .split(' ').filter(Boolean).sort().join(' ');
+  return (Number(m.item)||1) + '|' + palavras;
+}
+
+/* Não dá pra abrir o link daqui e conferir (o navegador não deixa ler
+   site de terceiro), mas dá pra ver pelo endereço quando ele NÃO é de
+   um anúncio: home de loja, busca, categoria. É o caso do link que
+   caiu em "nada de cera". */
+const LIC_LINK_NAO_PRODUTO = /\/(busca|buscar|search|pesquisa|categoria|categorias|departamento|departamentos|lista|listagem|loja|lojas|sobre|contato|institucional|home)(\/|$)/i;
+function licLinkDeProduto(url){
+  const u = String(url||'').trim();
+  if(!/^https?:\/\//i.test(u)) return false;
+  try{
+    const a = new URL(u);
+    if(!a.pathname || a.pathname === '/') return false;          // home da loja
+    if(LIC_LINK_NAO_PRODUTO.test(a.pathname)) return false;      // busca/categoria
+    if(/[?&](q|busca|search|keyword|palavra)=/i.test(a.search)) return false;
+    return true;
+  }catch(e){ return false; }
+}
+
+function licJuntarModelos(lista){
+  const porChave = new Map();
+  (lista||[]).filter(Boolean).forEach(m=>{
+    const k = licChaveModelo(m);
+    const atual = porChave.get(k);
+    if(!atual){ porChave.set(k, m); return; }
+    /* fica o mais barato — o preço do outro não se perde, vira "também em" */
+    const ganha = (licNumDireto(m.preco) > 0 &&
+                   (!(licNumDireto(atual.preco) > 0) || licNumDireto(m.preco) < licNumDireto(atual.preco)))
+                  ? m : atual;
+    const perde = ganha === m ? atual : m;
+    const outras = [].concat(ganha.tambemEm||[], perde.tambemEm||[]);
+    if(perde.fornecedor || licNumDireto(perde.preco)>0)
+      outras.push({ loja: perde.fornecedor||'outra loja', preco: licNumDireto(perde.preco), link: perde.link||'' });
+    const vistas = new Set();
+    ganha.tambemEm = outras.filter(o=>{
+      const c = licTextoChave(o.loja) + '|' + o.preco;
+      if(vistas.has(c)) return false; vistas.add(c); return true;
+    });
+    /* quem perdeu pode ter trazido justamente o que faltava no que ganhou */
+    if(!String(ganha.modelo||'').trim() && perde.modelo) ganha.modelo = perde.modelo;
+    if(!String(ganha.marca||'').trim() && perde.marca) ganha.marca = perde.marca;
+    if(!ganha.fabricante && perde.fabricante) ganha.fabricante = perde.fabricante;
+    if(!licLinkDeProduto(ganha.link) && licLinkDeProduto(perde.link)) ganha.link = perde.link;
+    if((!ganha.veredictos || !ganha.veredictos.length) && perde.veredictos && perde.veredictos.length)
+      ganha.veredictos = perde.veredictos;
+    porChave.set(k, ganha);
+  });
+
+  const juntos = [...porChave.values()];
+  juntos.forEach(m=>{
+    const avisos = [];
+    if(!String(m.modelo||'').trim())
+      avisos.push('veio sem o nome do modelo — confira se isso não é só o nome de uma loja');
+    if(!m.link) avisos.push('veio sem o link do anúncio');
+    else if(!licLinkDeProduto(m.link))
+      avisos.push('o link não parece ser a página do produto — abra e confira antes de confiar no preço');
+    m.avisos = avisos;
+  });
+  return juntos;
+}
+
 function licAplicarRespostaIA(l, dado){
   const d = dado.dispensa || {};
   /* Uma resposta de continuação (o botão "pedir mais opções deste item")
@@ -32211,8 +32456,8 @@ function licAplicarRespostaIA(l, dado){
   });
 
   /* ---- os modelos, agrupados por item ---- */
-  const modelos = Array.isArray(dado.modelos) ? dado.modelos.filter(m=>m && (m.modelo||m.marca)) : [];
-  modelos.forEach(m=>{
+  const modelosBrutos = Array.isArray(dado.modelos) ? dado.modelos.filter(m=>m && (m.modelo||m.marca)) : [];
+  modelosBrutos.forEach(m=>{
     m.item = Number(m.item) || 1;
     m.preco = licNumDireto(m.preco);
     m.veredictos = Array.isArray(m.veredictos) ? m.veredictos : [];
@@ -32220,15 +32465,20 @@ function licAplicarRespostaIA(l, dado){
     const confirmar = m.veredictos.some(v=>/A_CONFIRMAR|CONFIRMAR/i.test(String(v.situacao||'')));
     m.resultado = reprova ? 'reprova' : (confirmar ? 'a confirmar' : 'atende');
   });
+  /* Aqui é onde a loja repetida deixa de virar linha: junta antes de
+     guardar, não na hora de desenhar — assim o que fica salvo já é um
+     modelo por produto. */
+  const modelos = licJuntarModelos(modelosBrutos);
+  const repetidos = modelosBrutos.length - modelos.length;
+
   /* Resposta de continuação (só "modelos", sem "itens") SOMA aos que já
      existem, em vez de apagar — senão pedir mais opções de um item
-     derrubava a pesquisa dos outros. */
+     derrubava a pesquisa dos outros. A junção roda na lista inteira, pra
+     o modelo novo não repetir um que já estava ali. */
   const soModelos = modelos.length > 0 && ehContinuacao;
   if(soModelos && l.comparacao && l.comparacao.modelos.length){
-    const chave = (m)=>`${Number(m.item)||1}|${(m.marca||'').toUpperCase()}|${(m.modelo||'').toUpperCase()}`;
-    const tinha = new Set(l.comparacao.modelos.map(chave));
-    const novosModelos = modelos.filter(m=>!tinha.has(chave(m)));
-    l.comparacao = { modelos: l.comparacao.modelos.concat(novosModelos), quando:new Date().toISOString() };
+    l.comparacao = { modelos: licJuntarModelos(l.comparacao.modelos.concat(modelos)),
+                     quando:new Date().toISOString() };
   }else if(modelos.length){
     l.comparacao = { modelos, quando:new Date().toISOString() };
   }else if(itensIA.length){
@@ -32245,6 +32495,7 @@ function licAplicarRespostaIA(l, dado){
   if(itensIA.length) partes.push(`${itensIA.length} item${itensIA.length===1?'':'ns'}${novos?` (${novos} novo${novos===1?'':'s'})`:''}`);
   if(preenchidos) partes.push(`${preenchidos} campo${preenchidos===1?'':'s'}`);
   if(modelos.length) partes.push(`${modelos.length} modelo${modelos.length===1?'':'s'}`);
+  if(repetidos>0) partes.push(`juntei ${repetidos} repetido${repetidos===1?'':'s'}`);
   showToast(partes.length?('Li: '+partes.join(' · ')):'Li a resposta, mas ela veio vazia.', partes.length?'success':'error');
 }
 
@@ -33000,8 +33251,14 @@ function licComparacaoHtml(l){
           <div style="text-align:right;">
             <div style="font-size:17px;font-weight:700;font-family:var(--font-num);">${m.preco>0?fmtMoney(m.preco):'sem preço'}</div>
             ${m.link && /^https?:/i.test(m.link)?`<a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary);">🔗 abrir anúncio</a>`:''}
+            ${(m.tambemEm||[]).length?`<div style="font-size:11.5px;color:var(--ink-faint);margin-top:3px;">também em ${(m.tambemEm||[]).map(o=>escapeHtml(o.loja)+(o.preco>0?' '+fmtMoney(o.preco):'')).join(' · ')}</div>`:''}
           </div>
         </div>
+
+        ${(m.avisos||[]).length?`<div class="motivos" style="background:var(--warning-soft);">
+          <b>⚠️ Confira antes de usar:</b>
+          ${m.avisos.map(a=>`<div>· ${escapeHtml(a)}</div>`).join('')}
+        </div>`:''}
 
         ${falhas.length?`<div class="motivos" style="background:${fundo};">
           <b>Reprova em ${falhas.length}:</b>
@@ -33103,6 +33360,14 @@ jaVistos.length ? `JÁ PESQUISADOS — não repita estes:` : '',
 `tiver 3, diga isso.`,
 `A prova de que atende tem que vir da ficha técnica da página, não do`,
 `nome do produto.`,
+``,
+`UM REGISTRO POR MODELO, nunca um por loja: o mesmo produto em cinco`,
+`lojas é UM modelo, com o menor preço e a loja em "fornecedor".`,
+`"marca" é o fabricante e "modelo" é o nome na embalagem — nome de loja`,
+`ou de marketplace nunca entra nesses dois campos.`,
+`O "link" tem que abrir a página DAQUELE produto, com preço visível.`,
+`Abra o link e confira antes de me mandar: home de loja, categoria ou`,
+`busca não serve. Prefiro 3 certos a 5 duvidosos.`,
 `ORDENE do mais barato para o mais caro, contando só os que atendem`,
 `100% — o primeiro da lista é o mais barato que serve.`,
 `Prefira preço de atacado/distribuidor e diga qual é qual em`,
@@ -33924,9 +34189,9 @@ function licMarcarEnviada(id){
   const orc = (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId);
   if(orc) orc.status = 'enviado';
   licRegistrar(l, 'Proposta enviada ao órgão.');
-  saveState(); licAberta=null; licTela=null; licAba='propostas';
+  saveState(); licAberta=null; licTela=null; licAba='enviadas';
   renderPortalLicitacoes();
-  showToast('Marcada como enviada. Agora é aguardar o retorno.','success');
+  showToast('Marcada como enviada — saiu de "Prontas pra enviar" e foi pra "Enviadas".','success');
 }
 
 /* ---------------------------------------------------------
@@ -34304,6 +34569,144 @@ function licArquivoIdb(modo, chave, valor){
 }
 
 /* =========================================================
+   AS CERTIDÕES NAS DUAS MÁQUINAS
+
+   "Certidões e também cadastro do representante não está puxando para
+   todas as máquinas."
+
+   O representante era o config, que não subia depois de mesclado — isso
+   já está consertado lá no sincronismo. O ARQUIVO da certidão é outra
+   história: ele mora no IndexedDB, que é de cada navegador. Então na
+   máquina do Neto a linha aparecia e o PDF não existia.
+
+   Agora o arquivo também vai pra nuvem, numa coleção própria, uma linha
+   por certidão. Sobe quando ela anexa; desce no sincronismo normal e cai
+   direto no IndexedDB da outra máquina. Não passa pelo STATE de
+   propósito: base64 de PDF no localStorage estoura o navegador.
+   ========================================================= */
+function licBlobParaB64(blob){
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>{ const s = String(fr.result||''); resolve(s.slice(s.indexOf(',')+1)); };
+    fr.onerror = ()=>reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+function licB64ParaBlob(b64, tipo){
+  const bruto = atob(String(b64||''));
+  const bytes = new Uint8Array(bruto.length);
+  for(let i=0;i<bruto.length;i++) bytes[i] = bruto.charCodeAt(i);
+  return new Blob([bytes], { type: tipo || 'application/pdf' });
+}
+
+/* Sobe o arquivo de UMA certidão. Devolve true/false em vez de estourar:
+   nenhum anexo pode falhar por causa da internet. */
+async function licSubirCertidao(id){
+  try{
+    if(!nuvemSessao || !nuvemSessao.access_token) return false;
+    const d = licDoc(id);
+    if(!d || !d.arquivo) return false;
+    const blob = await licArquivoIdb('get', 'certidao:'+id);
+    if(!blob) return false;
+    if(blob.size > 12*1024*1024) return false;   // grande demais pra trafegar em JSON
+    const b64 = await licBlobParaB64(blob);
+    await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
+      method: 'POST',
+      headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+      body: JSON.stringify([{
+        colecao: NUVEM_COL_CERTIDAO, id: String(id), excluido: false,
+        dados: { nome: d.arquivo, tipo: blob.type || 'application/pdf', tamanho: blob.size, b64: b64 }
+      }])
+    });
+    return true;
+  }catch(e){ console.error('certidão não subiu', e); return false; }
+}
+
+/* Chamada pelo sincronismo quando o arquivo chega de outra máquina. */
+function licGuardarCertidaoBaixada(linha){
+  (async ()=>{
+    try{
+      if(linha.excluido){ await licArquivoIdb('del', 'certidao:'+linha.id); return; }
+      const d = linha.dados || {};
+      if(!d.b64) return;
+      await licArquivoIdb('put', 'certidao:'+linha.id, licB64ParaBlob(d.b64, d.tipo));
+      /* a ficha pode não ter chegado ainda — se chegou, acerta o nome */
+      const ficha = licDoc(linha.id);
+      if(ficha && !ficha.arquivo && d.nome){
+        ficha.arquivo = d.nome; ficha.tamanho = d.tamanho || 0;
+        saveState();
+      }
+    }catch(e){ console.error('certidão não desceu', e); }
+  })();
+}
+
+/* Os dois botões manuais, pra quando ela não quer esperar o sincronismo
+   ou está numa máquina que já passou do ponto. */
+async function licSubirCertidoesParaNuvem(){
+  if(!nuvemSessao || !nuvemSessao.access_token){
+    showToast('Entre na nuvem primeiro — é por ela que os arquivos viajam.','error'); return;
+  }
+  const docs = licDocs().filter(d=>d.arquivo);
+  if(!docs.length){ showToast('Não tem arquivo anexado pra enviar.','info'); return; }
+  showToast(`Enviando ${docs.length} arquivo${docs.length===1?'':'s'}…`,'info');
+  let ok = 0;
+  for(const d of docs){ if(await licSubirCertidao(d.id)) ok++; }
+  showToast(ok === docs.length
+    ? `${ok} arquivo${ok===1?'':'s'} na nuvem — a outra máquina recebe no próximo sincronismo.`
+    : `${ok} de ${docs.length} subiram. O resto tente de novo.`, ok?'success':'error');
+  const m = document.getElementById('modal-docs-licitacao');
+  if(m) licDesenharDocs(m);
+}
+
+async function licPuxarCertidoesDaNuvem(){
+  if(!nuvemSessao || !nuvemSessao.access_token){
+    showToast('Entre na nuvem primeiro.','error'); return;
+  }
+  try{
+    showToast('Procurando os arquivos na nuvem…','info');
+    const linhas = await nuvemJson(
+      '/rest/v1/registros?select=colecao,id,dados,excluido&colecao=eq.' + NUVEM_COL_CERTIDAO, { method:'GET' });
+    let baixados = 0;
+    for(const linha of (linhas||[])){
+      if(linha.excluido || !linha.dados || !linha.dados.b64) continue;
+      try{
+        await licArquivoIdb('put', 'certidao:'+linha.id, licB64ParaBlob(linha.dados.b64, linha.dados.tipo));
+        const ficha = licDoc(linha.id);
+        if(ficha && !ficha.arquivo && linha.dados.nome){
+          ficha.arquivo = linha.dados.nome; ficha.tamanho = linha.dados.tamanho || 0;
+        }
+        baixados++;
+      }catch(e){ console.error(e); }
+    }
+    saveState();
+    await licConferirOrfaos();
+    const m = document.getElementById('modal-docs-licitacao');
+    if(m) licDesenharDocs(m);
+    renderPortalLicitacoes();
+    showToast(baixados
+      ? `${baixados} arquivo${baixados===1?'':'s'} baixado${baixados===1?'':'s'} da nuvem.`
+      : 'Não tem arquivo de certidão na nuvem ainda. Envie da máquina que tem os PDFs.',
+      baixados?'success':'info');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui falar com a nuvem agora.','error');
+  }
+}
+
+/* O arquivo está guardado NESTA máquina? É o que diz se a certidão vai
+   junto na pasta .zip ou se a linha está verde por engano. */
+let licCertidoesLocais = null;   // Set com os ids que têm arquivo aqui
+async function licConferirCertidoesLocais(){
+  try{
+    const chaves = await licArquivoIdb('chaves');
+    licCertidoesLocais = new Set((chaves||[])
+      .filter(k=>String(k).startsWith('certidao:'))
+      .map(k=>String(k).slice(9)));
+  }catch(e){ licCertidoesLocais = null; }
+  return licCertidoesLocais;
+}
+
+/* =========================================================
    RECUPERAR A PASTA DE DOCUMENTOS
 
    Os arquivos moram no IndexedDB deste navegador; a ficha de cada um
@@ -34676,6 +35079,15 @@ function licLigarDetalhe(){
       }
     });
   });
+
+  /* O campo do órgão passa a procurar igual ao campo de produto: qualquer
+     palavra, em qualquer ordem, sem acento. Digitar num select nativo só
+     acha pelo COMEÇO do nome — era por isso que "EDUCACAO" nunca achava
+     "FUNDO MUNICIPAL DE EDUCACAO DE RIO VERDE". Vale também o CNPJ, o
+     nome fantasia e a cidade. */
+  if(document.getElementById('lic-cliente') && typeof ligarSugestaoCliente === 'function'){
+    ligarSugestaoCliente('lic-cliente', 'Digite qualquer parte do nome do órgão, o CNPJ ou a cidade...');
+  }
 
   /* campos da proposta — salvam ao sair, sem redesenhar */
   ['lic-cliente','lic-vendedor','licp-modalidade','licp-numero','licp-tipo',
@@ -46205,7 +46617,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '21/10/2026 19:23';
+const SISTEMA_VERSAO = '26/10/2026 14:49';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -46387,6 +46799,15 @@ RENDERERS['armazenamento'] = renderArmazenamento;
 /* licitacoesGeocodeCache é cache de mapa, recriável — subir isso
    só gastaria banco e banda. */
 const NUVEM_NAO_SINCRONIZA = ['licitacoesGeocodeCache'];
+
+/* Coleção à parte pros ARQUIVOS das certidões. A pasta (nome, validade,
+   nome do arquivo) sempre andou junto no `config` — o arquivo não, ele
+   mora no IndexedDB, que é de cada navegador. Resultado: na máquina do
+   Neto a linha aparecia verde e o PDF não existia.
+   Esta coleção NÃO passa pelo STATE de propósito: base64 de PDF no
+   localStorage estoura o limite de 5 MB do navegador. Ela sobe quando
+   ela anexa e desce direto pro IndexedDB no sincronismo normal. */
+const NUVEM_COL_CERTIDAO = 'certidaoArquivo';
 
 let nuvemSessao   = null;   // { access_token, refresh_token, expira }
 let nuvemUsuario  = null;   // { id, nome, email, dono, ativo, permissoes }
@@ -46622,6 +47043,9 @@ function nuvemMudancas(){
     if(agora[chave]) return;
     const [colecao, ...resto] = chave.split('|');
     if(colecao === '_doc') return;   // documento não some, só muda
+    /* os arquivos das certidões não vivem no STATE — se entrassem aqui,
+       toda rodada apagaria do servidor o PDF que acabou de subir */
+    if(colecao === NUVEM_COL_CERTIDAO) return;
     subir.push({
       colecao: colecao,
       id: resto.join('|'),
@@ -46703,6 +47127,12 @@ function nuvemAplicar(linhas){
       if(espelho[chave] !== digitalLocal) return;
     }
 
+    /* arquivo de certidão: vai pro IndexedDB, não pro STATE */
+    if(linha.colecao === NUVEM_COL_CERTIDAO){
+      licGuardarCertidaoBaixada(linha);
+      return;
+    }
+
     if(linha.colecao === '_doc'){
       /* Chave que ainda não existe nesta máquina (um bloco criado depois,
          como analiseST ou carrinhoCompra) também entra — senão a máquina
@@ -46727,9 +47157,24 @@ function nuvemAplicar(linhas){
           if(meuTem && !deleTem) juntos[k] = meu;
         });
         STATE.config = juntos;
-      }else{
-        STATE[linha.id] = linha.dados.valor;
+
+        /* E aqui estava o resto do problema das certidões e do
+           representante: depois de misturar, o espelho recebia a digital
+           do config MISTURADO. Pro sistema, nada havia mudado — então o
+           config completo nunca subia, e a máquina do Neto continuava
+           sem a pasta de documentos e sem o representante, pra sempre.
+           Agora: se a mistura ficou diferente do que veio do servidor, o
+           espelho guarda a digital do que VEIO. O config daqui conta como
+           alteração e sobe na próxima rodada, levando o que falta pras
+           outras máquinas. */
+        const digitalDeFora = nuvemDigital(JSON.stringify({ valor: deFora }));
+        const digitalJunto  = nuvemDigital(JSON.stringify({ valor: juntos }));
+        espelho[chave] = digitalJunto === digitalDeFora ? digitalJunto : digitalDeFora;
+        mudou++;
+        return;
       }
+
+      STATE[linha.id] = linha.dados.valor;
       espelho[chave] = nuvemDigital(JSON.stringify({ valor: STATE[linha.id] }));
       mudou++;
       return;
