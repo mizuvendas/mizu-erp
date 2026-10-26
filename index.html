@@ -1051,7 +1051,12 @@ table.data-table{ width:100%; font-size:13px; }
       </div>
       <button id="btn-export" style="background:rgba(46,125,91,0.18);border-color:rgba(46,125,91,0.35);color:#8FD9B4;font-weight:700;">⬇ Exportar backup (.json)</button>
       <button id="btn-import">⬆ Importar backup (.json)</button>
+      <!-- Devolve só o que sumiu, sem mexer no que está certo. É o caminho
+           seguro quando falta um registro: o "Importar backup" normal
+           SUBSTITUI tudo e leva junto o que foi lançado depois. -->
+      <button id="btn-repescar" style="background:rgba(201,138,44,0.18);border-color:rgba(201,138,44,0.35);color:#F0C27A;">🔎 Devolver o que sumiu (.json)</button>
       <input type="file" id="file-import" accept=".json" style="display:none;">
+      <input type="file" id="file-repescar" accept=".json" style="display:none;">
       <span id="last-saved">—</span>
       <button id="btn-novidades" onclick="abrirNovidades(null, 'Tudo que já mudou no sistema')" style="background:transparent;border-color:rgba(255,255,255,0.18);color:rgba(255,255,255,0.65);">✨ Novidades</button>
     </div>
@@ -2461,6 +2466,129 @@ document.getElementById('btn-export').addEventListener('click', exportarBackup);
 document.getElementById('btn-import').addEventListener('click', ()=>{
   document.getElementById('file-import').click();
 });
+/* =========================================================
+   DEVOLVER O QUE SUMIU
+
+   O "Importar backup" normal SUBSTITUI tudo — e aí tudo que foi lançado
+   depois do backup vai embora junto. Quando o que falta é um registro
+   ou outro (foi assim com o haver do Colégio do Sol), o que ela precisa
+   é o contrário: olhar um backup antigo, achar só o que não existe mais
+   aqui, e devolver esses — sem encostar em nada do que está certo.
+   ========================================================= */
+function repescarColecoes(doArquivo){
+  const achados = [];
+  Object.keys(doArquivo || {}).forEach(colecao=>{
+    const deLa = doArquivo[colecao];
+    if(!Array.isArray(deLa) || !deLa.length) return;
+    if(!deLa.every(x=>x && typeof x==='object' && x.id != null)) return;
+    const aqui = Array.isArray(STATE[colecao]) ? STATE[colecao] : [];
+    const temAqui = new Set(aqui.map(x=>String(x && x.id)));
+    const faltando = deLa.filter(x=>!temAqui.has(String(x.id)));
+    if(faltando.length) achados.push({ colecao, faltando });
+  });
+  return achados.sort((a,b)=>b.faltando.length - a.faltando.length);
+}
+
+/* Um rótulo que ela reconheça, e uma linha dizendo o que é cada registro
+   — "3 registros em haveres" não ajuda ninguém a decidir. */
+const REPESCA_NOMES = {
+  haveres:'Haver de clientes', clientes:'Clientes', produtos:'Produtos', vendas:'Vendas',
+  orcamentos:'Orçamentos', licitacoes:'Licitações', licitacoesRevisao:'Oportunidades de licitação',
+  fornecedores:'Fornecedores', despesas:'Despesas', contasPagar:'Contas a pagar',
+  contasReceber:'Contas a receber', notasRecebidas:'Notas recebidas', entregas:'Entregas'
+};
+function repescaDescrever(colecao, r){
+  const nomeCliente = id=>{ const c=(STATE.clientes||[]).find(x=>x.id===id); return c?c.nome:'(cliente que também sumiu)'; };
+  if(colecao==='haveres'){
+    let saldo = 0;
+    (r.historico||[]).forEach(le=>{ saldo += (le.tipo==='credito'?1:-1) * (Number(le.valor)||0); });
+    return `${nomeCliente(r.clienteId)} — saldo ${fmtMoney(saldo)} em ${(r.historico||[]).length} lançamento${(r.historico||[]).length===1?'':'s'}`;
+  }
+  if(colecao==='clientes' || colecao==='produtos' || colecao==='fornecedores') return r.nome || r.id;
+  if(colecao==='vendas') return `${r.data||''} · ${nomeCliente(r.clienteId)}`;
+  if(colecao==='orcamentos') return `nº ${r.numero||''} · ${nomeCliente(r.clienteId)}`;
+  if(colecao==='licitacoes'||colecao==='licitacoesRevisao') return `${r.numero||''} · ${(r.objeto||'').slice(0,60)}`;
+  return r.nome || r.descricao || r.id;
+}
+
+function abrirRepescagem(doArquivo, nomeArquivo){
+  const achados = repescarColecoes(doArquivo);
+  const quando = doArquivo && doArquivo.ultimoBackup
+    ? new Date(doArquivo.ultimoBackup).toLocaleString('pt-BR') : null;
+  const total = achados.reduce((s,a)=>s+a.faltando.length, 0);
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-repescar';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(720px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">🔎 Devolver o que sumiu</h3>
+      <p class="help-text">Comparei <b>${escapeHtml(nomeArquivo||'o arquivo')}</b>${quando?` (backup de ${escapeHtml(quando)})`:''}
+        com o que existe aqui agora. Abaixo está só o que <b>está no arquivo e não existe mais no sistema</b>.
+        Nada do que você tem hoje é apagado ou alterado — isto só devolve o que faltou.</p>
+      ${total===0 ? `<div class="lic-doc ok" style="display:block;"><b>Não falta nada.</b>
+          <small>Tudo que está nesse arquivo também está no sistema. Se você está procurando algo que sumiu,
+          tente um backup de uma data em que ele ainda existia.</small></div>`
+       : achados.map(a=>`
+          <div class="lic-doc aviso" style="display:block;">
+            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+              <input type="checkbox" class="rep-col" data-col="${escapeAttr(a.colecao)}" checked style="width:auto;">
+              <b>${escapeHtml(REPESCA_NOMES[a.colecao] || a.colecao)} — ${a.faltando.length} registro${a.faltando.length===1?'':'s'}</b>
+            </label>
+            <ul style="margin:6px 0 0;padding-left:26px;font-size:12.5px;line-height:1.7;">
+              ${a.faltando.slice(0,12).map(r=>`<li>${escapeHtml(repescaDescrever(a.colecao, r))}</li>`).join('')}
+              ${a.faltando.length>12?`<li style="color:var(--ink-faint);">…e mais ${a.faltando.length-12}</li>`:''}
+            </ul>
+          </div>`).join('')}
+      ${total>0 ? `<p class="help-text"><b>Atenção ao que veio depois.</b> Este arquivo é uma foto do dia dele.
+        Se houve lançamento novo nesse registro depois dessa data, ele não está aqui e você vai precisar lançar de novo.</p>`:''}
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        ${total>0?`<button class="btn btn-primary" id="rep-ok">Devolver o que está marcado</button>`:''}
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  const btn = m.querySelector('#rep-ok');
+  if(btn) btn.onclick = ()=>{
+    const marcadas = new Set([...m.querySelectorAll('.rep-col:checked')].map(c=>c.dataset.col));
+    let devolvidos = 0;
+    achados.forEach(a=>{
+      if(!marcadas.has(a.colecao)) return;
+      if(!Array.isArray(STATE[a.colecao])) STATE[a.colecao] = [];
+      /* confere de novo na hora de gravar: a nuvem pode ter trazido o
+         registro de volta enquanto a janela estava aberta */
+      const temAqui = new Set(STATE[a.colecao].map(x=>String(x && x.id)));
+      a.faltando.forEach(r=>{
+        if(temAqui.has(String(r.id))) return;
+        STATE[a.colecao].push(r); devolvidos++;
+      });
+    });
+    saveState();
+    m.remove();
+    showToast(devolvidos
+      ? `${devolvidos} registro${devolvidos===1?'':'s'} de volta. Confira na tela e, se estiver certo, exporte um backup novo.`
+      : 'Nada foi devolvido.', devolvidos?'success':'info');
+    if(devolvidos) setTimeout(()=>location.reload(), 1200);
+  };
+}
+
+document.getElementById('btn-repescar').addEventListener('click', ()=>{
+  document.getElementById('file-repescar').click();
+});
+document.getElementById('file-repescar').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const nome = file.name;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    try{ abrirRepescagem(JSON.parse(ev.target.result), nome); }
+    catch(err){ showToast('Arquivo inválido. Escolha um backup .json gerado por este sistema.','error'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
 document.getElementById('file-import').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if(!file) return;
@@ -2468,7 +2596,10 @@ document.getElementById('file-import').addEventListener('change', (e)=>{
   reader.onload = (ev)=>{
     try{
       const data = JSON.parse(ev.target.result);
-      confirmAction('Importar backup', 'Isso vai SUBSTITUIR todos os dados atuais pelos dados do arquivo. Deseja continuar?', ()=>{
+      confirmAction('Importar backup',
+        'Isso SUBSTITUI todos os dados atuais pelos do arquivo. Tudo que foi lançado depois desse backup some — ' +
+        'e, com a nuvem ligada, some também nas outras máquinas, porque elas seguem esta. ' +
+        'Se o que você quer é só devolver um registro que sumiu, feche aqui e use "🔎 Devolver o que sumiu". Continuar mesmo assim?', ()=>{
         STATE = Object.assign(defaultState(), data);
         saveState();
         showToast('Backup importado com sucesso.', 'success');
@@ -46617,7 +46748,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/10/2026 14:49';
+const SISTEMA_VERSAO = '26/10/2026 19:49';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47061,21 +47192,93 @@ function nuvemMudancas(){
 /* ---------------------------------------------------------
    SUBIR E BAIXAR
    --------------------------------------------------------- */
+/* =========================================================
+   FREIO DE MÃO NAS EXCLUSÕES EM MASSA
+
+   O sincronismo deduz exclusão: "esse registro está no espelho e não
+   está mais no STATE, então foi apagado — apaga na nuvem". É verdade
+   quando ela clica na lixeira. Não é verdade quando o STATE encolheu
+   por acidente — um backup antigo importado, um carregamento que veio
+   pela metade. Aí a máquina que perdeu os dados manda TODAS as outras
+   apagarem também, caladinho. Foi assim que o haver sumiu.
+
+   Apagar um ou dois registros é trabalho normal. Apagar meia dúzia de
+   uma vez é quase sempre acidente — então o sistema para, mostra o que
+   ia apagar, e espera ela dizer. ========================================================= */
+const NUVEM_LIMITE_EXCLUSAO = 4;
+let nuvemExclusoesSeguradas = null;   // {quando, linhas} enquanto ela não decide
+let nuvemExclusoesLiberadas = false;  // ela já disse "pode apagar" nesta sessão
+
+function nuvemNomeColecao(c){ return (typeof REPESCA_NOMES==='object' && REPESCA_NOMES[c]) || c; }
+
+function nuvemAvisarExclusoes(linhas){
+  if(document.getElementById('modal-exclusao-massa')) return;
+  const porColecao = {};
+  linhas.forEach(r=>{ porColecao[r.colecao] = (porColecao[r.colecao]||0) + 1; });
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-exclusao-massa';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,95vw);">
+      <h3 style="margin-top:0;color:var(--negative);">⚠️ Segurei uma exclusão grande</h3>
+      <p class="help-text">Esta máquina está prestes a mandar a nuvem apagar
+        <b>${linhas.length} registro${linhas.length===1?'':'s'}</b> — e isso apagaria nas outras máquinas também.
+        Registro que some sozinho quase sempre é acidente (um backup antigo importado, um carregamento pela metade),
+        então parei antes de mandar.</p>
+      <div class="lic-doc aviso" style="display:block;">
+        ${Object.keys(porColecao).map(c=>`<div>· <b>${escapeHtml(nuvemNomeColecao(c))}</b> — ${porColecao[c]} registro${porColecao[c]===1?'':'s'}</div>`).join('')}
+      </div>
+      <p class="help-text"><b>Se você não apagou essas coisas de propósito</b>, feche esta janela e não faça nada:
+        nada foi apagado da nuvem, e recarregando a página os registros voltam de lá.
+        Se você apagou mesmo, confirme.</p>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Não apaguei — deixa quieto</button>
+        <button class="btn btn-danger" id="exc-confirmar">Eu apaguei mesmo, pode mandar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelector('#exc-confirmar').onclick = ()=>{
+    nuvemExclusoesLiberadas = true;
+    m.remove();
+    showToast('Certo — as exclusões vão subir no próximo sincronismo.','info');
+    nuvemSincronizar(true);
+  };
+}
+
 async function nuvemSubir(){
-  const fila = nuvemMudancas();
+  let fila = nuvemMudancas();
+
+  /* o freio: separa as exclusões e só deixa passar o que for pouco,
+     ou o que ela confirmou */
+  const exclusoes = fila.filter(r=>r.excluido);
+  if(exclusoes.length > NUVEM_LIMITE_EXCLUSAO && !nuvemExclusoesLiberadas){
+    fila = fila.filter(r=>!r.excluido);
+    nuvemExclusoesSeguradas = { quando:Date.now(), linhas:exclusoes };
+    nuvemAvisarExclusoes(exclusoes);
+  }
+
   nuvemPendentes = fila.length;
   if(fila.length === 0) return 0;
 
   const espelho = nuvemLerEspelho();
   const LOTE = 100;
-  for(let i = 0; i < fila.length; i += LOTE){
-    const lote = fila.slice(i, i + LOTE);
+  /* Exclusão vai num lote separado e SEM o campo "dados". Antes mandava
+     dados:{}, o que apagava o conteúdo do registro no servidor também —
+     não sobrava de onde recuperar. Omitindo o campo, o servidor só muda
+     a marca de excluído e o conteúdo fica lá. */
+  const normais = fila.filter(r=>!r.excluido);
+  const apagar  = fila.filter(r=>r.excluido);
+  const lotes = [];
+  for(let i = 0; i < normais.length; i += LOTE) lotes.push(normais.slice(i, i + LOTE));
+  for(let i = 0; i < apagar.length;  i += LOTE) lotes.push(apagar.slice(i, i + LOTE));
+
+  for(const lote of lotes){
     await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
       method: 'POST',
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(lote.map(r => ({
-        colecao: r.colecao, id: r.id, dados: r.dados, excluido: r.excluido
-      })))
+      body: JSON.stringify(lote.map(r => r.excluido
+        ? { colecao: r.colecao, id: r.id, excluido: true }
+        : { colecao: r.colecao, id: r.id, dados: r.dados, excluido: false }))
     });
     lote.forEach(r => {
       if(r._digital) espelho[r._chave] = r._digital;
