@@ -25945,17 +25945,32 @@ function ufsCandidatasPorArea(area){
 // (gratuito, sem chave), com cache permanente em STATE.licitacoesGeocodeCache
 // por código IBGE — cada município só precisa ser geocodificado UMA vez em
 // todo o histórico do sistema, mesmo em buscas futuras.
+/* A chave do cache era o código do IBGE — e só o arquivo do PNCP traz
+   esse código. Dispensa trazida por link, lançada à mão ou preenchida
+   pela resposta da IA vinha com o nome da cidade e nenhum código, então
+   ficava pra sempre sem distância. Agora o nome da cidade + UF serve de
+   chave quando o código não existe: quem decide é o que dá pra medir. */
+function licChaveCidade(codigoIbge, municipioNome, uf){
+  if(codigoIbge) return String(codigoIbge);
+  const nome = String(municipioNome||'').toLowerCase().normalize('NFD')
+    .replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'');
+  if(!nome) return null;
+  return 'nome:' + nome + '-' + String(uf||'').toLowerCase();
+}
+
 async function geocodificarMunicipioPNCP(codigoIbge, municipioNome, uf){
-  if(!codigoIbge) return null;
-  const cache = STATE.licitacoesGeocodeCache[codigoIbge];
+  const chave = licChaveCidade(codigoIbge, municipioNome, uf);
+  if(!chave || !municipioNome) return null;
+  const cache = STATE.licitacoesGeocodeCache[chave];
   if(cache) return cache;
+  const codigoIbgeOuNome = chave;
   try{
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&country=Brazil&city=${encodeURIComponent(municipioNome)}&state=${encodeURIComponent(uf)}`;
     const resp = await fetch(url, { headers: { 'Accept-Language': 'pt-BR' } });
     const dados = await resp.json();
     if(!dados || !dados[0]) return null;
     const resultado = { lat: parseFloat(dados[0].lat), lng: parseFloat(dados[0].lon), municipio: municipioNome, uf };
-    STATE.licitacoesGeocodeCache[codigoIbge] = resultado;
+    STATE.licitacoesGeocodeCache[codigoIbgeOuNome] = resultado;
     saveState();
     return resultado;
   }catch(err){
@@ -27590,6 +27605,21 @@ function licInjetarEstilo(){
   .lic-chips button.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600;}
 
   .lic-captou{font-size:11.5px;color:var(--ink-soft);margin-top:4px;}
+  /* quem é esta dispensa — cabeçalho de conferência na precificação */
+  .lic-identidade{padding:14px 16px;}
+  .lic-ident-topo{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-start;}
+  .lic-identidade .proc{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint);}
+  .lic-identidade .proc b{color:var(--ink);letter-spacing:0;}
+  .lic-identidade .org{font-size:15px;font-weight:600;color:var(--ink);margin-top:2px;line-height:1.3;}
+  .lic-identidade .doc{font-size:12.5px;color:var(--ink-soft);margin-top:3px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+  .lic-identidade .doc b{font-family:var(--font-num);color:var(--ink);}
+  .lic-identidade .obj{margin-top:10px;padding-top:10px;border-top:1px solid var(--border);
+    font-size:13px;line-height:1.5;color:var(--ink);}
+  .lic-identidade .obj.vazio{color:var(--warning);}
+  .lic-ident-lidos{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);}
+  .lic-ident-lidos > div{flex:1 1 150px;min-width:140px;}
+  .lic-ident-lidos span{display:block;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-faint);}
+  .lic-ident-lidos b{display:block;font-size:12.5px;color:var(--ink);line-height:1.4;margin-top:1px;}
   /* a linha da distância, igual nas cinco abas */
   .lic-lugar{font-size:12px;color:var(--ink-soft);margin-top:4px;}
   .lic-lugar b{color:var(--ink);}
@@ -30688,7 +30718,7 @@ function licTodasComLugar(){
 function licQuantosSemDistancia(){
   const area = STATE.config.licitacoesArea;
   if(!area || area.lat==null) return 0;
-  return licTodasComLugar().filter(o=>o.distanciaKm==null && o.codigoIbge && o.municipioNome).length;
+  return licTodasComLugar().filter(o=>o.distanciaKm==null && o.municipioNome).length;
 }
 
 /* Descobre a distância dos municípios que ainda não estão no cache.
@@ -30705,20 +30735,23 @@ async function licCalcularDistancias(){
   }
   const pendentes = new Map();
   licTodasComLugar().forEach(o=>{
-    if(o.distanciaKm!=null || !o.codigoIbge || !o.municipioNome) return;
-    if(!pendentes.has(o.codigoIbge)) pendentes.set(o.codigoIbge, o);
+    if(o.distanciaKm!=null || !o.municipioNome) return;
+    const chave = licChaveCidade(o.codigoIbge, o.municipioNome, o.uf);
+    if(chave && !pendentes.has(chave)) pendentes.set(chave, o);
   });
   if(pendentes.size===0) return;
 
   licCalculandoDistancia = true;
   renderPortalLicitacoes();
   let feitos = 0, falhas = 0;
-  for(const [ibge, exemplo] of pendentes){
+  for(const [chave, exemplo] of pendentes){
     try{
-      const geo = await geocodificarMunicipioPNCP(ibge, exemplo.municipioNome, exemplo.uf);
+      const geo = await geocodificarMunicipioPNCP(exemplo.codigoIbge, exemplo.municipioNome, exemplo.uf);
       if(geo){
         const km = Math.round(distanciaKm(area.lat, area.lng, geo.lat, geo.lng));
-        licTodasComLugar().forEach(o=>{ if(o.codigoIbge===ibge) o.distanciaKm = km; });
+        licTodasComLugar().forEach(o=>{
+          if(licChaveCidade(o.codigoIbge, o.municipioNome, o.uf) === chave) o.distanciaKm = km;
+        });
         feitos++;
       }else falhas++;
     }catch(e){ falhas++; }
@@ -31632,6 +31665,149 @@ function licCabecalho(l, titulo, sub, acoes){
         ${acoes||''}
       </div>
     </div>`;
+}
+
+/* =========================================================
+   QUEM É ESTA DISPENSA
+
+   "Quando eu for precificar, mostre o CNPJ dele e também a opção de
+   clicar nos links pra abrir o edital, o PNCP. E os dados não estão
+   puxando — nem o nome do processo, nem o objeto."
+
+   Precificar é a hora de conferir: o número que vai na proposta, o
+   órgão e o CNPJ pra quem ela vai, e o edital a um clique pra tirar
+   dúvida de uma exigência sem sair da tela.
+
+   Cada dado vem do primeiro lugar que tiver: o que a IA leu no edital,
+   o que veio do PNCP, ou o que ela digitou na proposta. Antes a tela
+   lia um lugar só e, se estivesse vazio ali, não mostrava nada.
+   ========================================================= */
+function licPrimeiroQueTiver(){
+  for(let i=0;i<arguments.length;i++){
+    const v = arguments[i];
+    if(v!=null && String(v).trim() !== '') return String(v).trim();
+  }
+  return '';
+}
+function licCnpjBonito(v){
+  const d = String(v||'').replace(/\D/g,'');
+  if(d.length !== 14) return d;
+  return `${d.slice(0,2)}.${d.slice(2,5)}.${d.slice(5,8)}/${d.slice(8,12)}-${d.slice(12)}`;
+}
+
+function licIdentidadeHtml(l){
+  const pc = l.propostaCampos || {};
+  const leitura = l.leitura || {};
+  const numero = licPrimeiroQueTiver(pc.numero, l.numero, l.numeroControlePNCP);
+  const objeto = licPrimeiroQueTiver(l.objeto, pc.objeto);
+  const orgao  = licPrimeiroQueTiver(l.orgao, l.unidade);
+  const cnpj   = licCnpjBonito(l.cnpjOrgao);
+
+  /* o que a análise leu e que muda o preço: prazo de pagamento é custo
+     de dinheiro, prazo de entrega e local de entrega são frete */
+  const doEdital = [
+    ['Julgamento',        leitura.criterio],
+    ['Prazo de entrega',  leitura.prazoEntrega],
+    ['Prazo de pagamento',leitura.prazoPagamento],
+    ['Local de entrega',  leitura.localEntrega],
+    ['Validade da proposta', leitura.validade],
+    ['Exige amostra',     leitura.exigeAmostra]
+  ].filter(x=>x[1]);
+
+  return `
+  <div class="card lic-identidade">
+    <div class="lic-ident-topo">
+      <div style="flex:1;min-width:240px;">
+        ${numero ? `<div class="proc">PROCESSO <b>${escapeHtml(numero)}</b>${
+          l.modalidadeNome?` · ${escapeHtml(l.modalidadeNome)}`:''}</div>` : ''}
+        <div class="org">${escapeHtml(orgao||'órgão não informado')}</div>
+        <div class="doc">${cnpj
+          ? `CNPJ <b>${escapeHtml(cnpj)}</b> <button class="btn btn-sm" onclick="licCopiar('${escapeAttr(cnpj)}','CNPJ copiado.')">copiar</button>`
+          : '<span style="color:var(--warning);">CNPJ não veio no edital nem no PNCP</span>'}</div>
+        ${licLugarHtml(l)}
+      </div>
+      <div style="min-width:180px;text-align:right;">
+        ${licTarjasComoParticipar(l, true)}
+      </div>
+    </div>
+
+    ${objeto ? `<div class="obj">${escapeHtml(objeto)}</div>`
+             : `<div class="obj vazio">Sem o objeto. Cole a resposta da IA em "Em análise" — é de lá que ele vem.</div>`}
+
+    ${licLinksHtml(l)}
+    ${!l.linkPncp ? `<div class="help-text" style="margin:6px 0 0;">
+      Sem o número sequencial do PNCP não dá pra montar o endereço do edital — a IA lê o edital, mas esse
+      número só existe no PNCP.
+      <button class="btn btn-sm" style="margin-left:6px;" onclick="licColarLinkNesta('${l.id}')">Colar o link do PNCP</button>
+    </div>`:''}
+
+    ${doEdital.length ? `<div class="lic-ident-lidos">
+      ${doEdital.map(([rot,val])=>`<div><span>${escapeHtml(rot)}</span><b>${escapeHtml(val)}</b></div>`).join('')}
+    </div>` : `<div class="help-text" style="margin:8px 0 0;">
+      Nada lido do edital ainda — volte em "Em análise" e cole a resposta da IA pra esses dados virem pra cá.</div>`}
+  </div>`;
+}
+
+/* Ela cola o endereço da dispensa no PNCP e o sistema tira dali o que
+   faltava: o CNPJ, o ano e o sequencial — e com isso o link do edital
+   passa a existir, nesta e em qualquer tela. */
+function licColarLinkNesta(id){
+  const l = licAchar(id); if(!l) return;
+  document.getElementById('modal-lic-colar-link')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-colar-link';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(620px,94vw);">
+      <h3 style="margin-top:0;">Colar o link do PNCP</h3>
+      <p class="help-text">Abra a dispensa no PNCP, copie o endereço da barra do navegador e cole aqui.
+        Serve também o número de controle (aquele <b>14 dígitos-1-000091/2026</b>).</p>
+      <input type="text" id="lic-colar-link-txt" placeholder="https://pncp.gov.br/app/editais/..."
+        style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">
+      <div class="help-text" id="lic-colar-link-res" style="margin-top:8px;"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="lic-colar-link-ok">Usar este link</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const campo = m.querySelector('#lic-colar-link-txt');
+  campo.focus();
+  m.querySelector('#lic-colar-link-ok').onclick = ()=>{
+    const p = licPedacosDoLink(campo.value || '');
+    if(!p){
+      m.querySelector('#lic-colar-link-res').innerHTML =
+        '<span style="color:var(--negative);">Não reconheci. Cole o endereço inteiro do PNCP ou o número de controle.</span>';
+      return;
+    }
+    const alvo = licAchar(id); if(!alvo){ m.remove(); return; }
+    alvo.cnpjOrgao = alvo.cnpjOrgao || p.cnpj;
+    alvo.anoCompra = p.ano;
+    alvo.sequencialCompra = p.seq;
+    alvo.numeroControlePNCP = alvo.numeroControlePNCP
+      || `${p.cnpj}-1-${String(p.seq).padStart(6,'0')}/${p.ano}`;
+    alvo.linkPncp = linkEditalPNCP(p.cnpj, p.ano, p.seq);
+    alvo.linkEdital = alvo.linkPncp;
+    licRegistrar(alvo, 'Link do PNCP informado à mão.');
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast('Link guardado — agora o edital abre de qualquer tela.','success');
+  };
+  campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); m.querySelector('#lic-colar-link-ok').click(); } });
+}
+
+/* Copiar um texto curto sem depender de biblioteca nenhuma. */
+function licCopiar(texto, aviso){
+  const terminar = ()=>showToast(aviso||'Copiado.','success');
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){
+      navigator.clipboard.writeText(texto).then(terminar, ()=>terminar());
+      return;
+    }
+  }catch(e){}
+  const ta = document.createElement('textarea');
+  ta.value = texto; document.body.appendChild(ta); ta.select();
+  try{ document.execCommand('copy'); }catch(e){}
+  ta.remove(); terminar();
 }
 
 /* ---------------------------------------------------------
@@ -32900,6 +33076,29 @@ function licAplicarRespostaIA(l, dado){
   }
   if(dado.resumoDaDecisao) l.resumoDaDecisao = dado.resumoDaDecisao;
 
+  /* A IDENTIDADE DA DISPENSA VEM JUNTO.
+     A análise preenchia os campos da PROPOSTA e parava aí — o objeto, o
+     número do processo, o órgão e o CNPJ da própria dispensa ficavam
+     como vieram (ou vazios, numa trazida por link ou lançada à mão). Aí
+     a tela de precificação, que lê justamente esses, aparecia pelada.
+     Agora o que a IA leu no edital completa o que falta aqui também. */
+  const completa = (campo, valor, limpar)=>{
+    if(l[campo]) return;                       /* o que já existe manda */
+    const v = licLimparValor(valor);
+    if(!v || licValorVazio(v)) return;
+    l[campo] = limpar ? limpar(v) : v;
+  };
+  completa('objeto', d.objeto);
+  completa('numero', d.numero);
+  completa('orgao', d.orgao);
+  completa('unidade', d.unidade);
+  completa('municipioNome', d.cidade);
+  completa('uf', d.uf, v=>String(v).toUpperCase().slice(0,2));
+  completa('cnpjOrgao', d.cnpjOrgao, v=>String(v).replace(/\D/g,''));
+  completa('modalidadeNome', d.modalidade);
+  /* com o CNPJ em mãos, o link do PNCP passa a dar pra montar */
+  if(typeof licArrumarLinkPncp === 'function'){ try{ licArrumarLinkPncp(l); }catch(e){} }
+
   /* campos da proposta que já dá pra adiantar */
   const pc = l.propostaCampos;
   if(!pc.objeto && d.objeto) pc.objeto = licLimparValor(d.objeto);
@@ -34073,6 +34272,8 @@ function licTelaPrecificar(l){
          <option value="global" ${l.criterio==='global'?'selected':''}>Julgamento: preço global</option>
        </select>
        <button class="btn btn-primary" onclick="licAvancarEtapa('${l.id}','proposta','proposta')">Avançar para Proposta ›</button>`)}
+
+    ${licIdentidadeHtml(l)}
 
     ${(l.leitura||{}).criterio ? `<div class="help-text" style="margin:-6px 0 10px;">
       Lido do edital: <b>${escapeHtml(l.leitura.criterio)}</b>.
@@ -47202,7 +47403,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 13:10';
+const SISTEMA_VERSAO = '27/10/2026 13:45';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
