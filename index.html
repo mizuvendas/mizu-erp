@@ -1938,14 +1938,69 @@ function migrarFornecedoresELocaisCompra(state){
   });
 }
 
+/* =========================================================
+   QUANDO O NAVEGADOR RECUSA SALVAR
+
+   "O que fazer para eu não perder minhas coisas?"
+
+   O armazenamento do navegador é fixo (~5 MB) e, quando enche, o
+   setItem abaixo estoura. Antes isso virava um toast de três segundos
+   dizendo "veja o console" — ela nunca ia ver, e seguia trabalhando
+   horas achando que estava salvando. É assim que um dia de trabalho
+   some sem aviso.
+
+   Agora a tela ganha uma tarja vermelha que NÃO some sozinha, com o
+   botão de exportar backup do lado. Enquanto ela estiver ali, nada do
+   que for digitado está guardado — e isso precisa estar na cara.
+   ========================================================= */
+let salvarEstaFalhando = false;
+function avisarQueNaoSalvou(){
+  if(salvarEstaFalhando) return;
+  salvarEstaFalhando = true;
+  const t = document.createElement('div');
+  t.id = 'tarja-nao-salvou';
+  t.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:var(--negative);'
+    + 'color:#fff;padding:12px 16px;font-size:14px;line-height:1.5;display:flex;gap:12px;'
+    + 'align-items:center;flex-wrap:wrap;box-shadow:0 2px 12px rgba(0,0,0,.3);';
+  t.innerHTML = `
+    <div style="flex:1;min-width:260px;">
+      <b>⛔ O navegador recusou salvar — o que você fizer agora NÃO está sendo guardado.</b>
+      <div style="font-size:12.5px;opacity:.95;margin-top:2px;">
+        O armazenamento deste navegador encheu. Exporte um backup agora, depois abra Armazenamento e limpe espaço.
+        Não feche esta aba antes de exportar.</div>
+    </div>
+    <button id="tarja-backup" style="background:#fff;color:var(--negative);border:none;padding:9px 14px;
+      border-radius:6px;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap;">⬇ Exportar backup agora</button>
+    <button id="tarja-armaz" style="background:transparent;color:#fff;border:1px solid rgba(255,255,255,.6);
+      padding:9px 14px;border-radius:6px;font:inherit;cursor:pointer;white-space:nowrap;">Ver o armazenamento</button>`;
+  document.body.appendChild(t);
+  /* empurra a página pra baixo, senão a tarja cobre o topo do sistema */
+  document.body.style.paddingTop = (t.offsetHeight || 64) + 'px';
+  t.querySelector('#tarja-backup').onclick = ()=>{
+    const btn = document.getElementById('btn-export');
+    if(btn) btn.click();
+    else showToast('Use o botão "Exportar backup" na barra de baixo.','info');
+  };
+  t.querySelector('#tarja-armaz').onclick = ()=>{ try{ navigateTo('armazenamento'); }catch(e){} };
+}
+function tirarTarjaNaoSalvou(){
+  if(!salvarEstaFalhando) return;
+  salvarEstaFalhando = false;
+  const t = document.getElementById('tarja-nao-salvou');
+  if(t) t.remove();
+  document.body.style.paddingTop = '';
+  showToast('Voltou a salvar normalmente.','success');
+}
+
 function saveState(){
   try{
     localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
     const el = document.getElementById('last-saved');
     if(el) el.textContent = '💾 Dados salvos neste navegador às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    tirarTarjaNaoSalvou();   /* ela limpou espaço: a tarja some sozinha */
   }catch(e){
     console.error(e);
-    showToast('Erro ao salvar dados. Veja o console.', 'error');
+    avisarQueNaoSalvou();
   }
   atualizarBadgesMenu();
   if(typeof armazVigiar === 'function') armazVigiar();
@@ -47057,6 +47112,36 @@ function armazFaxinas(){
     explica:'Só a lista do que você já disse "não" — serve pra não voltar na importação. Limpando, elas voltam a aparecer.',
     bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesDescartadas||[])) });
 
+  /* A lixeira guarda a dispensa inteira pra dar pra restaurar — com os
+     itens, a análise e o texto dos anexos. Sessenta e seis dispensas
+     apagadas pesavam mais que os 956 produtos do cadastro. */
+  const naLixeira = (STATE.licitacoesLixeira||[]).length;
+  if(naLixeira > 0) f.push({ id:'lixeira', rotulo:`${naLixeira} dispensa${naLixeira===1?'':'s'} na lixeira`,
+    explica:'O que você apagou e ainda dá pra restaurar. Esvaziando, elas somem de vez — mas o espaço volta inteiro.',
+    bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesLixeira||[])) });
+
+  const triagem = (STATE.licitacoesRevisao||[]).length;
+  if(triagem > 0) f.push({ id:'triagem', rotulo:`${triagem} oportunidade${triagem===1?'':'s'} ainda na triagem`,
+    explica:'As que você ainda não disse sim nem não. Limpando, basta importar o arquivo do PNCP de novo pra elas voltarem.',
+    bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesRevisao||[])) });
+
+  const planos = (STATE.planosCompra||[]).length;
+  if(planos > 0) f.push({ id:'planos', rotulo:`${planos} plano${planos===1?'':'s'} de compra`,
+    explica:'O plano é montado a partir das vendas; dá pra gerar de novo quando precisar. As compras feitas continuam.',
+    bytes: armazTamanhoTexto(JSON.stringify(STATE.planosCompra||[])) });
+
+  /* Movimento de estoque é histórico: o saldo de cada produto fica
+     guardado no próprio produto, não é somado daqui. Então cortar os
+     antigos não mexe em saldo nenhum — só encurta a consulta. Seis
+     meses porque cancelar uma venda desfaz os movimentos dela, e venda
+     de mais de seis meses ninguém cancela. */
+  const corte = new Date(); corte.setMonth(corte.getMonth() - 6);
+  const corteISO = corte.toISOString().slice(0,10);
+  const velhos = (STATE.movimentosEstoque||[]).filter(m=>String(m.data||'') < corteISO);
+  if(velhos.length > 50) f.push({ id:'movimentos', rotulo:`${velhos.length} movimentos de estoque com mais de 6 meses`,
+    explica:'Só o histórico antigo. O saldo de cada produto fica no cadastro do produto e não muda — os movimentos dos últimos 6 meses ficam.',
+    bytes: armazTamanhoTexto(JSON.stringify(velhos)) });
+
   const geo = Object.keys(STATE.licitacoesGeocodeCache||{}).length;
   if(geo > 0) f.push({ id:'geocache', rotulo:`Cache de ${geo} cidade${geo===1?'':'s'}`,
     explica:'As coordenadas das cidades, pra calcular distância. Limpando, elas são buscadas de novo na próxima importação.',
@@ -47117,7 +47202,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 12:55';
+const SISTEMA_VERSAO = '27/10/2026 13:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47259,6 +47344,26 @@ function armazLimpar(id){
     descartadas: { titulo:'Limpar as descartadas',
       texto:'As dispensas que você descartou voltam a aparecer na próxima importação do arquivo do PNCP. Continuar?',
       faz: ()=>{ STATE.licitacoesDescartadas = []; } },
+    lixeira: { titulo:'Esvaziar a lixeira das dispensas',
+      texto:'As dispensas apagadas somem de vez — depois disso não tem mais como restaurar nenhuma delas. '
+           +'As dispensas que estão em uso (em análise, precificação, propostas) não são tocadas. Continuar?',
+      faz: ()=>{ STATE.licitacoesLixeira = []; } },
+    triagem: { titulo:'Limpar a triagem',
+      texto:'As oportunidades que você ainda não decidiu somem da lista. Pra elas voltarem, é só importar de novo '
+           +'o arquivo do PNCP. As dispensas que você já marcou com "tenho interesse" não são tocadas. Continuar?',
+      faz: ()=>{ STATE.licitacoesRevisao = []; } },
+    planos: { titulo:'Limpar os planos de compra',
+      texto:'Os planos somem. Eles são montados a partir das suas vendas, então dá pra gerar de novo quando precisar. '
+           +'As compras já feitas e o estoque não mudam. Continuar?',
+      faz: ()=>{ STATE.planosCompra = []; } },
+    movimentos: { titulo:'Encurtar o histórico de estoque',
+      texto:'Apaga os movimentos de estoque com mais de 6 meses. O saldo de cada produto NÃO muda — ele fica guardado '
+           +'no cadastro do produto. Você perde só a consulta do histórico antigo. Continuar?',
+      faz: ()=>{
+        const c = new Date(); c.setMonth(c.getMonth() - 6);
+        const cISO = c.toISOString().slice(0,10);
+        STATE.movimentosEstoque = (STATE.movimentosEstoque||[]).filter(m=>String(m.data||'') >= cISO);
+      } },
     geocache: { titulo:'Limpar o cache de distâncias',
       texto:'As coordenadas das cidades serão buscadas de novo na próxima importação — leva alguns segundos a mais. Continuar?',
       faz: ()=>{ STATE.licitacoesGeocodeCache = {}; } },
