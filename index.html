@@ -28016,6 +28016,9 @@ function licInjetarEstilo(){
    --------------------------------------------------------- */
 function licNormalizar(l){
   if(!l) return l;
+  /* qual documento da pasta ela escolheu pra cada exigência desta
+     dispensa — vazio quer dizer "decida sozinho" */
+  if(!l.docsEscolhidos || typeof l.docsEscolhidos !== 'object') l.docsEscolhidos = {};
   if(!l.etapa){
     /* vindo do funil antigo: traduz o status do kanban pra etapa nova */
     const mapa = { 'Potencial':'analise', 'Participando':'proposta', 'Aguardando Resultado':'enviada',
@@ -34084,6 +34087,115 @@ function licAbrirExigenciaDocs(id){
   document.body.appendChild(m);
 }
 
+/* =========================================================
+   QUEM RESOLVE CADA EXIGÊNCIA DO EDITAL
+
+   "Está pedindo em vermelho atestado de capacidade técnica, só que a
+   gente já tem. Às vezes um atestado é de um item, às vezes é outro.
+   Podia aparecer pra eu abrir quais atestados eu tenho e marcar qual
+   vai ser usado — aí fica verde."
+
+   E, junto: três dos quatro itens vermelhos daquela tela eram as
+   declarações que o próprio sistema escreve logo abaixo. A lista de
+   cima não sabia da lista de baixo, e assustava à toa.
+
+   Então cada exigência é resolvida em três degraus, nesta ordem:
+   1. O que ELA escolheu à mão pra esta dispensa — manda sempre. É o
+      jeito de dizer "deste edital, vale o atestado da Prefeitura X".
+   2. O que o sistema casa sozinho com a pasta, pelas palavras.
+   3. Uma das declarações que o sistema gera — aí não falta nada, é só
+      clicar em Gerar.
+   ========================================================= */
+function licChaveExigencia(nome){
+  return licTextoCru(nome).slice(0, 80);
+}
+
+/* A exigência casa com uma das declarações que o sistema escreve? */
+function licDeclaracaoQueResolve(l, nomeNoEdital){
+  const cru = licTextoCru(nomeNoEdital);
+  if(!cru) return null;
+  const regras = [
+    { id:'menor',      re:/menor|xxxiii|art 7|aprendiz/ },
+    { id:'meepp',      re:/microempresa|pequeno porte|me ?\/? ?epp|enquadramento|123/ },
+    { id:'pleno',      re:/pleno conhecimento|aceitacao das regras|reserva de cargos|8 ?213|art 68/ },
+    { id:'idoneidade', re:/idonei|fato impeditivo|superveniente|nao esta suspensa|nao declarada inidonea/ },
+    { id:'parentesco', re:/parentesco|conjuge|nepotismo|grau de agente/ }
+  ];
+  const achou = regras.find(r=>r.re.test(cru));
+  if(!achou) return null;
+  /* só vale quando o edital pede uma DECLARAÇÃO — "prova de
+     enquadramento" e "comprovação" também são, na prática */
+  if(!/declarac|declaro|prova de|comprovac|atestad[oa] de que/.test(cru) && achou.id!=='menor') return null;
+  return (licModelosDeclaracao(l) || []).find(m=>m.id===achou.id) || null;
+}
+
+function licResolverExigencia(l, d){
+  const nome = (d && d.documento) || '';
+  const escolhidos = (l && l.docsEscolhidos) || {};
+  const escolhido = escolhidos[licChaveExigencia(nome)];
+  if(escolhido){
+    const doc = licDocs().find(x=>x.id===escolhido);
+    if(doc) return { tipo:'escolhido', doc, estado: licEstadoDoc(doc) };
+  }
+  const daPasta = licDocDaPasta(nome);
+  if(daPasta) return { tipo:'pasta', doc: daPasta, estado: licEstadoDoc(daPasta) };
+  const modelo = licDeclaracaoQueResolve(l, nome);
+  if(modelo) return { tipo:'declaracao', modelo };
+  return { tipo:'falta' };
+}
+
+/* A janela de escolher qual documento da pasta vale pra esta exigência.
+   É aqui que ela diz qual dos atestados é o deste edital. */
+function licEscolherDaPasta(licId, chave, nomeExigencia){
+  const l = licAchar(licId); if(!l) return;
+  const docs = licDocs();
+  const atual = ((l.docsEscolhidos||{})[chave]) || '';
+  document.getElementById('modal-escolher-doc')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-escolher-doc';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Qual documento atende esta exigência?</h3>
+      <p class="help-text">O edital pede: <b>${escapeHtml(nomeExigencia||'')}</b>.
+        Escolha qual dos seus documentos vale <b>para esta dispensa</b> — serve pra quando você tem mais de um
+        atestado e cada um é de um tipo de fornecimento. A escolha fica só nesta dispensa.</p>
+      ${docs.length===0 ? '<div class="lic-doc falta"><div><b>A sua pasta está vazia</b><small>Guarde um documento primeiro.</small></div></div>'
+        : docs.map(d=>{
+          const e = licEstadoDoc(d);
+          return `<label class="lic-doc ${e.classe}" style="cursor:pointer;">
+            <div style="display:flex;gap:10px;align-items:flex-start;flex:1;">
+              <input type="radio" name="escolher-doc" value="${d.id}" ${atual===d.id?'checked':''} style="width:auto;margin-top:3px;">
+              <div><b>${escapeHtml(d.nome)}</b>
+                <small>${escapeHtml(e.estado)}${d.arquivo?` · ${escapeHtml(d.arquivo)}`:' · sem arquivo anexado'}</small></div>
+            </div></label>`;
+        }).join('')}
+      <div class="modal-actions">
+        ${atual?`<button class="btn" id="esc-tirar">Deixar o sistema decidir</button>`:''}
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="esc-ok" ${docs.length?'':'disabled'}>Usar este</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  const gravar = (valor)=>{
+    const alvo = licAchar(licId); if(!alvo) return;
+    if(!alvo.docsEscolhidos) alvo.docsEscolhidos = {};
+    if(valor) alvo.docsEscolhidos[chave] = valor;
+    else delete alvo.docsEscolhidos[chave];
+    saveState(); m.remove(); renderPortalLicitacoes();
+  };
+  m.querySelector('#esc-ok').onclick = ()=>{
+    const r = m.querySelector('input[name="escolher-doc"]:checked');
+    if(!r){ showToast('Marque qual documento vale.','error'); return; }
+    const d = licDocs().find(x=>x.id===r.value);
+    gravar(r.value);
+    showToast(`"${(d&&d.nome)||'Documento'}" vale pra esta exigência nesta dispensa.`,'success');
+  };
+  const tirar = m.querySelector('#esc-tirar');
+  if(tirar) tirar.onclick = ()=>{ gravar(null); showToast('Voltou pro automático.','info'); };
+}
+
 function licChecklistHtml(l){
   const pedidos = l.documentosHabilitacao || [];
   const minhaPasta = licDocs().map(d=>({ c:d, e: licEstadoDoc(d) }));
@@ -34100,26 +34212,48 @@ function licChecklistHtml(l){
   }
 
   /* Com a leitura: a lista do edital é a que manda. */
-  const casados = new Set();
   const linhas = pedidos.map(d=>{
-    const daPasta = licDocDaPasta(d.documento);
-    if(daPasta) casados.add(daPasta.id);
-    const e = daPasta ? licEstadoDoc(daPasta) : null;
-    const classe = !daPasta ? 'falta' : e.classe;
-    const situacao = !daPasta ? 'não está na sua pasta de certidões'
-                   : e.temos ? `você tem — ${e.estado}`
-                   : `você guarda esta, mas ${e.estado}`;
-    return `<div class="lic-doc ${classe}">
+    const r = licResolverExigencia(l, d);
+    const chave = licChaveExigencia(d.documento);
+    const fonte = d.fonte?` · <span style="color:var(--ink-faint);">${escapeHtml(d.fonte)}</span>`:'';
+    const trocar = `<button class="btn btn-sm" onclick="licEscolherDaPasta('${l.id}','${escapeAttr(chave)}',${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📂 ${r.tipo==='escolhido'?'Trocar':'Escolher da pasta'}</button>`;
+
+    if(r.tipo === 'declaracao'){
+      return `<div class="lic-doc aviso">
+        <div><b>${escapeHtml(d.documento)}</b>
+          <small>o sistema escreve esta por você — é a <b>${escapeHtml(r.modelo.titulo)}</b>${fonte}</small></div>
+        <button class="btn btn-sm btn-primary" onclick="licGerarDeclaracoes('${l.id}',['${r.modelo.id}'],'${escapeAttr((dadosProposta().cidade||'Rio Verde')+'/'+(dadosProposta().estado||'GO'))}')">📄 Gerar</button>
+      </div>`;
+    }
+
+    if(r.tipo === 'falta'){
+      return `<div class="lic-doc falta">
+        <div><b>${escapeHtml(d.documento)}</b>
+          <small>não está na sua pasta de certidões${fonte}</small></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          ${licDocs().length ? trocar : ''}
+          <button class="btn btn-sm" onclick="licAbrirCertidoes(${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📎 Guardar</button>
+        </div></div>`;
+    }
+
+    const e = r.estado;
+    const comoAchou = r.tipo==='escolhido' ? 'você escolheu' : 'você tem';
+    const situacao = e.temos ? `${comoAchou} — <b>${escapeHtml(r.doc.nome)}</b> — ${escapeHtml(e.estado)}`
+                             : `${comoAchou} <b>${escapeHtml(r.doc.nome)}</b>, mas ${escapeHtml(e.estado)}`;
+    return `<div class="lic-doc ${e.classe}">
       <div><b>${escapeHtml(d.documento)}</b>
-        <small>${escapeHtml(situacao)}${d.fonte?` · <span style="color:var(--ink-faint);">${escapeHtml(d.fonte)}</span>`:''}</small></div>
-      ${classe==='ok' ? '<span style="color:var(--positive);font-size:13px;">✓</span>'
-                      : `<button class="btn btn-sm" onclick="licAbrirCertidoes(${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📎 ${daPasta?'Atualizar':'Guardar'}</button>`}
-    </div>`;
+        <small>${situacao}${fonte}</small></div>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;">
+        ${e.classe==='ok' ? '<span style="color:var(--positive);font-size:13px;">✓</span>'
+          : `<button class="btn btn-sm" onclick="licAbrirCertidoes(${JSON.stringify(d.documento).replace(/"/g,'&quot;')})">📎 Atualizar</button>`}
+        ${trocar}
+      </div></div>`;
   }).join('');
 
   const faltando = pedidos.filter(d=>{
-    const c = licDocDaPasta(d.documento);
-    return !c || !licEstadoDoc(c).temos;
+    const r = licResolverExigencia(l, d);
+    if(r.tipo === 'declaracao') return false;     /* o sistema escreve */
+    return r.tipo === 'falta' || !r.estado.temos;
   }).length;
 
   return `
@@ -35775,14 +35909,28 @@ function licB64ParaBlob(b64, tipo){
 
 /* Sobe o arquivo de UMA certidão. Devolve true/false em vez de estourar:
    nenhum anexo pode falhar por causa da internet. */
+/* Por que o último envio falhou — sem isso, os botões falhavam calados
+   e ela ficava sem saber se o problema era a internet, o login ou o
+   arquivo. */
+let licUltimoErroCertidao = '';
+
 async function licSubirCertidao(id){
   try{
-    if(!nuvemSessao || !nuvemSessao.access_token) return false;
+    if(!nuvemSessao || !nuvemSessao.access_token){
+      licUltimoErroCertidao = 'você não está conectada à nuvem (entre de novo na barra de baixo)';
+      return false;
+    }
     const d = licDoc(id);
-    if(!d || !d.arquivo) return false;
+    if(!d || !d.arquivo){ licUltimoErroCertidao = 'essa linha não tem arquivo anexado'; return false; }
     const blob = await licArquivoIdb('get', 'certidao:'+id);
-    if(!blob) return false;
-    if(blob.size > 12*1024*1024) return false;   // grande demais pra trafegar em JSON
+    if(!blob){
+      licUltimoErroCertidao = 'o arquivo não está guardado nesta máquina — anexe de novo aqui';
+      return false;
+    }
+    if(blob.size > 12*1024*1024){
+      licUltimoErroCertidao = 'o arquivo passa de 12 MB — reduza o PDF antes';
+      return false;
+    }
     const b64 = await licBlobParaB64(blob);
     await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
       method: 'POST',
@@ -35792,8 +35940,13 @@ async function licSubirCertidao(id){
         dados: { nome: d.arquivo, tipo: blob.type || 'application/pdf', tamanho: blob.size, b64: b64 }
       }])
     });
+    licUltimoErroCertidao = '';
     return true;
-  }catch(e){ console.error('certidão não subiu', e); return false; }
+  }catch(e){
+    console.error('certidão não subiu', e);
+    licUltimoErroCertidao = (e && e.message) || 'o servidor não respondeu';
+    return false;
+  }
 }
 
 /* Chamada pelo sincronismo quando o arquivo chega de outra máquina. */
@@ -35824,12 +35977,42 @@ async function licSubirCertidoesParaNuvem(){
   if(!docs.length){ showToast('Não tem arquivo anexado pra enviar.','info'); return; }
   showToast(`Enviando ${docs.length} arquivo${docs.length===1?'':'s'}…`,'info');
   let ok = 0;
-  for(const d of docs){ if(await licSubirCertidao(d.id)) ok++; }
-  showToast(ok === docs.length
-    ? `${ok} arquivo${ok===1?'':'s'} na nuvem — a outra máquina recebe no próximo sincronismo.`
-    : `${ok} de ${docs.length} subiram. O resto tente de novo.`, ok?'success':'error');
+  const falhas = [];
+  licUltimoErroCertidao = '';
+  for(const d of docs){
+    if(await licSubirCertidao(d.id)) ok++;
+    else falhas.push({ nome: d.nome, porque: licUltimoErroCertidao || 'não deu' });
+  }
   const m = document.getElementById('modal-docs-licitacao');
   if(m) licDesenharDocs(m);
+
+  if(falhas.length === 0){
+    showToast(`${ok} arquivo${ok===1?'':'s'} na nuvem — a outra máquina recebe no próximo sincronismo.`,'success');
+    return;
+  }
+  /* Antes isto era um toast de três segundos dizendo "o resto tente de
+     novo" — ela tentava de novo, falhava igual, e não tinha como saber
+     por quê. Agora o motivo fica na tela até ela fechar. */
+  document.getElementById('modal-cert-falhou')?.remove();
+  const j = document.createElement('div');
+  j.className = 'modal-overlay open';
+  j.id = 'modal-cert-falhou';
+  j.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;color:var(--negative);">${falhas.length} arquivo${falhas.length===1?'':'s'} não subiu${falhas.length===1?'':'ram'}</h3>
+      ${ok ? `<p class="help-text">${ok} subiu${ok===1?'':'ram'} normal. ${falhas.length===1?'Este não':'Estes não'}:</p>`
+           : `<p class="help-text">Nenhum subiu. O motivo de cada um:</p>`}
+      ${falhas.map(f=>`<div class="lic-doc falta" style="display:block;">
+        <b>${escapeHtml(f.nome)}</b>
+        <small>${escapeHtml(f.porque)}</small></div>`).join('')}
+      <p class="help-text" style="margin-top:10px;">Se o motivo for o mesmo em todos e falar do servidor ou da
+        conexão, o problema é o sincronismo — veja o aviso na barra de baixo, em <b>ver o que houve</b>.</p>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove(); licSubirCertidoesParaNuvem();">Tentar de novo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(j);
 }
 
 async function licPuxarCertidoesDaNuvem(){
@@ -47830,7 +48013,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 17:03';
+const SISTEMA_VERSAO = '27/10/2026 18:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
