@@ -27390,14 +27390,46 @@ function licInjetarEstilo(){
   const st = document.createElement('style');
   st.id = 'estilo-portal-licitacoes';
   st.textContent = `
-  .lic-abas{display:flex;gap:2px;flex-wrap:wrap;border-bottom:1px solid var(--border);margin:0 0 14px;}
-  .lic-abas button{background:none;border:none;border-bottom:3px solid transparent;padding:9px 14px;
-    font:inherit;font-size:13.5px;color:var(--ink-soft);cursor:pointer;border-radius:0;}
-  .lic-abas button:hover{color:var(--ink);}
-  .lic-abas button.on{color:var(--primary);border-bottom-color:var(--primary);font-weight:600;}
-  .lic-abas .n{display:inline-block;min-width:18px;padding:1px 5px;margin-left:5px;border-radius:9px;
-    background:var(--border);color:var(--ink-soft);font-size:11px;font-weight:600;text-align:center;}
-  .lic-abas button.on .n{background:var(--primary-soft);color:var(--primary);}
+  /* ---- A TRILHA ----
+     As sete abas são o caminho de uma dispensa, da importação à
+     entrega. Elas ficam GRUDADAS no topo e aparecem em toda tela de
+     licitação, inclusive dentro de uma dispensa aberta — antes elas
+     sumiam ali e ela perdia a noção de onde estava.
+     O número de cada passo e a seta entre eles dizem que é uma
+     sequência; a cor só aparece onde tem coisa pedindo atenção, pra
+     não virar enfeite. */
+  .lic-trilha{position:sticky;top:0;z-index:30;background:var(--bg-card);
+    border:1px solid var(--border);border-radius:var(--radius);padding:7px 8px;margin:0 0 14px;
+    box-shadow:0 2px 10px rgba(27,75,90,.07);}
+  .lic-abas{display:flex;gap:3px;flex-wrap:wrap;align-items:stretch;margin:0;border:none;}
+  .lic-abas button{background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);
+    padding:7px 11px;font:inherit;font-size:13px;color:var(--ink-soft);cursor:pointer;
+    display:inline-flex;align-items:center;gap:7px;line-height:1.25;transition:none;}
+  .lic-abas button:hover{border-color:var(--primary);color:var(--ink);}
+  .lic-abas button .passo{display:inline-flex;align-items:center;justify-content:center;
+    width:19px;height:19px;border-radius:50%;background:var(--border);color:var(--ink-soft);
+    font-size:11px;font-weight:700;flex-shrink:0;}
+  .lic-abas button.on{background:var(--primary);border-color:var(--primary);color:#fff;font-weight:600;}
+  .lic-abas button.on .passo{background:rgba(255,255,255,.3);color:#fff;}
+  .lic-abas .n{display:inline-block;min-width:19px;padding:1px 6px;border-radius:9px;
+    background:var(--border);color:var(--ink-soft);font-size:11px;font-weight:700;text-align:center;}
+  .lic-abas button.on .n{background:rgba(255,255,255,.26);color:#fff;}
+  /* contador que pede ação: só aqui entra cor */
+  .lic-abas .n.urgente{background:var(--negative);color:#fff;}
+  .lic-abas .n.atencao{background:var(--warning);color:#fff;}
+  .lic-abas button.on .n.urgente,.lic-abas button.on .n.atencao{background:#fff;color:var(--primary-escuro);}
+  .lic-abas .seta{align-self:center;color:var(--ink-faint);font-size:12px;padding:0 1px;user-select:none;}
+  .lic-abas .risco{align-self:center;width:1px;background:var(--border);margin:2px 7px;}
+  /* dentro de uma dispensa aberta: a aba da etapa dela fica marcada,
+     mas sem fingir que é a lista — ela está um nível abaixo */
+  .lic-abas button.aqui{border-color:var(--primary);color:var(--primary-escuro);font-weight:600;
+    background:var(--primary-soft);}
+  .lic-trilha .onde{font-size:11.5px;color:var(--ink-soft);padding:5px 4px 1px;}
+  .lic-trilha .onde b{color:var(--ink);}
+  @media (max-width:720px){
+    .lic-abas button{font-size:12px;padding:6px 8px;gap:5px;}
+    .lic-abas .seta{display:none;}
+  }
 
   .lic-topo{display:flex;gap:12px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;
     background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:12px 14px;margin-bottom:12px;}
@@ -28166,20 +28198,13 @@ function renderPortalLicitacoes(){
   }
 
   if(licTela && licAberta){
-    box.innerHTML = licTelaDetalhe();
+    /* A trilha fica aqui também. Antes ela sumia quando uma dispensa
+       era aberta — e aí não dava pra ver em que passo você está nem
+       pular pra outra lista sem voltar primeiro. */
+    box.innerHTML = licTrilhaHtml() + licTelaDetalhe();
     licLigarDetalhe();
     return;
   }
-
-  const cont = {
-    oportunidades: (STATE.licitacoesRevisao||[]).length,
-    analise: licPorEtapa(['analise']).length,
-    precificacao: licPorEtapa(['precificacao']).length,
-    propostas: licPorEtapa(['proposta']).length,
-    enviadas: licPorEtapa(['enviada','ganhou','entregue']).length,
-    perdidas: licPorEtapa(['perdeu','desistiu']).length,
-    produtos: licHistoricoProdutos().length
-  };
 
   const painel = {
     oportunidades: licPainelOportunidades,
@@ -28192,17 +28217,103 @@ function renderPortalLicitacoes(){
   }[licAba] || licPainelOportunidades;
 
   box.innerHTML = `
+    ${licTrilhaHtml()}
     ${licAvisoPrazo()}
     ${licAvisoCertidoes()}
-    <div class="lic-abas">
-      ${LIC_ABAS.map(a=>`
-        <button class="${a.id===licAba?'on':''}" onclick="licIrAba('${a.id}')">
-          ${escapeHtml(a.rotulo)}<span class="n">${cont[a.id]}</span>
-        </button>`).join('')}
-    </div>
     ${painel()}
   `;
   licLigarPainel();
+}
+
+/* =========================================================
+   A TRILHA DAS SETE ABAS
+
+   "Deixe essa aba definida em todas as páginas que eu entrar. Ela
+   sempre vai aparecer. E deixe mais visível, mais fácil de entender —
+   se precisar colocar cor, pode."
+
+   As cinco primeiras abas são um caminho: importa, analisa, precifica,
+   envia, aguarda. Por isso elas são numeradas e separadas por setas.
+   "Não ganhamos" e "Produtos de licitação" não são passos — são
+   consulta — então ficam depois de um risco.
+
+   A cor entra só onde tem coisa pedindo atenção: vermelho quando o
+   prazo está correndo e ainda não saiu, amarelo quando passou do tempo
+   de cobrar um resultado. Colorir tudo não informaria nada.
+   ========================================================= */
+function licContagemAbas(){
+  return {
+    oportunidades: (STATE.licitacoesRevisao||[]).length,
+    analise:       licPorEtapa(['analise']).length,
+    precificacao:  licPorEtapa(['precificacao']).length,
+    propostas:     licPorEtapa(['proposta']).length,
+    enviadas:      licPorEtapa(['enviada','ganhou','entregue']).length,
+    perdidas:      licPorEtapa(['perdeu','desistiu']).length,
+    produtos:      licHistoricoProdutos().length
+  };
+}
+
+/* O que em cada aba está pedindo providência hoje. */
+function licAlertaDaAba(id){
+  if(id==='oportunidades' || id==='analise' || id==='precificacao'){
+    const etapas = { oportunidades:null, analise:['analise'], precificacao:['precificacao'] }[id];
+    const lista = etapas ? licPorEtapa(etapas) : (STATE.licitacoesRevisao||[]);
+    const apertadas = lista.filter(o=>{
+      const p = licPrazoInfo(o);
+      return !p.encerrada && p.quando && (p.quando.getTime() - Date.now()) < 48*3600000;
+    }).length;
+    return apertadas ? { classe:'urgente', quantos:apertadas, porque:'encerra em menos de 48h' } : null;
+  }
+  if(id==='propostas'){
+    const apertadas = licPorEtapa(['proposta']).filter(o=>{
+      const p = licPrazoInfo(o);
+      return !p.encerrada && p.quando && (p.quando.getTime() - Date.now()) < 48*3600000;
+    }).length;
+    return apertadas ? { classe:'urgente', quantos:apertadas, porque:'pronta e o prazo encerra em menos de 48h' } : null;
+  }
+  if(id==='enviadas'){
+    const cobrar = licTodas().filter(licPrecisaCobrar).length;
+    return cobrar ? { classe:'atencao', quantos:cobrar, porque:'sem retorno há dias — vale cobrar' } : null;
+  }
+  return null;
+}
+
+function licTrilhaHtml(){
+  const cont = licContagemAbas();
+  const aberta = licAberta ? licAchar(licAberta) : null;
+  const abaDaAberta = aberta ? ((LIC_ETAPAS[aberta.etapa]||{}).aba || null) : null;
+  /* a aba numerada só vale pros cinco passos do caminho */
+  const passos = ['oportunidades','analise','precificacao','propostas','enviadas'];
+
+  const botao = (a)=>{
+    const n = passos.indexOf(a.id);
+    const alerta = licAlertaDaAba(a.id);
+    const selecionada = !aberta && a.id===licAba;
+    const estaAqui = !!aberta && a.id===abaDaAberta;
+    const titulo = alerta ? `${alerta.quantos} ${alerta.porque}` : '';
+    return `<button class="${selecionada?'on':''}${estaAqui?' aqui':''}"
+      onclick="licIrAba('${a.id}')" ${titulo?`title="${escapeAttr(titulo)}"`:''}>
+      ${n>=0 ? `<span class="passo">${n+1}</span>` : ''}
+      <span>${escapeHtml(a.rotulo)}</span>
+      <span class="n ${alerta?alerta.classe:''}">${cont[a.id]}</span>
+    </button>`;
+  };
+
+  const partes = [];
+  LIC_ABAS.forEach((a,i)=>{
+    const ehPasso = passos.indexOf(a.id) >= 0;
+    const anteriorEraPasso = i>0 && passos.indexOf(LIC_ABAS[i-1].id) >= 0;
+    if(ehPasso && anteriorEraPasso) partes.push('<span class="seta">›</span>');
+    if(!ehPasso && anteriorEraPasso) partes.push('<span class="risco"></span>');
+    partes.push(botao(a));
+  });
+
+  return `<div class="lic-trilha">
+    <div class="lic-abas">${partes.join('')}</div>
+    ${aberta ? `<div class="onde">Você está dentro de
+      <b>${escapeHtml((aberta.numeroControlePNCP || aberta.numero || aberta.objeto || '').slice(0,60))}</b>
+      — clique numa aba acima pra voltar pras listas.</div>` : ''}
+  </div>`;
 }
 
 function licIrAba(aba){
@@ -47426,7 +47537,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 14:02';
+const SISTEMA_VERSAO = '27/10/2026 14:11';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -48768,9 +48879,25 @@ function versaoMostrarTarja(dado){
       <button class="btn btn-sm" style="background:#fff;color:var(--primary);border-color:#fff;font-weight:600;"
         onclick="versaoAtualizarAgora()">↻ Atualizar agora</button>
       <button class="btn btn-sm" style="background:transparent;color:#fff;border-color:rgba(255,255,255,.5);"
-        onclick="document.getElementById('versao-nova').remove()">Depois</button>
+        onclick="versaoLembrarDepois()">Depois</button>
     </div>`;
   document.body.appendChild(d);
+  versaoTarjaDado = dado;
+}
+
+/* "Depois" sumia pra sempre, e ela passava o dia inteiro numa versão
+   velha sem saber — foi assim que um ajuste publicado às 14h ainda não
+   estava na tela dela às 15h. Agora o aviso volta em 15 minutos. */
+let versaoTarjaDado = null;
+let versaoLembreteTimer = null;
+function versaoLembrarDepois(){
+  const d = document.getElementById('versao-nova');
+  if(d) d.remove();
+  clearTimeout(versaoLembreteTimer);
+  versaoLembreteTimer = setTimeout(()=>{
+    if(versaoTarjaDado && !document.getElementById('versao-nova')) versaoMostrarTarja(versaoTarjaDado);
+  }, 15*60*1000);
+  showToast('Certo — eu te lembro de novo em 15 minutos.','info');
 }
 
 function versaoAtualizarAgora(){
