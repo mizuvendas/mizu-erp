@@ -1858,29 +1858,224 @@ function defaultState(){
 
 let STATE = loadState();
 
+/* O tratamento que todo estado carregado recebe, venha de onde vier:
+   completa chaves novas que apareceram em atualizações e roda as
+   migrações antigas. Estava escondido dentro do loadState; virou função
+   própria porque agora o estado pode vir do IndexedDB também. */
+function prepararEstado(parsed){
+  // merge com default pra garantir chaves novas em atualizações futuras —
+  // 'config' é mesclado à parte (merge raso quebraria campos novos dele,
+  // como lojaLat/lojaLng, quando o usuário já tem um config salvo antigo
+  // sem esses campos: Object.assign de nível 1 sobrescreveria o objeto
+  // inteiro em vez de completar só o que falta).
+  const state = Object.assign(defaultState(), parsed || {});
+  state.config = Object.assign(defaultState().config, (parsed && parsed.config) || {});
+  state.caixa  = Object.assign(defaultState().caixa,  (parsed && parsed.caixa)  || {});
+  migrarFornecedoresELocaisCompra(state);
+  migrarPagadoresParaClientes(state);
+  migrarAmbienteNotasFiscais(state);
+  garantirClienteConsumidorFinal(state);
+  return state;
+}
+
 function loadState(){
   try{
     const raw = localStorage.getItem(STORAGE_KEY);
     if(!raw) return defaultState();
-    const parsed = JSON.parse(raw);
-    // merge com default pra garantir chaves novas em atualizações futuras —
-    // 'config' é mesclado à parte (merge raso quebraria campos novos dele,
-    // como lojaLat/lojaLng, quando o usuário já tem um config salvo antigo
-    // sem esses campos: Object.assign de nível 1 sobrescreveria o objeto
-    // inteiro em vez de completar só o que falta).
-    const state = Object.assign(defaultState(), parsed);
-    state.config = Object.assign(defaultState().config, parsed.config||{});
-    state.caixa = Object.assign(defaultState().caixa, parsed.caixa||{});
-    migrarFornecedoresELocaisCompra(state);
-    migrarPagadoresParaClientes(state);
-    migrarAmbienteNotasFiscais(state);
-    garantirClienteConsumidorFinal(state);
-    return state;
+    return prepararEstado(JSON.parse(raw));
   }catch(e){
     console.error('Erro ao carregar dados salvos, iniciando vazio.', e);
     return defaultState();
   }
 }
+
+/* =========================================================
+   ONDE O SISTEMA MORA: DO localStorage PRO IndexedDB
+
+   "Vamos aumentar essa memória já agora."
+
+   O localStorage tem teto fixo de ~5 MB por site. Não é configuração,
+   não tem plano pago, não adianta HD grande — é regra do navegador. E
+   quando ele enche, o `setItem` estoura: o sistema para de salvar, o
+   sincronismo para de anotar o que já subiu, e ela passa a tarde
+   trabalhando no vazio. Foi a causa das três perdas desta semana.
+
+   O IndexedDB é o outro armazenamento do MESMO navegador, e o limite
+   lá é uma fatia do disco livre — gigabytes. As certidões já moravam
+   nele. Agora o sistema inteiro passa a morar.
+
+   Como foi feito, pra não virar reforma:
+   · `saveState()` continua com o mesmo nome e o mesmo jeito de chamar.
+     Nenhum dos ~500 lugares que chamam ele mudou. Por baixo, ele
+     enfileira e grava no IndexedDB.
+   · Só a CARGA virou assíncrona, e num lugar só: o bloco de
+     inicialização, no fim do arquivo.
+   · A cópia velha do localStorage é a semente da primeira carga. Ela só
+     é apagada depois que o IndexedDB confirma que guardou — e aí os
+     5 MB voltam a ficar livres.
+   · Se o IndexedDB não existir ou falhar, tudo volta a funcionar como
+     antes, no localStorage. Nunca fica sem onde salvar.
+   ========================================================= */
+const ARMAZ_DB     = 'mizu-estado';
+const ARMAZ_STORE  = 'estado';
+const ARMAZ_CHAVE  = 'STATE';
+const ARMAZ_MIGROU = 'mizu_estado_no_idb';
+
+let armazOndeMora = 'localStorage';   // vira 'idb' quando a mudança dá certo
+
+function armazIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open(ARMAZ_DB, 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains(ARMAZ_STORE)) req.result.createObjectStore(ARMAZ_STORE);
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction(ARMAZ_STORE, modo==='get' ? 'readonly' : 'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore(ARMAZ_STORE);
+      const op = modo==='get' ? store.get(chave)
+               : modo==='del' ? store.delete(chave)
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror   = ()=>reject(op.error);
+    };
+  });
+}
+
+/* Roda uma vez, no início, ANTES de desenhar qualquer tela. */
+async function armazCarregar(){
+  let guardado = null;
+  try{ guardado = await armazIdb('get', ARMAZ_CHAVE); }
+  catch(e){ console.warn('IndexedDB indisponível — seguindo no localStorage', e); return; }
+
+  if(guardado){
+    try{
+      const doIdb = prepararEstado(JSON.parse(guardado));
+
+      /* QUEM GANHA, SE OS DOIS TIVEREM COISA.
+         O normal é o IndexedDB mandar. Mas se a cópia do localStorage
+         ainda existe (quer dizer que a limpeza nunca rodou) e tem MAIS
+         registro que a do IndexedDB, então o IndexedDB é que está
+         atrasado ou nasceu vazio — e confiar nele apagaria o trabalho
+         dela. Nesse caso vence o maior, e o outro é reescrito.
+         Nenhum dos dois é apagado antes dessa conta. */
+      const aindaNoLocal = localStorage.getItem(STORAGE_KEY);
+      if(aindaNoLocal){
+        const quantos = (s)=>{
+          let n = 0;
+          Object.keys(s||{}).forEach(k=>{ if(Array.isArray(s[k])) n += s[k].length; });
+          return n;
+        };
+        if(quantos(STATE) > quantos(doIdb)){
+          console.warn('O IndexedDB estava com menos registros que o navegador — mantive o do navegador.');
+          await armazIdb('put', ARMAZ_CHAVE, JSON.stringify(STATE));
+          armazOndeMora = 'idb';
+          try{ localStorage.setItem(ARMAZ_MIGROU, '1'); }catch(e){}
+          armazLimparSobraDoLocalStorage();
+          return;
+        }
+      }
+
+      STATE = doIdb;
+      armazOndeMora = 'idb';
+      try{ localStorage.setItem(ARMAZ_MIGROU, '1'); }catch(e){}
+      armazLimparSobraDoLocalStorage();
+      return;
+    }catch(e){
+      console.error('O estado guardado no IndexedDB não pôde ser lido — mantendo o do navegador', e);
+      return;
+    }
+  }
+
+  /* primeira vez: o que já está no STATE (veio do localStorage) é a
+     semente. Grava lá e confere antes de mexer na cópia velha. */
+  try{
+    const texto = JSON.stringify(STATE);
+    await armazIdb('put', ARMAZ_CHAVE, texto);
+    const conferindo = await armazIdb('get', ARMAZ_CHAVE);
+    if(typeof conferindo === 'string' && conferindo.length === texto.length){
+      armazOndeMora = 'idb';
+      try{ localStorage.setItem(ARMAZ_MIGROU, '1'); }catch(e){}
+      armazLimparSobraDoLocalStorage();
+      setTimeout(()=>{ try{
+        showToast('Pronto: o sistema saiu do limite de 5 MB do navegador. Espaço liberado.','success');
+      }catch(e){} }, 1500);
+    }
+  }catch(e){
+    console.error('Não consegui mudar o estado pro IndexedDB — seguindo no localStorage', e);
+  }
+}
+
+/* Só depois que o IndexedDB confirmou. É isto que devolve os 5 MB. */
+function armazLimparSobraDoLocalStorage(){
+  if(armazOndeMora !== 'idb') return;
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
+}
+
+/* ---- a gravação ----
+   SEM ATRASO, de propósito. A primeira versão esperava 150ms pra juntar
+   várias chamadas numa só — e aí quem salvasse e recarregasse a página
+   no mesmo segundo perdia a última alteração. Pouco tempo, mas é
+   exatamente o tipo de buraco que some com o trabalho dela sem aviso.
+
+   Agora a gravação COMEÇA na hora. O agrupamento continua existindo,
+   mas pelo outro lado: enquanto uma gravação está em curso, as
+   chamadas seguintes só marcam "tem mais coisa" e uma única gravação
+   final roda quando a primeira termina. Sessenta saveState() seguidos
+   viram duas gravações, e em momento nenhum fica mudança parada sem
+   gravação a caminho. */
+let armazTimer = null, armazGravando = false, armazPendente = false;
+
+function armazAgendarGravacao(){
+  armazPendente = true;
+  if(armazGravando) return;      /* a que está rodando já vai pegar isto */
+  armazGravarAgora();
+}
+
+async function armazGravarAgora(){
+  clearTimeout(armazTimer); armazTimer = null;
+  if(armazGravando) { armazPendente = true; return; }
+  armazGravando = true;
+  armazPendente = false;
+  let texto;
+  try{ texto = JSON.stringify(STATE); }
+  catch(e){ armazGravando = false; console.error(e); return; }
+  try{
+    await armazIdb('put', ARMAZ_CHAVE, texto);
+    armazOndeMora = 'idb';
+    tirarTarjaNaoSalvou();
+    const el = document.getElementById('last-saved');
+    if(el) el.textContent = '💾 Dados salvos às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  }catch(e){
+    console.error('Falha ao gravar no IndexedDB', e);
+    /* cai pro localStorage: melhor o teto apertado do que nada */
+    if(!armazGravarNoLocalStorage()) avisarQueNaoSalvou();
+  }finally{
+    armazGravando = false;
+    if(armazPendente) armazAgendarGravacao();
+  }
+}
+
+function armazGravarNoLocalStorage(){
+  try{
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
+    const el = document.getElementById('last-saved');
+    if(el) el.textContent = '💾 Dados salvos neste navegador às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+    tirarTarjaNaoSalvou();
+    return true;
+  }catch(e){ console.error(e); return false; }
+}
+
+/* Fechou a aba ou trocou de janela: não espera os 150ms. */
+window.addEventListener('pagehide', ()=>{ if(armazPendente || armazTimer) armazGravarAgora(); });
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden' && (armazPendente || armazTimer)) armazGravarAgora();
+});
 
 // Venda de balcão: a NFC-e não exige identificar o comprador, mas o Mizu
 // sempre precisa de um cliente na venda (é por ele que passam estoque,
@@ -1992,15 +2187,15 @@ function tirarTarjaNaoSalvou(){
   showToast('Voltou a salvar normalmente.','success');
 }
 
+/* Mesmo nome, mesma chamada, de todos os lugares de sempre. O que mudou
+   é só pra onde ele grava — e isso ele decide sozinho. */
 function saveState(){
-  try{
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(STATE));
-    const el = document.getElementById('last-saved');
-    if(el) el.textContent = '💾 Dados salvos neste navegador às ' + new Date().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
-    tirarTarjaNaoSalvou();   /* ela limpou espaço: a tarja some sozinha */
-  }catch(e){
-    console.error(e);
-    avisarQueNaoSalvou();
+  if(armazOndeMora === 'idb'){
+    armazAgendarGravacao();
+  }else{
+    /* antes da mudança dar certo, ou se o IndexedDB falhar, segue o
+       caminho velho — com o teto de 5 MB e a tarja quando estoura */
+    if(!armazGravarNoLocalStorage()) avisarQueNaoSalvou();
   }
   atualizarBadgesMenu();
   if(typeof armazVigiar === 'function') armazVigiar();
@@ -47537,7 +47732,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 14:59';
+const SISTEMA_VERSAO = '27/10/2026 16:17';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47545,8 +47740,14 @@ async function renderArmazenamento(){
   box.innerHTML = '<div class="card"><p class="help-text">Medindo...</p></div>';
 
   const m = await armazMedirTudo();
-  const usado = m.local.total;
-  const pct = (usado / ARMAZ_LIMITE_LOCAL) * 100;
+  /* Depois da mudança, o sistema não mora mais no localStorage — mora no
+     IndexedDB, onde o limite é uma fatia do disco. Então o número que
+     importa passou a ser o do navegador inteiro, não os 5 MB. */
+  const noIdb = armazOndeMora === 'idb';
+  const tamanhoDoSistema = armazTamanhoTexto(JSON.stringify(STATE));
+  const limite = noIdb ? ((m.origem && m.origem.quota) || 0) : ARMAZ_LIMITE_LOCAL;
+  const usado  = noIdb ? tamanhoDoSistema : m.local.total;
+  const pct = limite > 0 ? (usado / limite) * 100 : 0;
   const cor = pct >= 85 ? 'var(--negative)' : pct >= 70 ? 'var(--warning)' : 'var(--positive)';
   const estado = pct >= 85 ? 'Está apertado — limpe alguma coisa hoje.'
                : pct >= 70 ? 'Já passou de três quartos. Vale limpar.'
@@ -47571,22 +47772,38 @@ async function renderArmazenamento(){
       </div>
     </div>
 
-    ${pct >= 70 ? `<div class="lic-doc ${pct>=85?'falta':'aviso'}" style="display:block;margin-bottom:12px;">
+    ${(!noIdb && pct >= 70) ? `<div class="lic-doc ${pct>=85?'falta':'aviso'}" style="display:block;margin-bottom:12px;">
       <b>${pct>=85?'⛔':'⚠️'} O armazenamento deste navegador está em ${pct.toFixed(0)}%</b>
       <small>Quando ele enche, o sistema para de salvar — e você perde o que digitou sem aviso. Limpe algo abaixo.</small>
     </div>`:''}
 
+    ${noIdb ? `<div class="lic-doc ok" style="display:block;margin-bottom:12px;">
+      <b>✓ O sistema saiu do limite de 5 MB</b>
+      <small>Ele mora agora no armazenamento grande deste navegador, onde o espaço é uma fatia do seu disco.
+        Aquele aperto que travava o salvar acabou — as limpezas abaixo continuam disponíveis, mas viraram
+        opcionais.</small></div>`:''}
+
     <div class="card">
-      <h3 style="margin-top:0;">Neste navegador <span class="hint">é este que trava o sistema</span></h3>
-      <p class="help-text">Todo o sistema — clientes, produtos, orçamentos, vendas, licitações — mora aqui dentro.
-        O limite é do navegador, fixo, e <b>não dá pra comprar mais</b>. Quando enche, o sistema para de salvar.</p>
+      <h3 style="margin-top:0;">${noIdb ? 'Quanto o sistema ocupa' : 'Neste navegador'}
+        <span class="hint">${noIdb ? 'no armazenamento grande do navegador' : 'é este que trava o sistema'}</span></h3>
+      <p class="help-text">${noIdb
+        ? `Todo o sistema — clientes, produtos, orçamentos, vendas, licitações — mora aqui dentro.
+           O limite não é mais os 5 MB fixos: é o que o navegador libera do seu disco, e muda conforme
+           o espaço livre da máquina.`
+        : `Todo o sistema — clientes, produtos, orçamentos, vendas, licitações — mora aqui dentro.
+           O limite é do navegador, fixo, e <b>não dá pra comprar mais</b>. Quando enche, o sistema para de salvar.`}</p>
 
       <div style="font-size:26px;font-weight:700;font-family:var(--font-num);">
-        ${armazFormatar(usado)} <span style="font-size:15px;font-weight:400;color:var(--ink-faint);">de cerca de ${armazFormatar(ARMAZ_LIMITE_LOCAL)}</span>
+        ${armazFormatar(usado)} <span style="font-size:15px;font-weight:400;color:var(--ink-faint);">de ${
+          limite>0 ? armazFormatar(limite) : 'um limite que o navegador não informou'
+        }${noIdb?' que o navegador libera':' (cerca de 5 MB)'}</span>
       </div>
-      ${armazBarra(usado, ARMAZ_LIMITE_LOCAL, cor)}
-      <div style="font-size:12.5px;color:${cor};font-weight:600;">${pct.toFixed(1)}% ocupado — ${estado}</div>
-      <div class="help-text" style="margin-top:4px;">O limite exato varia um pouco com o navegador; 5 MB é o mais comum.</div>
+      ${armazBarra(usado, limite||1, cor)}
+      <div style="font-size:12.5px;color:${cor};font-weight:600;">${pct.toFixed(pct<1?2:1)}% ocupado — ${
+        noIdb && pct < 70 ? 'Tem espaço de sobra.' : estado}</div>
+      <div class="help-text" style="margin-top:4px;">${noIdb
+        ? 'Sobrou '+armazFormatar(Math.max(0, limite - usado))+' livre. Esse número cresce e diminui com o espaço livre do seu HD.'
+        : 'O limite exato varia um pouco com o navegador; 5 MB é o mais comum.'}</div>
 
       <div class="table-wrap" style="margin-top:14px;">
         <table class="data-table">
@@ -47714,11 +47931,14 @@ function armazLimpar(id){
   };
   const a = acoes[id];
   if(!a) return;
-  const antes = armazMedirLocalStorage().total;
+  /* Mede o SISTEMA, não o localStorage: depois da mudança pro IndexedDB
+     o estado nem mora mais lá, e o "Liberou" dizia sempre zero. */
+  const medir = ()=>armazTamanhoTexto(JSON.stringify(STATE));
+  const antes = medir();
   confirmAction(a.titulo, a.texto, ()=>{
     a.faz();
     saveState();
-    const depois = armazMedirLocalStorage().total;
+    const depois = medir();
     renderArmazenamento();
     showToast(`Liberou ${armazFormatar(Math.max(0, antes-depois))}.`,'success');
   }, 'Limpar');
@@ -47727,6 +47947,9 @@ function armazLimpar(id){
 /* Vigia: quando o espaço passa de 80%, avisa uma vez por sessão. */
 let armazJaAvisou = false;
 function armazVigiar(){
+  /* depois da mudança pro IndexedDB, o teto de 5 MB não vale mais —
+     esse aviso só assustaria à toa */
+  if(armazOndeMora === 'idb') return;
   if(armazJaAvisou) return;
   const usado = armazMedirLocalStorage().total;
   if(usado / ARMAZ_LIMITE_LOCAL < 0.8) return;
@@ -49018,24 +49241,30 @@ function versaoIniciarVigia(){
 /* =========================================================
    INICIALIZAÇÃO
    ========================================================= */
-document.addEventListener('DOMContentLoaded', ()=>{
+/* A carga do estado virou assíncrona (vem do IndexedDB), então a
+   abertura espera por ela antes de desenhar a primeira tela. É o ÚNICO
+   lugar do sistema que precisou saber disso. Roda uma vez só: o
+   DOMContentLoaded e o fallback chamam os dois. */
+let sistemaJaIniciou = false;
+async function iniciarSistema(){
+  if(sistemaJaIniciou) return;
+  sistemaJaIniciou = true;
+  try{ await armazCarregar(); }
+  catch(e){ console.error('Falha ao carregar o estado — seguindo com o que havia', e); }
   renderDashboard();
   atualizarBadgesMenu();
   verificarBackupAoAbrirApp();
   verificarNovidadesAoAbrirApp();
   renderFaixaSimulacao();
   versaoIniciarVigia();
+  nuvemIniciar();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
-});
+}
+
+document.addEventListener('DOMContentLoaded', iniciarSistema);
 // fallback caso DOMContentLoaded já tenha disparado (script no fim do body)
-renderDashboard();
-atualizarBadgesMenu();
-verificarBackupAoAbrirApp();
-verificarNovidadesAoAbrirApp();
-renderFaixaSimulacao();
-versaoIniciarVigia();
-nuvemIniciar();
+iniciarSistema();
 </script>
 </body>
 </html>
