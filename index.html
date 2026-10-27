@@ -31703,16 +31703,28 @@ function licIdentidadeHtml(l){
   const orgao  = licPrimeiroQueTiver(l.orgao, l.unidade);
   const cnpj   = licCnpjBonito(l.cnpjOrgao);
 
-  /* o que a análise leu e que muda o preço: prazo de pagamento é custo
-     de dinheiro, prazo de entrega e local de entrega são frete */
+  /* O que a análise leu e que muda o preço e o papel: prazo de
+     pagamento é custo de dinheiro, prazo de entrega e local de entrega
+     são frete, validade é por quanto tempo o preço fica de pé.
+     Na tela da proposta ela pode ter corrigido esses campos à mão — e
+     aí vale o que ela escreveu, não o que a IA leu. */
   const doEdital = [
-    ['Julgamento',        leitura.criterio],
-    ['Prazo de entrega',  leitura.prazoEntrega],
-    ['Prazo de pagamento',leitura.prazoPagamento],
-    ['Local de entrega',  leitura.localEntrega],
-    ['Validade da proposta', leitura.validade],
-    ['Exige amostra',     leitura.exigeAmostra]
+    ['Julgamento',           licPrimeiroQueTiver(pc.tipo, leitura.criterio)],
+    ['Validade da proposta', licPrimeiroQueTiver(pc.validade, leitura.validade)],
+    ['Prazo de entrega',     licPrimeiroQueTiver(pc.prazoEntrega, leitura.prazoEntrega)],
+    ['Prazo de pagamento',   licPrimeiroQueTiver(pc.prazoPagamento, leitura.prazoPagamento)],
+    ['Local de entrega',     leitura.localEntrega],
+    ['Exige amostra',        leitura.exigeAmostra]
   ].filter(x=>x[1]);
+
+  /* O CNPJ do órgão vem do edital/PNCP; o do cliente escolhido vem do
+     cadastro. São o mesmo órgão, mas nem sempre o mesmo número — e é o
+     do cadastro que sai impresso na proposta. Quando diferem, ela
+     precisa ver os dois pra saber qual está errado. */
+  const cliente = l.clienteId ? (STATE.clientes||[]).find(c=>c.id===l.clienteId) : null;
+  const cnpjCliente = cliente ? licCnpjBonito(cliente.documento) : '';
+  const soDigitos = v => String(v||'').replace(/\D/g,'');
+  const divergem = cnpjCliente && cnpj && soDigitos(cnpjCliente) !== soDigitos(cnpj);
 
   return `
   <div class="card lic-identidade">
@@ -31722,8 +31734,17 @@ function licIdentidadeHtml(l){
           l.modalidadeNome?` · ${escapeHtml(l.modalidadeNome)}`:''}</div>` : ''}
         <div class="org">${escapeHtml(orgao||'órgão não informado')}</div>
         <div class="doc">${cnpj
-          ? `CNPJ <b>${escapeHtml(cnpj)}</b> <button class="btn btn-sm" onclick="licCopiar('${escapeAttr(cnpj)}','CNPJ copiado.')">copiar</button>`
+          ? `CNPJ <b>${escapeHtml(cnpj)}</b> <button class="btn btn-sm" onclick="licCopiar('${escapeAttr(cnpj)}','CNPJ copiado.')">copiar</button>
+             <span style="font-size:11px;color:var(--ink-faint);">do edital</span>`
           : '<span style="color:var(--warning);">CNPJ não veio no edital nem no PNCP</span>'}</div>
+        ${cliente ? `<div class="doc">Cliente <b>${escapeHtml(cliente.nome)}</b></div>
+          <div class="doc">${cnpjCliente
+            ? `CNPJ <b>${escapeHtml(cnpjCliente)}</b>
+               <button class="btn btn-sm" onclick="licCopiar('${escapeAttr(cnpjCliente)}','CNPJ copiado.')">copiar</button>
+               <span style="font-size:11px;color:var(--ink-faint);">do cadastro — é este que sai na proposta</span>`
+            : '<span style="color:var(--warning);">o cadastro deste cliente está sem CNPJ — a proposta sai sem ele</span>'}</div>
+          ${divergem ? `<div class="doc" style="color:var(--negative);">
+            ⚠️ O CNPJ do cadastro é diferente do que veio no edital — confira qual está certo antes de enviar.</div>`:''}` : ''}
         ${licLugarHtml(l)}
       </div>
       <div style="min-width:180px;text-align:right;">
@@ -34663,6 +34684,8 @@ function licTelaProposta(l){
   return `
     ${licCabecalho(l, l.objeto||'Proposta', `${escapeHtml(l.orgao||'')} · ${l.itens.length} item${l.itens.length===1?'':'ns'} · ${fmtMoney(t.venda)}`,
       l.etapa==='proposta' ? `<button class="btn" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar à precificação</button>` : '')}
+
+    ${licIdentidadeHtml(l)}
 
     ${licPendenciasHtml(l)}
 
@@ -47403,7 +47426,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 13:45';
+const SISTEMA_VERSAO = '27/10/2026 14:02';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
