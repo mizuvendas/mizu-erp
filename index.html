@@ -32252,7 +32252,8 @@ function licChatGptHtml(l){
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;">
         <button class="btn btn-primary" onclick="licLerRespostaGpt('${l.id}')">Ler a resposta e preencher</button>
-        ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')">Desfazer</button>`:''}
+        ${temResposta?`<button class="btn btn-sm" onclick="licLimparRespostaIA('${l.id}')"
+          title="Apaga tudo que veio da IA — itens, campos lidos e modelos — pra você mandar uma análise nova do zero">🗑 Zerar a análise</button>`:''}
         <span class="dica" style="font-size:11.5px;color:var(--ink-faint);">serve ChatGPT, Gemini ou outra — pode arrastar um .json ou .txt na caixa</span>
       </div>
     </div>
@@ -32628,8 +32629,45 @@ function licLerRespostaGpt(id){
 
   const r = licExtrairJson(bruto);
   if(r.erro){ saveState(); showToast(r.erro,'error'); return; }
-  licAplicarRespostaIA(l, r.dado);
-  if(r.consertado) showToast('O JSON veio com uns defeitos, consertei e li.','info');
+
+  /* ESSA RESPOSTA É DESTA DISPENSA MESMO?
+     Foi assim que um nobreak de outro edital entrou numa dispensa de
+     poltronas: a resposta da IA era de outra dispensa e o sistema
+     engoliu calado. Agora ele compara o número antes e pergunta. */
+  const outra = licRespostaDeOutraDispensa(l, r.dado);
+  const seguir = ()=>{
+    licAplicarRespostaIA(l, r.dado);
+    if(r.consertado) showToast('O JSON veio com uns defeitos, consertei e li.','info');
+  };
+  if(outra){
+    confirmAction('Esta resposta parece ser de outra dispensa',
+      `A resposta fala da dispensa ${outra.naResposta}, e você está na ${outra.aberta}. ` +
+      `Se você colou a resposta errada, feche aqui e cole a certa — colar mesmo assim mistura ` +
+      `os itens das duas e dá trabalho pra desfazer. Colar assim mesmo?`,
+      seguir, 'Colar assim mesmo');
+    return;
+  }
+  seguir();
+}
+
+/* Compara o número da dispensa que veio na resposta com o da que está
+   aberta. Só acusa quando os dois existem e são claramente diferentes —
+   número ausente ou escrito de outro jeito não vira alarme falso. */
+function licSoDigitos(v){ return String(v==null?'':v).replace(/\D/g,''); }
+function licRespostaDeOutraDispensa(l, dado){
+  const d = (dado && dado.dispensa) || {};
+  const naResposta = licSoDigitos(d.numeroControlePNCP) || licSoDigitos(d.numero);
+  if(!naResposta || naResposta.length < 3) return null;
+  const aberta = licSoDigitos(l.numeroControlePNCP) || licSoDigitos(l.numero)
+              || licSoDigitos((l.propostaCampos||{}).numero);
+  if(!aberta || aberta.length < 3) return null;
+  /* um pode trazer o controle inteiro e o outro só o número do processo:
+     se um está contido no outro, é a mesma dispensa */
+  if(naResposta === aberta || naResposta.includes(aberta) || aberta.includes(naResposta)) return null;
+  return {
+    naResposta: String(d.numeroControlePNCP || d.numero),
+    aberta: String(l.numeroControlePNCP || l.numero || (l.propostaCampos||{}).numero)
+  };
 }
 
 /* Aplica no sistema. O que você já tinha escrito à mão manda — a IA
@@ -32837,14 +32875,25 @@ function licAplicarRespostaIA(l, dado){
     }else atualizados++;
     const qtd = Math.max(1, licNumDireto(ia.quantidade) || 1);
     const descLimpa = licLimparValor(ia.descricao);
-    if(!it.descricao || it.descricao===l.objeto) it.descricao = descLimpa;
-    if(!it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = descLimpa;
-    if(!it.unidade || it.unidade==='UND') it.unidade = licUnidadeLimpa(ia.unidade) || 'UND';
+
+    /* UMA ANÁLISE NOVA CORRIGE O QUE A ANTERIOR ERROU.
+       Antes, descrição/unidade/quantidade só eram preenchidas quando
+       estavam vazias — então, numa releitura, a descrição errada ficava
+       e só as exigências trocavam. Resultado: um item com descrição de
+       nobreak e as exigências das poltronas.
+       Agora a releitura completa substitui o que veio da IA. O que ELA
+       digitou à mão naquele campo fica — é o único jeito de corrigir
+       uma análise ruim sem perder o conserto feito na mão. */
+    const trocar = (campo)=> !ehContinuacao && !((it.mao||{})[campo]);
+
+    if(trocar('descricao') || !it.descricao || it.descricao===l.objeto) it.descricao = descLimpa;
+    if(trocar('descricaoProposta') || !it.descricaoProposta || it.descricaoProposta===l.objeto) it.descricaoProposta = descLimpa;
+    if(trocar('unidade') || !it.unidade || it.unidade==='UND') it.unidade = licUnidadeLimpa(ia.unidade) || 'UND';
     /* o que sobrou da frase da unidade vira observação, não se perde */
     const unidadeBruta = String(ia.unidade||'').trim();
     if(unidadeBruta.length > 8 && !it.observacoesEdital) it.observacoesEdital = unidadeBruta;
-    if(!licNumDireto(it.qtd) || it.qtd===1) it.qtd = qtd;
-    if(!licNumDireto(it.teto)){
+    if(trocar('qtd') || !licNumDireto(it.qtd) || it.qtd===1) it.qtd = qtd;
+    if(trocar('teto') || !licNumDireto(it.teto)){
       const total = licNumDireto(ia.valorTotalEstimado) || (licNumDireto(ia.valorUnitarioEstimado) * qtd);
       if(total>0) it.teto = total;
     }
@@ -32906,17 +32955,54 @@ function licAplicarRespostaIA(l, dado){
   showToast(partes.length?('Li: '+partes.join(' · ')):'Li a resposta, mas ela veio vazia.', partes.length?'success':'error');
 }
 
+/* =========================================================
+   ZERAR A ANÁLISE DE VERDADE
+
+   "O edital é de cadeiras e não de nobreak — quero zerar essa análise
+   por completo e mandar uma nova."
+
+   O botão antigo não zerava: apagava os modelos e as marcações de
+   fonte, mas DEIXAVA OS ITENS. E, como a releitura só preenche
+   descrição vazia, o item errado ficava preso pra sempre — foi assim
+   que a descrição de um nobreak sobreviveu numa dispensa de poltronas
+   enquanto as exigências já eram as das poltronas.
+
+   Agora zera mesmo: itens, campos lidos do edital, modelos, fontes,
+   riscos, perguntas, tudo que veio da IA. Fica só o que ela digitou à
+   mão (leituraManual) — e o aviso diz, antes, o que vai embora.
+   ========================================================= */
 function licLimparRespostaIA(id){
   const l = licAchar(id); if(!l) return;
-  confirmAction('Desfazer a leitura da IA',
-    'Isso apaga os modelos pesquisados e as marcações de fonte. Os itens e o que você digitou à mão continuam. Continuar?',
+  const itens = l.itens || [];
+  const comPreco = itens.filter(it=>licNumDireto(it.custo)>0 || licNumDireto(it.precoUnit)>0);
+  const naMao = Object.keys(l.leituraManual || {}).length;
+
+  confirmAction('Zerar a análise desta dispensa',
+    `Volta ao ponto de antes de qualquer resposta da IA: ` +
+    `${itens.length} ite${itens.length===1?'m':'ns'}, os campos lidos do edital, os modelos ` +
+    `pesquisados, as fontes, os riscos e as perguntas ao distribuidor — tudo apagado. ` +
+    (comPreco.length ? `ATENÇÃO: ${comPreco.length} ite${comPreco.length===1?'m já tem':'ns já têm'} ` +
+      `custo ou preço digitado e vai embora junto. ` : '') +
+    (naMao ? `O que você corrigiu à mão (${naMao} campo${naMao===1?'':'s'}) continua. ` : '') +
+    `Os arquivos do edital que você anexou continuam. Depois é só colar a resposta nova.`,
     ()=>{
-      l.comparacao = null; l.respostaIA = false;
+      l.itens = [];
+      l.comparacao = null; l.respostaIA = false; l.respostaIATexto = '';
+      /* o que ela corrigiu à mão sobrevive; o resto da leitura vai */
+      const naMaoMapa = l.leituraManual || {};
+      const sobra = {};
+      Object.keys(naMaoMapa).forEach(k=>{ if((l.leitura||{})[k]) sobra[k] = l.leitura[k]; });
+      l.leitura = sobra;
+      l.leituraOrigem = Object.keys(sobra).length ? 'mao' : null;
       l.fontes = {}; l.naoEncontrado = []; l.editalSilente = []; l.naoLi = [];
       l.contradicoes = []; l.riscos = []; l.perguntasDistribuidor = [];
-      l.resumoDaDecisao = null;
+      l.documentosHabilitacao = []; l.documentosNaoExigidos = [];
+      l.arquivosLidos = []; l.emails = []; l.trechosIlegiveis = [];
+      l.exigencias = []; l.resumoDaDecisao = null;
+      licRegistrar(l, 'Análise zerada — pronta pra receber uma resposta nova.');
       saveState(); renderPortalLicitacoes();
-    });
+      showToast('Análise zerada. Cole a resposta nova em "A ida e volta com a IA".','success');
+    }, 'Zerar a análise');
 }
 
 /* =========================================================
@@ -35455,6 +35541,9 @@ function licLigarDetalhe(){
         item[campo] = numerico ? licNumDireto(inp2.value)
                    : campo==='unidade' ? licUnidadeLimpa(inp2.value)
                    : inp2.value;
+        /* ela mexeu neste campo: uma análise nova não passa por cima.
+           É o que separa "corrigi isso na mão" de "a IA que escreveu". */
+        if(JSON.stringify(item) !== antes){ item.mao = item.mao || {}; item.mao[campo] = true; }
         /* o campo se arruma na hora: 3600 vira 3.600,00 e ela vê que entrou */
         if(inp2.dataset.moeda) inp2.value = licMoedaCampo(item[campo]);
         if(inp2.dataset.pct)   inp2.value = licPctCampo(item[campo]);
@@ -35476,6 +35565,7 @@ function licLigarDetalhe(){
             const item = alvo ? (alvo.itens||[]).find(x=>x.id===itemId) : null;
             if(!item) return;
             item[campo] = inp2.value;
+            item.mao = item.mao || {}; item.mao[campo] = true;
             saveState();
             const pos = inp2.selectionStart;
             renderPortalLicitacoes();
@@ -47027,7 +47117,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 10:54';
+const SISTEMA_VERSAO = '27/10/2026 12:55';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
