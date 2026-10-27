@@ -2034,7 +2034,14 @@ let armazTimer = null, armazGravando = false, armazPendente = false;
 function armazAgendarGravacao(){
   armazPendente = true;
   if(armazGravando) return;      /* a que está rodando já vai pegar isto */
-  armazGravarAgora();
+  if(armazTimer) return;
+  /* Zero milissegundos: só o tempo de deixar a rajada terminar.
+     Oito saveState() seguidos (um laço, uma importação) são oito
+     chamadas no MESMO instante — gravar na primeira guardaria só a
+     primeira, e um recarregar logo em seguida levava as outras sete.
+     Com o zero, as oito já entraram quando a gravação começa, e a
+     espera é curta demais pra caber qualquer coisa no meio. */
+  armazTimer = setTimeout(armazGravarAgora, 0);
 }
 
 async function armazGravarAgora(){
@@ -2730,11 +2737,24 @@ function repescarColecoes(doArquivo){
   Object.keys(doArquivo || {}).forEach(colecao=>{
     const deLa = doArquivo[colecao];
     if(!Array.isArray(deLa) || !deLa.length) return;
-    if(!deLa.every(x=>x && typeof x==='object' && x.id != null)) return;
     const aqui = Array.isArray(STATE[colecao]) ? STATE[colecao] : [];
-    const temAqui = new Set(aqui.map(x=>String(x && x.id)));
-    const faltando = deLa.filter(x=>!temAqui.has(String(x.id)));
-    if(faltando.length) achados.push({ colecao, faltando });
+
+    /* Lista de registros: compara por id. */
+    if(deLa.every(x=>x && typeof x==='object' && x.id != null)){
+      const temAqui = new Set(aqui.map(x=>String(x && x.id)));
+      const faltando = deLa.filter(x=>!temAqui.has(String(x.id)));
+      if(faltando.length) achados.push({ colecao, faltando, tipo:'registros' });
+      return;
+    }
+
+    /* Lista de textos — é o caso das dispensas descartadas, que são só
+       números de controle. Ficava de fora da repescagem porque não tem
+       id, e aí as 516 decisões dela não tinham como voltar. */
+    if(deLa.every(x=>typeof x === 'string' && x)){
+      const temAqui = new Set(aqui.map(String));
+      const faltando = deLa.filter(x=>!temAqui.has(x));
+      if(faltando.length) achados.push({ colecao, faltando, tipo:'textos' });
+    }
   });
   return achados.sort((a,b)=>b.faltando.length - a.faltando.length);
 }
@@ -2745,9 +2765,14 @@ const REPESCA_NOMES = {
   haveres:'Haver de clientes', clientes:'Clientes', produtos:'Produtos', vendas:'Vendas',
   orcamentos:'Orçamentos', licitacoes:'Licitações', licitacoesRevisao:'Oportunidades de licitação',
   fornecedores:'Fornecedores', despesas:'Despesas', contasPagar:'Contas a pagar',
-  contasReceber:'Contas a receber', notasRecebidas:'Notas recebidas', entregas:'Entregas'
+  contasReceber:'Contas a receber', notasRecebidas:'Notas recebidas', entregas:'Entregas',
+  licitacoesDescartadas:'Dispensas descartadas', contasReceberManuais:'Contas a receber lançadas à mão',
+  gruposProdutos:'Grupos de produtos', planosCompra:'Planos de compra',
+  lembretes:'Lembretes', notasFiscais:'Notas fiscais', valeFuncionarios:'Vales de funcionário',
+  marcas:'Marcas', locaisCompra:'Locais de compra', pagadores:'Pagadores de repasse'
 };
 function repescaDescrever(colecao, r){
+  if(typeof r === 'string') return r;
   const nomeCliente = id=>{ const c=(STATE.clientes||[]).find(x=>x.id===id); return c?c.nome:'(cliente que também sumiu)'; };
   if(colecao==='haveres'){
     let saldo = 0;
@@ -2808,6 +2833,14 @@ function abrirRepescagem(doArquivo, nomeArquivo){
       if(!Array.isArray(STATE[a.colecao])) STATE[a.colecao] = [];
       /* confere de novo na hora de gravar: a nuvem pode ter trazido o
          registro de volta enquanto a janela estava aberta */
+      if(a.tipo === 'textos'){
+        const temAqui = new Set(STATE[a.colecao].map(String));
+        a.faltando.forEach(r=>{
+          if(temAqui.has(r)) return;
+          STATE[a.colecao].push(r); temAqui.add(r); devolvidos++;
+        });
+        return;
+      }
       const temAqui = new Set(STATE[a.colecao].map(x=>String(x && x.id)));
       a.faltando.forEach(r=>{
         if(temAqui.has(String(r.id))) return;
@@ -29506,6 +29539,24 @@ function licAbrirPorLink(){
   ta.addEventListener('paste', ()=>setTimeout(()=>{ if(ta.value.trim()) licTrazerPorLink(); }, 60));
 }
 
+/* Fecha a janela do link e põe a dispensa na frente dela — na triagem,
+   filtrada pelo número; ou aberta, se já saiu da triagem. */
+function licLevarAte(id, aba){
+  document.getElementById('modal-lic-link')?.remove();
+  const naTriagem = (STATE.licitacoesRevisao||[]).some(x=>x.id===id);
+  if(naTriagem){
+    const o = (STATE.licitacoesRevisao||[]).find(x=>x.id===id) || {};
+    licFiltroBusca = String(o.numero || o.numeroControlePNCP || '').trim();
+    licAba = 'oportunidades'; licAberta = null; licTela = null;
+    renderPortalLicitacoes();
+    showToast('Filtrei a triagem por "'+licFiltroBusca+'" — ela é a que está na tela.','info');
+  }else{
+    licAba = aba || 'analise';
+    licAbrir(id, 'processo');
+  }
+  window.scrollTo({top:0, behavior:'smooth'});
+}
+
 async function licTrazerPorLink(){
   const ta = document.getElementById('lic-link-txt');
   const caixa = document.getElementById('lic-link-res');
@@ -29544,9 +29595,49 @@ async function licTrazerPorLink(){
     }
 
     const chave = licChaveOportunidade(o);
+
+    /* COLAR O LINK É UMA ORDEM: "quero esta aqui".
+       Se ela já tinha dito "não tenho interesse", o descarte é desfeito
+       — senão a dispensa some de novo na próxima importação e ela fica
+       procurando uma coisa que o sistema está escondendo de propósito.
+       Se estava na lixeira, volta de lá em vez de nascer vazia. */
+    const estavaDescartada = licDescartadas().indexOf(chave) >= 0;
+    if(estavaDescartada){
+      STATE.licitacoesDescartadas = licDescartadas().filter(k => k !== chave);
+    }
+    const naLixeira = licLixeira().find(x => x.registro && licChaveOportunidade(x.registro) === chave);
+    if(naLixeira && !jaTem.has(chave)){
+      /* usa o restaurar de sempre: ele devolve o orçamento junto e
+         recoloca a dispensa na etapa em que ela estava */
+      const volta = naLixeira.registro;
+      licRestaurarDaLixeira(naLixeira.id);
+      jaTem.add(chave);
+      linhasRes.push(`<div class="lic-doc ok"><div><b>${escapeHtml((volta.objeto||'').slice(0,70))}</b>
+        <small>estava na lixeira — trouxe de volta com tudo que ela já tinha${
+          estavaDescartada?', e tirei da lista de descartadas':''}</small>
+        <button class="btn btn-sm" style="margin-top:6px;"
+          onclick="licLevarAte('${volta.id}','${(LIC_ETAPAS[volta.etapa]||{}).aba||'analise'}')">Me leve até ela →</button>
+      </div></div>`);
+      continue;
+    }
+
     if(jaTem.has(chave)){
-      linhasRes.push(`<div class="lic-doc aviso"><div><b>${escapeHtml((o.objeto||'').slice(0,60))}</b>
-        <small>já está no sistema — não dupliquei</small></div></div>`);
+      /* Já existe. Dizer só "não dupliquei" deixava ela procurando a
+         dispensa no meio de centenas. Agora o sistema diz ONDE ela está
+         e abre com um clique. */
+      const achada = (STATE.licitacoesRevisao||[]).find(x=>licChaveOportunidade(x)===chave)
+                  || licTodas().find(x=>licChaveOportunidade(x)===chave);
+      const naTriagem = (STATE.licitacoesRevisao||[]).some(x=>x===achada);
+      const aba = naTriagem ? 'oportunidades' : ((LIC_ETAPAS[(achada||{}).etapa]||{}).aba || 'analise');
+      const ondeEsta = naTriagem ? 'na triagem, esperando você decidir'
+                                 : ((LIC_ETAPAS[(achada||{}).etapa]||{}).rotulo || 'no sistema');
+      linhasRes.push(`<div class="lic-doc aviso"><div>
+        <b>${escapeHtml(((achada||o).objeto||'').slice(0,60))}</b>
+        <small>já está no sistema — ${escapeHtml(ondeEsta)}${estavaDescartada?'. Tirei da lista de descartadas.':''}</small>
+        ${achada ? `<button class="btn btn-sm" style="margin-top:6px;"
+          onclick="licLevarAte('${achada.id}','${aba}')">Me leve até ela →</button>`:''}
+      </div></div>`);
+      if(estavaDescartada) saveState();
       continue;
     }
     jaTem.add(chave);
@@ -47637,10 +47728,12 @@ function armazNome(colecao){ return ARMAZ_NOMES[colecao] || colecao; }
 /* O que dá pra limpar sem perder nada que importe. */
 function armazFaxinas(){
   const f = [];
-  const desc = (STATE.licitacoesDescartadas||[]).length;
-  if(desc > 0) f.push({ id:'descartadas', rotulo:`${desc} dispensa${desc===1?'':'s'} descartada${desc===1?'':'s'}`,
-    explica:'Só a lista do que você já disse "não" — serve pra não voltar na importação. Limpando, elas voltam a aparecer.',
-    bytes: armazTamanhoTexto(JSON.stringify(STATE.licitacoesDescartadas||[])) });
+  /* A lista de descartadas NÃO entra mais aqui.
+     Ela guarda só o número de controle de cada dispensa que ela disse
+     "não" — alguns KB para centenas de decisões. Limpar isso economiza
+     quase nada e custa caro: na importação seguinte do PNCP, tudo que
+     ela já tinha rejeitado volta, e ela refaz a triagem na mão. Foi o
+     que aconteceu com 516 dispensas dela. Nem como opção deve existir. */
 
   /* A lixeira guarda a dispensa inteira pra dar pra restaurar — com os
      itens, a análise e o texto dos anexos. Sessenta e seis dispensas
@@ -47732,7 +47825,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 16:17';
+const SISTEMA_VERSAO = '27/10/2026 16:46';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47893,9 +47986,7 @@ async function renderArmazenamento(){
 
 function armazLimpar(id){
   const acoes = {
-    descartadas: { titulo:'Limpar as descartadas',
-      texto:'As dispensas que você descartou voltam a aparecer na próxima importação do arquivo do PNCP. Continuar?',
-      faz: ()=>{ STATE.licitacoesDescartadas = []; } },
+    /* 'descartadas' saiu de propósito — ver o comentário em armazFaxinas */
     lixeira: { titulo:'Esvaziar a lixeira das dispensas',
       texto:'As dispensas apagadas somem de vez — depois disso não tem mais como restaurar nenhuma delas. '
            +'As dispensas que estão em uso (em análise, precificação, propostas) não são tocadas. Continuar?',
@@ -48278,13 +48369,31 @@ function nuvemColecoesQueZeram(exclusoes){
   });
 }
 
-/* Devolve null (pode subir) ou o motivo de segurar. */
+/* Devolve null (pode subir) ou o motivo de segurar.
+
+   O freio estava perguntando o tempo todo, e isso é pior que não
+   perguntar: ela clica em "fui eu" no automático e, no dia em que for
+   de verdade, clica igual. Duas coisas mudaram:
+
+   · As LISTAS DE TRABALHO não contam. Triar vinte oportunidades de uma
+     vez apaga vinte registros da triagem — é o trabalho dela, não
+     acidente. Antes isso disparava o freio toda vez.
+   · Na abertura, agora precisa de pelo menos três. Uma exclusão que
+     sobrou da sessão anterior é comum e não diz nada.
+
+   O que continua segurando é o que importa: esvaziar por completo uma
+   coleção de cadastro ou de dinheiro, seja um registro ou cem. */
 function nuvemMotivoDeSegurar(exclusoes){
   if(nuvemExclusoesLiberadas || exclusoes.length === 0) return null;
-  if(exclusoes.length > NUVEM_LIMITE_EXCLUSAO) return { tipo:'muitas' };
+
+  /* zerar uma coleção de verdade segura sempre, em qualquer quantidade */
   const zeradas = nuvemColecoesQueZeram(exclusoes);
   if(zeradas.length) return { tipo:'zerou', colecoes:zeradas };
-  if(nuvemPrimeiraRodada) return { tipo:'abertura' };
+
+  const queContam = exclusoes.filter(r=>NUVEM_LISTAS_DE_TRABALHO.indexOf(r.colecao) < 0);
+  if(queContam.length === 0) return null;          // só triagem/lixeira: é trabalho
+  if(queContam.length > NUVEM_LIMITE_EXCLUSAO) return { tipo:'muitas' };
+  if(nuvemPrimeiraRodada && queContam.length >= 3) return { tipo:'abertura' };
   return null;
 }
 
