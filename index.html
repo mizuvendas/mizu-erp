@@ -47537,7 +47537,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 14:11';
+const SISTEMA_VERSAO = '27/10/2026 14:59';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -47754,6 +47754,7 @@ let nuvemUsuario  = null;   // { id, nome, email, dono, ativo, permissoes }
 let nuvemPendentes = 0;
 let nuvemSincronizando = false;
 let nuvemUltimoErro = null;
+let nuvemRegistrosRecusados = [];   // [{colecao,id,kb,motivo}] — o que o servidor recusou
 let nuvemAplicandoRemoto = false;
 let nuvemTimer = null;
 
@@ -48167,20 +48168,49 @@ async function nuvemSubir(){
   for(let i = 0; i < normais.length; i += LOTE) lotes.push(normais.slice(i, i + LOTE));
   for(let i = 0; i < apagar.length;  i += LOTE) lotes.push(apagar.slice(i, i + LOTE));
 
-  for(const lote of lotes){
+  /* UM REGISTRO RUIM NÃO PODE TRAVAR OS OUTROS TREZENTOS.
+     Antes, se um lote de 100 falhasse — por um registro grande demais,
+     um caractere que o servidor recusa, o que for — a função inteira
+     parava ali. Nada mais subia, nunca, e a tela só dizia "erro ao
+     sincronizar" num tooltip que ninguém lê.
+     Agora, quando um lote falha, ele é reenviado um a um: o que der
+     certo sobe, e o que não der fica anotado com nome e tamanho pra
+     ela saber exatamente qual é o problema. */
+  const enviar = async (linhas)=>{
     await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
       method: 'POST',
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(lote.map(r => r.excluido
+      body: JSON.stringify(linhas.map(r => r.excluido
         ? { colecao: r.colecao, id: r.id, excluido: true }
         : { colecao: r.colecao, id: r.id, dados: r.dados, excluido: false }))
     });
-    lote.forEach(r => {
+  };
+
+  for(const lote of lotes){
+    let subiram = lote;
+    try{
+      await enviar(lote);
+    }catch(e){
+      if(lote.length === 1) throw e;           // um só e falhou: é esse mesmo
+      subiram = [];
+      for(const r of lote){
+        try{ await enviar([r]); subiram.push(r); }
+        catch(err){
+          const tamanho = (()=>{ try{ return JSON.stringify(r.dados||{}).length; }catch(x){ return 0; } })();
+          nuvemRegistrosRecusados.push({
+            colecao: r.colecao, id: r.id, kb: Math.round(tamanho/1024),
+            motivo: String((err && err.message) || 'recusado')
+          });
+        }
+      }
+      if(subiram.length === 0) throw e;        // nenhum passou: é problema geral
+    }
+    subiram.forEach(r => {
       if(r._digital) espelho[r._chave] = r._digital;
       else delete espelho[r._chave];
     });
     nuvemGravarEspelho(espelho);
-    nuvemPendentes = Math.max(0, nuvemPendentes - lote.length);
+    nuvemPendentes = Math.max(0, nuvemPendentes - subiram.length);
     nuvemPintarStatus();
   }
   return fila.length;
@@ -48431,8 +48461,72 @@ function nuvemPintarStatus(){
     icone = '⏳'; cor = 'var(--warning)';
     texto = nuvemPendentes + (nuvemPendentes === 1 ? ' a enviar' : ' a enviar');
   }
-  el.innerHTML = `<span style="color:${cor};">${icone}</span> ${escapeHtml(texto)}`;
+  const temProblema = !!nuvemUltimoErro || nuvemRegistrosRecusados.length > 0;
+  el.innerHTML = `<span style="color:${cor};">${icone}</span> ${escapeHtml(texto)}`
+    + (temProblema ? ` <u style="cursor:pointer;">ver o que houve</u>` : '');
+  el.style.cursor = temProblema ? 'pointer' : 'default';
+  el.onclick = temProblema ? nuvemMostrarProblema : null;
   el.title = nuvemUltimoErro || (nuvemUsuario ? (nuvemUsuario.nome + (nuvemUsuario.dono ? ' (dono)' : '')) : '');
+}
+
+/* =========================================================
+   O ERRO DO SINCRONISMO, LEGÍVEL
+
+   "Está dando erro ao sincronizar." A mensagem existia, mas só dentro
+   do atributo title — um tooltip que ninguém passa o mouse em cima.
+   Resultado: o sistema sabia exatamente o que havia de errado e ela
+   ficava sem saber que nada estava subindo pra nuvem.
+   ========================================================= */
+function nuvemExplicarErro(msg){
+  const m = String(msg||'').toLowerCase();
+  if(/failed to fetch|networkerror|load failed/.test(m))
+    return 'O navegador não conseguiu falar com o servidor. Pode ser a internet daqui, ou o servidor fora do ar por um momento.';
+  if(/jwt|token|expired|401|invalid.*credential/.test(m))
+    return 'Sua entrada na nuvem venceu. Clique em Sair e entre de novo — os dados daqui não se perdem com isso.';
+  if(/payload|too large|413|row size|string too long/.test(m))
+    return 'Tem registro grande demais pra subir. Costuma ser anexo pesado guardado dentro do registro.';
+  if(/quota|storage/.test(m))
+    return 'O armazenamento deste navegador encheu e o sistema não consegue nem anotar o que já subiu. Limpe espaço em Armazenamento.';
+  if(/duplicate key|conflict|409/.test(m))
+    return 'O servidor recusou por conflito de registro. Sincronizar de novo costuma resolver.';
+  if(/paused|project.*not found|503|502/.test(m))
+    return 'O servidor não respondeu. Se ficar assim, o projeto na nuvem pode ter sido pausado por inatividade — abrir o painel do Supabase religa.';
+  return '';
+}
+
+function nuvemMostrarProblema(){
+  document.getElementById('modal-nuvem-erro')?.remove();
+  const recusados = nuvemRegistrosRecusados.slice(0, 12);
+  const explica = nuvemExplicarErro(nuvemUltimoErro);
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-nuvem-erro';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;color:var(--negative);">⚠️ O que está impedindo o sincronismo</h3>
+      ${nuvemUltimoErro ? `<div class="lic-doc falta" style="display:block;">
+        <b>O servidor respondeu:</b>
+        <div style="font-family:var(--font-num);font-size:12.5px;margin-top:4px;word-break:break-word;">${escapeHtml(nuvemUltimoErro)}</div>
+        ${explica?`<small style="display:block;margin-top:6px;">${escapeHtml(explica)}</small>`:''}
+      </div>`:''}
+      ${nuvemRegistrosRecusados.length ? `<div class="lic-doc aviso" style="display:block;margin-top:10px;">
+        <b>${nuvemRegistrosRecusados.length} registro${nuvemRegistrosRecusados.length===1?'':'s'} que o servidor não aceitou</b>
+        <small>O resto subiu normalmente — um registro ruim não segura mais os outros.</small>
+        <ul style="margin:6px 0 0;padding-left:20px;font-size:12.5px;line-height:1.6;">
+          ${recusados.map(r=>`<li>${escapeHtml(armazNome(r.colecao))} · ${escapeHtml(String(r.id).slice(0,24))}
+            ${r.kb?` · ${r.kb} KB`:''}<br><span style="color:var(--ink-faint);">${escapeHtml(r.motivo.slice(0,110))}</span></li>`).join('')}
+          ${nuvemRegistrosRecusados.length>12?`<li style="color:var(--ink-faint);">…e mais ${nuvemRegistrosRecusados.length-12}</li>`:''}
+        </ul>
+      </div>`:''}
+      <p class="help-text" style="margin-top:10px;">Enquanto isso não resolve, o que você lança <b>fica só nesta máquina</b>:
+        não chega na outra e não serve de backup. Exporte um backup se for trabalhar bastante antes de resolver.</p>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn" onclick="document.getElementById('btn-export').click()">⬇ Exportar backup</button>
+        <button class="btn btn-primary" onclick="nuvemRegistrosRecusados=[];this.closest('.modal-overlay').remove();nuvemSincronizar(false);">↻ Tentar de novo</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 function nuvemMontarRodape(){
