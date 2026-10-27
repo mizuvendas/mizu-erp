@@ -1,1 +1,1 @@
-{"versao":"26/10/2026 21:12","notas":"Procurar cliente ficou igual em todo o sistema: qualquer palavra, em qualquer ordem, sem acento - tambem pelo CNPJ, nome fantasia e cidade. Vale no haver, nas contas a receber e em todo campo de cliente."}
+{"versao":"27/10/2026 10:54","notas":"A forma de pagamento saiu do meio do formulario: agora voce escolhe no fim, ao finalizar, numa janela com o total na frente e os mesmos botoes do balcao - Dinheiro, PIX, Cartao, Crediario, Boleto. O repasse continua onde estava."}

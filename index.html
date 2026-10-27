@@ -10768,8 +10768,11 @@ function orcAtualizarRodapeBalcao(){
   põe('orc-balcao-vendedor', (vendedor && vendedor.value.trim()) || 'não informado');
 
   const cond = document.getElementById('orc-condicao-pagamento');
-  const nomes = { vista:'À vista', crediario:'Crediário', boleto:'Boleto / prazo' };
-  põe('orc-balcao-pagamento', cond ? (nomes[cond.value] || cond.value) : '—');
+  const campoForma = document.getElementById('orc-forma-pagamento');
+  põe('orc-balcao-pagamento', nomeFormaPagamento({
+    formaPagamento: campoForma ? campoForma.value : null,
+    condicaoPagamento: cond ? cond.value : null
+  }));
 
   const rep = document.getElementById('orc-tem-repasse');
   const repPct = document.getElementById('orc-repasse-pct');
@@ -11016,12 +11019,17 @@ function orcBalcaoPedirNome(modo){
 function orcBalcaoSeguir(modo){
   const antes = new Set(STATE.orcamentos.map(o => o.id));
 
-  if(modo === 'prevenda'){
-    const btn = document.getElementById('orc-btn-salvar-pre-venda');
-    if(btn) btn.click();
-  }else{
-    salvarOrcamento();
-  }
+  /* o balcão já perguntou o pagamento na janela dele — perguntar de
+     novo seria a mesma decisão duas vezes seguidas */
+  orcPagamentoRespondido = true;
+  try{
+    if(modo === 'prevenda'){
+      const btn = document.getElementById('orc-btn-salvar-pre-venda');
+      if(btn) btn.click();
+    }else{
+      salvarOrcamento();
+    }
+  } finally { orcPagamentoRespondido = false; }
 
   const novo = STATE.orcamentos.find(o => !antes.has(o.id))
             || (orcamentoEmEdicaoId ? STATE.orcamentos.find(o => o.id === orcamentoEmEdicaoId) : null);
@@ -11355,6 +11363,18 @@ function orcBalcaoLigarBusca(){
    existe: mexeria no Caixa e no Contas a Receber. A barra de baixo já
    mostra Restante e Troco pra quando isso entrar. */
 
+/* Como esse pagamento se chama na tela. Prefere a forma que ela
+   escolheu (Dinheiro, PIX, Cartão) e só cai na condição genérica
+   quando o orçamento é antigo e não tem essa informação. */
+function nomeFormaPagamento(o){
+  if(!o) return '—';
+  const porForma = { vista:'Dinheiro', pix:'PIX', cartao:'Cartão',
+                     crediario:'Crediário', boleto:'Boleto / prazo' };
+  const porCondicao = { vista:'À vista', crediario:'Crediário', boleto:'Boleto / prazo' };
+  if(o.formaPagamento && porForma[o.formaPagamento]) return porForma[o.formaPagamento];
+  return porCondicao[o.condicaoPagamento] || '—';
+}
+
 const ORC_FORMAS_BALCAO = [
   { id:'vista',     rotulo:'Dinheiro',  icone:'💵', cond:'vista' },
   { id:'pix',       rotulo:'PIX',       icone:'⚡', cond:'vista' },
@@ -11483,6 +11503,10 @@ function orcBalcaoAbrirPagamento(modo){
       el.dispatchEvent(new Event('change'));
     };
     põe('orc-condicao-pagamento', cond);
+    /* Dinheiro, PIX e Cartão viram todos "à vista" pro financeiro — este
+       campo guarda qual dos três foi, de verdade. */
+    const campoForma = document.getElementById('orc-forma-pagamento');
+    if(campoForma) campoForma.value = orcBalcaoForma;
     if(cond === 'crediario'){
       const par = modal.querySelector('#bp-parcelas'), dia = modal.querySelector('#bp-dia');
       if(par) põe('orc-crediario-parcelas', par.value);
@@ -11561,7 +11585,7 @@ function orcBalcaoPronto(orcamentoId, modo){
           ${linha('Número', '<strong>' + o.numero + '</strong>')}
           ${linha('Valor total', '<strong>' + fmtMoney(total) + '</strong>')}
           ${linha('Valor pago', fmtMoney(pago))}
-          ${linha('Pagamento', escapeHtml({vista:'À vista', crediario:'Crediário', boleto:'Boleto / prazo'}[o.condicaoPagamento] || '—'))}
+          ${linha('Pagamento', escapeHtml(nomeFormaPagamento(o)))}
           ${o.pagadorId ? linha('Repasse', escapeHtml((STATE.clientes.find(x => x.id === o.pagadorId) || {}).nome || '—')) : ''}
           ${nota ? linha('Nota fiscal', 'NF-e ' + escapeHtml(String(nota.numero || ''))) : ''}
         </div>
@@ -11917,6 +11941,25 @@ function renderOrcamentos(){
           <label>Percentual Personalizado (%) <span class="req">*</span></label>
           <input type="number" id="orc-repasse-pct" min="0" step="0.01" placeholder="Ex: 12,5">
         </div>
+        <div class="field field-full">
+          <label>Observações</label>
+          <textarea id="orc-obs" rows="2" placeholder="Campo livre — condições, prazo de entrega, etc."></textarea>
+        </div>
+      </div>
+
+      <!-- A FORMA DE PAGAMENTO SAIU DAQUI.
+           Ela decide isso no FIM, quando finaliza, numa janela só pra
+           isso — é quando a decisão realmente se toma, com o total na
+           frente. O repasse continua aqui em cima, que é decisão de
+           antes.
+           Os campos não foram duplicados: continuam existindo, só que
+           escondidos, e a janela os pega emprestados enquanto está
+           aberta. Assim tudo que lê orc-condicao-pagamento,
+           orc-crediario-parcelas e companhia — salvarOrcamento, o
+           rascunho automático, o balcão, a esteira — continua
+           funcionando sem saber que a tela mudou. -->
+      <div id="orc-pagamento-oculto" style="display:none;">
+        <input type="hidden" id="orc-forma-pagamento" value="vista">
         <div class="field" id="orc-wrap-condicao">
           <label>Forma de Pagamento</label>
           <select id="orc-condicao-pagamento">
@@ -11942,13 +11985,9 @@ function renderOrcamentos(){
           <label>Dia do Vencimento (todo mês)</label>
           ${renderSeletorDiaMes('orc-crediario-dia', 10)}
         </div>
-        <div class="field field-full">
-          <label>Observações</label>
-          <textarea id="orc-obs" rows="2" placeholder="Campo livre — condições, prazo de entrega, etc."></textarea>
-        </div>
+        <div class="help-text" id="orc-crediario-help" style="display:none;"></div>
+        <div class="help-text" id="orc-boleto-help" style="display:none;"></div>
       </div>
-      <div class="help-text" id="orc-crediario-help" style="display:none;"></div>
-      <div class="help-text" id="orc-boleto-help" style="display:none;"></div>
       <div class="field" style="flex-direction:row;align-items:center;gap:8px;margin-top:4px;">
         <input type="checkbox" id="orc-tem-comissao" style="width:auto;">
         <label for="orc-tem-comissao" style="margin:0;font-weight:600;color:var(--ink);">Este orçamento tem comissão (${STATE.config.comissaoPct}% sobre o valor bruto)</label>
@@ -12180,12 +12219,17 @@ function renderOrcamentos(){
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
   document.getElementById('orc-btn-salvar-pre-venda').addEventListener('click', ()=>{
-    const orcamento = salvarOrcamentoEmAndamento('pre_venda');
-    if(orcamento){
-      limparRascunhoOrcamento();
-      showToast('Salvo como Pré-venda — você pode continuar editando agora ou retomar depois na lista "Orçamentos em Andamento".', 'success');
-      renderOrcamentosEmAndamento();
-    }
+    const guardar = ()=>{
+      const orcamento = salvarOrcamentoEmAndamento('pre_venda');
+      if(orcamento){
+        limparRascunhoOrcamento();
+        showToast('Salvo como Pré-venda — você pode continuar editando agora ou retomar depois na lista "Orçamentos em Andamento".', 'success');
+        renderOrcamentosEmAndamento();
+      }
+    };
+    /* a pré-venda também passa pela janela: ela pediu assim */
+    if(orcPagamentoRespondido || !document.getElementById('orc-pagamento-oculto')){ guardar(); return; }
+    orcAbrirJanelaPagamento('Salvar como pré-venda', 'Salvar pré-venda', guardar);
   });
   document.getElementById('orc-btn-cancelar-edicao').addEventListener('click', cancelarEdicaoOrcamento);
 
@@ -13014,6 +13058,7 @@ function coletarDadosOrcamentoEmAndamento(){
     pagadorId: temRepasse ? (document.getElementById('orc-pagador').value || null) : null,
     repassePct: temRepasse ? (parseFloat(document.getElementById('orc-repasse-pct').value)||null) : null,
     condicaoPagamento,
+    formaPagamento: ((document.getElementById('orc-forma-pagamento')||{}).value) || condicaoPagamento,
     vencimentoReceber: condicaoPagamento==='boleto' ? (document.getElementById('orc-vencimento-receber').value||null) : null,
     prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
@@ -13126,7 +13171,165 @@ function renderOrcamentosEmAndamento(){
   }).join('');
 }
 
+/* =========================================================
+   A FORMA DE PAGAMENTO FICA PRO FIM
+
+   "Quando eu finalizo o orçamento, precisa abrir uma janela pra eu
+   decidir a forma de pagamento. Talvez eu não precise decidir isso no
+   início, quando estou digitando, e sim no final, pra dar uma
+   enxugada. Já a questão de repasse pode ser antes."
+
+   O balcão já funcionava assim. O formulário não — eram cinco campos
+   no meio do caminho, preenchidos antes de existir um total pra olhar.
+   Agora são os mesmos cinco botões do balcão, na hora de finalizar,
+   com o valor do orçamento na frente.
+
+   A janela não tem campo próprio: ela pega emprestado os campos que
+   continuam no formulário, escondidos. Quem lê esses campos não
+   precisou mudar nada, e o que já estava escolhido aparece escolhido.
+   ========================================================= */
+let orcPagamentoRespondido = false;   // ligado enquanto o salvar vem da janela
+
+/* O que precisa estar certo ANTES de perguntar o pagamento. Sem isto,
+   ela escolhia a forma e só então descobria que faltava o cliente. */
+function orcFaltaAlgoAntesDoPagamento(){
+  const numero = parseInt((document.getElementById('orc-numero')||{}).value);
+  const clienteId = (document.getElementById('orc-cliente')||{}).value;
+  const data = (document.getElementById('orc-data')||{}).value;
+  if(isNaN(numero) || numero<=0) return 'Informe o número do orçamento.';
+  if(STATE.orcamentos.some(o=>o.numero===numero && o.id!==orcamentoEmEdicaoId))
+    return `Já existe um orçamento com o número ${numero} — escolha outro.`;
+  if(!clienteId) return 'Selecione o cliente.';
+  if(!data) return 'Informe a data.';
+  if((carrinhoOrcamentoAtual||[]).length===0) return 'Adicione ao menos um item ao orçamento.';
+  const temRepasse = (document.getElementById('orc-tem-repasse')||{}).checked;
+  if(temRepasse && !(document.getElementById('orc-pagador')||{}).value)
+    return 'Selecione o pagador do repasse.';
+  if(temRepasse){
+    const pct = parseFloat((document.getElementById('orc-repasse-pct')||{}).value);
+    if(isNaN(pct) || pct<=0) return 'Informe um percentual de repasse válido.';
+  }
+  return null;
+}
+
+/* Quanto está sendo fechado — é o número que faz ela escolher boleto em
+   vez de à vista, então aparece grande. */
+function orcTotalDoFormulario(){
+  try{
+    const c = calcularVenda(montarVendaLikeDoFormularioOrcamento());
+    const ac = parseFloat((document.getElementById('orc-acrescimo-valor')||{}).value) || 0;
+    return c.bruto + ac;
+  }catch(e){ return 0; }
+}
+
+function orcAbrirJanelaPagamento(titulo, rotuloBotao, aoConfirmar){
+  const oculto = document.getElementById('orc-pagamento-oculto');
+  if(!oculto){ aoConfirmar(); return; }   // formulário antigo: segue direto
+
+  document.getElementById('modal-orc-pagamento')?.remove();
+  const total = orcTotalDoFormulario();
+  const escolhida = (document.getElementById('orc-forma-pagamento')||{}).value || 'vista';
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-orc-pagamento';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px,95vw);max-height:92vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💰</div>
+        <div>
+          <h3>${escapeHtml(titulo)}</h3>
+          <div class="sub">Como este orçamento vai ser pago</div>
+        </div>
+        <button class="modal-rapido-fechar-x" id="orcp-x">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:12px;
+                    padding:10px 14px;background:var(--primary-soft);border-radius:var(--radius-sm);margin-bottom:12px;">
+          <span style="font-size:12.5px;color:var(--ink-soft);">Total do orçamento</span>
+          <b style="font-size:22px;font-family:var(--font-num);color:var(--primary-escuro);">${fmtMoney(total)}</b>
+        </div>
+        <div id="orcp-formas" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">
+          ${ORC_FORMAS_BALCAO.map(f=>`
+            <button type="button" class="orcp-forma" data-forma="${f.id}" data-cond="${f.cond}"
+              style="flex:1 1 110px;min-width:104px;padding:14px 10px;border:2px solid var(--border);
+                     border-radius:var(--radius-sm);background:#fff;font:inherit;font-size:13px;
+                     font-weight:600;cursor:pointer;text-align:center;">
+              <div style="font-size:22px;line-height:1.2;">${f.icone}</div>${escapeHtml(f.rotulo)}
+            </button>`).join('')}
+        </div>
+        <div id="orcp-detalhe"></div>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="orcp-voltar">Voltar e conferir</button>
+        <button class="btn btn-primary" id="orcp-ok">${escapeHtml(rotuloBotao)}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  /* empresta os campos de verdade — não são cópias */
+  const emprestados = ['orc-wrap-condicao','orc-wrap-vencimento-receber','orc-wrap-prazos-boleto',
+                       'orc-wrap-crediario-parcelas','orc-wrap-crediario-dia',
+                       'orc-crediario-help','orc-boleto-help'];
+  const caixa = modal.querySelector('#orcp-detalhe');
+  emprestados.forEach(id=>{ const el = document.getElementById(id); if(el) caixa.appendChild(el); });
+  /* o select continua existindo e sendo lido, mas quem escolhe são os
+     botões — dois jeitos de dizer a mesma coisa confundiria */
+  const wrapCond = document.getElementById('orc-wrap-condicao');
+  if(wrapCond) wrapCond.style.display = 'none';
+
+  /* se a janela sumir por qualquer caminho, os campos voltam pra casa */
+  let devolvido = false;
+  function devolver(){
+    if(devolvido) return; devolvido = true;
+    emprestados.forEach(id=>{ const el = document.getElementById(id); if(el) oculto.appendChild(el); });
+    modal.remove();
+  }
+
+  let forma = escolhida;
+  function pintar(){
+    const def = ORC_FORMAS_BALCAO.find(f=>f.id===forma) || ORC_FORMAS_BALCAO[0];
+    modal.querySelectorAll('.orcp-forma').forEach(b=>{
+      const ativo = b.dataset.forma === forma;
+      b.style.borderColor = ativo ? 'var(--primary)' : 'var(--border)';
+      b.style.background  = ativo ? 'var(--primary-soft)' : '#fff';
+      b.style.color       = ativo ? 'var(--primary-escuro)' : 'var(--ink)';
+    });
+    const sel = document.getElementById('orc-condicao-pagamento');
+    if(sel && sel.value !== def.cond){ sel.value = def.cond; sel.dispatchEvent(new Event('change')); }
+    if(wrapCond) wrapCond.style.display = 'none';
+  }
+  modal.querySelectorAll('.orcp-forma').forEach(b=>{
+    b.addEventListener('click', ()=>{ forma = b.dataset.forma; pintar(); });
+  });
+  pintar();
+
+  modal.querySelector('#orcp-x').addEventListener('click', devolver);
+  modal.querySelector('#orcp-voltar').addEventListener('click', devolver);
+  modal.querySelector('#orcp-ok').addEventListener('click', ()=>{
+    const campo = document.getElementById('orc-forma-pagamento');
+    if(campo) campo.value = forma;
+    devolver();
+    try{ aoConfirmar(); }catch(e){ console.error(e); showToast('Não consegui salvar — confira os campos.','error'); }
+  });
+}
+
 function salvarOrcamento(){
+  /* a pergunta do pagamento vem antes de salvar, não no meio do
+     formulário; depois de respondida, cai de volta aqui e segue */
+  if(!orcPagamentoRespondido && document.getElementById('orc-pagamento-oculto')){
+    const falta = orcFaltaAlgoAntesDoPagamento();
+    if(falta){ showToast(falta, 'error'); return; }
+    orcAbrirJanelaPagamento(
+      orcamentoEmEdicaoId ? 'Salvar alterações' : 'Finalizar orçamento',
+      'Salvar orçamento',
+      ()=>{
+        orcPagamentoRespondido = true;
+        try{ salvarOrcamento(); } finally { orcPagamentoRespondido = false; }
+      });
+    return;
+  }
+
   const numero = parseInt(document.getElementById('orc-numero').value);
   const clienteId = document.getElementById('orc-cliente').value;
   const data = document.getElementById('orc-data').value;
@@ -13162,7 +13365,11 @@ function salvarOrcamento(){
     prazoEntrega, numeroPesquisa, responsavel, cargoResponsavel,
     publico: lerCamposPropostaPublica(),
     temComissao, pagadorId, repassePct: temRepasse ? repassePct : null,
-    condicaoPagamento, vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
+    condicaoPagamento,
+    /* Dinheiro, PIX e Cartão são todos "à vista" pro financeiro, mas não
+       são a mesma coisa pra ela. Fica registrado qual foi. */
+    formaPagamento: ((document.getElementById('orc-forma-pagamento')||{}).value) || condicaoPagamento,
+    vencimentoReceber: condicaoPagamento==='boleto' ? vencimentoReceber : null,
     prazosBoleto: condicaoPagamento==='boleto' ? prazosBoletoDoFormulario() : [],
     crediarioParcelas: condicaoPagamento==='crediario' ? (Math.max(1, parseInt(document.getElementById('orc-crediario-parcelas').value)||1)) : null,
     crediarioDia: condicaoPagamento==='crediario' ? (Math.min(31, Math.max(1, parseInt(document.getElementById('orc-crediario-dia').value)||10))) : null,
@@ -13275,6 +13482,9 @@ function editarOrcamento(id){
   // que já existia (boleto se tem pagador, à vista se não tem)
   const condicaoSalva = orcamento.condicaoPagamento || (orcamento.pagadorId ? 'boleto' : 'vista');
   document.getElementById('orc-condicao-pagamento').value = condicaoSalva;
+  /* a janela do pagamento abre já com o botão certo aceso */
+  const campoFormaEdicao = document.getElementById('orc-forma-pagamento');
+  if(campoFormaEdicao) campoFormaEdicao.value = orcamento.formaPagamento || condicaoSalva;
   const ehBoletoEdicao = condicaoSalva==='boleto';
   const ehCrediarioEdicao = condicaoSalva==='crediario';
   document.getElementById('orc-wrap-vencimento-receber').style.display = ehBoletoEdicao ? '' : 'none';
@@ -46817,7 +47027,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/10/2026 20:19';
+const SISTEMA_VERSAO = '27/10/2026 10:54';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
