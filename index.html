@@ -29757,6 +29757,8 @@ let licOrdemAnalise = 'prazo';   /* em análise o prazo manda — é o que faz p
    venda e certidão guardada não são tocados. A exclusão sobe pra nuvem,
    então também some na outra máquina. */
 function licComecarDoZero(){
+  /* ela vai confirmar numa janela — o freio não repete a pergunta */
+  if(typeof nuvemAutorizarExclusoes === 'function') nuvemAutorizarExclusoes(180);
   const nRev = (STATE.licitacoesRevisao||[]).length;
   const nLic = (STATE.licitacoes||[]).length;
   const nDesc = licDescartadas().length;
@@ -30552,6 +30554,8 @@ function licMarcar(id, marcado){
 function licTriarSelecionadas(interesse){
   const ids = [...licSelecionadas];
   licSelecionadas = new Set();
+  /* decisão dela, em lote e de propósito */
+  if(typeof nuvemAutorizarExclusoes === 'function') nuvemAutorizarExclusoes(120);
   ids.forEach(id=>licTriar(id, interesse, true));
   saveState();
   renderPortalLicitacoes();
@@ -30784,6 +30788,7 @@ function licLiberarDescartada(chave){
 }
 
 function licRestaurarDescartadas(){
+  if(typeof nuvemAutorizarExclusoes === 'function') nuvemAutorizarExclusoes(120);
   confirmAction('Limpar descartadas',
     'As dispensas que você descartou voltam a aparecer na próxima vez que importar o arquivo do PNCP. Continuar?',
     ()=>{ STATE.licitacoesDescartadas = []; saveState(); renderPortalLicitacoes(); showToast('Lista de descartadas limpa.','success'); });
@@ -47825,7 +47830,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 16:46';
+const SISTEMA_VERSAO = '27/10/2026 17:03';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -48027,6 +48032,8 @@ function armazLimpar(id){
   const medir = ()=>armazTamanhoTexto(JSON.stringify(STATE));
   const antes = medir();
   confirmAction(a.titulo, a.texto, ()=>{
+    /* ela já confirmou nesta janela: o freio não pergunta de novo */
+    if(typeof nuvemAutorizarExclusoes === 'function') nuvemAutorizarExclusoes(120);
     a.faz();
     saveState();
     const depois = medir();
@@ -48352,6 +48359,27 @@ let nuvemExclusoesSeguradas = null;   // {quando, linhas} enquanto ela não deci
 let nuvemExclusoesLiberadas = false;  // ela já disse "pode apagar" nesta sessão
 let nuvemPrimeiraRodada = true;       // ainda não subiu nada desde que abriu
 
+/* =========================================================
+   O QUE ELA MANDOU APAGAR NÃO PRECISA DE PERGUNTA
+
+   O freio apareceu depois que ela clicou em "Limpar os planos de
+   compra" — ela confirmou numa janela, o sistema apagou, e meio
+   segundo depois perguntou se ela tinha apagado mesmo. É o tipo de
+   pergunta que ensina a clicar em "sim" sem ler, e aí o freio não
+   serve pra mais nada no dia em que for de verdade.
+
+   Toda ação que JÁ pediu confirmação avisa aqui antes de apagar: as
+   limpezas do Armazenamento, esvaziar a lixeira, começar do zero,
+   triar em lote. A liberação vale por um minuto — o suficiente pra
+   essa exclusão subir, e curta demais pra cobrir um acidente que
+   aconteça depois.
+   ========================================================= */
+let nuvemLiberadoAte = 0;
+function nuvemAutorizarExclusoes(segundos){
+  nuvemLiberadoAte = Date.now() + (segundos || 60) * 1000;
+}
+function nuvemExclusaoAutorizada(){ return Date.now() < nuvemLiberadoAte; }
+
 /* Listas de trabalho: encher e esvaziar faz parte do uso. O resto do
    sistema é cadastro e dinheiro — ali, zerar é acidente. */
 const NUVEM_LISTAS_DE_TRABALHO = ['licitacoesRevisao','licitacoesDescartadas','licitacoesLixeira',
@@ -48385,6 +48413,7 @@ function nuvemColecoesQueZeram(exclusoes){
    coleção de cadastro ou de dinheiro, seja um registro ou cem. */
 function nuvemMotivoDeSegurar(exclusoes){
   if(nuvemExclusoesLiberadas || exclusoes.length === 0) return null;
+  if(nuvemExclusaoAutorizada()) return null;   /* ela acabou de mandar */
 
   /* zerar uma coleção de verdade segura sempre, em qualquer quantidade */
   const zeradas = nuvemColecoesQueZeram(exclusoes);
@@ -48413,24 +48442,34 @@ function nuvemAvisarExclusoes(linhas, motivo){
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(640px,95vw);">
       <h3 style="margin-top:0;color:var(--negative);">⚠️ Segurei uma exclusão</h3>
-      <p class="help-text">Esta máquina está prestes a mandar a nuvem apagar
-        <b>${linhas.length} registro${linhas.length===1?'':'s'}</b> — e isso apagaria nas outras máquinas também.
-        Parei antes de mandar.</p>
+
+      <div class="lic-doc falta" style="display:block;">
+        <b>${
+          !motivo ? 'Registro sumindo sozinho'
+          : motivo.tipo==='zerou'
+            ? 'Isto esvaziaria por completo: ' + motivo.colecoes.map(c=>escapeHtml(nuvemNomeColecao(c))).join(', ')
+          : motivo.tipo==='abertura'
+            ? 'Isto apareceu assim que o sistema abriu'
+            : 'São '+linhas.length+' exclusões de uma vez'
+        }</b>
+        <small>${
+          !motivo ? 'Registro que some sozinho quase sempre é acidente.'
+          : motivo.tipo==='zerou'
+            ? 'Apagar o último registro de um lugar é quase sempre acidente — foi assim que o haver do Colégio do Sol sumiu com R$ 4.264,76 de saldo.'
+          : motivo.tipo==='abertura'
+            ? 'Antes de você mexer em qualquer coisa. Exclusão que nasce sozinha veio dos dados desta máquina, não da sua mão.'
+            : 'Um backup antigo importado, ou um carregamento pela metade, faz exatamente isso.'
+        }</small>
+      </div>
+
+      <p class="help-text" style="margin:10px 0 4px;">Está na fila pra ser apagado nas <b>duas máquinas</b>:</p>
       <div class="lic-doc aviso" style="display:block;">
         ${Object.keys(porColecao).map(c=>`<div>· <b>${escapeHtml(nuvemNomeColecao(c))}</b> — ${porColecao[c]} registro${porColecao[c]===1?'':'s'}</div>`).join('')}
       </div>
-      <p class="help-text">${
-        !motivo ? 'Registro que some sozinho quase sempre é acidente.'
-        : motivo.tipo==='zerou'
-          ? `Parei porque isso <b>esvaziaria por completo</b>: ${motivo.colecoes.map(c=>escapeHtml(nuvemNomeColecao(c))).join(', ')}.
-             Apagar o último registro de um lugar é quase sempre acidente — foi assim que o haver do
-             Colégio do Sol sumiu com R$ 4.264,76 de saldo.`
-        : motivo.tipo==='abertura'
-          ? 'Parei porque isso apareceu <b>assim que o sistema abriu</b>, antes de você mexer em qualquer coisa. Exclusão que nasce sozinha veio dos dados desta máquina, não da sua mão.'
-          : 'Parei porque é muita coisa de uma vez — um backup antigo importado ou um carregamento pela metade faz exatamente isso.'
-      }</p>
-      <p class="help-text"><b>Se você não apagou isso de propósito</b>, clique em buscar de volta:
-        eu desfaço o pedido de exclusão e trago o que está na nuvem. Nada foi apagado até agora.</p>
+
+      <p class="help-text"><b>Nada foi apagado até agora.</b>
+        <b>Buscar de volta</b> desfaz o pedido e traz o que está na nuvem — é o certo quando você não
+        reconhece essa lista. <b>Eu apaguei mesmo</b> manda apagar nas duas máquinas, sem volta.</p>
       <div class="modal-actions">
         <button class="btn btn-primary" id="exc-buscar">Não apaguei — buscar de volta</button>
         <button class="btn btn-danger" id="exc-confirmar">Eu apaguei mesmo, pode mandar</button>
