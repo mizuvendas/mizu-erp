@@ -48110,7 +48110,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '30/10/2026 10:40';
+const SISTEMA_VERSAO = '30/10/2026 11:25';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -48916,6 +48916,50 @@ async function nuvemBaixar(){
 /* Põe no STATE o que veio de fora. Um registro que está esperando
    subir daqui NÃO é sobrescrito — senão a venda que ela acabou de
    lançar sumiria da tela antes de chegar ao servidor. */
+/* =========================================================
+   A CÓPIA MAIS POBRE NÃO PASSA POR CIMA DA MAIS COMPLETA
+
+   O que aconteceu com a dispensa de Piracanjuba: ela precificou e
+   montou a proposta na máquina dela no dia 27. A máquina do Neto
+   estava com o envio quebrado havia dias e nunca viu isso — pra ela,
+   aquela dispensa continuava "em análise", sem nenhum item. Quando o
+   sincronismo voltou, a cópia velha do Neto desceu aqui e substituiu
+   a dispensa inteira. O trabalho de um dia virou uma linha em branco.
+
+   O sincronismo trabalhava assim: "chegou do servidor, então é a
+   verdade". Agora ele confere antes. Dispensa não anda pra trás:
+   não volta de etapa e não perde os itens que já tem. Quando a de
+   fora é mais pobre, a daqui fica E sobe de novo — é ela que corrige
+   a outra máquina, não o contrário.
+   ========================================================= */
+const LIC_ORDEM_ETAPA = ['analise','precificacao','proposta','enviada','ganhou','entregue','perdeu','desistiu'];
+function licPassoDaEtapa(e){
+  const i = LIC_ORDEM_ETAPA.indexOf(String(e || 'analise'));
+  return i < 0 ? 0 : i;
+}
+let nuvemSeguradas = [];
+function nuvemVersaoQueFica(colecao, meu, deFora){
+  if(colecao !== 'licitacoes') return deFora;
+  if(!meu || !deFora || typeof meu !== 'object' || typeof deFora !== 'object') return deFora;
+  const meusItens  = Array.isArray(meu.itens)    ? meu.itens.length    : 0;
+  const forasItens = Array.isArray(deFora.itens) ? deFora.itens.length : 0;
+  const perdeItens = meusItens > 0 && forasItens === 0;
+  const voltaEtapa = licPassoDaEtapa(deFora.etapa) < licPassoDaEtapa(meu.etapa);
+  if(!perdeItens && !voltaEtapa) return deFora;
+  /* a daqui manda em tudo que ela tem; o que só existe lá fora entra junto */
+  return Object.assign({}, deFora, meu);
+}
+function nuvemContarSeguradas(){
+  const quantas = nuvemSeguradas.length;
+  const nomes = nuvemSeguradas.slice(0,3)
+    .map(l => (l.numero || l.orgao || 'dispensa')).join(', ');
+  nuvemSeguradas = [];
+  try{
+    showToast(`Segurei ${quantas} dispensa${quantas===1?'':'s'} (${nomes}${quantas>3?'…':''}): `
+      + 'a outra máquina mandou uma versão mais antiga, sem itens. Ficou a daqui.', 'info');
+  }catch(e){}
+}
+
 function nuvemAplicar(linhas){
   const espelho = nuvemLerEspelho();
   const agora = nuvemInstantaneo();
@@ -48997,11 +49041,24 @@ function nuvemAplicar(linhas){
       delete espelho[chave];
       return;
     }
-    if(idx >= 0) lista[idx] = linha.dados;
-    else lista.push(linha.dados);
+    if(idx >= 0){
+      const escolhido = nuvemVersaoQueFica(linha.colecao, lista[idx], linha.dados);
+      const segurei = escolhido !== linha.dados;
+      lista[idx] = escolhido;
+      /* Se a daqui ficou, o espelho guarda a digital da que VEIO: assim o
+         sistema enxerga a daqui como alteração e ela sobe na próxima
+         rodada, corrigindo a outra máquina em vez de ser corrigida. */
+      espelho[chave] = nuvemDigital(JSON.stringify(segurei ? linha.dados : escolhido));
+      if(segurei) nuvemSeguradas.push(escolhido);
+      mudou++;
+      return;
+    }
+    lista.push(linha.dados);
     espelho[chave] = nuvemDigital(JSON.stringify(linha.dados));
     mudou++;
   });
+
+  if(nuvemSeguradas.length) nuvemContarSeguradas();
 
   if(mudou){
     nuvemGravarEspelho(espelho);
@@ -49089,8 +49146,17 @@ async function nuvemSincronizar(silencioso){
     const primeiraVez = Object.keys(nuvemLerEspelho()).length === 0;
     let baixados = 0;
     if(primeiraVez) baixados += await nuvemBaixar();
-    await nuvemSubir();
+    /* SUBIR PODE FALHAR — BAIXAR NÃO PODE PARAR POR CAUSA DISSO.
+       Enquanto o envio estava quebrado, esta linha era um `await` seco:
+       estourava aqui e o baixar nunca rodava. As duas máquinas passaram
+       dias cada uma no seu canto, sem nunca ver o que a outra fazia — e
+       quando o envio voltou, a cópia velha de uma passou por cima do
+       trabalho da outra. O envio pode falhar à vontade; receber o que as
+       outras máquinas fizeram continua acontecendo. */
+    let erroAoSubir = null;
+    try{ await nuvemSubir(); }catch(e){ erroAoSubir = e; }
     baixados += await nuvemBaixar();
+    if(erroAoSubir) throw erroAoSubir;
     nuvemUltimoErro = null;
     if(baixados > 0){
       /* CHEGOU COISA NOVA DO OUTRO COMPUTADOR.
