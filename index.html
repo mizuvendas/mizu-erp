@@ -3516,10 +3516,12 @@ function abrirFormCliente(id, onCriado){
               <input type="text" id="f-cidade" value="${cliente?escapeAttr(cliente.cidade||''):''}">
             </div>
             <div class="field">
-              <label>Tipo de cliente</label>
+              <label>Tipo de cliente <span class="req">*</span></label>
               <select id="f-tipo">
-                ${TIPOS_CLIENTE.map(t=>`<option value="${escapeAttr(t.valor)}" ${tipoClienteDe(cliente)===t.valor?'selected':''}>${escapeHtml(t.rotulo)}</option>`).join('')}
+                <option value="" ${cliente?'':'selected'}>— selecione —</option>
+                ${TIPOS_CLIENTE.map(t=>`<option value="${escapeAttr(t.valor)}" ${cliente && tipoClienteDe(cliente)===t.valor?'selected':''}>${escapeHtml(t.rotulo)}</option>`).join('')}
               </select>
+              <div class="help-text">Decide o modelo da proposta e o que a nota exige. Cadastro novo não salva sem escolher.</div>
             </div>
             <div class="field field-full">
               <label>Endereço</label>
@@ -3702,6 +3704,18 @@ function abrirFormCliente(id, onCriado){
     e.preventDefault();
     const nome = document.getElementById('f-nome').value.trim();
     if(!nome){ showToast('Informe o nome do cliente.', 'error'); return; }
+    /* O TIPO PRECISA SER ESCOLHIDO, SEM CHUTE DO SISTEMA.
+       Antes a lista já abria marcada em "Empresa", e cliente que era
+       escola ou órgão público nascia errado — a proposta saía no modelo
+       errado e a nota pedia dado que ninguém tinha preenchido. Agora
+       abre em branco e não passa daqui sem escolher. */
+    const tipoEscolhido = document.getElementById('f-tipo').value;
+    if(!tipoEscolhido){
+      showToast('Escolha o tipo de cliente: pessoa física, empresa, órgão público ou escola.', 'error');
+      const sel = document.getElementById('f-tipo');
+      if(sel){ sel.style.borderColor = 'var(--negative)'; sel.focus(); }
+      return;
+    }
     const data = {
       nome,
       nomeFantasia: document.getElementById('f-nome-fantasia').value.trim(),
@@ -12178,6 +12192,18 @@ function renderOrcamentos(){
   }
 
   box.innerHTML = `
+    <div class="orc-topo">
+      <div>
+        <h2 style="margin:0;font-size:21px;">Orçamentos</h2>
+        <div class="help-text" style="margin:2px 0 0;" id="orc-topo-resumo"></div>
+      </div>
+      <button class="btn btn-primary" id="orc-btn-abrir-gaveta" style="margin-left:auto;padding:12px 20px;font-size:14.5px;">
+        ＋ Novo orçamento
+      </button>
+    </div>
+    <div class="orc-cartoes" id="orc-cartoes"></div>
+    <div class="orc-abas" id="orc-abas"></div>
+
     <div id="orc-rascunho-banner"></div>
     <div class="card">
       <h3 id="orc-form-titulo">1. Dados do Orçamento</h3>
@@ -12496,42 +12522,19 @@ function renderOrcamentos(){
     </div>
 
     <div class="card">
-      <h3>Orçamentos Lançados</h3>
-      <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
-        <div class="field" style="margin:0;min-width:180px;">
-          <label style="font-size:12px;">Filtrar por status</label>
-          <select id="orc-lista-filtro-status" onchange="renderListaOrcamentos()">
-            <option value="">Todos</option>
-            <option value="pendente">Pendente</option>
-            <option value="aprovado">Aprovado</option>
-            <option value="enviado">Enviado</option>
-            <option value="recusado">Recusado</option>
-            <option value="expirado">Expirado</option>
-            <option value="convertido">Virou Venda</option>
-          </select>
-        </div>
-        <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ink);cursor:pointer;padding-bottom:2px;">
-          <input type="checkbox" id="orc-lista-esconder-finalizados" style="width:auto;" onchange="alternarEsconderFinalizadosOrcamentos(this.checked)">
-          Esconder já entregues e virados em venda
-        </label>
-        <button class="btn btn-sm" onclick="abrirConfigNfe()" style="margin-bottom:2px;" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
-        <button class="btn btn-sm" onclick="abrirCancelarNota()" style="margin-bottom:2px;" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
-        <button class="btn btn-sm" onclick="abrirAnaliseST()" style="margin-bottom:2px;" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;">
+        <h3 style="margin:0;" id="orc-lista-titulo">Orçamentos lançados</h3>
+        <input type="text" id="orc-lista-busca" placeholder="Procurar cliente, número ou produto…"
+               oninput="renderListaOrcamentos()"
+               style="margin-left:auto;max-width:280px;flex:1 1 200px;">
+        <button class="btn btn-sm" onclick="abrirConfigNfe()" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
+        <button class="btn btn-sm" onclick="abrirCancelarNota()" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
+        <button class="btn btn-sm" onclick="abrirAnaliseST()" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
       </div>
       <div class="table-wrap">
         <table class="data-table">
-          <thead><tr><th>Nº</th><th style="cursor:pointer;user-select:none;" onclick="alternarOrdemDataOrcamentos()" title="Clique pra inverter a ordem">Data <span id="orc-lista-seta-ordem"></span></th><th>Cliente</th><th>Vendedor</th><th>Validade até</th><th class="num">Valor Original</th><th class="num">Desconto</th><th class="num">Valor Final</th><th>Status</th><th>Entrega</th><th>Ações</th></tr></thead>
+          <thead><tr id="orc-lista-cabecalho"></tr></thead>
           <tbody id="orc-lista-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <div class="card" id="card-orcamentos-em-andamento" style="display:none;">
-      <h3>Orçamentos em Andamento <span class="hint">pré-vendas salvas e rascunhos ainda não finalizados — continue de onde parou ou exclua se não precisar mais</span></h3>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr><th>Cliente</th><th class="num">Valor até o momento</th><th>Situação</th><th>Última atualização</th><th>Ações</th></tr></thead>
-          <tbody id="orc-em-andamento-body"></tbody>
         </table>
       </div>
     </div>
@@ -14222,44 +14225,196 @@ function licAbrirDoOrcamento(licId, tela){
   setTimeout(()=>{ licAbrir(licId, tela); }, 60);
 }
 
+/* =========================================================
+   AS ABAS DE ORÇAMENTO
+
+   A tela tinha tudo ao mesmo tempo: o formulário em cima, a separação no
+   meio, a lista com dez colunas embaixo, as licitações no fim. Ninguém
+   enxergava onde acabava "montar um orçamento" e começava "acompanhar o
+   que já saiu".
+
+   Agora a lista é a tela, e as abas são recortes dela. Todos é a lista
+   inteira — nada sai de lá, do rascunho até a venda concluída. As outras
+   cinco são atalhos do dia a dia.
+
+   A situação de um orçamento é DEDUZIDA dos campos que já existiam
+   (status comercial + status de entrega + venda gerada), não é um campo
+   novo. Assim nada do que já estava salvo precisou ser convertido, e o
+   resto do sistema — relatórios, caixa, estoque — continua lendo os
+   mesmos campos de sempre.
+   ========================================================= */
+const ORC_ABAS = [
+  { id:'aguardando', rotulo:'Aguardando o cliente' },
+  { id:'aprovados',  rotulo:'Aprovados' },
+  { id:'entrega',    rotulo:'Em entrega' },
+  { id:'recusados',  rotulo:'Recusados' },
+  { id:'rascunhos',  rotulo:'Rascunhos' },
+  { id:'todos',      rotulo:'Todos' }
+];
+let orcAbaAtual = 'todos';
+
+function orcSituacao(o){
+  if(!o) return 'aguardando';
+  if(o.status==='pre_venda' || o.status==='rascunho') return 'rascunho';
+  /* venda concluída: virou venda de verdade, ou a mercadoria já chegou
+     no cliente. Os dois querem dizer "acabou". */
+  if(o.status==='convertido' || o.vendaGeradaId) return 'concluida';
+  if(['entregue','retirado'].includes(o.statusEntrega)) return 'concluida';
+  if(['separacao','em_rota'].includes(o.statusEntrega)) return 'entrega';
+  if(o.status==='recusado') return 'recusado';
+  if(o.status==='aprovado') return 'aprovado';
+  return 'aguardando';   // pendente, enviado, expirado
+}
+
+const ORC_SITUACAO_ROTULO = {
+  rascunho:   { texto:'Rascunho',            cor:'background:#EEEEEE;color:#666666;' },
+  aguardando: { texto:'Aguardando cliente',  cor:'background:#FBF0DC;color:#8A5A10;' },
+  aprovado:   { texto:'Aprovado',            cor:'background:#E7F4EE;color:#2E7D5B;' },
+  entrega:    { texto:'Em entrega',          cor:'background:#E6F1FB;color:#185FA5;' },
+  recusado:   { texto:'Recusado',            cor:'background:#FBEAE8;color:#C4483D;' },
+  concluida:  { texto:'Venda concluída',     cor:'background:#E7F4EE;color:#1F6246;' }
+};
+
+/* as que ela escolhe à mão no selinho da linha; rascunho e venda
+   concluída são consequência, não escolha */
+const ORC_SITUACOES_ESCOLHIVEIS = ['aguardando','aprovado','entrega','recusado'];
+
+function orcSelo(sit){
+  const r = ORC_SITUACAO_ROTULO[sit] || ORC_SITUACAO_ROTULO.aguardando;
+  return `<span class="badge" style="${r.cor}">${r.texto}</span>`;
+}
+
+function orcMudarSituacao(id, nova){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  if(o.status==='convertido' || o.vendaGeradaId){
+    showToast('Este orçamento já virou venda — o status dele não muda mais por aqui.', 'error');
+    renderListaOrcamentos();
+    return;
+  }
+  if(nova==='aguardando'){ o.status='pendente';  o.statusEntrega='nenhum'; }
+  else if(nova==='aprovado'){ o.status='aprovado'; o.statusEntrega='nenhum'; }
+  else if(nova==='entrega'){
+    o.status='aprovado';
+    if(!['separacao','em_rota'].includes(o.statusEntrega)){ o.statusEntrega='em_rota'; o.faseEntrega='separacao'; }
+  }
+  else if(nova==='recusado'){ o.status='recusado'; o.statusEntrega='nenhum'; }
+  else return;
+  registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} passou para ${(ORC_SITUACAO_ROTULO[nova]||{}).texto||nova}`);
+  saveState();
+  renderListaOrcamentos();
+}
+
+function orcDaAba(aba){
+  const todos = (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao);
+  if(aba==='todos') return todos;
+  if(aba==='rascunhos')  return todos.filter(o=>orcSituacao(o)==='rascunho');
+  if(aba==='aguardando') return todos.filter(o=>orcSituacao(o)==='aguardando');
+  if(aba==='aprovados')  return todos.filter(o=>orcSituacao(o)==='aprovado');
+  if(aba==='entrega')    return todos.filter(o=>orcSituacao(o)==='entrega');
+  if(aba==='recusados')  return todos.filter(o=>orcSituacao(o)==='recusado');
+  return todos;
+}
+
+function orcContagemAbas(){
+  const c = {};
+  ORC_ABAS.forEach(a=>{ c[a.id] = orcDaAba(a.id).length; });
+  return c;
+}
+
+function orcIrParaAba(aba){
+  orcAbaAtual = aba;
+  try{ localStorage.setItem('mizu_orc_aba', aba); }catch(e){}
+  renderListaOrcamentos();
+}
+
+/* ---------------------------------------------------------
+   QUANDO SAI — só na aba Em entrega
+
+   Pedido dela: poder dizer se a entrega é hoje, amanhã, num dia certo,
+   ou se está esperando mercadoria pra poder fechar. Fica numa coluna
+   própria, não no status: são duas perguntas diferentes.
+   --------------------------------------------------------- */
+function orcQuandoSaiTexto(o){
+  const q = o.entregaPrevista;
+  if(!q) return { texto:'—', cor:'color:var(--ink-faint);', urgente:false };
+  if(q==='aguardando_mercadoria') return { texto:'⏳ Aguardando mercadoria', cor:'background:#FBF0DC;color:#8A5A10;padding:2px 9px;border-radius:999px;', urgente:true };
+  const hoje = todayISO();
+  if(q < hoje)  return { texto:'🔴 Atrasado — '+fmtDate(q), cor:'background:#FBEAE8;color:#C4483D;padding:2px 9px;border-radius:999px;', urgente:true };
+  if(q === hoje) return { texto:'Hoje', cor:'background:#E7F4EE;color:#2E7D5B;padding:2px 9px;border-radius:999px;', urgente:false };
+  return { texto: fmtDate(q), cor:'color:var(--ink-soft);', urgente:false };
+}
+
+function orcDefinirQuandoSai(id, valor){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  if(valor==='hoje')        o.entregaPrevista = todayISO();
+  else if(valor==='amanha') o.entregaPrevista = addDays(todayISO(), 1);
+  else if(valor==='aguardando_mercadoria') o.entregaPrevista = 'aguardando_mercadoria';
+  else if(valor==='escolher'){ orcAbrirEscolherDiaEntrega(id); return; }
+  else if(valor==='') o.entregaPrevista = null;
+  saveState();
+  renderListaOrcamentos();
+}
+
+function orcAbrirEscolherDiaEntrega(id){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  document.getElementById('modal-dia-entrega')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-dia-entrega';
+  const atual = (o.entregaPrevista && o.entregaPrevista!=='aguardando_mercadoria') ? o.entregaPrevista : '';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(420px,94vw);">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📅</div>
+        <div><h3>Que dia essa entrega sai?</h3><div class="sub">#${escapeHtml(String(o.numero||''))}</div></div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-dia-entrega').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div class="field"><label>Dia da entrega</label>
+          <input type="date" id="dia-entrega-valor" value="${escapeAttr(atual)}"></div>
+        <div class="modal-actions" style="margin-top:16px;">
+          <button class="btn" onclick="document.getElementById('modal-dia-entrega').remove()">Cancelar</button>
+          <button class="btn btn-primary" id="dia-entrega-ok">Guardar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.querySelector('#dia-entrega-ok').addEventListener('click', ()=>{
+    const v = modal.querySelector('#dia-entrega-valor').value;
+    o.entregaPrevista = v || null;
+    saveState();
+    modal.remove();
+    renderListaOrcamentos();
+  });
+}
+
 function renderListaOrcamentos(){
   const tbody = document.getElementById('orc-lista-body');
   if(!tbody) return;
   atualizarOrcamentosExpirados();
-  renderOrcamentosEmAndamento();
   renderRelatorioSeparacaoEntrega();
+  orcDesenharAbas();
 
-  const filtroStatus = document.getElementById('orc-lista-filtro-status') ? document.getElementById('orc-lista-filtro-status').value : '';
-  const checkboxEsconder = document.getElementById('orc-lista-esconder-finalizados');
-  if(checkboxEsconder) checkboxEsconder.checked = orcamentoListaEsconderFinalizados;
+  const busca = normalizarBusca((document.getElementById('orc-lista-busca')||{}).value || '');
   const setaOrdem = document.getElementById('orc-lista-seta-ordem');
   if(setaOrdem) setaOrdem.textContent = orcamentoListaOrdemData==='desc' ? '▼' : '▲';
 
-  // Pré-vendas e rascunhos ainda NÃO fazem parte dos "Orçamentos Lançados"
-  // de verdade — ficam só na lista de "Orçamentos em Andamento" (ver
-  // renderOrcamentosEmAndamento()), até o usuário finalizar de verdade
-  // clicando em "Salvar Orçamento".
-  /* Orçamento de licitação tem quadro próprio, logo abaixo: ele se
-     resolve com ganhou/perdeu, não com aprovado/entregue. Misturado
-     aqui, atrapalhava os dois. */
-  let lista = STATE.orcamentos.filter(o=>o.status!=='pre_venda' && o.status!=='rascunho' && !o.origemLicitacao);
-  renderOrcamentosLicitacao();
-  // Orçamento já convertido em venda continua aparecendo aqui normalmente
-  // (com o selo "✅ Virou Venda" na coluna Status) — antes ele sumia da
-  // lista por padrão assim que convertia, o que dava a impressão de que
-  // nada tinha acontecido. O histórico dele também continua existindo como
-  // venda de verdade na aba Vendas, isso não muda.
-  if(filtroStatus){
-    lista = lista.filter(o=>o.status===filtroStatus);
+  let lista = orcDaAba(orcAbaAtual);
+
+  /* A busca vale em qualquer aba — pedido dela pra achar na lista de
+     Todos sem ficar rolando: número, cliente, vendedor ou produto. */
+  if(busca){
+    lista = lista.filter(o=>{
+      const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
+      const alvo = [ '#'+(o.numero||''), cliente?cliente.nome:'', o.vendedor||'',
+                     (o.itens||[]).map(i=>i.nome).join(' ') ].join(' ');
+      return normalizarBusca(alvo).indexOf(busca) >= 0;
+    });
   }
-  if(orcamentoListaEsconderFinalizados){
-    // "finalizado" = já foi entregue E já virou venda — o par que não
-    // precisa mais de nenhuma ação. Só sai da vista por padrão, continua
-    // tudo salvo e reaparece desmarcando a caixinha ou filtrando por status.
-    lista = lista.filter(o=>!(['entregue','retirado'].includes(o.statusEntrega) && (o.status==='convertido' || !!o.vendaGeradaId)));
-  }
-  // Mais recente primeiro por padrão (data, com a hora de criação como
-  // desempate dentro do mesmo dia) — clicar no cabeçalho "Data" inverte.
+
   const orcamentosOrdenados = lista.sort((a,b)=>{
     if(a.data!==b.data) return orcamentoListaOrdemData==='desc' ? (a.data<b.data?1:-1) : (a.data<b.data?-1:1);
     const criadoA = a.criadoEm||'', criadoB = b.criadoEm||'';
@@ -14267,57 +14422,71 @@ function renderListaOrcamentos(){
     return orcamentoListaOrdemData==='desc' ? (criadoA<criadoB?1:-1) : (criadoA<criadoB?-1:1);
   });
 
+  const mostraQuandoSai = orcAbaAtual==='entrega';
+  const colunas = mostraQuandoSai ? 8 : 7;
+
   if(orcamentosOrdenados.length===0){
-    tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;color:var(--ink-faint);padding:16px;">Nenhum orçamento encontrado com esse filtro.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colunas}" style="text-align:center;color:var(--ink-faint);padding:22px;">
+      ${busca ? 'Nada encontrado com esse texto.' : escapeHtml(orcAbaVazia(orcAbaAtual))}</td></tr>`;
     return;
   }
+
   tbody.innerHTML = orcamentosOrdenados.map(o=>{
     const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
     const c = calcularVenda(o);
     const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
-    const validadeAte = addDays(o.data, o.validadeDias);
-    // considera convertido tanto pelo status quanto pela venda já existir de
-    // verdade (vendaGeradaId) — os dois deveriam andar sempre juntos, mas
-    // checar os dois é uma segunda trava contra o mesmo tipo de inconsistência
-    // que já aconteceu (status voltando pra "aprovado" com a venda já lançada)
-    const jaConvertido = o.status==='convertido' || !!o.vendaGeradaId;
-    // status COMERCIAL efetivo pro dropdown: convertido/expirado não são
-    // opções selecionáveis no dropdown (esse último é automático) — mapeia
-    // pro valor mais próximo, só pra manter o select coerente. Escolher
-    // manualmente outro status ali "reativa" um orçamento expirado.
-    const statusComercialSelect = jaConvertido ? 'aprovado' : (o.status==='expirado' ? 'pendente' : o.status);
+    const sit = orcSituacao(o);
+    const jaConvertido = sit==='concluida';
     const statusEntrega = o.statusEntrega || 'nenhum';
+    const quando = orcQuandoSaiTexto(o);
+
+    /* O selinho de status é editável na própria linha — menos pra venda
+       concluída e rascunho, que são consequência e não escolha. */
+    const celulaStatus = (jaConvertido || sit==='rascunho')
+      ? orcSelo(sit)
+      : `<select onchange="orcMudarSituacao('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;border-radius:6px;${ORC_SITUACAO_ROTULO[sit].cor}border:1px solid currentColor;font-weight:600;">
+          ${ORC_SITUACOES_ESCOLHIVEIS.map(s=>`<option value="${s}" ${sit===s?'selected':''}>${ORC_SITUACAO_ROTULO[s].texto}</option>`).join('')}
+        </select>`;
+
+    /* A coluna Observação conta o que está acontecendo com a entrega —
+       e, quando a nota sai, vira "Venda concluída". */
+    const observacao = jaConvertido
+      ? '<span style="color:var(--positive);font-weight:600;">✅ Venda concluída</span>'
+      : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o) : '<span style="color:var(--ink-faint);">—</span>');
+
     return `
       <tr>
         <td>${o.numero!=null ? '#'+escapeHtml(String(o.numero)) : '—'}</td>
         <td>${fmtDate(o.data)}</td>
         <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
         <td>${o.vendedor ? escapeHtml(o.vendedor) : '<span style="color:var(--ink-faint);">—</span>'}</td>
-        <td>${fmtDate(validadeAte)}</td>
-        <td class="num">${fmtMoney(c.brutoOriginal+acrescimo)}</td>
-        <td class="num">${(c.brutoOriginal-c.bruto)>0?fmtMoney(c.brutoOriginal-c.bruto):'—'}</td>
         <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
-        <td>
-          ${jaConvertido ? statusOrcamentoLabel.convertido : (o.status==='expirado' ? statusOrcamentoLabel[o.status] : `<select onchange="mudarStatusOrcamento('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;border-radius:6px;${estiloCorStatusSelect(statusComercialSelect)}">
-            ${['pendente','aprovado','enviado','recusado'].map(s=>`<option value="${s}" ${statusComercialSelect===s?'selected':''}>${s.charAt(0).toUpperCase()+s.slice(1)}</option>`).join('')}
-          </select>`)}
-        </td>
-        <td>${rotuloStatusEntrega(o)}</td>
+        <td>${celulaStatus}</td>
+        ${mostraQuandoSai ? `<td>
+          <select onchange="orcDefinirQuandoSai('${o.id}', this.value)" style="padding:4px 6px;font-size:12px;border-radius:6px;${quando.urgente?'background:#FBF0DC;color:#8A5A10;font-weight:600;':''}">
+            <option value="">${escapeHtml(quando.texto)}</option>
+            <option value="hoje">Hoje</option>
+            <option value="amanha">Amanhã</option>
+            <option value="escolher">Escolher a data…</option>
+            <option value="aguardando_mercadoria">Aguardando mercadoria</option>
+          </select>
+        </td>` : ''}
+        <td>${observacao}</td>
         <td>
           <div>
-            ${!jaConvertido && o.status==='aprovado' ? `<button class="btn btn-sm btn-primary" onclick="converterOrcamentoEmVenda('${o.id}')">💰 Converter em Venda</button>` : ''}
+            ${orcAcaoPrincipal(o, sit)}
             <details class="acoes-ver-mais">
               <summary></summary>
               <div class="acoes-ver-mais-lista">
-                <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver Itens</button>
-                <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF</button>
+                <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
+                <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
+                ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
+                <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
                 ${nfeBotoesOrcamento(o)}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Marcar Entregue</button>` : ''}
                 ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na Loja</button>` : ''}
                 ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer</button>` : ''}
-                ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
-                <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
                 ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
               </div>
             </details>
@@ -14325,6 +14494,62 @@ function renderListaOrcamentos(){
         </td>
       </tr>`;
   }).join('');
+}
+
+/* O botão que fica visível na linha muda conforme a aba: é sempre o
+   próximo passo natural daquele orçamento. */
+function orcAcaoPrincipal(o, sit){
+  if(sit==='rascunho')
+    return `<button class="btn btn-sm btn-primary" onclick="editarOrcamento('${o.id}')">▶ Continuar</button>`;
+  if(sit==='aprovado')
+    return `<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 Gerar nota fiscal</button>`;
+  if(sit==='entrega')
+    return `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>`;
+  return '';
+}
+
+function orcAbaVazia(aba){
+  if(aba==='aguardando') return 'Nenhum orçamento esperando resposta do cliente.';
+  if(aba==='aprovados')  return 'Nenhum orçamento aprovado esperando nota.';
+  if(aba==='entrega')    return 'Nada em separação nem na rua agora.';
+  if(aba==='recusados')  return 'Nenhum orçamento recusado — bom sinal.';
+  if(aba==='rascunhos')  return 'Nenhum rascunho nem pré-venda parada.';
+  return 'Nenhum orçamento lançado ainda. Clique em "+ Novo orçamento" pra começar.';
+}
+
+/* Desenha a fileira de abas e os quatro cartões do topo. */
+function orcDesenharAbas(){
+  const caixa = document.getElementById('orc-abas');
+  if(!caixa) return;
+  const cont = orcContagemAbas();
+  caixa.innerHTML = ORC_ABAS.map(a=>{
+    const on = orcAbaAtual===a.id;
+    const n = cont[a.id] || 0;
+    return `<button type="button" class="orc-aba${on?' on':''}" onclick="orcIrParaAba('${a.id}')">
+      <span>${a.rotulo}</span><span class="n">${n}</span></button>`;
+  }).join('');
+
+  const cartoes = document.getElementById('orc-cartoes');
+  if(!cartoes) return;
+  const soma = (ids)=>ids.reduce((s,o)=>{
+    const c = calcularVenda(o); return s + c.bruto + (o.acrescimo?o.acrescimo.valor:0);
+  }, 0);
+  const aguardando = orcDaAba('aguardando');
+  const aprovados  = orcDaAba('aprovados');
+  const entrega    = orcDaAba('entrega');
+  const concluidas = (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao && orcSituacao(o)==='concluida');
+  const dados = [
+    { rotulo:'Aguardando o cliente', n:aguardando.length, v:fmtMoney(soma(aguardando))+' em jogo', borda:'#C98A2C' },
+    { rotulo:'Aprovados',            n:aprovados.length,  v:fmtMoney(soma(aprovados))+' pra faturar', borda:'#2E7D5B' },
+    { rotulo:'Em entrega',           n:entrega.length,    v:fmtMoney(soma(entrega))+' a caminho', borda:'#0081A7' },
+    { rotulo:'Vendas concluídas',    n:concluidas.length, v:fmtMoney(soma(concluidas))+' no total', borda:'#1B4B5A' }
+  ];
+  cartoes.innerHTML = dados.map(d=>`
+    <div class="orc-cartao" style="border-left:4px solid ${d.borda};">
+      <div class="rot">${d.rotulo}</div>
+      <div class="num">${d.n}</div>
+      <div class="sub">${d.v}</div>
+    </div>`).join('');
 }
 
 // Copia um orçamento existente (cliente, itens, condições) como ponto de
@@ -39047,34 +39272,142 @@ function nfeConferir(orcamento, modelo){
   return problemas;
 }
 
-function nfeMostrarProblemas(problemas){
+/* =========================================================
+   A CONFERÊNCIA ANTES DA NOTA
+
+   Antes era assim: clicava em emitir, aparecia a lista do que faltava,
+   clicava em Corrigir, a janela sumia, arrumava um campo — e tinha que
+   clicar em emitir de novo pra descobrir o PRÓXIMO que faltava. Com
+   cinco produtos incompletos, cinco voltas.
+
+   Agora é uma lista viva: mostra o que já está certo e o que falta,
+   cada falta com o botão de arrumar ali mesmo, e a lista se refaz
+   sozinha quando você salva. O botão de emitir só acende quando não
+   falta mais nada.
+   ========================================================= */
+function nfeConferirTudo(orcamento, modelo){
+  const linhas = [];
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const ehNfce = modelo===NFE_MODELO.NFCE;
+
+  if(!cliente){
+    linhas.push({ ok:false, titulo:'Cliente', texto:'O cliente deste orçamento não existe mais no cadastro.' });
+    return linhas;
+  }
+
+  if(ehNfce){
+    linhas.push({ ok:true, titulo:'Cliente', texto:'Cupom de balcão — a NFC-e não exige identificar quem comprou.' });
+  }else{
+    const doc = (cliente.documento||'').replace(/\D/g,'');
+    const temDoc = doc.length===11 || doc.length===14;
+    linhas.push({
+      ok: temDoc, titulo: cliente.nome,
+      texto: temDoc ? 'CPF/CNPJ preenchido' : 'Falta o CPF ou CNPJ — sem ele a Receita rejeita a nota.',
+      acao: temDoc ? null : ()=>abrirFormCliente(cliente.id)
+    });
+
+    const faltaEnd = [];
+    if(!(cliente.cep||'').replace(/\D/g,'')) faltaEnd.push('CEP');
+    if(!cliente.uf) faltaEnd.push('UF');
+    if(!(cliente.cidadeEstruturada||cliente.cidade)) faltaEnd.push('cidade');
+    if(!cliente.bairro) faltaEnd.push('bairro');
+    if(!(cliente.logradouro||cliente.endereco)) faltaEnd.push('rua');
+    linhas.push({
+      ok: faltaEnd.length===0, titulo: cliente.nome,
+      texto: faltaEnd.length===0
+        ? 'Endereço completo'
+        : 'Falta ' + enLista(faltaEnd) + ' — está no bloco "Endereço estruturado" do cadastro.',
+      acao: faltaEnd.length===0 ? null : ()=>abrirFormCliente(cliente.id)
+    });
+  }
+
+  const itens = orcamento.itens||[];
+  if(itens.length===0){
+    linhas.push({ ok:false, titulo:'Itens', texto:'Este orçamento não tem nenhum item — não há o que colocar na nota.' });
+  }
+  itens.forEach(it=>{
+    const produto = STATE.produtos.find(p=>p.id===it.produtoId);
+    if(!produto){
+      linhas.push({ ok:false, titulo:it.nome, texto:'O cadastro deste produto não existe mais.' });
+      return;
+    }
+    const pend = pendenciasDeNota(produto);
+    linhas.push({
+      ok: pend.length===0, titulo: it.nome,
+      texto: pend.length===0 ? 'Pronto pra nota' : 'Falta ' + textoPendencias(pend) + '.',
+      acao: pend.length===0 ? null : ()=>abrirCorrigirProdutoFiscal(produto.id, ()=>nfeDesenharConferencia())
+    });
+  });
+
+  return linhas;
+}
+
+let NFE_CONFERENCIA = null;   // { orcamento, modelo, aoAprovar }
+
+function nfeAbrirConferencia(orcamento, modelo, aoAprovar){
+  NFE_CONFERENCIA = { orcamento, modelo, aoAprovar };
   document.getElementById('modal-nfe-problemas')?.remove();
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-nfe-problemas';
-  window.__nfeAcoesProblema = problemas.map(p=>p.acao);
+  document.body.appendChild(modal);
+  nfeDesenharConferencia();
+}
+
+function nfeDesenharConferencia(){
+  const modal = document.getElementById('modal-nfe-problemas');
+  if(!modal || !NFE_CONFERENCIA) return;
+  const { orcamento, modelo } = NFE_CONFERENCIA;
+  const linhas = nfeConferirTudo(orcamento, modelo);
+  const faltam = linhas.filter(l=>!l.ok);
+  const tudoCerto = faltam.length===0;
+  window.__nfeAcoesConferencia = linhas.map(l=>l.acao);
+
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:min(640px, 94vw);max-height:90vh;overflow-y:auto;">
-      <div class="modal-rapido-cabecalho" style="background:#B02A37;">
-        <div class="ic-rapido">⚠️</div>
+    <div class="modal-box modal-box-rapido" style="max-width:min(660px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho" style="background:${tudoCerto?'var(--positive)':'#B02A37'};">
+        <div class="ic-rapido">${tudoCerto?'✅':'⚠️'}</div>
         <div>
-          <h3>Falta informação para emitir a nota</h3>
-          <div class="sub">A Receita exige esses dados — sem eles a nota é rejeitada</div>
+          <h3>${tudoCerto ? 'Tudo conferido — pode emitir' : 'Falta preencher pra emitir a nota'}</h3>
+          <div class="sub">${tudoCerto
+            ? 'O cadastro do cliente e dos produtos está completo'
+            : `${faltam.length} ${faltam.length===1?'pendência':'pendências'} — arrume aqui mesmo, a lista se atualiza sozinha`}</div>
         </div>
         <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-nfe-problemas').remove()">✕</button>
       </div>
       <div class="modal-rapido-corpo">
-        ${problemas.map((p,i)=>`
-          <div style="display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--border);">
-            <div style="flex:1;font-size:13.5px;">${escapeHtml(p.texto)}</div>
-            ${p.acao?`<button class="btn btn-sm" onclick="document.getElementById('modal-nfe-problemas').remove(); window.__nfeAcoesProblema[${i}]();">Corrigir</button>`:''}
+        ${linhas.map((l,i)=>`
+          <div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--border);">
+            <div style="flex-shrink:0;width:18px;font-size:13px;">${l.ok?'✅':'⬜'}</div>
+            <div style="flex:1;min-width:0;">
+              <div style="font-size:13px;font-weight:600;${l.ok?'color:var(--ink-soft);':''}">${escapeHtml(l.titulo)}</div>
+              <div style="font-size:12.5px;color:${l.ok?'var(--ink-faint)':'var(--negative)'};">${escapeHtml(l.texto)}</div>
+            </div>
+            ${l.acao?`<button class="btn btn-sm" onclick="window.__nfeAcoesConferencia[${i}]();">Arrumar</button>`:''}
           </div>`).join('')}
         <div class="modal-actions" style="margin-top:18px;">
-          <button class="btn btn-primary" onclick="document.getElementById('modal-nfe-problemas').remove()">Entendi</button>
+          <button class="btn" onclick="document.getElementById('modal-nfe-problemas').remove()">Agora não</button>
+          <button class="btn btn-primary" id="nfe-conf-emitir" ${tudoCerto?'':'disabled style="opacity:0.45;cursor:not-allowed;"'}>
+            ${tudoCerto ? '🧾 Emitir a nota agora' : 'Emitir (falta preencher)'}
+          </button>
         </div>
       </div>
     </div>`;
-  document.body.appendChild(modal);
+
+  const bt = modal.querySelector('#nfe-conf-emitir');
+  if(bt && tudoCerto){
+    bt.addEventListener('click', ()=>{
+      const seguir = NFE_CONFERENCIA && NFE_CONFERENCIA.aoAprovar;
+      modal.remove();
+      if(seguir) seguir();
+    });
+  }
+}
+
+/* nome antigo, ainda usado por outras telas */
+function nfeMostrarProblemas(problemas){
+  if(NFE_CONFERENCIA){ nfeDesenharConferencia(); return; }
+  showToast(problemas.length ? problemas[0].texto : 'Falta informação para emitir a nota.', 'error');
 }
 
 /* ---------- código IBGE do município do cliente ---------- */
@@ -39184,8 +39517,26 @@ async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
       }
     },
     produtos: nfeItensParaNota(orcamento),
-    pagamento: nfePagamentoDoOrcamento(orcamento)
+    pagamento: nfePagamentoDoOrcamento(orcamento),
+    /* O que ela escreveu em Observações do orçamento sai no quadro
+       "Dados Adicionais", no rodapé do DANFE — é onde entram condição de
+       entrega, nº do pedido do cliente, o que for. A frase obrigatória do
+       Simples Nacional continua vindo primeiro, posta pelo servidor. */
+    observacoes: nfeObservacoesDoOrcamento(orcamento)
   };
+}
+
+/* Junta o que vai no rodapé da nota: a observação escrita no orçamento e,
+   quando for proposta pra órgão público, o número do processo — que o
+   empenho depois cobra. */
+function nfeObservacoesDoOrcamento(orcamento){
+  const partes = [];
+  const obs = String((orcamento && orcamento.observacoes) || '').trim();
+  if(obs) partes.push(obs);
+  const pub = (orcamento && orcamento.publico) || {};
+  if(pub.numero) partes.push(`${pub.modalidade || 'Processo'} nº ${pub.numero}`);
+  if(orcamento && orcamento.numero) partes.push(`Pedido/orçamento nº ${orcamento.numero}`);
+  return partes.join(' | ').slice(0, 4800);
 }
 
 /* =========================================================
@@ -39427,8 +39778,15 @@ async function nfeEmitir(origem, modelo, opcoes){
     return null;
   }
 
+  /* A conferência do cadastro vem ANTES de qualquer outra coisa: é ela
+     que mostra, numa lista só, o que falta no cliente e nos produtos —
+     com o botão de arrumar ali mesmo. Arrumou tudo, o botão de emitir
+     acende e a emissão continua daqui de dentro. */
   const problemas = nfeConferir(orcamento, modelo);
-  if(problemas.length){ nfeMostrarProblemas(problemas); return null; }
+  if(problemas.length){
+    nfeAbrirConferencia(orcamento, modelo, ()=>nfeEmitir(origem, modelo, opcoes));
+    return null;
+  }
 
   const num = nfeNumeracao(modelo);
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
@@ -39799,6 +40157,13 @@ function abrirOpcoesEmitirDepois(orcamentoId){
                   onclick="document.getElementById('modal-fechar-venda').remove(); emitirNotaFiscal('${orcamento.id}', 55)">🧾 Emitir NF-e</button>
           <button class="btn" style="justify-content:flex-start;padding:12px 14px;"
                   onclick="document.getElementById('modal-fechar-venda').remove(); emitirNotaFiscal('${orcamento.id}', 65)">🧾 Emitir NFC-e</button>
+        </div>
+        <div style="margin-top:12px;">
+          <button class="btn btn-sm" style="width:100%;justify-content:center;"
+                  onclick="document.getElementById('modal-fechar-venda').remove(); nfeAbrirConferencia(STATE.orcamentos.find(o=>o.id==='${orcamento.id}'), 55, ()=>emitirNotaFiscal('${orcamento.id}', 55));">
+            🔎 Conferir o cadastro antes de emitir
+          </button>
+          <div class="help-text" style="margin-top:4px;">Mostra numa lista só o que falta no cliente e nos produtos, com o botão de arrumar ali mesmo.</div>
         </div>
         <div class="modal-actions" style="margin-top:18px;">
           <button class="btn" onclick="document.getElementById('modal-fechar-venda').remove()">Cancelar</button>
@@ -48110,7 +48475,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '30/10/2026 11:25';
+const SISTEMA_VERSAO = '30/10/2026 15:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
