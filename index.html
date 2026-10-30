@@ -690,7 +690,10 @@ table.data-table{ width:100%; font-size:13px; }
 .cart-table td{ padding:6px 8px; border-bottom:1px solid #F0F1F3; }
 .item-picker-row{
   display:grid;
-  grid-template-columns:2fr 1fr 1fr auto;
+  /* com o desconto do item na linha, a grade fixa estourava pra fora da
+     caixa e o último campo ficava cortado — agora as colunas se acomodam
+     sozinhas e quebram em duas fileiras quando o espaço aperta */
+  grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
   gap:10px;
   align-items:end;
   padding:12px;
@@ -854,6 +857,54 @@ table.data-table{ width:100%; font-size:13px; }
 .combo-option:last-child{ border-bottom:none; }
 .combo-option:hover, .combo-option.combo-active{ background:var(--primary-soft); }
 .combo-option .combo-sub{ font-size:11px; color:var(--ink-faint); }
+/* preço de venda miudinho embaixo de cada produto da busca */
+.combo-option .combo-preco{ font-size:11.5px; color:var(--primary-escuro); margin-top:2px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+.combo-option .combo-preco strong{ font-size:12.5px; font-variant-numeric:tabular-nums; }
+.combo-option .combo-preco .ok{ color:var(--positive); font-size:10.5px; }
+.combo-option .combo-preco .zero{ color:var(--negative); font-size:10.5px; }
+
+/* =========================================================
+   TELA DE ORÇAMENTOS — A LISTA É A TELA
+   Topo com o botão de novo, cartões do dia, abas de atalho, e o
+   formulário inteiro numa gaveta que entra pela direita.
+   ========================================================= */
+.orc-topo{ display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:14px; }
+.orc-cartoes{ display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:14px; }
+.orc-cartao{ background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+  padding:13px 15px; display:flex; flex-direction:column; gap:2px; }
+.orc-cartao .rot{ font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--ink-soft); font-weight:600; }
+.orc-cartao .num{ font-size:25px; font-weight:700; letter-spacing:-.5px; font-family:var(--font-num); }
+.orc-cartao .sub{ font-size:12px; color:var(--ink-soft); }
+.orc-abas{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; }
+.orc-aba{ display:flex; align-items:center; gap:7px; cursor:pointer; border-radius:9px;
+  padding:9px 14px; font-size:13.5px; min-height:40px; border:1px solid var(--border);
+  background:var(--surface); color:var(--primary-escuro); font:inherit; }
+.orc-aba:hover{ background:var(--bg-app); }
+.orc-aba .n{ border-radius:999px; padding:1px 8px; font-size:11.5px; font-weight:700;
+  background:var(--bg-app); color:var(--ink-soft); }
+.orc-aba.on{ background:var(--primary-escuro); border-color:var(--primary-escuro); color:#fff; font-weight:600; }
+.orc-aba.on .n{ background:rgba(255,255,255,0.22); color:#fff; }
+
+.orc-gaveta-fundo{ position:fixed; inset:0; background:rgba(18,35,43,0.45); z-index:960;
+  opacity:0; pointer-events:none; transition:opacity .18s ease; }
+.orc-gaveta-fundo.on{ opacity:1; pointer-events:auto; }
+.orc-gaveta{ position:fixed; top:0; right:0; bottom:0; width:min(900px, 96vw); z-index:970;
+  background:var(--bg-app); box-shadow:-14px 0 40px rgba(0,0,0,0.18);
+  display:flex; flex-direction:column; transform:translateX(102%); transition:transform .22s ease; }
+.orc-gaveta.aberta{ transform:translateX(0); }
+.orc-gaveta-topo{ display:flex; align-items:center; gap:12px; padding:15px 22px;
+  background:var(--primary-escuro); color:#fff; flex-shrink:0; }
+.orc-gaveta-topo strong{ font-size:16px; }
+.orc-gaveta-sub{ font-size:12.5px; opacity:.8; }
+.orc-gaveta-x{ margin-left:auto; width:34px; height:34px; min-width:34px; border-radius:50%; border:none;
+  background:rgba(255,255,255,0.18); color:#fff; font-size:16px; cursor:pointer; line-height:1; }
+.orc-gaveta-x:hover{ background:rgba(255,255,255,0.32); }
+.orc-gaveta-corpo{ flex:1 1 auto; overflow-y:auto; padding:16px 22px 40px; }
+body.orc-gaveta-travada{ overflow:hidden; }
+@media (max-width: 720px){
+  .orc-gaveta{ width:100vw; }
+  .orc-gaveta-corpo{ padding:14px 14px 40px; }
+}
 .combo-empty{ padding:10px 11px; font-size:12.5px; color:var(--ink-faint); }
 .combo-option-criar{
   color:var(--primary); font-weight:600; border-top:1px solid var(--border);
@@ -995,6 +1046,16 @@ table.data-table{ width:100%; font-size:13px; }
     <a class="nav-item" data-page="orcamentos" href="#">
       <span class="ic ic-operacao">📋</span> Orçamentos <span class="nav-badge" id="nav-badge-orcamentos" style="display:none;"></span>
     </a>
+    <!-- Licitação subiu de Relatórios pra cá: participar de dispensa é
+         trabalho do dia, não relatório. E a proposta de licitação saiu de
+         dentro da tela de Orçamentos — misturada lá, ela aparecia no meio
+         do orçamento de cliente, que não tem nada a ver. -->
+    <a class="nav-item" data-page="licitacoes" href="#">
+      <span class="ic ic-operacao">🏛️</span> Licitações <span class="nav-badge" id="nav-badge-licitacoes" style="display:none;"></span>
+    </a>
+    <a class="nav-item" data-page="proposta-licitacao" href="#">
+      <span class="ic ic-operacao">⚖️</span> Proposta de Licitação <span class="nav-badge" id="nav-badge-proposta-lic" style="display:none;"></span>
+    </a>
     <a class="nav-item" data-page="logistica" href="#">
       <span class="ic ic-operacao">🚚</span> Logística
     </a>
@@ -1038,9 +1099,6 @@ table.data-table{ width:100%; font-size:13px; }
     </a>
     <a class="nav-item" data-page="vendas-cliente" href="#">
       <span class="ic ic-relatorios">👥</span> Vendas por Cliente
-    </a>
-    <a class="nav-item" data-page="licitacoes" href="#">
-      <span class="ic ic-relatorios">🏛️</span> Licitações <span class="nav-badge" id="nav-badge-licitacoes" style="display:none;"></span>
     </a>
     <a class="nav-item" data-page="sugestao-compra" href="#">
       <span class="ic ic-relatorios">🛒</span> Sugestão de Compra
@@ -1228,6 +1286,16 @@ table.data-table{ width:100%; font-size:13px; }
         </div>
       </div>
       <div id="orcamentos-content"></div>
+    </section>
+
+    <section class="page" id="page-proposta-licitacao">
+      <div class="page-header">
+        <div>
+          <h2>Proposta de Licitação</h2>
+          <p class="subtitle">Dispensa, pregão e cotação escolar — marque aqui se ganhou ou perdeu</p>
+        </div>
+      </div>
+      <div id="proposta-licitacao-content"></div>
     </section>
 
     <section class="page" id="page-logistica">
@@ -8579,6 +8647,10 @@ function ativarComboboxProduto(inputId, hiddenId, opcoes, onSelect, opcoesExtra)
         <div class="combo-option" data-idx="${i}" data-id="${o.id}">
           ${escapeHtml(o.label)}
           ${o.sub ? `<div class="combo-sub">${escapeHtml(o.sub)}</div>` : ''}
+          ${o.precoVenda ? `<div class="combo-preco">
+              <strong>${fmtMoney(o.precoVenda)}</strong> / ${escapeHtml(o.unidadeVenda||'UN')}
+              <span class="${o.estoque>0?'ok':'zero'}">${o.estoque>0 ? fmtNum(o.estoque)+' em estoque' : 'sem estoque'}</span>
+            </div>` : ''}
         </div>
       `).join('') + (permitirCriar ? `<div class="combo-option combo-option-criar" data-criar="1">➕ Criar produto novo${termoAtual?` "${escapeHtml(termoAtual)}"`:''}</div>` : '');
       dropdown.querySelectorAll('.combo-option[data-id]').forEach(el=>{
@@ -8877,7 +8949,14 @@ function opcoesProdutosCombobox(){
     label: p.nome,
     sub: [p.marca, p.fornecedor, p.categoria].filter(Boolean).join(' · '),
     buscaExtra: [p.codigoBarras, p.sku].filter(Boolean).join(' '),
-    criadoRapido: !!p.criadoRapido
+    criadoRapido: !!p.criadoRapido,
+    /* O preço de venda aparece miudinho embaixo de cada opção: pedido
+       dela, pra decidir o item sem ter que escolher primeiro e conferir
+       o preço depois. O estoque vem junto porque é a outra pergunta que
+       ela faz na hora ("tem?"). */
+    precoVenda: Number(p.precoVenda) || 0,
+    unidadeVenda: p.unidade || 'UN',
+    estoque: Number(p.estoqueAtual) || 0
   }));
 }
 
@@ -12114,24 +12193,21 @@ function orcAplicarEsteira(){
   const box = document.getElementById('orcamentos-content');
   if(!box) return;
 
-  // o seletor de modelo aparece nos dois, sempre no topo
+  /* O seletor de modelo é do FORMULÁRIO, não da tela: "como você quer
+     vender" só importa quando você está montando um orçamento. Depois
+     que a tela virou lista, ele foi pra dentro da gaveta — na tela de
+     fora ele só ocupava espaço e confundia. */
   if(!document.getElementById('orc-seletor-modelo')){
     const sel = document.createElement('div');
     sel.id = 'orc-seletor-modelo';
     sel.innerHTML = orcHtmlSeletorModelo();
-    box.insertBefore(sel, box.firstChild);
+    const destino = document.querySelector('#orc-gaveta .orc-gaveta-corpo') || box;
+    destino.insertBefore(sel, destino.firstChild);
   }
 
-  // o painel do dia entra antes da lista de lançados, nos dois modelos
-  const cardLista = [...box.querySelectorAll('.card > h3')]
-    .find(h => h.textContent.trim().indexOf('Orçamentos Lançados') === 0);
-  if(cardLista && !document.getElementById('orc-painel-dia')){
-    const painel = document.createElement('div');
-    painel.id = 'orc-painel-dia';
-    painel.innerHTML = orcHtmlPainelDoDia();
-    const alvo = cardLista.closest('.card');
-    alvo.parentNode.insertBefore(painel, alvo);
-  }
+  /* O painel do dia saiu: os quatro cartões no alto da tela (aguardando,
+     aprovados, em entrega, vendas concluídas) contam a mesma coisa, e em
+     cima da lista, que é onde ela olha. */
 
   if(orcModelo() === 'balcao'){ orcAplicarBalcao(box); return; }
   if(orcModelo() !== 'esteira') return;
@@ -12194,8 +12270,7 @@ function renderOrcamentos(){
   box.innerHTML = `
     <div class="orc-topo">
       <div>
-        <h2 style="margin:0;font-size:21px;">Orçamentos</h2>
-        <div class="help-text" style="margin:2px 0 0;" id="orc-topo-resumo"></div>
+        <div class="help-text" style="margin:0;" id="orc-topo-resumo"></div>
       </div>
       <button class="btn btn-primary" id="orc-btn-abrir-gaveta" style="margin-left:auto;padding:12px 20px;font-size:14.5px;">
         ＋ Novo orçamento
@@ -12204,6 +12279,45 @@ function renderOrcamentos(){
     <div class="orc-cartoes" id="orc-cartoes"></div>
     <div class="orc-abas" id="orc-abas"></div>
 
+    <div class="card" id="orc-card-separacao-entrega">
+      <h3>📦 Separação e Entrega <span class="hint">o que está sendo preparado e o que já saiu pra entrega</span></h3>
+      <div id="orc-relatorio-separacao"></div>
+    </div>
+
+    <div class="card">
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;">
+        <h3 style="margin:0;" id="orc-lista-titulo">Orçamentos lançados</h3>
+        <input type="text" id="orc-lista-busca" placeholder="Procurar cliente, número ou produto…"
+               oninput="renderListaOrcamentos()"
+               style="margin-left:auto;max-width:280px;flex:1 1 200px;">
+        <button class="btn btn-sm" onclick="abrirConfigNfe()" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
+        <button class="btn btn-sm" onclick="abrirCancelarNota()" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
+        <button class="btn btn-sm" onclick="abrirAnaliseST()" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr id="orc-lista-cabecalho"></tr></thead>
+          <tbody id="orc-lista-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+
+    <!-- ================= A GAVETA DO NOVO ORÇAMENTO =================
+         Modelo escolhido por ela: a tela é a LISTA. O formulário inteiro
+         mora aqui dentro e só aparece quando ela clica em "Novo
+         orçamento" — por cima da lista, sem trocar de página.
+         Os campos continuam exatamente os mesmos, com os mesmos ids:
+         esteira, balcão, rascunho automático e pré-venda seguem
+         funcionando sem saber que a tela mudou de lugar. -->
+    <div class="orc-gaveta-fundo" id="orc-gaveta-fundo"></div>
+    <aside class="orc-gaveta" id="orc-gaveta" aria-hidden="true">
+      <div class="orc-gaveta-topo">
+        <strong id="orc-gaveta-titulo">Novo orçamento</strong>
+        <span class="orc-gaveta-sub" id="orc-gaveta-sub"></span>
+        <button type="button" class="orc-gaveta-x" id="orc-btn-fechar-gaveta" aria-label="Fechar">✕</button>
+      </div>
+      <div class="orc-gaveta-corpo">
     <div id="orc-rascunho-banner"></div>
     <div class="card">
       <h3 id="orc-form-titulo">1. Dados do Orçamento</h3>
@@ -12427,6 +12541,24 @@ function renderOrcamentos(){
           <label>Preço unit. (R$)</label>
           <input type="number" id="orc-item-preco" min="0" step="0.01" style="text-align:center;">
         </div>
+        <!-- DESCONTO NA HORA DE LANÇAR O ITEM.
+             Antes só dava pra dar desconto depois, pelo ✏️ Editar da linha —
+             duas telas pra uma decisão que se toma na hora. O desconto é
+             sempre POR UNIDADE: "tiro R$ 2 de cada uma", e o sistema
+             multiplica pela quantidade. -->
+        <div class="field" style="min-width:150px;">
+          <label>Desconto no item</label>
+          <div style="display:flex;gap:5px;">
+            <select id="orc-item-desc-tipo" style="flex:0 0 78px;padding:6px 4px;font-size:12.5px;">
+              <option value="">—</option>
+              <option value="pct">%</option>
+              <option value="valor">R$</option>
+            </select>
+            <input type="number" id="orc-item-desc-valor" min="0" step="0.01" placeholder="por unidade"
+                   style="flex:1;min-width:0;text-align:center;" disabled>
+          </div>
+          <div class="help-text" id="orc-item-desc-aviso" style="margin:3px 0 0;display:none;"></div>
+        </div>
         <div class="field" id="orc-item-caixa-wrap" style="display:none;min-width:170px;">
           <label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;">
             <input type="checkbox" id="orc-item-vender-caixa" style="width:auto;">
@@ -12516,36 +12648,15 @@ function renderOrcamentos(){
       </div>
     </div>
 
-    <div class="card" id="orc-card-separacao-entrega">
-      <h3>📦 Separação e Entrega <span class="hint">o que está sendo preparado e o que já saiu pra entrega</span></h3>
-      <div id="orc-relatorio-separacao"></div>
-    </div>
-
-    <div class="card">
-      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;">
-        <h3 style="margin:0;" id="orc-lista-titulo">Orçamentos lançados</h3>
-        <input type="text" id="orc-lista-busca" placeholder="Procurar cliente, número ou produto…"
-               oninput="renderListaOrcamentos()"
-               style="margin-left:auto;max-width:280px;flex:1 1 200px;">
-        <button class="btn btn-sm" onclick="abrirConfigNfe()" title="Endereço do servidor, token e numeração da NF-e">🧾 Configurar Nota Fiscal</button>
-        <button class="btn btn-sm" onclick="abrirCancelarNota()" title="Cancelar uma nota já autorizada, emitida aqui ou em outro sistema">🚫 Cancelar Nota</button>
-        <button class="btn btn-sm" onclick="abrirAnaliseST()" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
       </div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr id="orc-lista-cabecalho"></tr></thead>
-          <tbody id="orc-lista-body"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Propostas de licitação ficam por ÚLTIMO de propósito: quando ela está
-         fazendo orçamento de cliente, não precisa rolar por cima deste quadro. -->
-    <div class="card" id="card-orc-licitacao" style="display:none;">
-      <h3>⚖️ Propostas de licitação <span class="hint">dispensa, pregão e cotação escolar — marque aqui se ganhou ou perdeu</span></h3>
-      <div id="orc-licitacao-conteudo"></div>
-    </div>
+    </aside>
+    <!-- O quadro de propostas de licitação SAIU daqui: agora é tela
+         própria, em Operação › Proposta de Licitação. -->
   `;
+
+  document.getElementById('orc-btn-abrir-gaveta').addEventListener('click', ()=>orcAbrirGaveta());
+  document.getElementById('orc-btn-fechar-gaveta').addEventListener('click', ()=>orcFecharGaveta());
+  document.getElementById('orc-gaveta-fundo').addEventListener('click', ()=>orcFecharGaveta());
 
   document.getElementById('orc-btn-novo-cliente').addEventListener('click', ()=>{
     abrirFormCliente(null, (clienteCriado)=>{
@@ -12599,6 +12710,10 @@ function renderOrcamentos(){
   document.getElementById('orc-item-preco').addEventListener('input', atualizarPreviewItemOrcamento);
   document.getElementById('orc-item-caixa-fator').addEventListener('input', atualizarPreviewItemOrcamento);
   document.getElementById('orc-item-vender-caixa').addEventListener('change', atualizarPreviewItemOrcamento);
+  document.getElementById('orc-item-desc-tipo').addEventListener('change', orcAvisarDescontoItem);
+  document.getElementById('orc-item-desc-valor').addEventListener('input', orcAvisarDescontoItem);
+  document.getElementById('orc-item-qtd').addEventListener('input', orcAvisarDescontoItem);
+  document.getElementById('orc-item-preco').addEventListener('input', orcAvisarDescontoItem);
   document.getElementById('orc-btn-add-item').addEventListener('click', adicionarItemAoOrcamento);
   document.getElementById('orc-btn-salvar').addEventListener('click', salvarOrcamento);
   document.getElementById('orc-btn-salvar-pre-venda').addEventListener('click', ()=>{
@@ -12959,6 +13074,11 @@ function adicionarItemAoOrcamento(){
   if(isNaN(qtd) || qtd<=0){ showToast('Informe uma quantidade válida.', 'error'); return; }
   if(isNaN(preco) || preco<0){ showToast('Informe um preço válido.', 'error'); return; }
 
+  /* desconto do item, lançado junto — por unidade, em % ou em reais */
+  const desc = orcDescontoDigitado();
+  if(desc.erro){ showToast(desc.erro, 'error'); return; }
+  const precoComDesconto = orcAplicarDesconto(preco, desc.tipo, desc.valor);
+
   // Resolve a origem escolhida (fornecedor OU local de compra) pro nome de
   // exibição e o endereço — o endereço é o dado que o Planejador de Rotas
   // (próxima fase) vai precisar pra calcular a rota de coleta de verdade.
@@ -13005,7 +13125,9 @@ function adicionarItemAoOrcamento(){
 
   const novoItemOrc = {
     produtoId: p.id, nome: p.nome, marca: p.marca||'', fornecedor: p.fornecedor||'',
-    custoUnit: p.custo, precoUnit: preco, qtd: qtdReal, unidade: p.unidade||'UN',
+    custoUnit: p.custo, precoUnit: precoComDesconto, qtd: qtdReal, unidade: p.unidade||'UN',
+    precoUnitOriginal: desc.tipo ? preco : null,
+    descontoItemTipo: desc.tipo, descontoItemValor: desc.tipo ? desc.valor : null,
     vendidoEmCaixa: vendendoEmCaixaAtivo, qtdCaixas, unidadesPorCaixa: vendendoEmCaixaAtivo?fatorConversao:null, descricaoLinha,
     origem: origemNome, origemTipo, origemId, origemEndereco // origem específica DESTE orçamento — não altera o produto
   };
@@ -13021,7 +13143,77 @@ function adicionarItemAoOrcamento(){
   document.getElementById('orc-item-preco').value = '';
   document.getElementById('orc-item-origem-id').value = '';
   document.getElementById('orc-item-info').style.display = 'none';
+  orcLimparDescontoItem();
   atualizarToggleVenderCaixa(null);
+}
+
+/* =========================================================
+   DESCONTO DO ITEM — SEMPRE POR UNIDADE
+
+   "São 10 unidades de detergente, tiro R$ 2 de cada" → o sistema faz a
+   conta e a linha sai com o preço já abatido. Em porcentagem é a mesma
+   ideia: 10% sai de cada unidade.
+
+   O preço de tabela fica guardado em precoUnitOriginal, pra linha poder
+   mostrar o de antes riscado e o de agora embaixo — e pra "atualizar o
+   cadastro" nunca levar o preço com desconto pro produto.
+   ========================================================= */
+function orcAplicarDesconto(precoTabela, tipo, valor){
+  let final = precoTabela;
+  if(tipo==='pct')        final = precoTabela * (1 - valor/100);
+  else if(tipo==='valor') final = Math.max(0, precoTabela - valor);
+  return Math.round(final*100)/100;
+}
+
+function orcDescontoDigitado(){
+  const selTipo = document.getElementById('orc-item-desc-tipo');
+  const selValor = document.getElementById('orc-item-desc-valor');
+  if(!selTipo || !selValor) return { tipo:null, valor:null };
+  const tipo = selTipo.value || null;
+  if(!tipo) return { tipo:null, valor:null };
+  const valor = parseFloat(selValor.value);
+  if(isNaN(valor) || valor<0) return { erro:'Informe o valor do desconto, ou deixe o tipo em "—".' };
+  if(tipo==='pct' && valor>100) return { erro:'O desconto em porcentagem não pode passar de 100%.' };
+  return { tipo, valor };
+}
+
+function orcLimparDescontoItem(){
+  const t = document.getElementById('orc-item-desc-tipo');
+  const v = document.getElementById('orc-item-desc-valor');
+  const a = document.getElementById('orc-item-desc-aviso');
+  if(t) t.value = '';
+  if(v){ v.value = ''; v.disabled = true; v.placeholder = 'por unidade'; }
+  if(a) a.style.display = 'none';
+}
+
+/* Mostra, antes de adicionar, quanto fica cada unidade e quanto sai de
+   desconto no total — a conta que ela faria no papel. */
+function orcAvisarDescontoItem(){
+  const aviso = document.getElementById('orc-item-desc-aviso');
+  const selTipo = document.getElementById('orc-item-desc-tipo');
+  const selValor = document.getElementById('orc-item-desc-valor');
+  if(!aviso || !selTipo || !selValor) return;
+
+  const tipo = selTipo.value || null;
+  selValor.disabled = !tipo;
+  selValor.placeholder = tipo==='pct' ? '% por unidade' : (tipo==='valor' ? 'R$ por unidade' : 'por unidade');
+  if(!tipo){ aviso.style.display='none'; selValor.value=''; return; }
+
+  const preco = parseFloat((document.getElementById('orc-item-preco')||{}).value);
+  const qtd = parseFloat((document.getElementById('orc-item-qtd')||{}).value) || 1;
+  const valor = parseFloat(selValor.value);
+  if(isNaN(preco) || preco<=0 || isNaN(valor) || valor<=0){ aviso.style.display='none'; return; }
+  if(tipo==='pct' && valor>100){
+    aviso.style.display='';
+    aviso.innerHTML = '<span style="color:var(--negative);">Desconto acima de 100%.</span>';
+    return;
+  }
+  const novo = orcAplicarDesconto(preco, tipo, valor);
+  const abatidoTotal = (preco - novo) * qtd;
+  aviso.style.display = '';
+  aviso.innerHTML = `Cada uma sai por <strong>${fmtMoney(novo)}</strong> `
+    + `<span style="color:var(--ink-faint);text-decoration:line-through;">${fmtMoney(preco)}</span>`
+    + ` · ${fmtMoney(abatidoTotal)} de desconto em ${fmtNum(qtd)}`;
 }
 
 // Procura no carrinho uma linha do MESMO produto, com o MESMO preço unitário
@@ -13360,8 +13552,10 @@ function renderCarrinhoOrcamento(){
         ${it.vendidoEmCaixa ? `<input type="text" value="${escapeAttr(it.descricaoLinha||'')}" title="Descrição da linha (só exibição, editável)" style="width:110px;margin-top:3px;padding:2px 5px;font-size:11px;color:var(--ink-soft);display:block;" onchange="editarDescricaoLinhaItemOrcamento(${idx}, this.value)">` : ''}
       </td>
       <td>
+        ${it.descontoItemTipo && !it.vendidoEmCaixa && it.precoUnitOriginal
+          ? `<div style="font-size:11px;color:var(--negative);text-decoration:line-through;text-align:center;margin-bottom:2px;">${fmtMoney(it.precoUnitOriginal)}</div>` : ''}
         <input type="number" min="0" step="0.01" value="${itemPrecoUnitExibicao(it)}" style="width:90px;padding:4px 6px;font-size:12.5px;text-align:center;" onchange="editarPrecoItemOrcamento(${idx}, this.value)">
-        ${it.descontoItemTipo && !it.vendidoEmCaixa ? `<div style="font-size:10.5px;color:var(--negative);margin-top:2px;text-align:center;">🏷️ ${it.descontoItemTipo==='pct'?`-${fmtNum(it.descontoItemValor)}%`:`-${fmtMoney(it.descontoItemValor)}`} <span style="color:var(--ink-faint);text-decoration:line-through;">${fmtMoney(it.precoUnitOriginal)}</span></div>` : ''}
+        ${it.descontoItemTipo && !it.vendidoEmCaixa ? `<div style="font-size:10.5px;color:var(--negative);margin-top:2px;text-align:center;">🏷️ ${it.descontoItemTipo==='pct'?`-${fmtNum(it.descontoItemValor)}%`:`-${fmtMoney(it.descontoItemValor)}`} por unidade</div>` : ''}
       </td>
       <td><select style="padding:4px 6px;font-size:12.5px;" onchange="tratarSelecaoOrigemCarrinho(${idx}, this)">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select></td>
       <td>${fmtMoney(it.qtd*it.precoUnit)}</td>
@@ -13923,7 +14117,12 @@ function editarOrcamento(id){
 
   renderCarrinhoOrcamento();
   atualizarResumoOrcamento();
-  window.scrollTo({top:0, behavior:'smooth'});
+  /* editar abre a mesma gaveta do novo, só com outro nome em cima */
+  const cli = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  orcAbrirGaveta(
+    emAndamento ? (orcamento.status==='pre_venda' ? 'Continuando a pré-venda' : 'Continuando o rascunho')
+                : `Editando o orçamento #${orcamento.numero||''}`,
+    cli ? cli.nome : '');
 }
 
 function cancelarEdicaoOrcamento(){
@@ -14034,7 +14233,8 @@ function rotuloStatusEntrega(o){
       ? '<span class="badge" style="background:#E3F0F5;color:#0B5E76;">🚚 Em Rota de Entrega</span>'
       : '<span class="badge" style="background:#EDE4FA;color:#6B3FA0;">📦 Em Separação</span>';
   }
-  return statusEntregaLabel[statusEntrega];
+  /* status desconhecido não vira "undefined" na tela */
+  return statusEntregaLabel[statusEntrega] != null ? statusEntregaLabel[statusEntrega] : '';
 }
 
 function marcarFaseEntregaOrcamento(id, fase){
@@ -14109,17 +14309,43 @@ const ORC_LIC_SITUACAO = {
   perdeu:   { t:'Perdemos',   cor:'var(--negative)',   fundo:'var(--negative-soft)' }
 };
 
+/* =========================================================
+   PROPOSTA DE LICITAÇÃO — TELA PRÓPRIA
+
+   Isto vivia no fim da tela de Orçamentos. Pedido dela: sair de lá.
+   Orçamento de cliente e proposta de licitação são dois trabalhos
+   diferentes, com gente diferente olhando — misturados, um atrapalhava
+   a leitura do outro. Mesmo quadro, mesmas ações, endereço próprio.
+   ========================================================= */
+function renderPropostaLicitacao(){
+  const box = document.getElementById('proposta-licitacao-content');
+  if(!box) return;
+  box.innerHTML = `
+    <div class="card">
+      <div id="orc-licitacao-conteudo"></div>
+    </div>`;
+  renderOrcamentosLicitacao();
+}
+
 function renderOrcamentosLicitacao(){
-  const card = document.getElementById('card-orc-licitacao');
   const box = document.getElementById('orc-licitacao-conteudo');
-  if(!card || !box) return;
+  if(!box) return;
+  const card = box.closest('.card') || box;
 
   const lista = (STATE.orcamentos||[])
     .filter(o=>o.origemLicitacao && o.status!=='pre_venda' && o.status!=='rascunho')
     .sort((a,b)=> (a.data===b.data) ? String(b.criadoEm||'').localeCompare(String(a.criadoEm||''))
                                     : String(b.data).localeCompare(String(a.data)));
 
-  if(lista.length===0){ card.style.display='none'; box.innerHTML=''; return; }
+  if(lista.length===0){
+    card.style.display = '';
+    box.innerHTML = `<div style="text-align:center;color:var(--ink-faint);padding:26px 16px;">
+      <div style="font-size:26px;margin-bottom:6px;">⚖️</div>
+      <div style="font-size:14px;">Nenhuma proposta de licitação por aqui ainda.</div>
+      <div class="help-text" style="margin-top:4px;">Elas nascem no menu <strong>Licitações</strong>, quando você monta a proposta de uma dispensa.</div>
+    </div>`;
+    return;
+  }
   card.style.display = '';
 
   const porSituacao = {};
@@ -14518,10 +14744,64 @@ function orcAbaVazia(aba){
 }
 
 /* Desenha a fileira de abas e os quatro cartões do topo. */
+/* =========================================================
+   ABRIR E FECHAR A GAVETA
+
+   Fechar NÃO joga nada fora: o rascunho automático já guarda o que
+   estava preenchido, igual acontecia quando ela trocava de página.
+   Então o ✕ é seguro, e o que ela digitou está esperando na aba
+   Rascunhos.
+   ========================================================= */
+function orcGavetaAberta(){
+  const g = document.getElementById('orc-gaveta');
+  return !!(g && g.classList.contains('aberta'));
+}
+
+function orcAbrirGaveta(titulo, sub){
+  const g = document.getElementById('orc-gaveta');
+  const f = document.getElementById('orc-gaveta-fundo');
+  if(!g || !f) return;
+  const t = document.getElementById('orc-gaveta-titulo');
+  const s = document.getElementById('orc-gaveta-sub');
+  if(t) t.textContent = titulo || 'Novo orçamento';
+  if(s) s.textContent = sub || '';
+  g.classList.add('aberta');
+  g.setAttribute('aria-hidden','false');
+  f.classList.add('on');
+  document.body.classList.add('orc-gaveta-travada');
+  g.querySelector('.orc-gaveta-corpo').scrollTop = 0;
+  const campo = document.getElementById('orc-cliente');
+  if(campo) setTimeout(()=>{ try{ campo.focus(); }catch(e){} }, 120);
+}
+
+function orcFecharGaveta(){
+  const g = document.getElementById('orc-gaveta');
+  const f = document.getElementById('orc-gaveta-fundo');
+  if(!g || !f) return;
+  /* guarda o que estava escrito, do mesmo jeito que sair da página faz */
+  try{ if(typeof salvarRascunhoOrcamento === 'function') salvarRascunhoOrcamento(); }catch(e){}
+  g.classList.remove('aberta');
+  g.setAttribute('aria-hidden','true');
+  f.classList.remove('on');
+  document.body.classList.remove('orc-gaveta-travada');
+  renderListaOrcamentos();
+}
+
 function orcDesenharAbas(){
   const caixa = document.getElementById('orc-abas');
   if(!caixa) return;
   const cont = orcContagemAbas();
+
+  /* a linha do topo conta a tela em uma frase */
+  const resumo = document.getElementById('orc-topo-resumo');
+  if(resumo){
+    const partes = [`${cont.todos} orçamento${cont.todos===1?'':'s'}`];
+    if(cont.aguardando) partes.push(`${cont.aguardando} aguardando o cliente`);
+    if(cont.aprovados)  partes.push(`${cont.aprovados} aprovado${cont.aprovados===1?'':'s'} pra separar`);
+    if(cont.entrega)    partes.push(`${cont.entrega} em entrega`);
+    if(cont.rascunhos)  partes.push(`${cont.rascunhos} rascunho${cont.rascunhos===1?'':'s'}`);
+    resumo.textContent = partes.join(' · ');
+  }
   caixa.innerHTML = ORC_ABAS.map(a=>{
     const on = orcAbaAtual===a.id;
     const n = cont[a.id] || 0;
@@ -15321,6 +15601,7 @@ function editarOrigemItemOrcamentoSalvo(orcamentoId, idx, novoValor){
 }
 
 RENDERERS['orcamentos'] = renderOrcamentos;
+RENDERERS['proposta-licitacao'] = renderPropostaLicitacao;
 
 /* =========================================================
    LOGÍSTICA — PLANEJADOR DE ROTAS (Fase 5 e 6)
@@ -24546,7 +24827,17 @@ function getLinhasReceber(){
     };
   });
 
-  return [...deVendas, ...manuais];
+  /* Cada linha ganha quanto já entrou e quanto ainda falta. Fica aqui, num
+     lugar só, pra lista, calendário, KPIs e fechamento do mês contarem a
+     mesma história. */
+  return [...deVendas, ...manuais].map(l=>{
+    const alvo = crAlvoDaConta(l.id, l.origem, l.vendaId, l.parcelaIdx);
+    const pago = alvo ? crTotalPago(alvo) : 0;
+    const saldo = Math.max(0, Math.round((l.valor - pago)*100)/100);
+    let statusCalc = l.statusCalc;
+    if(!l.recebido && pago > 0) statusCalc = 'parcial';
+    return Object.assign({}, l, { pago, saldo, statusCalc });
+  });
 }
 
 let receberSort = {key:'vencimento', dir:'asc'};
@@ -24559,12 +24850,24 @@ function calcularKpisReceber(){
   const em30 = addDays(hoje, 30);
   let totalAberto=0, proximos30=0, atrasado=0, recebidoMes=0;
   linhas.forEach(l=>{
-    if(!l.recebido){
-      totalAberto += l.valor;
-      if(l.vencimento>=hoje && l.vencimento<=em30) proximos30 += l.valor;
-      if(l.vencimento<hoje) atrasado += l.valor;
-    }else{
-      if(l.dataRecebimento && l.dataRecebimento.slice(0,7)===hoje.slice(0,7)) recebidoMes += l.valor;
+    /* O que está em aberto é o SALDO, não o valor cheio: conta de R$ 400
+       com R$ 150 recebidos deve R$ 250, e era isso que o total de "em
+       aberto" contava errado antes. */
+    const emAberto = l.saldo != null ? l.saldo : (l.recebido ? 0 : l.valor);
+    if(emAberto > 0){
+      totalAberto += emAberto;
+      if(l.vencimento>=hoje && l.vencimento<=em30) proximos30 += emAberto;
+      if(l.vencimento<hoje) atrasado += emAberto;
+    }
+    /* e o recebido do mês soma os recebimentos do mês, inteiros ou
+       parciais */
+    const alvo = crAlvoDaConta(l.id, l.origem, l.vendaId, l.parcelaIdx);
+    if(alvo){
+      crPagamentos(alvo).forEach(p=>{
+        if(String(p.data||'').slice(0,7)===hoje.slice(0,7)) recebidoMes += Number(p.valor)||0;
+      });
+    }else if(l.recebido && l.dataRecebimento && l.dataRecebimento.slice(0,7)===hoje.slice(0,7)){
+      recebidoMes += l.valor;
     }
   });
   return {totalAberto, proximos30, atrasado, recebidoMes};
@@ -24614,6 +24917,7 @@ function renderContasReceber(){
           <select id="cr-status">
             <option value="">Todos</option>
             <option value="pendente">Pendente</option>
+            <option value="parcial">Pago em parte</option>
             <option value="atrasado">Atrasado</option>
             <option value="recebido">Recebido</option>
           </select>
@@ -24909,7 +25213,8 @@ function renderTabelaReceber(){
   const statusBadge = {
     recebido: '<span class="badge badge-positive">Recebido</span>',
     atrasado: '<span class="badge badge-negative">Atrasado</span>',
-    pendente: '<span class="badge badge-warning">Pendente</span>'
+    pendente: '<span class="badge badge-warning">Pendente</span>',
+    parcial:  '<span class="badge" style="background:#E6F1FB;color:#185FA5;">Pago em parte</span>'
   };
 
   const total = linhas.length;
@@ -24919,12 +25224,18 @@ function renderTabelaReceber(){
     <tr>
       <td>${fmtDate(l.vencimento)}</td>
       <td>${escapeHtml(l.descricao)}</td>
-      <td class="num">${fmtMoney(l.valor)}</td>
+      <td class="num">
+        ${fmtMoney(l.valor)}
+        ${(l.pago>0 && !l.recebido) ? `<div style="font-size:11px;color:var(--ink-soft);margin-top:2px;">
+            recebido ${fmtMoney(l.pago)} · <strong style="color:var(--negative);">falta ${fmtMoney(l.saldo)}</strong>
+          </div>` : ''}
+      </td>
       <td class="num" style="color:${l.lucro==null?'var(--ink-faint)':(l.lucro>=0?'var(--positive)':'var(--negative)')}">${l.lucro==null?'—':fmtMoney(l.lucro)}</td>
       <td>${statusBadge[l.statusCalc]}</td>
       <td>
         <div class="cell-actions">
-          ${!l.recebido ? `<button class="btn btn-sm" onclick="marcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Marcar recebido</button>` : `<button class="btn btn-sm" onclick="desmarcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Desfazer</button>`}
+          ${!l.recebido ? `<button class="btn btn-sm btn-primary" onclick="abrirReceberParcial('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">💰 Receber</button>` : ''}
+          ${!l.recebido ? `<button class="btn btn-sm" onclick="marcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Recebi tudo</button>` : `<button class="btn btn-sm" onclick="desmarcarContaRecebida('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">Desfazer</button>`}
           <button class="btn btn-sm" onclick="abrirEditarVencimentoReceber('${l.id}','${l.origem}','${l.vendaId||l.id}',${l.parcelaIdx!=null?l.parcelaIdx:'null'})">📅 Vencimento</button>
           ${l.origem==='manual'
             ? `<button class="btn btn-sm" onclick="abrirEditarContaReceberManual('${l.id}')">✏️ Editar</button>`
@@ -25102,6 +25413,192 @@ function abrirEditarValorReceberVenda(id, origem, vendaId, parcelaIdx){
   });
 }
 
+/* =========================================================
+   RECEBIMENTO PARCIAL
+
+   Pedido dela: "a Keila deve R$ 400,00 e pagou R$ 150,00 — quero lançar
+   esse pagamento e o resto continuar aberto". Antes só existia pago ou
+   não pago, e o jeito de registrar meio pagamento era mexer no valor da
+   conta, o que apagava quanto ela devia de verdade.
+
+   Agora cada conta guarda uma lista de recebimentos (data e valor). O
+   saldo é o valor menos o que já entrou, e a conta se quita sozinha
+   quando o saldo chega a zero — sem ninguém precisar marcar nada.
+
+   Serve pros três tipos de conta: boleto de venda, parcela de crediário
+   e conta lançada à mão.
+   ========================================================= */
+function crAlvoDaConta(id, origem, vendaId, parcelaIdx){
+  if(origem==='manual'){
+    return (STATE.contasReceberManuais||[]).find(c=>c.id===id) || null;
+  }
+  const venda = (STATE.vendas||[]).find(v=>v.id===(vendaId||id));
+  if(!venda) return null;
+  if(parcelaIdx!=null && venda.parcelasReceber) return venda.parcelasReceber[parcelaIdx] || null;
+  return venda.receber || null;
+}
+
+function crPagamentos(alvo){
+  if(!alvo) return [];
+  if(!Array.isArray(alvo.pagamentos)) alvo.pagamentos = [];
+  return alvo.pagamentos;
+}
+
+function crTotalPago(alvo){
+  return crPagamentos(alvo).reduce((s,p)=>s + (Number(p.valor)||0), 0);
+}
+
+/* Depois de mexer nos pagamentos: se cobriu tudo, a conta fica recebida;
+   se sobrou saldo, volta a ficar aberta. O "recebido" continua existindo
+   porque meio sistema lê esse campo — ele só deixou de ser decidido na
+   mão. */
+function crAcertarQuitacao(alvo, valorDaConta){
+  if(!alvo) return;
+  const pago = crTotalPago(alvo);
+  if(valorDaConta > 0 && pago >= valorDaConta - 0.005){
+    alvo.recebido = true;
+    const ultimos = crPagamentos(alvo);
+    alvo.dataRecebimento = ultimos.length ? ultimos[ultimos.length-1].data : todayISO();
+  }else if(pago > 0){
+    alvo.recebido = false;
+    alvo.dataRecebimento = '';
+  }
+}
+
+function crValorDaConta(id, origem, vendaId, parcelaIdx){
+  const linha = getLinhasReceber().find(l=>l.id===id && l.origem===origem);
+  return linha ? Number(linha.valor)||0 : 0;
+}
+
+function abrirReceberParcial(id, origem, vendaId, parcelaIdx){
+  const alvo = crAlvoDaConta(id, origem, vendaId, parcelaIdx);
+  if(!alvo){ showToast('Não encontrei essa conta.', 'error'); return; }
+  const linha = getLinhasReceber().find(l=>l.id===id && l.origem===origem);
+  if(!linha){ showToast('Não encontrei essa conta.', 'error'); return; }
+
+  const valor = Number(linha.valor)||0;
+  const pago = crTotalPago(alvo);
+  const saldo = Math.max(0, Math.round((valor - pago)*100)/100);
+  const lista = crPagamentos(alvo);
+
+  document.getElementById('modal-receber-parcial')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-receber-parcial';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">💰</div>
+        <div>
+          <h3>Receber desta conta</h3>
+          <div class="sub">${escapeHtml(linha.clienteNome||linha.descricao)}</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-receber-parcial').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:14px;">
+          <div style="background:var(--bg-app);border-radius:var(--radius-sm);padding:10px 12px;">
+            <div class="help-text" style="margin:0;">Valor da conta</div>
+            <div style="font-size:16px;font-weight:700;">${fmtMoney(valor)}</div>
+          </div>
+          <div style="background:var(--bg-app);border-radius:var(--radius-sm);padding:10px 12px;">
+            <div class="help-text" style="margin:0;">Já recebido</div>
+            <div style="font-size:16px;font-weight:700;color:var(--positive);">${fmtMoney(pago)}</div>
+          </div>
+          <div style="background:var(--bg-app);border-radius:var(--radius-sm);padding:10px 12px;">
+            <div class="help-text" style="margin:0;">Falta</div>
+            <div style="font-size:16px;font-weight:700;color:${saldo>0?'var(--negative)':'var(--positive)'};" id="rp-saldo">${fmtMoney(saldo)}</div>
+          </div>
+        </div>
+
+        ${lista.length ? `
+          <div class="help-text" style="margin:0 0 6px;">Recebimentos lançados</div>
+          <div style="border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:14px;">
+            ${lista.map((p,i)=>`
+              <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;${i?'border-top:1px solid var(--border);':''}">
+                <span style="font-size:12.5px;color:var(--ink-soft);width:86px;">${fmtDate(p.data)}</span>
+                <span style="flex:1;font-size:13.5px;font-weight:600;">${fmtMoney(p.valor)}</span>
+                <span style="font-size:12px;color:var(--ink-faint);flex:1;min-width:0;">${escapeHtml(p.obs||'')}</span>
+                <button class="btn btn-sm btn-danger" onclick="crApagarPagamento('${id}','${origem}','${vendaId||id}',${parcelaIdx!=null?parcelaIdx:'null'},'${p.id}')">Apagar</button>
+              </div>`).join('')}
+          </div>` : ''}
+
+        ${saldo > 0 ? `
+          <div class="form-grid">
+            <div class="field">
+              <label>Quanto entrou agora (R$)</label>
+              <input type="number" id="rp-valor" min="0.01" step="0.01" value="${saldo.toFixed(2)}">
+            </div>
+            <div class="field">
+              <label>Data</label>
+              <input type="date" id="rp-data" value="${todayISO()}">
+            </div>
+            <div class="field field-full">
+              <label>Observação</label>
+              <input type="text" id="rp-obs" placeholder="ex.: PIX, dinheiro, depósito">
+            </div>
+          </div>
+          <div class="help-text">Deixe o valor cheio pra quitar de uma vez, ou troque pelo que o cliente pagou — o resto continua aberto.</div>
+          <div class="modal-actions" style="margin-top:16px;">
+            <button class="btn" onclick="document.getElementById('modal-receber-parcial').remove()">Cancelar</button>
+            <button class="btn btn-primary" id="rp-lancar">Lançar recebimento</button>
+          </div>`
+        : `<div class="help-text" style="color:var(--positive);">Esta conta já está quitada. Pra reabrir, apague um dos recebimentos acima.</div>
+           <div class="modal-actions" style="margin-top:16px;">
+             <button class="btn btn-primary" onclick="document.getElementById('modal-receber-parcial').remove()">Fechar</button>
+           </div>`}
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  const bt = modal.querySelector('#rp-lancar');
+  if(bt) bt.addEventListener('click', ()=>{
+    const v = parseFloat(document.getElementById('rp-valor').value);
+    if(isNaN(v) || v<=0){ showToast('Informe quanto o cliente pagou.', 'error'); return; }
+    if(v > saldo + 0.005){
+      showToast(`O cliente só deve ${fmtMoney(saldo)} nesta conta. Lance o excedente em outra conta ou em Haver de Clientes.`, 'error');
+      return;
+    }
+    crRegistrarPagamento(id, origem, vendaId, parcelaIdx, {
+      valor: Math.round(v*100)/100,
+      data: document.getElementById('rp-data').value || todayISO(),
+      obs: (document.getElementById('rp-obs').value||'').trim()
+    });
+  });
+}
+
+function crRegistrarPagamento(id, origem, vendaId, parcelaIdx, pagamento){
+  const alvo = crAlvoDaConta(id, origem, vendaId, parcelaIdx);
+  if(!alvo) return;
+  const valor = crValorDaConta(id, origem, vendaId, parcelaIdx);
+  crPagamentos(alvo).push(Object.assign({ id: uid('rec') }, pagamento));
+  crAcertarQuitacao(alvo, valor);
+  const pago = crTotalPago(alvo);
+  const saldo = Math.max(0, Math.round((valor - pago)*100)/100);
+  registrarAuditoria('conta_recebida',
+    `Recebimento de ${fmtMoney(pagamento.valor)}${saldo>0?` — falta ${fmtMoney(saldo)}`:' — conta quitada'}`,
+    pagamento.valor);
+  saveState();
+  document.getElementById('modal-receber-parcial')?.remove();
+  showToast(saldo>0 ? `Recebido ${fmtMoney(pagamento.valor)}. Ainda falta ${fmtMoney(saldo)}.`
+                    : 'Conta quitada.', 'success');
+  renderContasReceber();
+}
+
+function crApagarPagamento(id, origem, vendaId, parcelaIdx, pagamentoId){
+  const alvo = crAlvoDaConta(id, origem, vendaId, parcelaIdx);
+  if(!alvo) return;
+  const valor = crValorDaConta(id, origem, vendaId, parcelaIdx);
+  alvo.pagamentos = crPagamentos(alvo).filter(p=>p.id!==pagamentoId);
+  if(crTotalPago(alvo)===0){ alvo.recebido = false; alvo.dataRecebimento = ''; }
+  else crAcertarQuitacao(alvo, valor);
+  registrarAuditoria('conta_despaga', 'Recebimento apagado de uma conta a receber', null);
+  saveState();
+  document.getElementById('modal-receber-parcial')?.remove();
+  renderContasReceber();
+  abrirReceberParcial(id, origem, vendaId, parcelaIdx);
+}
+
 function marcarContaRecebida(id, origem, vendaId, parcelaIdx){
   let descricaoAud = '', valorAud = null;
   if(origem==='manual'){
@@ -25127,6 +25624,17 @@ function marcarContaRecebida(id, origem, vendaId, parcelaIdx){
       valorAud = venda.receber.valorAjustado!=null ? venda.receber.valorAjustado : null;
     }else{
       return;
+    }
+  }
+  /* "Marcar recebido" continua existindo pra quem recebeu tudo de uma vez
+     — mas agora deixa registro no mesmo lugar do parcial, pra conta não
+     ter duas histórias diferentes. */
+  const alvoQuitado = crAlvoDaConta(id, origem, vendaId, parcelaIdx);
+  if(alvoQuitado){
+    const valorConta = crValorDaConta(id, origem, vendaId, parcelaIdx);
+    const falta = Math.round((valorConta - crTotalPago(alvoQuitado))*100)/100;
+    if(falta > 0.005){
+      crPagamentos(alvoQuitado).push({ id: uid('rec'), valor: falta, data: todayISO(), obs: 'recebido integral' });
     }
   }
   registrarAuditoria('conta_recebida', descricaoAud, valorAud);
@@ -25159,6 +25667,10 @@ function desmarcarContaRecebida(id, origem, vendaId, parcelaIdx){
       return;
     }
   }
+  /* desfazer apaga também os recebimentos lançados — senão a conta
+     voltaria "aberta" mas com dinheiro registrado dentro dela */
+  const alvoAberto = crAlvoDaConta(id, origem, vendaId, parcelaIdx);
+  if(alvoAberto) alvoAberto.pagamentos = [];
   registrarAuditoria('conta_despaga', descricaoAud, null);
   saveState();
   renderContasReceber();
@@ -47809,6 +48321,101 @@ function enCopiarContador(){
 
 /* ---------- concluir ---------- */
 
+/* =========================================================
+   AVISO DE ST NA ENTRADA DE NOTA
+
+   A pergunta "quais dos meus produtos têm ST em Goiás?" não precisa de
+   lista nenhuma: a nota do fornecedor já responde, item por item, em
+   campo estruturado (CST/CSOSN, CEST, ICMS retido). O que faltava era
+   alguém perguntar.
+
+   Agora, ao concluir a entrada, o sistema junta os itens que vieram com
+   ST e cujo produto ainda não está marcado, e pergunta. Ela marca os que
+   são — e a partir daí esses produtos saem com ST nas vendas, sem ela
+   pensar nisso de novo.
+
+   Marca só o que ela disser: "veio com ST na nota do fornecedor" é
+   informação do mercado; "este produto tem ST" é decisão dela.
+   ========================================================= */
+function enItensComSTPendente(entrada){
+  if(!entrada) return [];
+  return (entrada.itens||[])
+    .filter(it => it.acao !== 'ignorar' && it.comST && it.produtoId)
+    .map(it => ({ it, prod: STATE.produtos.find(p=>p.id===it.produtoId) }))
+    .filter(x => x.prod && x.prod.stConfirmado !== true);
+}
+
+function enAvisarST(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  const pendentes = enItensComSTPendente(e);
+  if(pendentes.length===0) return;
+
+  document.getElementById('modal-st-entrada')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-st-entrada';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(680px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho" style="background:var(--warning);">
+        <div class="ic-rapido">🏷️</div>
+        <div>
+          <h3>Esta nota veio com ST</h3>
+          <div class="sub">${pendentes.length} produto${pendentes.length===1?'':'s'} com imposto já recolhido pelo fornecedor</div>
+        </div>
+        <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-st-entrada').remove()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">
+          Marcando aqui, estes produtos passam a sair com ST nas suas vendas — e o contador
+          consegue separar essa receita no PGDAS-D, que é onde você deixa de pagar imposto duas vezes.
+          O que você não marcar continua como está.
+        </p>
+        <div style="border:1px solid var(--border);border-radius:var(--radius-sm);margin:12px 0;">
+          ${pendentes.map((x,i)=>`
+            <label style="display:flex;gap:10px;align-items:flex-start;padding:11px 13px;cursor:pointer;${i?'border-top:1px solid var(--border);':''}">
+              <input type="checkbox" class="st-ent-item" data-produto="${escapeAttr(x.prod.id)}" checked style="width:auto;margin-top:3px;">
+              <span style="flex:1;min-width:0;">
+                <span style="font-size:13.5px;font-weight:600;display:block;">${escapeHtml(x.prod.nome || x.it.nomeNaNota)}</span>
+                <span class="help-text" style="margin:2px 0 0;">
+                  Na nota: ${escapeHtml((x.it.sinaisST||[]).join(', ') || 'ICMS retido')}
+                  ${x.it.cest ? ` · CEST ${escapeHtml(cestFormatado(x.it.cest))}` : ''}
+                  ${x.it.ncm ? ` · NCM ${escapeHtml(ncmFormatado(x.it.ncm))}` : ''}
+                </span>
+                ${!(x.prod.cest||x.it.cest) ? `<span class="help-text" style="margin:2px 0 0;color:var(--negative);">
+                  Sem CEST — vai precisar dele pra nota sair com ST.</span>` : ''}
+              </span>
+            </label>`).join('')}
+        </div>
+        <div class="modal-actions">
+          <button class="btn" onclick="document.getElementById('modal-st-entrada').remove()">Agora não</button>
+          <button class="btn btn-primary" id="st-ent-marcar">Marcar os escolhidos</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+
+  modal.querySelector('#st-ent-marcar').addEventListener('click', ()=>{
+    let quantos = 0;
+    modal.querySelectorAll('.st-ent-item').forEach(cb=>{
+      if(!cb.checked) return;
+      const prod = STATE.produtos.find(p=>p.id===cb.dataset.produto);
+      if(!prod) return;
+      prod.stConfirmado = true;
+      /* o CEST da nota serve: é o mesmo segmento */
+      const doItem = pendentes.find(x=>x.prod.id===prod.id);
+      if(!prod.cest && doItem && doItem.it.cest) prod.cest = String(doItem.it.cest).replace(/\D/g,'');
+      quantos++;
+    });
+    if(quantos){
+      registrarAuditoria('produto', `${quantos} produto(s) marcados com ST pela nota de entrada`, null);
+      saveState();
+    }
+    modal.remove();
+    showToast(quantos ? `${quantos} produto${quantos===1?'':'s'} ${quantos===1?'passa':'passam'} a sair com ST nas vendas.`
+                      : 'Nada foi marcado.', quantos ? 'success' : 'info');
+  });
+}
+
 function enConcluir(entradaId){
   const e = entradas().find(x=>x.id===entradaId);
   if(!e) return;
@@ -47895,6 +48502,11 @@ function enConcluir(entradaId){
       saveState();
       renderEntradaNota();
       showToast('Entrada concluída. Estoque e custos atualizados.', 'success');
+      /* A nota do fornecedor acabou de dizer quais itens vieram com ST.
+         Em vez de pedir a lista pro contador, a correção vem daqui: ela
+         confirma item por item e, daí em diante, o produto sai com ST nas
+         vendas. Em alguns meses de compras a lista se monta sozinha. */
+      enAvisarST(e.id);
       // A mercadoria entrou; falta o dinheiro sair. Ela confirma, porque
       // lancar automatico duplicaria um boleto ja lancado a mao.
       if(!e.despesaId && enParcelasParaDespesa(e).length > 0){
@@ -48475,7 +49087,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '30/10/2026 15:10';
+const SISTEMA_VERSAO = '30/10/2026 18:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
