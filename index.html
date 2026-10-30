@@ -661,6 +661,25 @@ table.data-table{ width:100%; font-size:13px; }
 }
 .modal-rapido-cabecalho .modal-rapido-fechar-x:hover{ background:rgba(255,255,255,0.32); }
 .modal-rapido-corpo{ padding:18px 22px 22px 22px; }
+
+/* X DE FECHAR EM TODA JANELA.
+   Vai sozinho em qualquer .modal-box que ainda não tenha um. O invólucro
+   é sticky e de altura zero: não empurra nada pra baixo e continua no
+   canto mesmo quando a janela é comprida e ela rola o conteúdo. */
+.modal-x-wrap{ position:sticky; top:0; height:0; z-index:12; display:block; }
+.modal-x-global{
+  position:absolute; top:2px; right:0; width:30px; height:30px; min-width:30px;
+  border-radius:50%; border:1px solid var(--linha,#dde3e6); background:#fff;
+  color:var(--ink,#1B4B5A); font-size:15px; line-height:1; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  box-shadow:0 1px 4px rgba(0,0,0,0.12);
+}
+.modal-x-global:hover{ background:#f1f5f6; }
+.modal-box-rapido .modal-x-global{
+  top:13px; right:14px; background:rgba(255,255,255,0.22);
+  border-color:transparent; color:#fff; box-shadow:none;
+}
+.modal-box-rapido .modal-x-global:hover{ background:rgba(255,255,255,0.38); }
 .modal-rapido-voltar{
   font-size:12px; color:var(--ink-faint); display:flex; align-items:center; gap:6px; margin-bottom:14px;
 }
@@ -5208,6 +5227,84 @@ function iniciarBuscaDeClientes(){
 }
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarBuscaDeClientes);
 else iniciarBuscaDeClientes();
+
+/* =========================================================
+   X DE FECHAR EM TODA JANELA
+
+   Pedido dela: "todas abas modal coloque opção para fechar a página
+   com um x lá em cima". Em vez de mexer nas dezenas de janelas uma a
+   uma — e esquecer das que ainda vão nascer —, um vigia põe o X em
+   qualquer .modal-box que apareça sem um.
+
+   Fechar não é só sumir com a janela: se a janela já tem um botão de
+   Fechar/Cancelar, o X clica NELE, porque esse botão costuma ter
+   faxina pra fazer (devolver campos emprestados, limpar rascunho).
+   Só quando não existe nenhum é que o X esconde a janela por conta.
+
+   E esconder não é a mesma coisa que remover: as janelas que já vêm
+   escritas no HTML são reaproveitadas a vida toda — some com a classe
+   "open" e pronto. As que o sistema cria na hora podem sair do ar.
+   ========================================================= */
+function modalEhFixo(over){
+  return over && over.dataset && over.dataset.modalFixo === '1';
+}
+function modalMarcarOsFixos(){
+  document.querySelectorAll('.modal-overlay').forEach(o=>{
+    if(!o.dataset.modalFixo) o.dataset.modalFixo = '1';
+  });
+}
+function modalFecharPeloX(box){
+  const over = box.closest('.modal-overlay') || box;
+  const saida = [...over.querySelectorAll('button')].find(b=>{
+    if(b.classList.contains('modal-x-global')) return false;
+    if(b.classList.contains('modal-rapido-fechar-x')) return false;
+    if(b.disabled) return false;
+    const t = (b.textContent || '').trim().toLowerCase().replace(/^[^a-zà-ú]+/,'');
+    return ['fechar','cancelar','voltar','agora não','agora nao','sair','deixa pra lá','deixa pra la']
+      .indexOf(t) >= 0;
+  });
+  if(saida){ saida.click(); return; }
+  if(modalEhFixo(over)) over.classList.remove('open');
+  else over.remove();
+}
+function modalPorXEm(box){
+  if(!box || box.dataset.xPosto === '1') return;
+  box.dataset.xPosto = '1';
+  /* janela que já tem o X do cabeçalho colorido não ganha outro */
+  if(box.querySelector('.modal-rapido-fechar-x')) return;
+  if(getComputedStyle(box).position === 'static') box.style.position = 'relative';
+  const wrap = document.createElement('div');
+  wrap.className = 'modal-x-wrap';
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'modal-x-global';
+  b.title = 'Fechar';
+  b.setAttribute('aria-label','Fechar');
+  b.textContent = '✕';
+  b.addEventListener('click', (e)=>{ e.preventDefault(); e.stopPropagation(); modalFecharPeloX(box); });
+  wrap.appendChild(b);
+  box.insertBefore(wrap, box.firstChild);
+}
+function modalGarantirXs(){
+  try{
+    document.querySelectorAll('.modal-overlay .modal-box').forEach(modalPorXEm);
+  }catch(e){ console.warn(e); }
+}
+let __modalXAgendado = null;
+function modalAgendarXs(){
+  if(__modalXAgendado) return;
+  __modalXAgendado = setTimeout(()=>{ __modalXAgendado = null; modalGarantirXs(); }, 60);
+}
+function modalIniciarXs(){
+  modalMarcarOsFixos();
+  modalGarantirXs();
+  try{
+    new MutationObserver(modalAgendarXs)
+      .observe(document.body, { childList:true, subtree:true });
+  }catch(e){ console.warn(e); }
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', modalIniciarXs);
+else modalIniciarXs();
 
 function filtrarProdutosPorTexto(lista, texto){
   const palavras = normalizarBusca(texto).split(/[\s#\-\/]+/).filter(Boolean);
@@ -48013,7 +48110,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/10/2026 18:15';
+const SISTEMA_VERSAO = '30/10/2026 10:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -48730,13 +48827,42 @@ async function nuvemSubir(){
      Agora, quando um lote falha, ele é reenviado um a um: o que der
      certo sobe, e o que não der fica anotado com nome e tamanho pra
      ela saber exatamente qual é o problema. */
+  /* EXCLUSÃO NÃO PODE IR DE UPSERT — foi isso que travou TODA a
+     sincronização dela.
+     A tabela exige que a coluna "dados" nunca fique nula. Pra não apagar
+     o conteúdo do registro no servidor, a exclusão era mandada sem esse
+     campo — e o Postgres recusa a linha inteira ANTES de perceber que ela
+     já existe: "null value in column dados violates not-null constraint".
+     Uma exclusão pendente bastava pra derrubar o lote inteiro, e as 986
+     exclusões acumuladas derrubavam todas as rodadas.
+     Agora exclusão é um PATCH: mexe só na marca de excluído, não encosta
+     no conteúdo, e registro que o servidor nem tem simplesmente não é
+     encontrado — nada falha por causa disso. */
+  const apagarNoServidor = async (linhas)=>{
+    const porColecao = {};
+    linhas.forEach(r => { (porColecao[r.colecao] = porColecao[r.colecao] || []).push(r.id); });
+    for(const colecao of Object.keys(porColecao)){
+      const ids = porColecao[colecao];
+      for(let i = 0; i < ids.length; i += 50){
+        const lista = ids.slice(i, i + 50)
+          .map(id => encodeURIComponent('"' + String(id).replace(/"/g, '') + '"')).join(',');
+        await nuvemJson('/rest/v1/registros'
+          + '?colecao=eq.' + encodeURIComponent(colecao)
+          + '&id=in.(' + lista + ')', {
+          method: 'PATCH',
+          headers: { 'Prefer': 'return=minimal' },
+          body: JSON.stringify({ excluido: true })
+        });
+      }
+    }
+  };
   const enviar = async (linhas)=>{
+    if(linhas.length && linhas[0].excluido) return apagarNoServidor(linhas);
     await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
       method: 'POST',
       headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(linhas.map(r => r.excluido
-        ? { colecao: r.colecao, id: r.id, excluido: true }
-        : { colecao: r.colecao, id: r.id, dados: r.dados, excluido: false }))
+      body: JSON.stringify(linhas.map(r => (
+        { colecao: r.colecao, id: r.id, dados: r.dados || {}, excluido: false })))
     });
   };
 
