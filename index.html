@@ -875,7 +875,11 @@ table.data-table{ width:100%; font-size:13px; }
 .orc-cartao .rot{ font-size:11px; letter-spacing:.4px; text-transform:uppercase; color:var(--ink-soft); font-weight:600; }
 .orc-cartao .num{ font-size:25px; font-weight:700; letter-spacing:-.5px; font-family:var(--font-num); }
 .orc-cartao .sub{ font-size:12px; color:var(--ink-soft); }
-.orc-abas{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px; }
+/* A fileira de abas gruda no alto quando a lista é longa: descendo a
+   página, ela continua ali pra trocar de assunto sem voltar ao topo. */
+.orc-abas{ display:flex; flex-wrap:wrap; gap:7px; margin-bottom:14px;
+  position:sticky; top:0; z-index:40; background:var(--bg-app);
+  padding:10px 0 10px; border-bottom:1px solid var(--border); }
 .orc-aba{ display:flex; align-items:center; gap:7px; cursor:pointer; border-radius:9px;
   padding:9px 14px; font-size:13.5px; min-height:40px; border:1px solid var(--border);
   background:var(--surface); color:var(--primary-escuro); font:inherit; }
@@ -12279,10 +12283,10 @@ function renderOrcamentos(){
     <div class="orc-cartoes" id="orc-cartoes"></div>
     <div class="orc-abas" id="orc-abas"></div>
 
-    <div class="card" id="orc-card-separacao-entrega">
-      <h3>📦 Separação e Entrega <span class="hint">o que está sendo preparado e o que já saiu pra entrega</span></h3>
-      <div id="orc-relatorio-separacao"></div>
-    </div>
+    <!-- O quadro "📦 Separação e Entrega" saiu daqui: a aba Em entrega
+         mostra a mesma coisa, com os botões na linha de cada pedido.
+         Dois lugares contando a mesma história é um a mais. -->
+    <div id="orc-relatorio-separacao" hidden></div>
 
     <div class="card">
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-bottom:12px;">
@@ -14624,6 +14628,20 @@ function renderListaOrcamentos(){
   renderRelatorioSeparacaoEntrega();
   orcDesenharAbas();
 
+  /* O CABEÇALHO DA TABELA.
+     Ele tinha ficado vazio: o lugar existia no HTML, mas nada escrevia
+     nele — a lista aparecia sem o nome de nenhuma coluna. A coluna
+     "Quando sai" só existe na aba Em entrega, então o cabeçalho é
+     montado junto com as linhas, pra nunca desencontrar. */
+  const cabecalho = document.getElementById('orc-lista-cabecalho');
+  if(cabecalho){
+    const cols = ['Nº','Data','Cliente','Vendedor','Valor final','Status'];
+    if(orcAbaAtual==='entrega') cols.push('Quando sai');
+    cols.push('Observação','Ações');
+    cabecalho.innerHTML = cols.map((c,i)=>
+      `<th${i===4?' class="num"':''}>${escapeHtml(c)}</th>`).join('');
+  }
+
   const busca = normalizarBusca((document.getElementById('orc-lista-busca')||{}).value || '');
   const setaOrdem = document.getElementById('orc-lista-seta-ordem');
   if(setaOrdem) setaOrdem.textContent = orcamentoListaOrdemData==='desc' ? '▼' : '▲';
@@ -14698,28 +14716,68 @@ function renderListaOrcamentos(){
           </select>
         </td>` : ''}
         <td>${observacao}</td>
-        <td>
-          <div>
-            ${orcAcaoPrincipal(o, sit)}
-            <details class="acoes-ver-mais">
-              <summary></summary>
-              <div class="acoes-ver-mais-lista">
-                <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
-                <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
-                ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
-                <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
-                ${nfeBotoesOrcamento(o)}
-                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">🚚 Controle de Entrega</button>` : ''}
-                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Marcar Entregue</button>` : ''}
-                ${statusEntrega==='em_rota' ? `<button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na Loja</button>` : ''}
-                ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer</button>` : ''}
-                ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
-              </div>
-            </details>
-          </div>
-        </td>
+        <td>${orcAcoesDaLinha(o, sit)}</td>
       </tr>`;
   }).join('');
+}
+
+/* =========================================================
+   O QUE CADA ABA OFERECE NA LINHA
+
+   Pedido dela: cada aba mostra só o que faz sentido ali. Em Aprovados
+   a decisão é a nota; em Em entrega a decisão é se chegou. Oferecer as
+   quinze ações em toda linha, como era antes, é o mesmo que não
+   oferecer nenhuma — ela tinha que ler tudo pra achar a única que
+   importava naquele momento.
+   ========================================================= */
+function orcAcoesDaLinha(o, sit){
+  const nota = (typeof nfeNotaDoOrcamento === 'function') ? nfeNotaDoOrcamento(o.id) : null;
+  const statusEntrega = o.statusEntrega || 'nenhum';
+
+  /* --- APROVADOS: a nota e a entrega, nada mais --- */
+  if(sit==='aprovado'){
+    const bts = [];
+    if(nota){
+      bts.push(`<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">⬇️ Nota nº ${nota.numero}</button>`);
+      bts.push(`<button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>`);
+      bts.push(`<button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`);
+    }else{
+      bts.push(`<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 Gerar nota fiscal</button>`);
+      bts.push(`<button class="btn btn-sm" onclick="verEspelhoNfe('${o.id}', 55)" title="Monta a nota sem enviar — dá pra abrir e baixar em PDF pra conferir antes">👁 Espelho</button>`);
+    }
+    bts.push(`<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`);
+    return `<div class="cell-actions">${bts.join('')}</div>`;
+  }
+
+  /* --- EM ENTREGA: chegou ou o cliente veio buscar --- */
+  if(sit==='entrega'){
+    return `<div class="cell-actions">
+      <button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>
+      <button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na loja</button>
+    </div>`;
+  }
+
+  /* --- as outras abas: o passo natural + o resto escondido --- */
+  const jaConvertido = sit==='concluida';
+  return `
+    <div>
+      ${orcAcaoPrincipal(o, sit)}
+      <details class="acoes-ver-mais">
+        <summary></summary>
+        <div class="acoes-ver-mais-lista">
+          <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
+          <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
+          ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
+          <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
+          ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button>
+                    <button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>
+                    <button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`
+                 : nfeBotoesOrcamento(o)}
+          ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer entrega</button>` : ''}
+          ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
+        </div>
+      </details>
+    </div>`;
 }
 
 /* O botão que fica visível na linha muda conforme a aba: é sempre o
@@ -40251,15 +40309,23 @@ async function nfeVerEspelho(origem, modelo){
     const payload = await nfeMontarPayload(orcamento, num.proximo, modelo);
     const r = await nfeChamar('/espelho', payload);
     if(r.pdf){
+      /* nome do arquivo com cliente e nº do orçamento: ela guarda o
+         espelho na pasta e precisa reconhecer depois qual é qual */
+      const cli = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+      const nome = ['Espelho ' + NFE_MODELO_NOME[modelo],
+                    cli ? cli.nome : null,
+                    orcamento.numero!=null ? 'Orc ' + orcamento.numero : null]
+                   .filter(Boolean).join(' - ').replace(/[\\/:*?"<>|]/g,'-');
       nfeMostrarArquivos({
         titulo: 'Espelho da ' + NFE_MODELO_NOME[modelo],
         subtitulo: 'Conferência apenas — nada foi enviado à Receita',
         sucesso: true,
         pdfBlob: r.pdf,
         chave: 'espelho',
-        nomeArquivo: 'Espelho ' + NFE_MODELO_NOME[modelo],
+        nomeArquivo: nome,
         linhas: [
           ['Número que seria usado', num.proximo],
+          ['Cliente', cli ? cli.nome : '—'],
           ['Situação', 'Não emitida — só conferência']
         ]
       });
@@ -40431,6 +40497,45 @@ async function imprimirNotaFiscal(orcamentoId){
 /* Mesma coisa, chamada da tela de Vendas por Cliente. */
 async function baixarNotaFiscalDaVenda(vendaId){
   await nfeAbrirArquivosDaNota(nfeNotaDaVenda(vendaId));
+}
+
+/* Baixar direto pela CHAVE — é o que a linha da lista usa, pra não
+   precisar saber de qual orçamento a nota veio. */
+function nfeNotaPelaChave(chave){
+  return (STATE.notasFiscais||[]).find(n=>n.chave===chave) || null;
+}
+async function nfeBaixarPdfDaNota(chave){
+  await nfeAbrirArquivosDaNota(nfeNotaPelaChave(chave));
+}
+async function nfeBaixarXmlDaNota(chave){
+  const nota = nfeNotaPelaChave(chave);
+  if(!nota) return;
+  let xml = NFE_XML_EM_MEMORIA[nota.chave] || null;
+  if(!xml){
+    let pasta = null;
+    try{ pasta = await nfePastaSalva(true); }catch(e){ console.warn(e); }
+    if(pasta) xml = await nfeLerXmlDaPasta(pasta, nota);
+  }
+  if(!xml){
+    showToast('Não encontrei o XML desta nota nesta máquina. Abra pelo botão da nota pra ver onde ele deveria estar.', 'error');
+    return;
+  }
+  NFE_XML_EM_MEMORIA[nota.chave] = xml;
+  nfeBaixarTexto(nfeNomeArquivo(nota) + '.xml', xml);
+}
+
+/* Download de um texto sem passar pelo servidor. */
+function nfeBaixarTexto(nome, texto){
+  try{
+    const url = URL.createObjectURL(new Blob([texto], { type:'application/xml' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 30000);
+    showToast('XML baixado.', 'success');
+  }catch(e){
+    showToast('Não consegui baixar o arquivo: ' + e.message, 'error');
+  }
 }
 
 async function nfeAbrirArquivosDaNota(nota){
@@ -49087,7 +49192,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '30/10/2026 18:40';
+const SISTEMA_VERSAO = '03/11/2026 16:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
