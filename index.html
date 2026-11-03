@@ -892,7 +892,12 @@ table.data-table{ width:100%; font-size:13px; }
 .orc-gaveta-fundo{ position:fixed; inset:0; background:rgba(18,35,43,0.45); z-index:960;
   opacity:0; pointer-events:none; transition:opacity .18s ease; }
 .orc-gaveta-fundo.on{ opacity:1; pointer-events:auto; }
-.orc-gaveta{ position:fixed; top:0; right:0; bottom:0; width:min(900px, 96vw); z-index:970;
+/* Pedido dela: a gaveta do orçamento precisa de tela. Montar orçamento é
+   o trabalho do dia — carrinho, preço, desconto, origem da coleta, tudo
+   junto. Em 900px a linha do item quebrava em duas e o carrinho ficava
+   espremido contra a direita. Agora ela ocupa quase a tela inteira, com
+   uma faixa de lista à esquerda só pra lembrar de onde ela veio. */
+.orc-gaveta{ position:fixed; top:0; right:0; bottom:0; width:min(1480px, 94vw); z-index:970;
   background:var(--bg-app); box-shadow:-14px 0 40px rgba(0,0,0,0.18);
   display:flex; flex-direction:column; transform:translateX(102%); transition:transform .22s ease; }
 .orc-gaveta.aberta{ transform:translateX(0); }
@@ -903,8 +908,11 @@ table.data-table{ width:100%; font-size:13px; }
 .orc-gaveta-x{ margin-left:auto; width:34px; height:34px; min-width:34px; border-radius:50%; border:none;
   background:rgba(255,255,255,0.18); color:#fff; font-size:16px; cursor:pointer; line-height:1; }
 .orc-gaveta-x:hover{ background:rgba(255,255,255,0.32); }
-.orc-gaveta-corpo{ flex:1 1 auto; overflow-y:auto; padding:16px 22px 40px; }
+.orc-gaveta-corpo{ flex:1 1 auto; overflow-y:auto; padding:16px 26px 40px; }
 body.orc-gaveta-travada{ overflow:hidden; }
+@media (max-width: 1100px){
+  .orc-gaveta{ width:97vw; }
+}
 @media (max-width: 720px){
   .orc-gaveta{ width:100vw; }
   .orc-gaveta-corpo{ padding:14px 14px 40px; }
@@ -31058,8 +31066,11 @@ function licAnaliseDados(l){
     const venc = it.vencedor || {};
     return {
       n: i+1,
+      id: it.id,
       nome: it.descricaoProposta || it.descricao || `Item ${i+1}`,
+      ganhamos: it.ganhamos,
       vencedorUnit: licNumDireto(venc.precoUnit),
+      vencedorTotal: licNumDireto(venc.precoUnit) * Math.max(1, licNumDireto(it.qtd)||1),
       vencedorQuem: venc.empresa || '',
       marca: it.marca || '',
       qtd: c.qtd,
@@ -31080,10 +31091,32 @@ function licAnaliseDados(l){
       passaDoTeto: teto>0 && venda>teto
     };
   });
+  const conta = licAnaliseSomar(itens);
+
+  /* Ganhando em parte, a conta que interessa é a do que ganhamos: é esse
+     dinheiro que entra, esse frete que a gente paga, esse imposto que a
+     gente recolhe. O que perdemos vira outra conta, do lado, com o preço
+     que o concorrente jogou. Somar os dois juntos não descreve nada. */
+  let parcial = null;
+  if(licEhParcial(l)){
+    const ganhos = itens.filter(x=>x.ganhamos === true);
+    const perdidos = itens.filter(x=>x.ganhamos === false);
+    parcial = {
+      ganhos: Object.assign({ itens: ganhos }, licAnaliseSomar(ganhos)),
+      perdidos: Object.assign({ itens: perdidos }, licAnaliseSomar(perdidos)),
+      vencedorTotal: perdidos.reduce((a,x)=>a + (x.vencedorTotal||0), 0),
+      quem: [...new Set(perdidos.map(x=>x.vencedorQuem).filter(Boolean))]
+    };
+  }
+
+  return { itens, total: conta.total, partes: conta.partes, parcial };
+}
+
+/* A mesma conta, para qualquer recorte de itens. */
+function licAnaliseSomar(itens){
   const soma = (f)=>itens.reduce((a,x)=>a+(x[f]||0),0);
   const venda = soma('venda'), custo = soma('custo'), teto = soma('teto');
   return {
-    itens,
     total: { venda, custo, teto, lucro: venda-custo,
              margem: venda>0 ? ((venda-custo)/venda*100) : 0,
              abaixoDoTeto: (teto>0 && venda>0) ? (1 - venda/teto)*100 : null },
@@ -31133,25 +31166,128 @@ function licAnaliseGrafico(d){
     </div>`;
 }
 
-function licAnaliseHtml(l){
-  const d = licAnaliseDados(l);
-  const t = d.total;
-  const semPreco = d.itens.filter(x=>x.venda<=0).length;
-
+/* "Onde o dinheiro vai", para qualquer recorte: produto, fretes,
+   imposto, comissão, custo, venda e a sobra. É a conta que ela lê. */
+function licContaHtml(partes, total, l, titulo, ajuda){
   const linha = (rot, val, destaque)=>`
     <tr><td>${rot}</td><td style="text-align:right;${destaque||''}">${fmtMoney(val)}</td></tr>`;
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <h3 style="margin-top:0;">${escapeHtml(titulo)}</h3>
+      ${ajuda?`<p class="help-text">${ajuda}</p>`:''}
+      <div class="lic-conta">
+        <table>
+          ${linha('Produto (o que pagamos ao distribuidor)', partes.produto)}
+          ${partes.freteNos?linha('Frete do fornecedor até nós', partes.freteNos):''}
+          ${partes.freteCliente?linha('Frete daqui até o cliente', partes.freteCliente):''}
+          ${partes.imposto?linha(`Impostos (${licPctCampo(l.impostoPct)}%)`, partes.imposto):''}
+          ${partes.comissao?linha(`Comissão ${escapeHtml(l.comissaoVendedor||'')} (${licPctCampo(l.comissaoPct)}%)`, partes.comissao):''}
+          ${linha('Custo total', total.custo, 'font-weight:700;')}
+          ${linha('Nossa proposta', total.venda, 'font-weight:700;')}
+          ${linha('Sobra', total.lucro, `font-weight:700;color:${total.lucro<0?'var(--negative)':'var(--positive)'};`)}
+        </table>
+      </div>
+    </div>`;
+}
+
+/* O quadro do que ficou com o concorrente: quanto ele jogou em cada
+   item, quanto a gente tinha pedido, e de quanto era a diferença. */
+function licPerdidosHtml(parcial){
+  if(!parcial || !parcial.perdidos || !parcial.perdidos.itens.length) return '';
+  const p = { itens: parcial.perdidos.itens, total: parcial.perdidos.total,
+              vencedorTotal: parcial.vencedorTotal, quem: parcial.quem };
+  const comPreco = p.itens.filter(x=>x.vencedorUnit>0);
+  const nossoTotal = p.total.venda;
+  const dif = (p.vencedorTotal>0 && nossoTotal>0) ? ((nossoTotal/p.vencedorTotal)-1)*100 : null;
+  return `
+    <div class="card" style="margin-bottom:12px;">
+      <h3 style="margin-top:0;">O que ficou com o concorrente (${p.itens.length})</h3>
+      <p class="help-text">Estes não entram na conta de cima — não vamos comprar nem faturar.
+        O que vale aqui é o preço que o outro jogou: é dele que sai o preço da próxima.</p>
+
+      <div class="kpi-row" style="margin-bottom:12px;">
+        <div class="kpi-card"><div class="kpi-label">Nossa proposta nesses itens</div>
+          <div class="kpi-value" style="font-size:19px;">${fmtMoney(nossoTotal)}</div>
+          <div class="kpi-sub">o que deixamos de faturar</div></div>
+        <div class="kpi-card"><div class="kpi-label">O concorrente jogou</div>
+          <div class="kpi-value negative" style="font-size:19px;">${p.vencedorTotal>0?fmtMoney(p.vencedorTotal):'—'}</div>
+          <div class="kpi-sub">${comPreco.length?`preço anotado em ${comPreco.length} de ${p.itens.length}`:'anote o preço do vencedor'}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Ficamos acima</div>
+          <div class="kpi-value ${dif!=null && dif>0?'negative':(dif!=null?'positive':'')}">${dif!=null?`${dif>0?'+':''}${dif.toFixed(1)}%`:'—'}</div>
+          <div class="kpi-sub">${dif!=null?(dif>0?'era de quanto precisava baixar':'nosso preço era melhor — perdemos por outro motivo'):''}</div></div>
+        <div class="kpi-card"><div class="kpi-label">Quem levou</div>
+          <div class="kpi-value" style="font-size:14px;line-height:1.3;">${p.quem.length?escapeHtml(p.quem.join(', ')):'—'}</div>
+          <div class="kpi-sub">${p.quem.length?'':'não anotado'}</div></div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>#</th><th>Item</th><th class="num">Qtd</th>
+            <th class="num">Nosso un.</th><th class="num">Nosso total</th>
+            <th class="num">Concorrente un.</th><th class="num">Concorrente total</th>
+            <th class="num">Diferença</th><th>Quem levou</th>
+          </tr></thead>
+          <tbody>
+            ${p.itens.map(x=>{
+              const d2 = (x.vencedorUnit>0 && x.vendaUnit>0) ? ((x.vendaUnit/x.vencedorUnit)-1)*100 : null;
+              return `<tr>
+                <td>${x.n}</td>
+                <td>${escapeHtml(x.nome.slice(0,60))}${x.marca?`<br><small style="color:var(--ink-faint);">${escapeHtml(x.marca)}</small>`:''}</td>
+                <td class="num">${x.qtd} ${escapeHtml(x.unidade)}</td>
+                <td class="num">${x.vendaUnit>0?fmtMoney(x.vendaUnit):'—'}</td>
+                <td class="num">${x.venda>0?fmtMoney(x.venda):'—'}</td>
+                <td class="num" style="color:var(--negative);">${x.vencedorUnit>0?fmtMoney(x.vencedorUnit):'—'}</td>
+                <td class="num" style="color:var(--negative);">${x.vencedorTotal>0?fmtMoney(x.vencedorTotal):'—'}</td>
+                <td class="num" style="color:${d2!=null && d2>0?'var(--negative)':'var(--positive)'};font-weight:600;">
+                  ${d2!=null?`${d2>0?'+':''}${d2.toFixed(1)}%`:'—'}</td>
+                <td>${escapeHtml(x.vencedorQuem||'—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr style="font-weight:700;background:#F6F8FA;">
+            <td colspan="4">Total</td>
+            <td class="num">${fmtMoney(nossoTotal)}</td>
+            <td class="num">—</td>
+            <td class="num" style="color:var(--negative);">${p.vencedorTotal>0?fmtMoney(p.vencedorTotal):'—'}</td>
+            <td class="num">${dif!=null?`${dif>0?'+':''}${dif.toFixed(1)}%`:'—'}</td>
+            <td></td>
+          </tr></tfoot>
+        </table>
+      </div>
+      ${comPreco.length < p.itens.length ? `<div class="help-text" style="margin-top:6px;">
+        Falta o preço do vencedor em ${p.itens.length-comPreco.length} ite${p.itens.length-comPreco.length===1?'m':'ns'}.
+        Use <b>✎ Corrigir o que ganhamos</b> pra anotar — sem esse número, perder não ensina nada.</div>`:''}
+    </div>`;
+}
+
+function licAnaliseHtml(l){
+  const d = licAnaliseDados(l);
+  const parcial = d.parcial;
+  /* Em ganho parcial a tela inteira passa a falar do que ganhamos. */
+  const foco = parcial ? parcial.ganhos : d;
+  const t = foco.total;
+  const itensFoco = parcial ? parcial.ganhos.itens : d.itens;
+  const semPreco = itensFoco.filter(x=>x.venda<=0).length;
 
   return `
+    ${parcial ? `<div class="lic-res ok" style="margin-bottom:12px;">
+      <b>🏆 Ganhamos em parte:</b> ${parcial.ganhos.itens.length} de ${d.itens.length} itens.
+      Os números abaixo são <b>só dos itens que ganhamos</b> — custo, frete, imposto, comissão e sobra.
+      O que ficou com o concorrente está no quadro do fim.
+    </div>`:''}
+
     <div class="kpi-row" style="margin-bottom:12px;">
       <div class="kpi-card"><div class="kpi-label">Teto do edital</div>
         <div class="kpi-value">${t.teto>0?fmtMoney(t.teto):'—'}</div>
-        <div class="kpi-sub">somando os ${d.itens.length} iten${d.itens.length===1?'':'s'}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Nossa proposta</div>
-        <div class="kpi-value">${t.venda>0?fmtMoney(t.venda):'—'}</div>
+        <div class="kpi-sub">somando ${itensFoco.length===1?'o item':`os ${itensFoco.length} itens`}${parcial?' que ganhamos':''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${parcial?'O que ganhamos':'Nossa proposta'}</div>
+        <div class="kpi-value ${parcial?'positive':''}">${t.venda>0?fmtMoney(t.venda):'—'}</div>
         <div class="kpi-sub">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'% abaixo do teto':''}</div></div>
       <div class="kpi-card"><div class="kpi-label">Custo total</div>
-        <div class="kpi-value">${fmtMoney(t.custo)}</div></div>
-      <div class="kpi-card"><div class="kpi-label">Lucro</div>
+        <div class="kpi-value">${fmtMoney(t.custo)}</div>
+        <div class="kpi-sub">${parcial?'só do que vamos entregar':''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">${parcial?'Sobra':'Lucro'}</div>
         <div class="kpi-value ${t.venda<=0?'':(t.lucro<0?'negative':'positive')}">${t.venda>0?fmtMoney(t.lucro):'—'}</div>
         <div class="kpi-sub">${t.venda>0?t.margem.toFixed(1)+'% de margem':'falta precificar'}</div></div>
     </div>
@@ -31161,12 +31297,12 @@ function licAnaliseHtml(l){
       <small>Os números abaixo ficam incompletos até precificar tudo.</small></div>`:''}
 
     <div class="card" style="margin-bottom:12px;">
-      <h3 style="margin-top:0;">Item por item</h3>
-      ${licAnaliseGrafico(d)}
+      <h3 style="margin-top:0;">Item por item${parcial?' — o que ganhamos':''}</h3>
+      ${licAnaliseGrafico({ itens: itensFoco })}
     </div>
 
     <div class="card" style="margin-bottom:12px;">
-      <h3 style="margin-top:0;">A tabela</h3>
+      <h3 style="margin-top:0;">A tabela${parcial?' — o que ganhamos':''}</h3>
       <div class="table-wrap">
         <table class="data-table">
           <thead><tr>
@@ -31175,10 +31311,10 @@ function licAnaliseHtml(l){
             <th class="num">Venda un.</th><th class="num">Venda total</th>
             <th class="num">Lucro</th><th class="num">Margem</th>
             <th class="num">Teto un.</th><th class="num">Teto total</th><th class="num">Abaixo do teto</th>
-            ${d.itens.some(x=>x.vencedorUnit>0)?'<th class="num">Vencedor un.</th>':''}
+            ${itensFoco.some(x=>x.vencedorUnit>0)?'<th class="num">Vencedor un.</th>':''}
           </tr></thead>
           <tbody>
-            ${d.itens.map(x=>`<tr>
+            ${itensFoco.map(x=>`<tr>
               <td>${x.n}</td>
               <td>${escapeHtml(x.nome.slice(0,60))}${x.marca?`<br><small style="color:var(--ink-faint);">${escapeHtml(x.marca)}</small>`:''}</td>
               <td class="num">${x.qtd} ${escapeHtml(x.unidade)}</td>
@@ -31193,7 +31329,7 @@ function licAnaliseHtml(l){
               <td class="num">${x.teto>0?fmtMoney(x.teto):'—'}</td>
               <td class="num" style="color:${x.passaDoTeto?'var(--negative)':'var(--ink)'};">
                 ${x.passaDoTeto?'PASSOU DO TETO':(x.abaixoDoTeto!=null?x.abaixoDoTeto.toFixed(1)+'%':'—')}</td>
-              ${d.itens.some(y=>y.vencedorUnit>0) ? `<td class="num" style="color:var(--negative);">
+              ${itensFoco.some(y=>y.vencedorUnit>0) ? `<td class="num" style="color:var(--negative);">
                 ${x.vencedorUnit>0
                   ? `${fmtMoney(x.vencedorUnit)}${x.vendaUnit>0?`<div style="font-size:10.5px;">${(((x.vencedorUnit/x.vendaUnit)-1)*100).toFixed(1)}% do nosso</div>`:''}`
                   : '—'}</td>`:''}
@@ -31209,28 +31345,17 @@ function licAnaliseHtml(l){
             <td class="num">—</td>
             <td class="num">${t.teto>0?fmtMoney(t.teto):'—'}</td>
             <td class="num">${t.abaixoDoTeto!=null?t.abaixoDoTeto.toFixed(1)+'%':'—'}</td>
-            ${d.itens.some(x=>x.vencedorUnit>0)?'<td class="num">—</td>':''}
+            ${itensFoco.some(x=>x.vencedorUnit>0)?'<td class="num">—</td>':''}
           </tr></tfoot>
         </table>
       </div>
     </div>
 
-    <div class="card">
-      <h3 style="margin-top:0;">Onde o dinheiro vai</h3>
-      <p class="help-text">O custo total aberto — é aqui que se vê se o frete ou o imposto está comendo a margem.</p>
-      <div class="lic-conta">
-        <table>
-          ${linha('Produto (o que pagamos ao distribuidor)', d.partes.produto)}
-          ${d.partes.freteNos?linha('Frete do fornecedor até nós', d.partes.freteNos):''}
-          ${d.partes.freteCliente?linha('Frete daqui até o cliente', d.partes.freteCliente):''}
-          ${d.partes.imposto?linha(`Impostos (${licPctCampo(l.impostoPct)}%)`, d.partes.imposto):''}
-          ${d.partes.comissao?linha(`Comissão ${escapeHtml(l.comissaoVendedor||'')} (${licPctCampo(l.comissaoPct)}%)`, d.partes.comissao):''}
-          ${linha('Custo total', t.custo, 'font-weight:700;')}
-          ${linha('Nossa proposta', t.venda, 'font-weight:700;')}
-          ${linha('Sobra', t.lucro, `font-weight:700;color:${t.lucro<0?'var(--negative)':'var(--positive)'};`)}
-        </table>
-      </div>
-    </div>`;
+    ${licContaHtml(foco.partes, t, l,
+      parcial ? 'Onde o dinheiro vai — só o que ganhamos' : 'Onde o dinheiro vai',
+      'O custo total aberto — é aqui que se vê se o frete ou o imposto está comendo a margem.')}
+
+    ${parcial ? licPerdidosHtml(parcial) : ''}`;
 }
 
 function licAbrirAnalise(id){
@@ -33768,225 +33893,104 @@ function licTextoParaChatGpt(l){
   const escaneados = arqs.filter(a=>/escaneado/i.test(a.erro||''));
   const listaArq = arqs.length ? [
     ``,
-    `ARQUIVOS QUE ESTOU ANEXANDO (${arqs.length}):`,
-    ...arqs.map(a=>`- ${a.nome}${a.paginas?` (${a.paginas} páginas)`:''}${/escaneado/i.test(a.erro||'')?' — ESTE É ESCANEADO, só imagem':''}`),
-    escaneados.length ? `` : null,
-    escaneados.length ? `ATENÇÃO: ${escaneados.length} destes arquivos são escaneados (imagem, sem texto).` : null,
-    escaneados.length ? `Você vai precisar LER A IMAGEM de cada página. Não pule página.` : null
+    `ARQUIVOS ANEXADOS (${arqs.length}):`,
+    ...arqs.map(a=>`- ${a.nome}${a.paginas?` (${a.paginas} páginas)`:''}${/escaneado/i.test(a.erro||'')?' — ESCANEADO, só imagem':''}`),
+    escaneados.length ? `${escaneados.length} deles são escaneados. Leia a imagem, página por página — não pule página.` : null
   ].filter(x=>x!==null).join('\n') : '';
 
-  return `Anexei o edital desta contratação e TODOS os anexos. Leia tudo, do começo ao fim.${listaArq}
+  return `Anexei o edital desta contratação e todos os anexos.
 
-O QUE É
-${d.join('\n')}
+ANTES DE QUALQUER COISA — FAÇA AS BUSCAS NA INTERNET
+Esta tarefa EXIGE pesquisa na web. Para cada item do edital eu preciso de
+produtos reais à venda hoje no Brasil, com link e preço visível. Pesquise
+PRIMEIRO, responda depois.
+Se você não puder navegar nesta conversa, não omita em silêncio: responda
+com "pesquiseiNaWeb": false e diga o motivo em "porqueNaoPesquisei". Omitir
+sem avisar é o pior resultado, porque eu fico esperando uma coisa que não vem.
 
-SUA TAREFA
-Extrair, com o máximo de esforço, tudo que eu preciso para decidir se
-participo, precificar e emitir a proposta. Depois, pesquisar produtos
-reais que atendam a cada item.
+O QUE EU PRECISO, EM UMA FRASE
+Todos os itens do edital, com os critérios de cada um, e para cada item o
+produto MAIS BARATO que atenda 100% dos critérios, com link e preço.
 
-Resposta vaga não me serve. "Conforme o edital", "a ser confirmado" e
-campo em branco sem explicação me obrigam a reler tudo — que é
-justamente o que eu estou tentando evitar. Prefiro que você demore e
-volte ao documento três vezes.
+AS TRÊS REGRAS QUE NÃO SE QUEBRAM
+1. Um item do edital = um item do JSON. Se o edital tem 12, o JSON tem 12.
+   Nunca agrupe, nunca pule, nunca resuma a descrição: ela vai impressa na
+   minha proposta.
+2. Todo item leva "exigencias" (a lista numerada de características que o
+   edital pede) e "produtos" (o que você achou à venda). Item sem essas
+   duas listas não me serve.
+3. Ficha técnica omissa NÃO é "atende" — é "A_CONFIRMAR". Uma única
+   característica que não bate me desclassifica a proposta inteira. Prefiro
+   "não achei" a informação inventada.
 
-COMO LER — isto é o que separa uma resposta útil de uma inútil
+A DISPENSA
+${d.join('\n')}${listaArq}
 
-1. LISTE TODOS OS ITENS DO EDITAL, um por um, do primeiro ao último.
-   Eles estão na planilha do Termo de Referência, ou numa tabela do
-   aviso. Se o edital tem 12 itens, o JSON tem 12 itens. Nunca agrupe
-   dois num só, nunca pule o que parecer repetido, nunca devolva a
-   lista vazia sem dizer em "resumoDaDecisao" por que não achou a
-   planilha. Traga também a quantidade, a unidade e o valor unitário
-   estimado de cada um — é com esse valor que eu decido o preço.
-2. A planilha de itens é só o começo. Boa parte da especificação está
-   solta no corpo do texto, no Termo de Referência, em nota de rodapé,
-   em tabela de anexo ou numa cláusula do contrato. Leia tudo e junte.
-3. Para CADA item, varra o documento inteiro atrás de qualquer linha que
-   fale dele, mesmo longe da planilha. Junte tudo numa lista única de
-   exigências daquele item.
-4. Se a planilha disser uma coisa e o Termo de Referência disser outra,
-   NÃO escolha: me aponte a contradição com as duas versões e as duas
-   fontes.
-5. Diferencie três situações, porque elas pedem reação diferente. Para
-   TODO campo que você não preencher, diga qual é o caso em
-   "situacaoCampos", usando exatamente uma destas palavras:
-   - "nao_consta" -> você LEU e o edital realmente não trata disso, ou
-     não exige aquilo. Exemplo: o edital não obriga a informar marca e
-     modelo. Isso NÃO é um erro nem um buraco: é uma resposta, e das
-     boas. Use esta palavra sempre que a sua conclusão for "o edital não
-     exige / não menciona / não obriga".
-   - "nao_li"    -> você não abriu a parte onde isso estaria. É uma
-     resposta honesta e eu prefiro ela a um palpite.
-   - "nao_achei" -> você leu tudo onde isso deveria estar e mesmo assim
-     não localizou. Use só quando leu de verdade.
-   Exemplo do que NÃO fazer: responder "não encontrei exigência de marca
-   e modelo" e marcar o campo como "nao_achei". Se você leu e o edital
-   não exige, é "nao_consta".
-   Nunca invente, nunca deduza "o normal é 30 dias".
-6. Se o PDF for escaneado, leia a imagem. Se mesmo assim uma parte for
-   ilegível, diga qual em "trechosIlegiveis".
-7. PRESTE CONTAS DO QUE VOCÊ LEU. Preencha "arquivosLidos" com uma
-   linha por arquivo que eu anexei: o nome, quantas páginas tem, se é
-   texto ou imagem escaneada, QUAIS PÁGINAS você realmente abriu, e o
-   que você não conseguiu ler.
-   Se você não leu um arquivo inteiro, diga. Se leu só algumas páginas,
-   diga quais. "Não li" é uma resposta aceitável e útil; "não achei",
-   quando na verdade você não leu, não é — me faz confiar num buraco.
-   Na dúvida entre as duas, diga "não li".
-8. COMO SE ENVIA A PROPOSTA é a pergunta mais importante desta lista.
-   Se eu errar isso, não adianta nada o resto estar certo. Procure em
-   TODO o documento — no aviso, no termo de referência, nos anexos, em
-   parágrafo solto no meio do texto — a frase que diz para onde mandar a
-   proposta. Copie essa frase literalmente em "comoEnviarProposta",
-   com a cláusula em "fontes". Não resuma, não interprete: a frase como
-   ela está escrita.
-   Muita dispensa eletrônica diz "pelo sistema" numa cláusula e, em
-   outra, dá um e-mail para onde mandar a proposta assinada. As duas
-   coisas podem ser verdade ao mesmo tempo. Se achar as duas, descreva
-   as duas.
-9. Varra o documento inteiro atrás de endereços de e-mail e diga para
-   que serve cada um. Perder o e-mail certo me faz perder a dispensa.
-   Se o edital tiver um único e-mail e não disser claramente para que
-   serve, diga isso em vez de chutar a finalidade.
-10. Em "fontes" e em cada documento de habilitação, diga a cláusula E a
-   página ("Aviso, item 6.2, p. 4"). Sem isso eu não consigo conferir.
-11. Antes de fechar a resposta, confira item por item desta lista:
-   - o número de itens bate com o do edital?
-   - o número de documentos de habilitação bate com a cláusula de
-     habilitação?
-   - "comoEnviarProposta" está preenchido com uma frase do edital?
-   - todos os e-mails do documento estão em "emails"?
-   - "arquivosLidos" tem uma linha para CADA arquivo que eu anexei?
-   - prazo de entrega, prazo de pagamento e validade da proposta estão
-     preenchidos ou registrados como não encontrados?
-   Se faltar qualquer um, volte ao documento e complete antes de
-   responder. É melhor demorar do que me entregar resposta vaga.
-12. Se o que eu anexei não for o edital completo, diga isso logo no
-   "resumoDaDecisao", diga QUAL parte falta, e marque como
-   "não encontrado" tudo que dependeria dela — não deduza.
+COMO LER O EDITAL
+- A planilha de itens é só o começo. Boa parte da especificação está solta
+  no corpo do texto, no termo de referência, em nota de rodapé ou em anexo.
+  Para cada item, varra o documento inteiro e junte tudo em "exigencias".
+- Se a planilha disser uma coisa e o termo de referência outra, não escolha:
+  registre as duas em "contradicoes".
+- Traga quantidade, unidade e valor unitário estimado de cada item — é com
+  esse valor que eu decido o preço.
+- "comoEnviarProposta" é o campo mais importante do bloco administrativo.
+  Copie a frase LITERAL do edital e diga a cláusula em "fontes". Muita
+  dispensa diz "pelo sistema" numa cláusula e dá um e-mail em outra: as duas
+  podem ser verdade, descreva as duas.
+- Liste TODOS os e-mails do documento, cada um com a finalidade.
+- Habilitação: só o que ESTE edital exige, com a cláusula de onde saiu.
 
-PESQUISA DE PRODUTOS
+COMO PESQUISAR OS PRODUTOS
+- Busque pela ESPECIFICAÇÃO, não pelo nome genérico. Monte a busca com as
+  exigências: material, medida, capacidade, voltagem, norma, numeração, cor.
+  "sandália PVC solado antiderrapante numeração 38 ao 44", não "sandália".
+- Se o edital citar marca de referência ("tipo Havaianas"), procure essa E
+  as equivalentes, e diga qual é qual em "observacao".
+- UM REGISTRO POR MODELO, nunca um por loja. O mesmo produto em cinco lojas
+  é um modelo só: traga o MENOR preço e diga a loja em "fornecedor".
+- "marca" é o fabricante, "modelo" é o nome na embalagem. Nome de loja ou
+  de marketplace vai em "fornecedor", nunca nesses dois.
+- O "link" tem que abrir a página DAQUELE produto, com preço visível. Abra
+  antes de me mandar. Prefiro 3 certos a 5 duvidosos.
+- Pelo menos 3 que atendam 100%, ordenados do mais barato pro mais caro.
+  Se não existirem 3, traga quantos existirem e diga isso em "observacao".
+  Traga também os que chegam perto e reprovam, pra eu saber o que descartei.
+- Prefira distribuidor/atacado quando existir, e diga qual é qual em
+  "fornecedor". Varejo serve de referência, mas eu compro no distribuidor.
+- Compare com o valor unitário estimado do edital e escreva em "observacao":
+  "custa 12,40 contra 21,60 do edital — sobra 42%". Se TODOS os que atendem
+  custarem mais que o edital, diga isso em "resumoDaDecisao".
+- Confira cada produto contra CADA exigência, pela ficha técnica da página:
+  ATENDE (diga onde leu) · NAO_ATENDE (diga os dois números: "brilho 350
+  cd/m², o edital exige 400") · A_CONFIRMAR (diga o que falta e escreva a
+  pergunta pro distribuidor).
 
-O QUE EU QUERO AQUI, em uma frase: o produto MAIS BARATO que atenda
-100% das exigências daquele item. Não é uma lista de opções bonitas —
-é o produto que eu vou comprar e revender dentro do valor do edital.
-
-ATENÇÃO: esta parte exige NAVEGAR NA INTERNET. Se você estiver sem
-acesso à internet nesta conversa, ou se não for navegar, NÃO omita a
-pesquisa em silêncio: devolva "modelos": [] e escreva em
-"resumoDaDecisao" a frase "não pesquisei produtos porque estou sem
-acesso à internet". Omitir sem avisar é o pior resultado possível,
-porque eu fico esperando uma coisa que não vem.
-
-Para CADA item:
-a) PROCURE PELA ESPECIFICAÇÃO, não pelo nome genérico do produto.
-   Antes de buscar, releia as exigências daquele item e monte a busca
-   com elas: material, medida, capacidade, voltagem, norma técnica,
-   numeração, cor, composição, o que estiver escrito. Buscar só
-   "sandália" ou só "nobreak" devolve qualquer coisa — e qualquer
-   coisa me desclassifica. Busque "sandália PVC solado antiderrapante
-   numeração 38 ao 44", "nobreak 1200VA bivolt 8 tomadas".
-   Se o edital citar uma marca como referência ("tipo Havaianas"),
-   procure ESSA marca E as equivalentes, e diga em "observacao" qual é
-   a de referência e qual é a equivalente.
-b) Produtos reais, à venda no Brasil HOJE, com link e preço visível na
-   página. Nada de preço "a partir de", nada de produto esgotado, nada
-   de página de marketplace sem estoque.
-c) UM REGISTRO POR MODELO, nunca um por loja. Se o mesmo produto do
-   mesmo fabricante está à venda em cinco lojas, isso é UM modelo:
-   traga uma linha só, com o MENOR preço que você achou, e diga a loja
-   em "fornecedor". Nada de repetir "Start Química Cera Master" três
-   vezes porque está no Mercado Livre, na Shopee e no Magalu.
-d) "marca" é o FABRICANTE e "modelo" é o nome do produto como está na
-   embalagem. Nunca ponha nome de loja, de distribuidor nem de
-   marketplace nesses dois campos — loja vai em "fornecedor".
-   Se você não sabe o fabricante, não invente: deixe "marca" vazia e
-   explique em "observacao".
-e) O "link" tem que abrir A PÁGINA DAQUELE PRODUTO, com o produto e o
-   preço visíveis. Não serve home de loja, não serve página de
-   categoria, não serve resultado de busca, não serve link que cai em
-   "produto não encontrado". ABRA o link antes de me mandar e confira
-   que o produto está lá. Se não conseguir abrir ou não for a página
-   certa, não mande aquele produto — prefiro 3 certos a 5 duvidosos.
-f) Me dê pelo menos 3 que atendam 100% das exigências. Se não existirem
-   3, traga quantos existirem e diga em "observacao" que o mercado não
-   tem mais do que isso — isso também é informação.
-g) Traga ainda os que chegam perto e reprovam, para eu saber o que
-   descartei e por quê. No mínimo 5 produtos no total.
-h) ORDENE a lista do mais barato para o mais caro, contando só os que
-   atendem 100%. O primeiro da lista tem que ser o mais barato que
-   serve.
-i) Prefira preço de atacado/distribuidor quando existir, e diga qual é
-   qual em "fornecedor". Loja de varejo serve como referência, mas eu
-   compro melhor no distribuidor — se achar os dois, traga os dois.
-j) Compare o preço com o VALOR UNITÁRIO ESTIMADO daquele item (o que
-   você extraiu do edital). Em "observacao" do modelo, escreva se cabe:
-   "custa 12,40 contra 21,60 do edital — sobra 42%". Se TODOS os
-   produtos que atendem custarem mais que o valor do edital, diga isso
-   com todas as letras em "resumoDaDecisao": é o aviso de que não vale
-   a pena participar deste item.
-
-Depois de achar, CONFIRA um por um contra CADA exigência daquele item.
-A prova tem que vir da ficha técnica da página — não da sua impressão
-nem do nome do produto. Se a página não mostra a medida, a norma ou a
-composição que o edital pede, aquilo não é ATENDE:
-- ATENDE: a ficha técnica comprova, e você diz onde leu.
-- NAO_ATENDE: diga o número do produto E o número exigido
-  ("brilho 350 cd/m², o edital exige 400 — 50 abaixo").
-- A_CONFIRMAR: a ficha é omissa. Diga exatamente o que falta.
-Ficha omissa NUNCA é ATENDE — quero 100% comprovado, não 100%
-presumido. Um único NAO_ATENDE reprova o produto inteiro, porque me
-desclassifica. Para tudo que ficar A_CONFIRMAR, escreva a pergunta que
-eu devo fazer ao distribuidor, por escrito.
+QUANDO UM CAMPO FICAR VAZIO
+Diga o porquê em "situacaoCampos", com uma destas palavras:
+- "nao_consta": você leu e o edital não trata disso ou não exige. Isso é
+  resposta boa, não buraco. Exemplo: o edital não obriga a informar marca
+  e modelo — isso é "nao_consta", nunca "nao_achei".
+- "nao_li": você não abriu a parte onde isso estaria. Prefiro isso a palpite.
+- "nao_achei": você leu tudo onde estaria e mesmo assim não achou.
+Nunca invente, nunca deduza "o normal é 30 dias".
 
 FORMATO
-Responda SOMENTE com o bloco JSON abaixo preenchido. Sem introdução,
-sem explicação, sem comentário no fim, sem perguntar se pode seguir.
-Se for longo, vá até o fim; se precisar cortar, corte no meio de uma
-lista e eu peço a continuação — mas não resuma e não pule item.
-Use ponto como separador decimal nos números e não escreva "R$".
+Responda SOMENTE com o JSON abaixo preenchido. Sem introdução, sem
+explicação, sem comentário no fim, sem perguntar se pode seguir.
+A ordem dos blocos é esta de propósito: se a resposta ficar longa e você
+precisar cortar, corte no FIM — nunca nos itens e nos produtos. Se cortar,
+corte no meio de uma lista e eu peço a continuação.
+Ponto como separador decimal. Não escreva "R$".
 
 {
-  "dispensa": {
-    "modalidade": "", "numero": "", "orgao": "", "unidade": "",
-    "cnpjOrgao": "", "cidade": "", "uf": "",
-    "objeto": "",
-    "criterio": "",
-    "modoDisputa": "", "orcamentoSigiloso": "",
-    "meioEnvio": "", "comoEnviarProposta": "", "portal": "",
-    "emailProposta": "", "emailEsclarecimento": "",
-    "dataHoraLimite": "", "dataHoraSessao": "",
-    "validade": "", "prazoEntrega": "", "prazoPagamento": "",
-    "localEntrega": "", "garantia": "", "exigeAmostra": ""
-  },
-
-  "fontes": {
-    "criterio": "", "prazoEntrega": "", "prazoPagamento": "",
-    "meioEnvio": "", "validade": "", "localEntrega": ""
-  },
-
-  "emails": [
-    { "endereco": "", "para": "", "fonte": "" }
-  ],
-
-  "situacaoCampos": { "nomeDoCampo": "nao_consta | nao_li | nao_achei" },
-  "naoEncontrado": [],
-  "editalSilente": [],
-  "trechosIlegiveis": [],
-
-  "arquivosLidos": [
-    { "arquivo": "", "paginas": 0, "tipo": "", "paginasLidas": "", "naoConsegui": "" }
-  ],
-
-  "contradicoes": [
-    { "assunto": "", "versaoA": "", "fonteA": "", "versaoB": "", "fonteB": "" }
-  ],
+  "pesquiseiNaWeb": true,
+  "porqueNaoPesquisei": "",
 
   "itens": [
     {
       "numero": 1,
-      "descricao": "",
+      "descricao": "a descrição inteira, como está no edital",
       "unidade": "",
       "quantidade": 0,
       "valorUnitarioEstimado": 0,
@@ -33994,73 +33998,85 @@ Use ponto como separador decimal nos números e não escreva "R$".
       "marcaReferencia": "",
       "aceitaEquivalente": "",
       "exigeAmostra": "",
-      "exigencias": [],
+      "exigencias": [
+        "uma linha por característica exigida, na ordem"
+      ],
+      "produtos": [
+        {
+          "marca": "", "modelo": "", "fabricante": "",
+          "preco": 0, "link": "", "fornecedor": "",
+          "veredictos": [
+            { "exigencia": 1, "situacao": "ATENDE | NAO_ATENDE | A_CONFIRMAR", "observacao": "" }
+          ],
+          "resultado": "atende | nao_atende | a_confirmar",
+          "observacao": ""
+        }
+      ],
+      "perguntasAoDistribuidor": [ "" ],
       "observacoes": ""
     }
   ],
 
-  "modelos": [
-    {
-      "item": 1,
-      "marca": "", "modelo": "", "fabricante": "",
-      "preco": 0, "link": "", "fornecedor": "",
-      "veredictos": [
-        { "exigencia": 1, "situacao": "ATENDE", "observacao": "" }
-      ],
-      "resultado": ""
-    }
-  ],
+  "dispensa": {
+    "modalidade": "", "numero": "", "orgao": "", "unidade": "",
+    "cnpjOrgao": "", "cidade": "", "uf": "",
+    "objeto": "",
+    "criterio": "por item | global | por lote",
+    "modoDisputa": "", "orcamentoSigiloso": "",
+    "meioEnvio": "sistema | email | presencial",
+    "comoEnviarProposta": "a frase literal do edital",
+    "portal": "", "emailProposta": "", "emailEsclarecimento": "",
+    "dataHoraLimite": "", "dataHoraSessao": "",
+    "validade": "", "prazoEntrega": "", "prazoPagamento": "",
+    "localEntrega": "", "garantia": "", "exigeAmostra": ""
+  },
 
-  "perguntasAoDistribuidor": [
-    { "item": 1, "pergunta": "" }
-  ],
+  "emails": [ { "endereco": "", "para": "", "fonte": "" } ],
 
-  "documentosHabilitacao": [
-    { "documento": "", "obrigatorio": true, "fonte": "", "observacao": "" }
-  ],
-
+  "documentosHabilitacao": [ { "documento": "", "obrigatorio": true, "fonte": "", "observacao": "" } ],
   "documentosNaoExigidos": [],
 
-  "riscos": [
-    { "risco": "", "impacto": "", "fonte": "" }
-  ],
+  "fontes": { "campo": "cláusula e página de onde tirou" },
+  "contradicoes": [ { "assunto": "", "versaoA": "", "fonteA": "", "versaoB": "", "fonteB": "" } ],
+  "riscos": [ { "risco": "", "impacto": "", "fonte": "" } ],
 
-  "resumoDaDecisao": { "vale": "", "porque": "" }
+  "situacaoCampos": { "nomeDoCampo": "nao_consta | nao_li | nao_achei" },
+  "naoEncontrado": [],
+  "editalSilente": [],
+  "trechosIlegiveis": [],
+  "arquivosLidos": [ { "arquivo": "", "paginas": 0, "tipo": "", "paginasLidas": "", "naoConsegui": "" } ],
+
+  "resumoDaDecisao": { "vale": "sim | não | depende", "porque": "" }
 }
 
 REGRAS DOS CAMPOS
-- Cada campo leva SÓ O VALOR. Nada de observação, origem ou comentário
-  dentro do valor. Errado: "FUNDO MUNICIPAL (PNCP informado pelo usuário)".
-  Certo: o nome, e a observação vai em "fontes".
-- "criterio": escreva exatamente "por item", "global" ou "por lote".
-- "meioEnvio": exatamente "sistema", "email" ou "presencial".
-- "emails": liste TODOS os endereços que aparecerem no edital, cada um
-  com a finalidade em "para" (proposta, esclarecimento, recurso,
-  habilitação, contato do setor) e a cláusula em "fonte". Não deixe
-  nenhum de fora, mesmo que pareça repetido ou secundário.
-- "emailProposta": preencha SEMPRE que o edital der um endereço para
-  onde mandar a proposta, mesmo que o envio principal seja por sistema —
-  muitos editais aceitam os dois. E-mail de esclarecimento NÃO é e-mail
-  de proposta, mas ambos têm que aparecer em "emails".
-- "descricao" do item: a descrição INTEIRA, como está no edital. Ela vai
-  impressa na minha proposta. Não resuma, não agrupe, não pule item.
-- "exigencias": uma linha por característica exigida, na ordem. O número
-  do veredicto se refere à posição nesta lista.
+- Cada campo leva SÓ O VALOR. Observação, origem e comentário vão em
+  "fontes" ou em "observacao", nunca dentro do valor.
+  Errado: "FUNDO MUNICIPAL (PNCP informado pelo usuário)". Certo: o nome.
+- "exigencias": uma linha por característica. O número do veredicto se
+  refere à posição nesta lista.
 - "resultado": "atende" só se todos os veredictos forem ATENDE.
-- "documentosHabilitacao": liste SÓ o que ESTE edital exige, na redação
-  dele, e "fonte" é obrigatória em cada um (cláusula e página). Não
-  acrescente documento de praxe que o edital não pediu.
+- "emailProposta": preencha sempre que o edital der endereço pra onde mandar
+  a proposta, mesmo que o envio principal seja por sistema. E-mail de
+  esclarecimento não é e-mail de proposta, mas os dois vão em "emails".
 - "documentosNaoExigidos": dos documentos comuns em licitação (certidão
-  federal RFB/PGFN, FGTS, trabalhista CNDT, estadual, municipal,
-  falência/concordata, balanço, atestado de capacidade técnica,
-  contrato social), liste os que você procurou e o edital NÃO exige.
-  Isso me evita juntar papel à toa.
-- "situacaoCampos": um por campo que ficou vazio, com nao_consta,
-  nao_li ou nao_achei. É o campo mais importante depois dos valores.
-- "naoEncontrado" e "editalSilente": use os nomes dos campos acima
-  (ex: "prazoEntrega").
+  federal RFB/PGFN, FGTS, trabalhista CNDT, estadual, municipal, falência,
+  balanço, atestado de capacidade técnica, contrato social), liste os que
+  você procurou e este edital NÃO exige. Isso me evita juntar papel à toa.
 - Campo sem informação: deixe "" e registre em "naoEncontrado" ou
-  "editalSilente". Não preencha com "não informado".`;
+  "editalSilente". Não preencha com "não informado".
+
+ANTES DE ENVIAR, CONFIRA
+- o número de itens bate com o do edital?
+- TODO item tem "exigencias" preenchida?
+- TODO item tem pelo menos um produto em "produtos", ou uma explicação em
+  "observacoes" de por que não achou?
+- "pesquiseiNaWeb" está dizendo a verdade?
+- "comoEnviarProposta" tem uma frase do edital?
+- todos os e-mails do documento estão em "emails"?
+- "arquivosLidos" tem uma linha para cada arquivo anexado?
+Se faltar qualquer um, volte ao documento e complete. É melhor demorar do
+que me entregar resposta vaga.`;
 }
 
 function licChatGptHtml(l){
@@ -34087,6 +34103,17 @@ function licChatGptHtml(l){
         <span><b>3</b> traga o JSON de volta</span>
       </div>
 
+      ${curto ? `<div class="lic-doc" style="display:block;margin-top:8px;">
+        <b>Atenção: este modo não traz produto nenhum.</b>
+        <small>Ele pede só os dados da dispensa. Se você quer os itens, os critérios de cada um
+          e onde comprar, marque <b>Tudo</b> aqui em cima.</small>
+      </div>` : `<div class="lic-doc" style="display:block;margin-top:8px;">
+        <b>Antes de colar: ligue a busca na web da IA.</b>
+        <small>É ela que traz os produtos com link e preço. No Gemini, use o Gem
+          <b>Licitações Mizu</b> com a busca ligada — sem isso ele lê o edital e não pesquisa.
+          Se não pesquisar, o sistema te avisa quando você trouxer a resposta.</small>
+      </div>`}
+
       <div class="acoes">
         <button class="btn btn-primary" onclick="licCopiarPergunta('${l.id}')">📋 Copiar ${curto?'a pergunta curta':'a pergunta completa'}</button>
         <button class="btn btn-sm" onclick="licVerPergunta('${l.id}')">ver o texto</button>
@@ -34107,10 +34134,10 @@ function licChatGptHtml(l){
   `;
 }
 
-/* O contexto fixo: o texto que ela cola UMA VEZ nas instruções do
-   Projeto do ChatGPT. Toda conversa nova dentro do Projeto já nasce
-   sabendo quem ela é, o que está em jogo e como responder. Fica aqui
-   dentro pra ela não precisar procurar numa conversa antiga. */
+/* O contexto fixo: o texto que ela cola UMA VEZ nas instruções do Gem
+   do Gemini (ou do Projeto do ChatGPT). Toda conversa nova lá dentro já
+   nasce sabendo quem ela é, o que está em jogo e como responder. Fica
+   aqui dentro pra ela não precisar procurar numa conversa antiga. */
 function licContextoFixo(){
   const E = (typeof dadosProposta === 'function') ? dadosProposta() : {};
   const cidade = (E.cidade || 'Rio Verde') + '/' + (E.estado || 'GO');
@@ -34129,6 +34156,13 @@ colar um pedido com um formato de resposta. Seu trabalho é ler os
 documentos inteiros e devolver, em JSON, tudo que meu sistema precisa
 para: decidir se vale participar, encontrar produtos que atendam à
 especificação, precificar e emitir a proposta.
+
+PESQUISAR NA INTERNET FAZ PARTE DO TRABALHO
+Quando o pedido tiver a parte de produtos, eu preciso que você BUSQUE NA
+WEB produtos reais à venda hoje no Brasil, com link e preço visível. Não
+é opcional e não é "se der". Se nesta conversa você não puder navegar,
+diga isso na resposta, no campo que o pedido indicar — nunca entregue o
+JSON sem os produtos fingindo que está completo.
 
 POR QUE O RIGOR IMPORTA
 Em licitação, uma única característica que não bate desclassifica a
@@ -34171,9 +34205,26 @@ function licVerContextoFixo(){
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(780px,95vw);max-height:88vh;overflow-y:auto;">
       <h3 style="margin-top:0;">Contexto fixo — cole uma vez só</h3>
-      <p class="help-text">No ChatGPT, crie um <b>Projeto</b> e cole este texto nas <b>instruções do Projeto</b>.
-        Depois é só abrir <b>uma conversa nova por dispensa</b> dentro dele — cada uma já nasce sabendo de tudo.</p>
-      <div class="lic-doc aviso" style="display:block;">
+      <p class="help-text">Isto você faz <b>uma vez na vida</b>. Depois é só abrir
+        <b>uma conversa nova por dispensa</b> lá dentro — cada uma já nasce sabendo de tudo.</p>
+
+      <div class="lic-doc" style="display:block;">
+        <b>No Gemini (recomendado — é mais rápido)</b>
+        <small>1. Abra gemini.google.com e entre com sua conta.<br>
+          2. No menu da esquerda, clique em <b>Gems</b> → <b>Novo Gem</b>.<br>
+          3. Nome: <b>Licitações Mizu</b>.<br>
+          4. Cole este texto no campo grande de instruções e salve.<br>
+          5. Em cada conversa dentro do Gem, deixe a <b>busca na web ligada</b> — é ela que
+          traz os produtos. Sem isso ele lê o edital e não pesquisa nada.</small>
+      </div>
+
+      <div class="lic-doc" style="display:block;margin-top:8px;">
+        <b>No ChatGPT</b>
+        <small>Crie um <b>Projeto</b>, cole este texto nas instruções do Projeto, e abra uma
+          conversa nova por dispensa dentro dele.</small>
+      </div>
+
+      <div class="lic-doc aviso" style="display:block;margin-top:8px;">
         <b>Por que uma conversa por dispensa?</b>
         <small>Edital é documento grande. Depois de três ou quatro na mesma conversa, ele começa a misturar os
         itens de um com os do outro e a qualidade cai. Conversa nova, limpa, pra cada dispensa.</small>
@@ -34190,7 +34241,7 @@ function licCopiarContextoFixo(){
   const txt = licContextoFixo();
   if(navigator.clipboard && navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt)
-      .then(()=>showToast('Contexto copiado. Cole nas instruções do Projeto, no ChatGPT.','success'))
+      .then(()=>showToast('Contexto copiado. Cole nas instruções do Gem (Gemini) ou do Projeto (ChatGPT).','success'))
       .catch(()=>licCopiarNaMao(txt));
   }else licCopiarNaMao(txt);
 }
@@ -34683,7 +34734,18 @@ function licAplicarRespostaIA(l, dado){
   l.contradicoes = manter(l.contradicoes, dado.contradicoes, c=>c && c.assunto);
   l.riscos = manter(l.riscos, dado.riscos, x=>x && x.risco);
   l.documentosHabilitacao = manter(l.documentosHabilitacao, dado.documentosHabilitacao, x=>x && x.documento);
-  const perguntasNovas = Array.isArray(dado.perguntasAoDistribuidor) ? dado.perguntasAoDistribuidor.filter(x=>x && x.pergunta) : [];
+  /* As perguntas podem vir soltas (formato antigo, com "item" dentro) ou
+     dentro de cada item, como texto puro (formato novo). As duas valem. */
+  const perguntasNovas = (Array.isArray(dado.perguntasAoDistribuidor) ? dado.perguntasAoDistribuidor : [])
+    .map(x=>(typeof x === 'string') ? { item:1, pergunta:x } : x)
+    .filter(x=>x && x.pergunta);
+  (Array.isArray(dado.itens) ? dado.itens : []).forEach(ia=>{
+    const n = Number(ia && ia.numero) || 1;
+    (Array.isArray(ia && ia.perguntasAoDistribuidor) ? ia.perguntasAoDistribuidor : []).forEach(q=>{
+      const texto = (typeof q === 'string') ? q : (q && q.pergunta);
+      if(texto && String(texto).trim()) perguntasNovas.push({ item:n, pergunta:String(texto).trim() });
+    });
+  });
   if(ehContinuacao){
     const jaTem = new Set((l.perguntasDistribuidor||[]).map(x=>(x.pergunta||'').trim()));
     l.perguntasDistribuidor = (l.perguntasDistribuidor||[]).concat(perguntasNovas.filter(x=>!jaTem.has((x.pergunta||'').trim())));
@@ -34781,8 +34843,25 @@ function licAplicarRespostaIA(l, dado){
     (ia.exigencias||[]).forEach((t,i)=>l.exigencias.push({ n:l.exigencias.length+1, texto:t, item:Number(ia.numero)||1 }));
   });
 
-  /* ---- os modelos, agrupados por item ---- */
-  const modelosBrutos = Array.isArray(dado.modelos) ? dado.modelos.filter(m=>m && (m.modelo||m.marca)) : [];
+  /* ---- os modelos, agrupados por item ----
+     O texto novo pede os produtos DENTRO de cada item. É de propósito: se
+     a IA cortar a resposta no meio, ela recebe itens completos COM produto,
+     em vez de todos os itens e nenhum produto — que era o que acontecia
+     com a lista "modelos" lá no fim do JSON. Aqui eles voltam pra lista
+     única que o resto da tela já sabe desenhar, e a forma antiga, com
+     "modelos" solto, continua valendo. */
+  const produtosDosItens = [];
+  (Array.isArray(dado.itens) ? dado.itens : []).forEach(ia=>{
+    const n = Number(ia && ia.numero) || 1;
+    const lista = Array.isArray(ia && ia.produtos) ? ia.produtos
+                : (Array.isArray(ia && ia.modelos) ? ia.modelos : []);
+    lista.forEach(pr=>{
+      if(!pr || !(pr.modelo || pr.marca)) return;
+      produtosDosItens.push(Object.assign({}, pr, { item: Number(pr.item) || n }));
+    });
+  });
+  const modelosBrutos = (Array.isArray(dado.modelos) ? dado.modelos : [])
+    .concat(produtosDosItens).filter(m=>m && (m.modelo||m.marca));
   modelosBrutos.forEach(m=>{
     m.item = Number(m.item) || 1;
     m.preco = licNumDireto(m.preco);
@@ -34823,6 +34902,89 @@ function licAplicarRespostaIA(l, dado){
   if(modelos.length) partes.push(`${modelos.length} modelo${modelos.length===1?'':'s'}`);
   if(repetidos>0) partes.push(`juntei ${repetidos} repetido${repetidos===1?'':'s'}`);
   showToast(partes.length?('Li: '+partes.join(' · ')):'Li a resposta, mas ela veio vazia.', partes.length?'success':'error');
+
+  licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao);
+}
+
+/* =========================================================
+   PRESTAR CONTAS DA RESPOSTA
+
+   O pior jeito de uma análise falhar é em silêncio: vieram os 12 itens,
+   não veio produto nenhum, e ela só descobre na precificação, dois dias
+   depois. Aqui o sistema conta na cara o que faltou — e diz o que fazer.
+   ========================================================= */
+function licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao){
+  if(ehContinuacao) return;
+  if(!itensIA.length && !modelos.length) return;
+
+  const faltas = [];
+  const temItens = itensIA.length > 0;
+  const semExigencia = itensIA.filter(ia=>!Array.isArray(ia.exigencias) || ia.exigencias.length===0).length;
+  const comModelo = new Set(modelos.map(m=>Number(m.item)||1));
+  const semModelo = itensIA.filter(ia=>!comModelo.has(Number(ia.numero)||1)).length;
+  const semLink = modelos.filter(m=>!String(m.link||'').trim()).length;
+  const semPreco = modelos.filter(m=>!(licNumDireto(m.preco) > 0)).length;
+
+  /* a própria IA pode ter avisado que não pesquisou */
+  const disse = dado.pesquiseiNaWeb;
+  const naoPesquisou = disse === false || disse === 'false' || disse === 'nao' || disse === 'não';
+  if(naoPesquisou){
+    faltas.push({ grave:true,
+      texto:'A IA disse que <b>não pesquisou na internet</b>'
+        + (dado.porqueNaoPesquisei?`: “${escapeHtml(String(dado.porqueNaoPesquisei))}”`:'.'),
+      como:'No Gemini, ligue a busca na web e mande o mesmo texto de novo. No ChatGPT, use um modelo com navegação.' });
+  }
+
+  if(temItens && modelos.length === 0 && !naoPesquisou){
+    faltas.push({ grave:true,
+      texto:`Vieram <b>${itensIA.length} ite${itensIA.length===1?'m':'ns'} e nenhum produto</b>.`,
+      como:'A IA leu o edital mas não pesquisou. Peça de novo, só os produtos, pelo botão “Pedir mais opções” de cada item.' });
+  }else if(semModelo > 0){
+    faltas.push({ grave:false,
+      texto:`<b>${semModelo} ite${semModelo===1?'m ficou':'ns ficaram'} sem nenhum produto.</b>`,
+      como:'Abra o item e use “Pedir mais opções” para pedir só a pesquisa dele.' });
+  }
+  if(semExigencia > 0){
+    faltas.push({ grave:false,
+      texto:`<b>${semExigencia} ite${semExigencia===1?'m veio':'ns vieram'} sem a lista de critérios.</b>`,
+      como:'Sem os critérios não dá pra conferir o produto contra o edital. Peça a análise de novo desse item.' });
+  }
+  if(semLink > 0 || semPreco > 0){
+    const q = [];
+    if(semLink) q.push(`${semLink} sem link`);
+    if(semPreco) q.push(`${semPreco} sem preço`);
+    faltas.push({ grave:false,
+      texto:`Produtos incompletos: <b>${q.join(' e ')}</b>.`,
+      como:'Produto sem link e sem preço não serve pra precificar — confira antes de usar.' });
+  }
+
+  if(faltas.length === 0) return;
+
+  const grave = faltas.some(f=>f.grave);
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-faltou';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,95vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">${grave?'⚠️ A resposta veio incompleta':'A resposta veio, com ressalvas'}</h3>
+      <p class="help-text">Li o que deu. Isto aqui é o que faltou — pra você não descobrir na
+        hora de precificar.</p>
+      <div style="margin:10px 0;">
+        ${faltas.map(f=>`<div class="lic-doc ${f.grave?'aviso':''}" style="display:block;margin-bottom:8px;">
+          <b>${f.texto}</b>
+          <small>${escapeHtml(f.como)}</small>
+        </div>`).join('')}
+      </div>
+      <div class="lic-doc" style="display:block;">
+        <b>O que já entrou no sistema</b>
+        <small>${itensIA.length} ite${itensIA.length===1?'m':'ns'} · ${modelos.length} produto${modelos.length===1?'':'s'}.
+          Nada foi perdido — o que vier depois soma a isto.</small>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Entendi</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 /* =========================================================
@@ -49603,7 +49765,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '03/11/2026 21:10';
+const SISTEMA_VERSAO = '03/11/2026 23:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
