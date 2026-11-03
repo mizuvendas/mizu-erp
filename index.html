@@ -34316,8 +34316,22 @@ COMO PESQUISAR OS PRODUTOS
   é um modelo só: traga o MENOR preço e diga a loja em "fornecedor".
 - "marca" é o fabricante, "modelo" é o nome na embalagem. Nome de loja ou
   de marketplace vai em "fornecedor", nunca nesses dois.
-- O "link" tem que abrir a página DAQUELE produto, com preço visível. Abra
-  antes de me mandar. Prefiro 3 certos a 5 duvidosos.
+- O "link" tem que abrir a página DAQUELE produto, numa LOJA BRASILEIRA
+  DE VERDADE, com o preço visível na página. Abra antes de me mandar.
+  Prefiro 3 certos a 5 duvidosos.
+- PROVE que abriu, com dois campos obrigatórios em cada produto:
+  "tituloNaPagina" = o nome do produto copiado LITERALMENTE da página, do
+  jeito que a loja escreveu; "loja" = o domínio, só o domínio
+  (magazineluiza.com.br, amazon.com.br, kabum.com.br).
+  Se "tituloNaPagina" não bater com o que você pôs em "marca" e "modelo",
+  é porque o link é de outro produto: conserte antes de me mandar.
+- NÃO MANDE link que não seja de loja: nada de googleusercontent.com, de
+  referência interna de busca, de agregador de preços, de página de
+  categoria, de resultado de pesquisa ou de encurtador. Se o único
+  endereço que você tem é desses, não mande aquele produto — mande o
+  nome e diga em "observacao" que não achou página de loja.
+- Link que você não conseguiu abrir é link que não existe pra mim. Não
+  adivinhe o endereço a partir do nome do produto.
 - Pelo menos 3 que atendam 100%, ordenados do mais barato pro mais caro.
   Se não existirem 3, traga quantos existirem e diga isso em "observacao".
   Traga também os que chegam perto e reprovam, pra eu saber o que descartei.
@@ -34369,7 +34383,11 @@ Ponto como separador decimal. Não escreva "R$".
       "produtos": [
         {
           "marca": "", "modelo": "", "fabricante": "",
-          "preco": 0, "link": "", "fornecedor": "",
+          "preco": 0,
+          "link": "https://loja-de-verdade.com.br/pagina-do-produto",
+          "tituloNaPagina": "o nome do produto copiado literalmente da página",
+          "loja": "so-o-dominio.com.br",
+          "fornecedor": "",
           "veredictos": [
             { "exigencia": 1, "situacao": "ATENDE | NAO_ATENDE | A_CONFIRMAR", "observacao": "" }
           ],
@@ -34436,6 +34454,11 @@ ANTES DE ENVIAR, CONFIRA
 - TODO item tem "exigencias" preenchida?
 - TODO item tem pelo menos um produto em "produtos", ou uma explicação em
   "observacoes" de por que não achou?
+- TODO produto tem "tituloNaPagina" e "loja" preenchidos?
+- O "tituloNaPagina" de cada produto bate com a marca e o modelo que você
+  declarou? Se não bate, o link é de outro produto.
+- Sobrou algum link que não é de loja (googleusercontent, busca,
+  agregador, categoria)? Tire.
 - "pesquiseiNaWeb" está dizendo a verdade?
 - "comoEnviarProposta" tem uma frase do edital?
 - todos os e-mails do documento estão em "emails"?
@@ -34967,9 +34990,24 @@ function licChaveModelo(m){
    um anúncio: home de loja, busca, categoria. É o caso do link que
    caiu em "nada de cera". */
 const LIC_LINK_NAO_PRODUTO = /\/(busca|buscar|search|pesquisa|categoria|categorias|departamento|departamentos|lista|listagem|loja|lojas|sobre|contato|institucional|home)(\/|$)/i;
+
+/* Domínios que NUNCA são a página de um produto à venda.
+
+   Ela recebeu "R$ 3.063,09" com um endereço googleusercontent.com — que
+   é referência interna do buscador e não abre nada. Preço que não dá pra
+   conferir nem pra comprar é pior que preço nenhum: entra na
+   precificação como se fosse real. Agregador de preços também não vende;
+   encurtador esconde pra onde vai. */
+const LIC_DOMINIOS_FALSOS = [
+  'googleusercontent.com', 'gstatic.com', 'webcache.',
+  'google.com/search', 'google.com/shopping', 'bing.com/search', 'duckduckgo.com',
+  'buscape.com.br', 'zoom.com.br', 'bondfaro.com.br',
+  'bit.ly', 'tinyurl.com', 'encurtador.'
+];
 function licLinkDeProduto(url){
   const u = String(url||'').trim();
   if(!/^https?:\/\//i.test(u)) return false;
+  if(LIC_DOMINIOS_FALSOS.some(d=>u.toLowerCase().includes(d))) return false;
   try{
     const a = new URL(u);
     if(!a.pathname || a.pathname === '/') return false;          // home da loja
@@ -35002,7 +35040,14 @@ function licJuntarModelos(lista){
     if(!String(ganha.modelo||'').trim() && perde.modelo) ganha.modelo = perde.modelo;
     if(!String(ganha.marca||'').trim() && perde.marca) ganha.marca = perde.marca;
     if(!ganha.fabricante && perde.fabricante) ganha.fabricante = perde.fabricante;
-    if(!licLinkDeProduto(ganha.link) && licLinkDeProduto(perde.link)) ganha.link = perde.link;
+    if(!licLinkDeProduto(ganha.link) && licLinkDeProduto(perde.link)){
+      ganha.link = perde.link;
+      ganha.tituloNaPagina = perde.tituloNaPagina;
+      ganha.loja = perde.loja;
+    }
+    if(!String(ganha.tituloNaPagina||'').trim() && perde.tituloNaPagina && ganha.link === perde.link)
+      ganha.tituloNaPagina = perde.tituloNaPagina;
+    if(!String(ganha.loja||'').trim() && perde.loja) ganha.loja = perde.loja;
     if((!ganha.veredictos || !ganha.veredictos.length) && perde.veredictos && perde.veredictos.length)
       ganha.veredictos = perde.veredictos;
     porChave.set(k, ganha);
@@ -35015,7 +35060,11 @@ function licJuntarModelos(lista){
       avisos.push('veio sem o nome do modelo — confira se isso não é só o nome de uma loja');
     if(!m.link) avisos.push('veio sem o link do anúncio');
     else if(!licLinkDeProduto(m.link))
-      avisos.push('o link não parece ser a página do produto — abra e confira antes de confiar no preço');
+      avisos.push('o link não é a página de um produto à venda — não dá pra conferir nem comprar por esse preço');
+    else if(!String(m.tituloNaPagina||'').trim())
+      avisos.push('a IA não copiou o título da página — não dá pra saber se ela abriu o link ou adivinhou o endereço');
+    if(licTituloNaoBate(m))
+      avisos.push(`o link é de outro produto: a página se chama “${String(m.tituloNaPagina).slice(0,70)}”`);
     m.avisos = avisos;
   });
   return juntos;
@@ -35278,6 +35327,53 @@ function licAplicarRespostaIA(l, dado){
    não veio produto nenhum, e ela só descobre na precificação, dois dias
    depois. Aqui o sistema conta na cara o que faltou — e diz o que fazer.
    ========================================================= */
+/* Link que não leva a lugar nenhum.
+
+   Ela recebeu "R$ 3.063,09" com um endereço googleusercontent.com, que é
+   referência interna do buscador e não abre página de produto. Preço que
+   não dá pra conferir nem pra comprar é pior que preço nenhum: entra na
+   precificação como se fosse real. Aqui o sistema separa esses na hora
+   de ler a resposta. */
+function licLinkSuspeito(link){
+  const u = String(link||'').trim();
+  if(!u) return false;                   /* sem link é outra falta, não esta */
+  return !licLinkDeProduto(u);
+}
+
+/* O título copiado da página tem que falar do produto declarado. Se a IA
+   diz "Galaxy Tab S9" e a página se chama "Tab S10 FE Enterprise", o
+   link é de outro aparelho — e foi exatamente o que aconteceu. */
+function licTituloNaoBate(m){
+  const titulo = String((m&&m.tituloNaPagina)||'').trim();
+  if(!titulo) return false;                         /* sem título é outra falta */
+  const alvo = (s)=>String(s||'').toLowerCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
+  const t = alvo(titulo);
+  const marca = alvo(m.marca);
+  /* a marca tem que aparecer no título; é o teste que erra menos */
+  if(marca && marca.length >= 3 && !t.includes(marca)) return true;
+
+  const palavrasDe = (s)=>alvo(s).split(' ').filter(Boolean);
+  /* O que separa um modelo do outro quase nunca é a palavra: é o código.
+     "Galaxy Tab" é igual no S9 e no S10 — o que muda é o "s9", o "x716b",
+     o "500ml". Então o teste forte é esse: se o modelo declarado tem
+     código, pelo menos um deles tem que estar no título da página.
+     Foi assim que passou um link do "Tab S10 FE" dizendo ser um "S9". */
+  const ehCodigo = p => /[a-z]/.test(p) && /[0-9]/.test(p);
+  const codigos = palavrasDe(m.modelo).filter(ehCodigo);
+  const codigosNoTitulo = palavrasDe(titulo).filter(ehCodigo);
+  if(codigos.length && codigosNoTitulo.length){
+    if(!codigos.some(c=>codigosNoTitulo.includes(c))) return true;
+  }
+  /* Sem código nenhum dos dois lados, vale a palavra: pelo menos uma
+     palavra forte do modelo tem que aparecer. */
+  const genericas = new Set(['com','sem','para','de','da','do','e','ou','un','kit',
+                             'gb','tb','ml','cm','mm','polegadas','pol','novo','original']);
+  const palavras = palavrasDe(m.modelo).filter(p=>p.length>=3 && !genericas.has(p) && !ehCodigo(p));
+  if(palavras.length && !palavras.some(p=>t.includes(p))) return true;
+  return false;
+}
+
 function licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao){
   if(ehContinuacao) return;
   if(!itensIA.length && !modelos.length) return;
@@ -35289,6 +35385,9 @@ function licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao){
   const semModelo = itensIA.filter(ia=>!comModelo.has(Number(ia.numero)||1)).length;
   const semLink = modelos.filter(m=>!String(m.link||'').trim()).length;
   const semPreco = modelos.filter(m=>!(licNumDireto(m.preco) > 0)).length;
+  const suspeitos = modelos.filter(m=>licLinkSuspeito(m.link));
+  const semTitulo = modelos.filter(m=>String(m.link||'').trim() && !String(m.tituloNaPagina||'').trim());
+  const naoBate = modelos.filter(m=>licTituloNaoBate(m));
 
   /* a própria IA pode ter avisado que não pesquisou */
   const disse = dado.pesquiseiNaWeb;
@@ -35321,6 +35420,25 @@ function licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao){
     faltas.push({ grave:false,
       texto:`Produtos incompletos: <b>${q.join(' e ')}</b>.`,
       como:'Produto sem link e sem preço não serve pra precificar — confira antes de usar.' });
+  }
+  if(suspeitos.length){
+    faltas.push({ grave:true,
+      texto:`<b>${suspeitos.length} link${suspeitos.length===1?'':'s'} que não é de loja:</b> `
+        + suspeitos.slice(0,3).map(m=>escapeHtml(`${m.marca||''} ${m.modelo||''}`.trim() || 'sem nome')).join(', ')
+        + (suspeitos.length>3?` e mais ${suspeitos.length-3}`:'') + '.',
+      como:'Endereço interno de busca, agregador de preços ou página de categoria — não abre produto nenhum. Peça o link de uma loja de verdade antes de usar esse preço.' });
+  }
+  if(naoBate.length){
+    faltas.push({ grave:true,
+      texto:`<b>${naoBate.length} produto${naoBate.length===1?'':'s'} com link de outra coisa:</b> `
+        + naoBate.slice(0,3).map(m=>escapeHtml(`${m.marca||''} ${m.modelo||''}`.trim())).join(', ')
+        + (naoBate.length>3?` e mais ${naoBate.length-3}`:'') + '.',
+      como:'O título da página não bate com a marca e o modelo declarados. Abra o link e veja o que está sendo vendido de fato.' });
+  }
+  if(semTitulo.length){
+    faltas.push({ grave:false,
+      texto:`<b>${semTitulo.length} produto${semTitulo.length===1?'':'s'} sem o título da página.</b>`,
+      como:'Sem ele não dá pra saber se a IA abriu o link ou só adivinhou o endereço. Peça de novo com "tituloNaPagina".' });
   }
 
   if(faltas.length === 0) return;
@@ -36396,9 +36514,16 @@ jaVistos.length ? `JÁ PESQUISADOS — não repita estes:` : '',
 `lojas é UM modelo, com o menor preço e a loja em "fornecedor".`,
 `"marca" é o fabricante e "modelo" é o nome na embalagem — nome de loja`,
 `ou de marketplace nunca entra nesses dois campos.`,
-`O "link" tem que abrir a página DAQUELE produto, com preço visível.`,
-`Abra o link e confira antes de me mandar: home de loja, categoria ou`,
-`busca não serve. Prefiro 3 certos a 5 duvidosos.`,
+`O "link" tem que abrir a página DAQUELE produto numa LOJA BRASILEIRA`,
+`DE VERDADE, com o preço visível. Abra e confira antes de me mandar.`,
+`PROVE que abriu: "tituloNaPagina" = o nome copiado LITERALMENTE da`,
+`página, e "loja" = só o domínio (magazineluiza.com.br, amazon.com.br).`,
+`Se o título da página não bater com a marca e o modelo que você`,
+`declarou, o link é de outro produto — conserte antes de mandar.`,
+`NÃO MANDE googleusercontent.com, referência interna, agregador de`,
+`preços, página de categoria, resultado de busca nem encurtador. Sem`,
+`página de loja, mande o nome e explique em "observacao".`,
+`Prefiro 3 certos a 5 duvidosos.`,
 `ORDENE do mais barato para o mais caro, contando só os que atendem`,
 `100% — o primeiro da lista é o mais barato que serve.`,
 `Prefira preço de atacado/distribuidor e diga qual é qual em`,
@@ -36412,13 +36537,16 @@ licNumDireto(item.teto)>0
 ``,
 `Responda SOMENTE com este JSON, sem texto em volta:`,
 `{ "modelos": [ { "item": ${numItem}, "marca": "", "modelo": "", "fabricante": "",`,
-`  "preco": 0, "link": "", "fornecedor": "",`,
+`  "preco": 0, "link": "https://loja-de-verdade.com.br/pagina-do-produto",`,
+`  "tituloNaPagina": "o nome copiado literalmente da página",`,
+`  "loja": "so-o-dominio.com.br", "fornecedor": "",`,
 `  "veredictos": [ { "exigencia": 1, "situacao": "ATENDE", "observacao": "" } ],`,
 `  "resultado": "" } ],`,
 `  "perguntasAoDistribuidor": [ { "item": ${numItem}, "pergunta": "" } ] }`,
 ``,
 `Regras: NAO_ATENDE com o número do produto e o número exigido.`,
-`Ficha omissa é A_CONFIRMAR, nunca ATENDE.`
+`Ficha omissa é A_CONFIRMAR, nunca ATENDE.`,
+`"tituloNaPagina" e "loja" são obrigatórios em todo produto.`
   ].filter(x=>x!=='').join('\n');
 
   licCopiarNaMao(txt);
@@ -50190,7 +50318,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 03:05';
+const SISTEMA_VERSAO = '04/11/2026 04:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
