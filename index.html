@@ -35354,6 +35354,16 @@ function licPendencias(l){
   LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{
     if(!(l.leitura||{})[c.id]) faltam.push(c);
   });
+  /* Escola tem cabeçalho próprio no orçamento. Faltando quem assina, o
+     PDF sai com o rodapé vazio e a escola devolve. */
+  const cli = l.clienteId ? (STATE.clientes||[]).find(c=>c.id===l.clienteId) : null;
+  if(cli && typeof tipoClienteDe === 'function' && tipoClienteDe(cli) === 'Escola'){
+    const pc = l.propostaCampos || {};
+    if(!String(pc.responsavel||'').trim())
+      faltam.push({ id:'responsavel', rotulo:'Responsável da escola (quem assina)' });
+    if(!String(pc.cargoResponsavel||'').trim())
+      faltam.push({ id:'cargoResponsavel', rotulo:'Cargo do responsável' });
+  }
   return faltam;
 }
 function licPendenciasHtml(l){
@@ -36938,6 +36948,27 @@ function licTelaProposta(l){
       </div>
       <div class="field"><label>Objeto</label>
         <textarea id="licp-objeto" style="width:100%;height:70px;padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;">${escapeHtml(pc.objeto || l.objeto || '')}</textarea></div>
+
+      ${/* Escola pede cabeçalho próprio no orçamento — nº da pesquisa, quem
+            assina e o cargo. Isso já existia na tela de Orçamentos, mas a
+            proposta nascida aqui ia sempre com os três em branco, e o PDF
+            da escola saía sem o cabeçalho que ela exige. Agora é o mesmo
+            bloco, no mesmo lugar do fluxo. */
+        cliente && tipoClienteDe(cliente) === 'Escola' ? `
+        <div style="border:1px solid var(--border);border-left:3px solid var(--primary);
+                    border-radius:var(--radius-sm);padding:11px 13px;background:var(--bg-app);margin-top:12px;">
+          <strong style="font-size:13px;">🏫 Dados que a escola exige no orçamento</strong>
+          <p class="help-text" style="margin:2px 0 10px;">Entram no cabeçalho do PDF, junto com o prazo de entrega aí de cima.
+            O número da pesquisa é opcional — preencha quando a escola mandar.</p>
+          <div class="lic-grade">
+            <div><label>Nº da pesquisa</label>
+              <input type="text" id="licp-num-pesquisa" value="${escapeAttr(pc.numeroPesquisa || '')}" placeholder="opcional"></div>
+            <div><label>Responsável da escola</label>
+              <input type="text" id="licp-responsavel" value="${escapeAttr(pc.responsavel || '')}" placeholder="nome de quem assina"></div>
+            <div><label>Cargo</label>
+              <input type="text" id="licp-cargo" value="${escapeAttr(pc.cargoResponsavel || '')}" placeholder="ex.: Diretora"></div>
+          </div>
+        </div>` : ''}
     </div>
 
     <div class="card">
@@ -37024,6 +37055,9 @@ function licSalvarCamposProposta(l){
   set('modalidade','licp-modalidade'); set('numero','licp-numero'); set('tipo','licp-tipo');
   set('validade','licp-validade'); set('prazoEntrega','licp-entrega');
   set('prazoPagamento','licp-pagamento'); set('objeto','licp-objeto');
+  /* os três da escola — só existem na tela quando o cliente é escola */
+  set('numeroPesquisa','licp-num-pesquisa'); set('responsavel','licp-responsavel');
+  set('cargoResponsavel','licp-cargo');
 }
 
 /* Gera (ou atualiza) o orçamento do sistema e abre o PDF.
@@ -37074,7 +37108,10 @@ function licGerarProposta(id){
     observacoes: '',
     vendedor: l.vendedor || '',
     prazoEntrega: pc.prazoEntrega || '',
-    numeroPesquisa: '', responsavel: '', cargoResponsavel: '',
+    /* Escola: o cabeçalho que ela exige vem dos campos da proposta. */
+    numeroPesquisa: pc.numeroPesquisa || '',
+    responsavel: pc.responsavel || '',
+    cargoResponsavel: pc.cargoResponsavel || '',
     publico: {
       modalidade: pc.modalidade || 'DISPENSA',
       numero: pc.numero || l.numero || '',
@@ -38182,9 +38219,25 @@ function licLigarDetalhe(){
 
   /* campos da proposta — salvam ao sair, sem redesenhar */
   ['lic-cliente','lic-vendedor','licp-modalidade','licp-numero','licp-tipo',
-   'licp-validade','licp-entrega','licp-pagamento','licp-objeto'].forEach(id=>{
+   'licp-validade','licp-entrega','licp-pagamento','licp-objeto',
+   'licp-num-pesquisa','licp-responsavel','licp-cargo'].forEach(id=>{
     const e = document.getElementById(id);
-    if(e) e.addEventListener('change', ()=>{ licSalvarCamposProposta(l); saveState(); });
+    if(!e) return;
+    /* Trocar o cliente pode fazer o bloco da escola aparecer ou sumir —
+       nesse caso vale redesenhar. Nos outros campos, não: redesenhar a
+       cada tecla é como a tela some debaixo dela enquanto digita. */
+    if(id === 'lic-cliente'){
+      e.addEventListener('change', ()=>{
+        const antes = (()=>{ const c = l.clienteId ? (STATE.clientes||[]).find(x=>x.id===l.clienteId) : null;
+                             return !!c && tipoClienteDe(c)==='Escola'; })();
+        licSalvarCamposProposta(l); saveState();
+        const depois = (()=>{ const c = l.clienteId ? (STATE.clientes||[]).find(x=>x.id===l.clienteId) : null;
+                              return !!c && tipoClienteDe(c)==='Escola'; })();
+        if(antes !== depois) renderPortalLicitacoes();
+      });
+      return;
+    }
+    e.addEventListener('change', ()=>{ licSalvarCamposProposta(l); saveState(); });
   });
 }
 
@@ -50081,7 +50134,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 01:15';
+const SISTEMA_VERSAO = '04/11/2026 02:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
