@@ -40406,8 +40406,39 @@ async function nfeEmitir(origem, modelo, opcoes){
     const r = await nfeChamar('/emitir', payload);
 
     if(!r.ok){
-      showToast(`A Receita rejeitou a nota (código ${r.codigoStatus}): ${r.mensagem}`, 'error');
       console.warn('Rejeição da nota:', r);
+      /* =====================================================
+         539 — NÚMERO JÁ USADO NA RECEITA
+
+         "Duplicidade de NF-e, com diferença na Chave de Acesso"
+         quer dizer: esse número, nessa série, já foi autorizado — e
+         não foi esta nota. Acontece quando a numeração daqui ficou
+         atrás da que a Receita tem (uma nota autorizada cujo retorno
+         não chegou a ser gravado aqui, ou um talão migrado de outro
+         sistema).
+
+         O contador antigo era um beco: a numeração só avançava quando
+         dava CERTO, então ela reenviava o mesmo número pra sempre e
+         pra sempre tomava 539. Agora o sistema avança o número e
+         oferece tentar de novo — e vai avançando até encontrar um que
+         a Receita aceite.
+         ===================================================== */
+      if(String(r.codigoStatus) === '539'){
+        const usado = num.proximo;
+        STATE.config[num.campoProximo] = usado + 1;
+        saveState();
+        confirmAction(
+          'Esse número já foi usado na Receita',
+          `A Receita respondeu que a ${nomeModelo} nº ${usado} da série ${num.serie} já existe, `
+          + `emitida com outra chave de acesso. Isso quer dizer que a numeração daqui estava atrás da dela.\n\n`
+          + `Já adiantei o contador para o nº ${usado + 1}. Quer tentar de novo com esse número?\n\n`
+          + `Se der 539 de novo, é só repetir — cada tentativa avança um número, até achar um livre. `
+          + `Nada é cobrado nem emitido enquanto a Receita recusa.`,
+          ()=>{ nfeEmitir(origem, modelo, opcoes); },
+          'Tentar com o nº ' + (usado + 1));
+        return null;
+      }
+      showToast(`A Receita rejeitou a nota (código ${r.codigoStatus}): ${r.mensagem}`, 'error');
       return null;
     }
 
@@ -49192,7 +49223,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '03/11/2026 16:20';
+const SISTEMA_VERSAO = '03/11/2026 17:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
