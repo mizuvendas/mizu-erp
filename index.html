@@ -2398,6 +2398,24 @@ function atualizarBadgesMenu(){
     }
     else{ badgeLic.style.display = 'none'; }
   }
+  /* Proposta pronta cuja data de envio é hoje ou já passou: esse é o
+     número que não pode esperar ela entrar na tela pra descobrir. */
+  const badgeProp = document.getElementById('nav-badge-proposta-lic');
+  if(badgeProp){
+    let vencendo = 0;
+    if(typeof licDataDeEnvio === 'function'){
+      (STATE.licitacoes||[]).forEach(l=>{
+        if(!l || l.etapa !== 'proposta' || !l.orcamentoId) return;
+        const e = licDataDeEnvio(l);
+        if(e && e.faltam <= 0) vencendo++;
+      });
+    }
+    if(vencendo>0){
+      badgeProp.textContent = vencendo; badgeProp.style.display = '';
+      badgeProp.title = `${vencendo} proposta${vencendo===1?'':'s'} com a data de envio em cima ou já passada`;
+    }
+    else{ badgeProp.style.display = 'none'; }
+  }
   const badgeMargem = document.getElementById('nav-badge-margem');
   if(badgeMargem){
     const critico = typeof getSaudeMargemProdutos==='function' ? getSaudeMargemProdutos(30).filter(p=>p.status==='critica').length : 0;
@@ -14313,6 +14331,53 @@ function licDoOrcamento(orc){
   return (STATE.licitacoes||[]).find(l=>l.orcamentoId===orc.id) || null;
 }
 
+/* =========================================================
+   AS ABAS DA PROPOSTA DE LICITAÇÃO
+
+   Pedido dela: "precisa conter aqui também, tipo nossos orçamentos, só
+   que nele vai constar o orçamento que já foi formalizado; se já enviou
+   ele vai pra parte onde foi enviado, se ainda falta enviar ele vai me
+   mostrar até que dia devo enviar, e se ganhamos vai pra parte ganhamos,
+   se perdeu vai pra parte que perdemos, e também ter a parte de todos."
+
+   Mesma gramática do Orçamentos: a aba é a pergunta ("o que falta fazer
+   hoje?"), não o relatório. Quem decide a aba é a etapa da licitação —
+   então marcar que enviou, ou que ganhou, já muda a linha de lugar.
+   ========================================================= */
+const PROP_ABAS = [
+  { id:'enviar',   rotulo:'Falta enviar',  etapas:['proposta'] },
+  { id:'enviadas', rotulo:'Enviadas',      etapas:['enviada'] },
+  { id:'ganhamos', rotulo:'Ganhamos',      etapas:['ganhou','ganhou_parcial','entregue'] },
+  { id:'perdemos', rotulo:'Perdemos',      etapas:['perdeu','desistiu'] },
+  { id:'todos',    rotulo:'Todos',         etapas:null }
+];
+let propAbaAtual = 'enviar';
+
+function propEtapaDoOrcamento(o){
+  const l = licDoOrcamento(o);
+  return l ? l.etapa : 'proposta';
+}
+function propDaAba(lista, aba){
+  const def = PROP_ABAS.find(a=>a.id===aba) || PROP_ABAS[PROP_ABAS.length-1];
+  const filtrada = def.etapas ? lista.filter(o=>def.etapas.indexOf(propEtapaDoOrcamento(o)) >= 0) : lista;
+  /* Em "Falta enviar" a ordem é a do aperto: o que vence primeiro em
+     cima. Nas outras abas vale a ordem da lista, que é por data. */
+  if(aba !== 'enviar') return filtrada;
+  return filtrada.slice().sort((a,b)=>{
+    const ea = licDataDeEnvio(licDoOrcamento(a)), eb = licDataDeEnvio(licDoOrcamento(b));
+    if(!ea && !eb) return 0;
+    if(!ea) return 1;              /* sem prazo informado vai pro fim */
+    if(!eb) return -1;
+    return ea.quando.getTime() - eb.quando.getTime();
+  });
+}
+function propIrParaAba(aba){
+  propAbaAtual = aba;
+  renderOrcamentosLicitacao();
+  const topo = document.getElementById('proposta-licitacao-content');
+  if(topo) topo.scrollIntoView({ behavior:'smooth', block:'start' });
+}
+
 const ORC_LIC_SITUACAO = {
   proposta: { t:'Montando',   cor:'var(--ink-soft)',   fundo:'#F2F5F7' },
   enviada:  { t:'Aguardando', cor:'var(--warning)',    fundo:'var(--warning-soft)' },
@@ -14413,15 +14478,40 @@ function renderOrcamentosLicitacao(){
       </div>`;
     })()}
 
+    <div class="orc-abas">
+      ${PROP_ABAS.map(a=>{
+        const n = propDaAba(lista, a.id).length;
+        return `<button type="button" class="orc-aba ${propAbaAtual===a.id?'on':''}"
+          onclick="propIrParaAba('${a.id}')">${escapeHtml(a.rotulo)}<span class="n">${n}</span></button>`;
+      }).join('')}
+    </div>
+
+    ${(()=>{
+      const daAba = propDaAba(lista, propAbaAtual);
+      if(daAba.length) return '';
+      const vazio = {
+        enviar:   'Nada esperando pra sair. Quando você montar uma proposta em <b>Licitações</b>, ela aparece aqui com a data de envio.',
+        enviadas: 'Nenhuma proposta aguardando resultado agora.',
+        ganhamos: 'Ainda não ganhamos nenhuma. Marque o resultado na linha, em <b>Todos</b>.',
+        perdemos: 'Nada aqui — e tomara que demore.',
+        todos:    'Nenhuma proposta de licitação por aqui ainda.'
+      }[propAbaAtual] || '';
+      return `<div style="text-align:center;color:var(--ink-faint);padding:26px 16px;">
+        <div style="font-size:26px;margin-bottom:6px;">⚖️</div>
+        <div class="help-text" style="margin:0;">${vazio}</div></div>`;
+    })()}
+
+    ${propDaAba(lista, propAbaAtual).length === 0 ? '' : `
     <div class="table-wrap">
       <table class="data-table">
         <thead><tr>
-          <th>Nº</th><th>Data</th><th>Órgão / escola</th><th>Tipo</th>
-          <th>Vendedor</th><th style="text-align:right;">Valor</th>
-          <th>Situação</th><th>Resultado</th><th></th>
+          <th>Nº</th><th>Data</th><th>Órgão / escola</th>
+          ${propAbaAtual==='enviar'?'':'<th>Tipo</th><th>Vendedor</th>'}
+          <th style="text-align:right;">Valor</th>
+          ${propAbaAtual==='enviar'?'<th>Enviar até</th>':'<th>Situação</th><th>Resultado</th>'}<th></th>
         </tr></thead>
         <tbody>
-          ${lista.map(o=>{
+          ${propDaAba(lista, propAbaAtual).map(o=>{
             const l = licDoOrcamento(o);
             const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
             const etapa = l ? l.etapa : 'proposta';
@@ -14436,10 +14526,10 @@ function renderOrcamentosLicitacao(){
               <td>${fmtDate(o.data)}</td>
               <td>${escapeHtml(cliente ? cliente.nome : (l && l.orgao) || '—')}
                 ${l && l.numero?`<div style="font-size:11px;color:var(--ink-faint);">nº ${escapeHtml(l.numero)}</div>`:''}</td>
-              <td><span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10.5px;">${escapeHtml(tipo)}</span></td>
-              <td>${escapeHtml(o.vendedor||'—')}</td>
+              ${propAbaAtual==='enviar' ? '' : `<td><span class="badge" style="background:#EDF2F5;color:#1B4B5A;font-size:10.5px;">${escapeHtml(tipo)}</span></td>
+              <td>${escapeHtml(o.vendedor||'—')}</td>`}
               <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(valor)}</td>
-              <td><span class="badge" style="background:${sit.fundo};color:${sit.cor};">${sit.t}</span>
+              ${propAbaAtual==='enviar' ? '' : `<td><span class="badge" style="background:${sit.fundo};color:${sit.cor};">${sit.t}</span>
                 ${resParcial?`<div style="font-size:11px;color:var(--positive);margin-top:2px;">${resParcial.qtdGanhos} de ${resParcial.qtdTotal} itens</div>`:''}
                 ${virouVenda?'<div style="font-size:11px;color:var(--positive);">✅ virou venda</div>':''}
                 ${l && etapa==='enviada' ? (()=>{
@@ -14448,20 +14538,33 @@ function renderOrcamentosLicitacao(){
                   return licPrecisaCobrar(l)
                     ? `<div style="font-size:11px;color:var(--warning);font-weight:600;margin-top:2px;">⏰ ${dias} dias — cobre o resultado</div>`
                     : `<div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">${dias===0?'desde hoje':`há ${dias} dia${dias===1?'':'s'}`}</div>`;
-                })() : ''}</td>
-              <td>${resParcial
+                })() : ''}</td>`}
+              ${propAbaAtual==='enviar' ? (()=>{
+                const e = l ? licDataDeEnvio(l) : null;
+                if(!e) return '<td><span style="color:var(--ink-faint);font-size:12px;">sem prazo informado</span></td>';
+                const cor = e.passou ? 'var(--negative)' : (e.faltam<=1 ? 'var(--warning)' : 'var(--ink)');
+                return `<td style="white-space:nowrap;">
+                  <span style="font-size:12.5px;font-weight:600;color:${cor};">${escapeHtml(e.quando.toLocaleDateString('pt-BR'))}</span>
+                  <div style="font-size:11px;color:${cor};">${e.passou?`passou há ${Math.abs(e.faltam)} dia${Math.abs(e.faltam)===1?'':'s'}`
+                    : e.hoje?'é hoje' : e.faltam===1?'é amanhã' : `faltam ${e.faltam} dias`}</div>
+                  <div style="font-size:10.5px;color:var(--ink-faint);">encerra ${escapeHtml(e.encerra.toLocaleDateString('pt-BR'))}</div>
+                  ${((l.leitura||{}).emailProposta)?`<div style="font-size:10.5px;color:var(--ink-faint);">${escapeHtml(l.leitura.emailProposta)}</div>`:''}
+                </td>`;
+              })() : ''}
+              ${propAbaAtual==='enviar' ? '' : `<td>${resParcial
                     ? `<span style="font-size:12px;color:var(--positive);font-weight:600;">ganho: ${fmtMoney(resParcial.valorGanho)}</span>
                        <div style="font-size:11px;color:var(--ink-faint);">perdido: ${fmtMoney(resParcial.valorPerdido)}</div>`
                     : decidida && l && l.valorResultado
                     ? `<span style="font-size:12px;">${etapa==='perdeu'?'vencedor: ':'homologado: '}${fmtMoney(l.valorResultado)}</span>`
-                    : '<span style="color:var(--ink-faint);font-size:12px;">—</span>'}</td>
+                    : '<span style="color:var(--ink-faint);font-size:12px;">—</span>'}</td>`}
               <td style="text-align:right;white-space:nowrap;">
                 ${l && etapa==='enviada' ? `
                   <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
                   <button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Ganhamos alguns itens e perdemos outros — marque item por item">🏆 Em parte</button>
                   <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>` : ''}
                 ${l && etapa==='ganhou_parcial' ? `<button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Mudar quais itens ganhamos">✎ Corrigir</button>` : ''}
-                ${l && etapa==='proposta' ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','proposta')">Abrir proposta</button>` : ''}
+                ${l && etapa==='proposta' ? `<button class="btn btn-sm btn-primary" onclick="licMarcarEnviada('${l.id}')" title="Sai de Falta enviar e vai pra Enviadas">✈ Já enviei</button>
+                  <button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','proposta')">Abrir proposta</button>` : ''}
                 ${l && decidida ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','compra')">Ver</button>` : ''}
                 ${l ? `<button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Custo x venda, item por item">📊 Análise</button>` : ''}
                 ${!l ? `<span style="font-size:11.5px;color:var(--ink-faint);">licitação removida</span>` : ''}
@@ -14471,10 +14574,11 @@ function renderOrcamentosLicitacao(){
           }).join('')}
         </tbody>
       </table>
-    </div>
+    </div>`}
     <div class="help-text" style="margin-top:8px;">
-      Estes não aparecem na lista de baixo de propósito — eles se resolvem com ganhou ou perdeu,
-      não com aprovado ou entregue. Marcando que ganhou, o sistema oferece lançar a venda.
+      ${propAbaAtual==='enviar'
+        ? 'A data de envio é um dia antes do encerramento, como vocês sempre fazem — e quando esse dia cai no fim de semana, o sistema puxa pra sexta. Marcando <b>Já enviei</b>, a proposta vai pra aba Enviadas e o lembrete se dá por cumprido.'
+        : 'Estas não aparecem em Orçamentos de propósito — elas se resolvem com ganhou ou perdeu, não com aprovado ou entregue. Marcando que ganhou, o sistema oferece lançar a venda.'}
     </div>`;
 }
 
@@ -29204,6 +29308,101 @@ function licPrazoInfo(l){
   const dias = Math.round(horas/24);
   return { texto:`faltam ${dias} dia${dias===1?'':'s'}`, classe: dias<=2?'urg':'', encerrada:false, quando:d };
 }
+/* =========================================================
+   ATÉ QUE DIA MANDAR A PROPOSTA
+
+   "sempre enviamos um dia antes do encerramento do limite."
+
+   Então a data de envio não é o prazo do edital — é um dia antes dele.
+   E um dia antes que cai no sábado ou no domingo não serve: ninguém
+   abre e-mail de proposta no fim de semana, e se ela deixar pra
+   segunda já é o dia do encerramento. Nesses dois casos o sistema
+   puxa pra sexta, que é o último dia útil em que alguém lê.
+   ========================================================= */
+function licDataDeEnvio(l){
+  const iso = l && (l.dataEncerramentoProposta || l.dataAbertura);
+  if(!iso) return null;
+  const fim = new Date(iso);
+  if(isNaN(fim.getTime())) return null;
+
+  const dia = new Date(fim.getFullYear(), fim.getMonth(), fim.getDate());
+  dia.setDate(dia.getDate() - 1);
+  let puxou = '';
+  if(dia.getDay() === 6){ dia.setDate(dia.getDate() - 1); puxou = 'sábado'; }       /* sáb → sex */
+  else if(dia.getDay() === 0){ dia.setDate(dia.getDate() - 2); puxou = 'domingo'; } /* dom → sex */
+
+  const zera = d => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const faltam = Math.round((zera(dia) - zera(new Date())) / 86400000);
+  return {
+    quando: dia,
+    iso: `${dia.getFullYear()}-${String(dia.getMonth()+1).padStart(2,'0')}-${String(dia.getDate()).padStart(2,'0')}`,
+    encerra: fim,
+    faltam,
+    hoje: faltam === 0,
+    passou: faltam < 0,
+    puxou
+  };
+}
+
+/* O aviso em uma linha, pra caber em tabela e em cartão. */
+function licTextoDoEnvio(l){
+  const e = licDataDeEnvio(l);
+  if(!e) return '';
+  const data = e.quando.toLocaleDateString('pt-BR');
+  if(e.passou) return `era pra ter enviado em ${data}`;
+  if(e.hoje) return `enviar HOJE (${data})`;
+  if(e.faltam === 1) return `enviar amanhã (${data})`;
+  return `enviar até ${data} — faltam ${e.faltam} dias`;
+}
+function licClasseDoEnvio(l){
+  const e = licDataDeEnvio(l);
+  if(!e) return '';
+  if(e.passou) return 'negative';
+  if(e.faltam <= 1) return 'warning';
+  return '';
+}
+
+/* O lembrete de enviar. Um por dispensa: se já existe, atualiza em vez
+   de empilhar outro — senão mudar a data do edital deixava dois
+   lembretes contradizendo um ao outro na tela de Lembretes. */
+function licLembreteDeEnvio(l){
+  if(!l) return null;
+  const e = licDataDeEnvio(l);
+  if(!e) return null;
+  if(!Array.isArray(STATE.lembretes)) STATE.lembretes = [];
+
+  const email = ((l.leitura||{}).emailProposta || '').trim();
+  const quem = l.orgao || 'órgão';
+  const texto = `Enviar a proposta — ${quem}`
+    + (l.numero ? ` (nº ${l.numero})` : '')
+    + (email ? ` para ${email}` : '')
+    + ` · encerra ${e.encerra.toLocaleDateString('pt-BR')}`;
+
+  let lem = STATE.lembretes.find(x=>x && x.licitacaoId === l.id && !x.concluido);
+  if(lem){
+    lem.texto = texto;
+    lem.dataLembrete = e.iso;
+  }else{
+    lem = { id: uid('lemb'), texto, dataLembrete: e.iso, concluido:false, concluidoEm:'',
+            criadoEm: new Date().toISOString(), licitacaoId: l.id };
+    STATE.lembretes.push(lem);
+  }
+  return lem;
+}
+
+/* Enviou, ganhou, perdeu ou desistiu: o lembrete cumpriu o papel e sai
+   da lista de pendentes sozinho. Lembrete que fica piscando depois de
+   feito é o jeito mais rápido de ensinar alguém a ignorar lembrete. */
+function licFecharLembreteDeEnvio(l){
+  if(!l || !Array.isArray(STATE.lembretes)) return;
+  STATE.lembretes.forEach(x=>{
+    if(x && x.licitacaoId === l.id && !x.concluido){
+      x.concluido = true;
+      x.concluidoEm = new Date().toISOString();
+    }
+  });
+}
+
 function licDataHora(d){
   if(!d) return '—';
   return d.toLocaleDateString('pt-BR') + ', ' + d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
@@ -31020,6 +31219,20 @@ function licParaOndeVai(l){
   return { email, meio, portal, fonte };
 }
 
+/* Até que dia mandar, em faixa, pra quem está olhando a proposta. */
+function licFaixaQuandoEnviar(l){
+  const q = licDataDeEnvio(l);
+  if(!q) return '';
+  const urgente = q.passou || q.faltam <= 1;
+  return `<div class="lic-doc ${urgente?'aviso':''}" style="display:block;margin-bottom:12px;">
+    <b>📨 Enviar até ${escapeHtml(q.quando.toLocaleDateString('pt-BR'))}${q.passou?' — essa data já passou'
+      : q.hoje?' — é HOJE' : q.faltam===1?' — é amanhã' : ` — faltam ${q.faltam} dias`}</b>
+    <small>Um dia antes do encerramento (${escapeHtml(q.encerra.toLocaleDateString('pt-BR'))}), como vocês sempre
+      fazem${q.puxou?` — o dia anterior caía num ${escapeHtml(q.puxou)}, então puxei pra sexta`:''}.
+      Está em <b>Lembretes</b> com essa data.</small>
+  </div>`;
+}
+
 function licFaixaEnvio(l){
   if(l.semEdital) return '';
   const e = licParaOndeVai(l);
@@ -31504,7 +31717,24 @@ function licNovaCotacao(){
         </select></div>
 
       <div class="field"><label>Quem está pedindo <span style="color:var(--negative);">*</span></label>
-        <input type="text" id="cot-orgao" placeholder="ex: Colégio Estadual Professora Liodosia"></div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-start;">
+          <select id="cot-cliente" style="flex:2 1 220px;min-width:180px;">
+            <option value="">— escolha o cliente —</option>
+            ${(STATE.clientes||[]).slice()
+              .sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'))
+              .map(c=>`<option value="${escapeAttr(c.id)}">${escapeHtml(c.nome||'')}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-sm" id="cot-btn-novo-cliente" style="flex-shrink:0;white-space:nowrap;">+ Novo</button>
+        </div>
+        <div class="help-text" style="margin-top:4px;">
+          Digite qualquer parte do nome, o CNPJ ou a cidade.
+          <a href="javascript:void(0)" id="cot-link-avulso" style="color:var(--primary);">Não está cadastrado? Digitar o nome mesmo assim</a>
+        </div>
+        <input type="text" id="cot-orgao" placeholder="ex: Colégio Estadual Professora Liodosia"
+          style="display:none;margin-top:6px;"></div>
+
+      <div class="field"><label>E-mail pra onde mandar a proposta</label>
+        <input type="email" id="cot-email" placeholder="ex: compras@escola.go.gov.br"></div>
 
       <div class="field"><label>O que eles querem <span style="color:var(--negative);">*</span></label>
         <textarea id="cot-objeto" style="width:100%;height:70px;padding:9px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13px;" placeholder="ex: material de limpeza e higiene para o 1º semestre"></textarea></div>
@@ -31523,6 +31753,8 @@ function licNovaCotacao(){
           <input type="time" id="cot-hora" value="17:00"></div>
       </div>
 
+      <div class="lic-doc" style="display:block;" id="cot-aviso-envio"></div>
+
       <div class="field"><label>Valor estimado <span style="font-weight:400;color:var(--ink-faint);">(se eles disserem)</span></label>
         <input type="number" step="0.01" id="cot-valor" placeholder="0,00"></div>
 
@@ -31540,20 +31772,84 @@ function licNovaCotacao(){
     </div>`;
   document.body.appendChild(m);
 
+  /* a busca por nome, CNPJ ou cidade é a mesma dos outros campos de
+     cliente do sistema — aqui só avisamos o vigia que nasceu mais um */
+  CAMPOS_DE_CLIENTE['cot-cliente'] = 'Digite o nome, o CNPJ ou a cidade...';
+  try{ ligarSugestaoCliente('cot-cliente', CAMPOS_DE_CLIENTE['cot-cliente']); }catch(e){ console.warn(e); }
+
+  const v = (id)=>{ const e=m.querySelector('#'+id); return e ? String(e.value||'').trim() : ''; };
+
+  /* Cliente novo sem sair daqui: cadastra, entra na lista e já fica
+     escolhido. É o "adicionar rápido o cliente" que ela pediu. */
+  m.querySelector('#cot-btn-novo-cliente').onclick = ()=>{
+    abrirFormCliente(null, (novo)=>{
+      const sel = m.querySelector('#cot-cliente');
+      if(!sel || !novo) return;
+      const op = document.createElement('option');
+      op.value = novo.id; op.textContent = novo.nome || '';
+      sel.appendChild(op);
+      sel.value = novo.id;
+      const sug = m.querySelector('#cot-cliente-sug');
+      if(sug) sug.value = novo.nome || '';
+      const avulso = m.querySelector('#cot-orgao');
+      if(avulso){ avulso.style.display = 'none'; avulso.value = ''; }
+      if(novo.email && !v('cot-email')){
+        const e = m.querySelector('#cot-email'); if(e) e.value = novo.email;
+      }
+    });
+  };
+
+  /* Escola de Instagram muitas vezes não é cliente de ninguém ainda.
+     O nome avulso continua valendo — só não vem na frente. */
+  m.querySelector('#cot-link-avulso').onclick = ()=>{
+    const avulso = m.querySelector('#cot-orgao');
+    if(!avulso) return;
+    avulso.style.display = '';
+    avulso.focus();
+  };
+
+  /* O aviso de quando mandar se arruma sozinho enquanto ela mexe na
+     data — assim ela vê a regra funcionando antes de salvar. */
+  const pintarEnvio = ()=>{
+    const caixa = m.querySelector('#cot-aviso-envio');
+    if(!caixa) return;
+    const data = v('cot-data');
+    if(!data){ caixa.style.display = 'none'; return; }
+    const e = licDataDeEnvio({ dataEncerramentoProposta: data + 'T' + (v('cot-hora')||'17:00') + ':00' });
+    if(!e){ caixa.style.display = 'none'; return; }
+    caixa.style.display = 'block';
+    caixa.className = 'lic-doc' + (e.passou || e.faltam<=1 ? ' aviso' : '');
+    const email = v('cot-email');
+    caixa.innerHTML = `<b>📨 Enviar a proposta até ${escapeHtml(e.quando.toLocaleDateString('pt-BR'))}</b>
+      <small>Um dia antes do encerramento, como vocês sempre fazem${e.puxou?` — o dia anterior caía num ${escapeHtml(e.puxou)}, então puxei pra sexta`:''}.
+      ${e.passou ? 'Essa data já passou.' : (e.hoje ? 'É hoje.' : `Faltam ${e.faltam} dia${e.faltam===1?'':'s'}.`)}
+      ${email ? `Vai pro e-mail ${escapeHtml(email)}.` : 'Preencha o e-mail acima pra ele entrar no lembrete.'}
+      Eu crio o lembrete em <b>Lembretes</b> com essa data.</small>`;
+  };
+  ['cot-data','cot-hora','cot-email'].forEach(id=>{
+    const el = m.querySelector('#'+id);
+    if(el){ el.addEventListener('change', pintarEnvio); el.addEventListener('input', pintarEnvio); }
+  });
+  pintarEnvio();
+
   m.querySelector('#cot-ok').onclick = ()=>{
-    const v = (id)=>{ const e=m.querySelector('#'+id); return e ? String(e.value||'').trim() : ''; };
-    const orgao = v('cot-orgao'), objeto = v('cot-objeto'), data = v('cot-data');
-    if(!orgao){ showToast('Diga quem está pedindo.','error'); return; }
+    const clienteId = v('cot-cliente');
+    const cliente = clienteId ? (STATE.clientes||[]).find(c=>c.id===clienteId) : null;
+    const orgao = cliente ? (cliente.nome||'') : v('cot-orgao');
+    const objeto = v('cot-objeto'), data = v('cot-data');
+    if(!orgao){ showToast('Escolha o cliente, ou digite quem está pedindo.','error'); return; }
     if(!objeto){ showToast('Escreva o que eles querem.','error'); return; }
     if(!data){ showToast('Informe quando encerra.','error'); return; }
 
     const hora = v('cot-hora') || '17:00';
     const encerra = new Date(data + 'T' + hora + ':00');
     const link = v('cot-link');
+    const email = v('cot-email');
 
     const l = {
       id: uid('lic'),
       orgao, objeto,
+      clienteId: clienteId || null,
       unidade: '',
       numero: v('cot-numero'),
       status: 'Potencial',
@@ -31577,8 +31873,16 @@ function licNovaCotacao(){
     l.propostaCampos.modalidade = l.modalidadeNome;
     l.propostaCampos.numero = l.numero;
     l.propostaCampos.objeto = objeto;
-    licRegistrar(l, 'Cotação criada à mão, sem edital.');
+    if(email){ l.leitura.emailProposta = email; l.leitura.meioEnvio = 'email'; }
+    if(cliente && cliente.cidade && !l.municipioNome) l.municipioNome = cliente.cidade;
+    licRegistrar(l, 'Cotação criada à mão, sem edital.'
+      + (cliente ? ` Cliente: ${cliente.nome}.` : '')
+      + (email ? ` Proposta vai para ${email}.` : ''));
     STATE.licitacoes.push(l);
+
+    /* O lembrete nasce junto: um dia antes do encerramento. */
+    const lem = licLembreteDeEnvio(l);
+    if(lem) licRegistrar(l, `Lembrete criado: enviar a proposta em ${new Date(lem.dataLembrete+'T12:00:00').toLocaleDateString('pt-BR')}.`);
     licNovoItem(l.id, true);          // já abre com uma linha pra digitar
     l.itens[0].teto = 0;
     l.itens[0].descricao = '';
@@ -31586,7 +31890,9 @@ function licNovaCotacao(){
     saveState();
     m.remove();
     licAbrir(l.id, 'precificar');
-    showToast('Cotação criada. Agora adicione os itens.','success');
+    const e = licDataDeEnvio(l);
+    showToast('Cotação criada. Agora adicione os itens.'
+      + (e ? ` Lembrete de enviar em ${e.quando.toLocaleDateString('pt-BR')}.` : ''),'success');
   };
 }
 
@@ -32766,7 +33072,7 @@ function licCartaoProposta(l){
           ${licAvisoCobrar(l, true)}
         </div>
         ${licLinksHtml(l)}
-        ${l.etapa==='proposta' ? licFaixaEnvio(l) : ''}
+        ${l.etapa==='proposta' ? licFaixaQuandoEnviar(l) + licFaixaEnvio(l) : ''}
         ${licAvisoCobrar(l, false)}
       </div>
       <div class="dir">
@@ -32827,6 +33133,7 @@ function licDesistir(id){
       l.etapa = 'desistiu';
       l.status = 'Perdemos';
       l.dataResultado = todayISO();
+      licFecharLembreteDeEnvio(l);
       licRegistrar(l, 'Desistimos — não vamos participar.');
       saveState(); licAberta=null; licTela=null; licAba='perdidas';
       renderPortalLicitacoes();
@@ -32978,6 +33285,7 @@ function licResultado(id, resultado){
     l.etapa = resultado;
     l.status = resultado==='ganhou' ? 'Ganhamos' : 'Perdemos';
     l.dataResultado = todayISO();
+    licFecharLembreteDeEnvio(l);
 
     let somaItens = 0, comPreco = 0;
     if(perdeu){
@@ -33204,6 +33512,7 @@ function licResultadoParcial(l){
     l.status = 'Ganhamos em parte';
     l.ganhouParcial = true;
     l.dataResultado = todayISO();
+    licFecharLembreteDeEnvio(l);
     l.valorResultado = vGanho;
     l.valorPerdidoParcial = vPerdido;
     l.resultadoObs = m.querySelector('#lic-par-obs').value.trim();
@@ -36793,9 +37102,14 @@ function licGerarProposta(id){
     licRegistrar(l, `Orçamento nº ${orc.numero} gerado a partir da licitação.`);
   }
   l.dataProposta = todayISO();
+  /* A proposta existe: a partir de agora o que importa é a data de
+     mandar. O lembrete nasce aqui, igual ao da cotação sem edital. */
+  const lemb = licLembreteDeEnvio(l);
+  const env = licDataDeEnvio(l);
   saveState();
   renderPortalLicitacoes();
-  showToast(`Orçamento nº ${orc.numero} pronto — abrindo o PDF.`,'success');
+  showToast(`Orçamento nº ${orc.numero} pronto — abrindo o PDF.`
+    + (lemb && env ? ` Enviar até ${env.quando.toLocaleDateString('pt-BR')}.` : ''),'success');
   setTimeout(()=>{ try{ gerarPdfOrcamento(orc.id); }catch(e){ console.error(e); } }, 150);
 }
 
@@ -36850,10 +37164,12 @@ function licMarcarEnviada(id){
   l.dataEnvio = new Date().toISOString();
   const orc = (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId);
   if(orc) orc.status = 'enviado';
+  licFecharLembreteDeEnvio(l);
   licRegistrar(l, 'Proposta enviada ao órgão.');
   saveState(); licAberta=null; licTela=null; licAba='enviadas';
   renderPortalLicitacoes();
-  showToast('Marcada como enviada — saiu de "Prontas pra enviar" e foi pra "Enviadas".','success');
+  try{ if(typeof renderOrcamentosLicitacao === 'function') renderOrcamentosLicitacao(); }catch(e){}
+  showToast('Marcada como enviada — saiu de "Falta enviar" e foi pra "Enviadas".','success');
 }
 
 /* ---------------------------------------------------------
@@ -49765,7 +50081,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '03/11/2026 23:30';
+const SISTEMA_VERSAO = '04/11/2026 01:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
