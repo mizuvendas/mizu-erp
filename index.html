@@ -845,18 +845,28 @@ table.data-table{ width:100%; font-size:13px; }
 /* Fora de um .field o input nao recebia largura e nascia pequeno — foi o
    que aconteceu ao levar o combobox pra barra do balcao. */
 .combo-wrap input[type="text"]{ width:100%; }
+/* A lista de sugestões não cabe na largura do campo: nome de produto de
+   licitação tem seis palavras e quebrava em cinco linhas, cada opção
+   virando um parágrafo. Pedido dela: "as sugestões está pequena e pode
+   cobrir o restante da tela, não tem problema, não precisa ficar
+   sobreposta". Então ela passa a ser mais larga que o campo e mais alta,
+   com cada opção numa linha só. O ajuste de borda (quando a lista
+   estouraria pra fora da tela) vive no JS, logo abaixo. */
 .combo-dropdown{
-  display:none; position:absolute; top:calc(100% + 2px); left:0; right:0; z-index:50;
+  display:none; position:absolute; top:calc(100% + 2px); left:0; right:auto; z-index:50;
+  min-width:min(520px, 92vw); max-width:min(680px, 94vw); width:max-content;
   background:#fff; border:1px solid var(--border); border-radius:var(--radius-sm);
-  box-shadow:0 6px 20px rgba(18,35,43,0.12); max-height:260px; overflow-y:auto;
+  box-shadow:0 10px 28px rgba(18,35,43,0.18); max-height:min(460px, 60vh); overflow-y:auto;
 }
 .combo-dropdown.open{ display:block; }
+.combo-dropdown.combo-pra-esquerda{ left:auto; right:0; }
 .combo-option{
-  padding:8px 11px; font-size:13px; cursor:pointer; border-bottom:1px solid #F0F1F3;
+  padding:9px 12px; font-size:13.5px; cursor:pointer; border-bottom:1px solid #F0F1F3;
+  line-height:1.35;
 }
 .combo-option:last-child{ border-bottom:none; }
 .combo-option:hover, .combo-option.combo-active{ background:var(--primary-soft); }
-.combo-option .combo-sub{ font-size:11px; color:var(--ink-faint); }
+.combo-option .combo-sub{ font-size:11.5px; color:var(--ink-faint); margin-top:1px; }
 /* preço de venda miudinho embaixo de cada produto da busca */
 .combo-option .combo-preco{ font-size:11.5px; color:var(--primary-escuro); margin-top:2px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
 .combo-option .combo-preco strong{ font-size:12.5px; font-variant-numeric:tabular-nums; }
@@ -5339,6 +5349,52 @@ function iniciarBuscaDeClientes(){
 }
 if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciarBuscaDeClientes);
 else iniciarBuscaDeClientes();
+
+/* =========================================================
+   A LISTA DE SUGESTÕES CABE NA TELA
+
+   A lista agora é mais larga que o campo de propósito — é o que faz cada
+   produto caber numa linha em vez de virar um parágrafo de cinco. Mas
+   campo perto da borda direita faria a lista sair da tela (ou ser cortada
+   pela gaveta, que tem rolagem). Então, quando ela abre, o sistema mede:
+   se não cabe abrindo pra direita, abre pra esquerda.
+   ========================================================= */
+function comboAjustarBorda(dd){
+  if(!dd || !dd.classList.contains('open')) return;
+  dd.classList.remove('combo-pra-esquerda');
+  try{
+    const r = dd.getBoundingClientRect();
+    const limite = (dd.closest('.orc-gaveta') || document.documentElement).getBoundingClientRect().right;
+    if(r.right > limite - 8){
+      dd.classList.add('combo-pra-esquerda');
+      /* se virar pra esquerda também estourar, volta e deixa como estava:
+         lista cortada na direita incomoda menos que lista fora da tela */
+      const r2 = dd.getBoundingClientRect();
+      if(r2.left < 4) dd.classList.remove('combo-pra-esquerda');
+    }
+  }catch(e){ /* layout indisponível: deixa o CSS resolver */ }
+}
+let __comboAgendado = null;
+function comboAgendarAjuste(){
+  if(__comboAgendado) return;
+  __comboAgendado = setTimeout(()=>{
+    __comboAgendado = null;
+    document.querySelectorAll('.combo-dropdown.open').forEach(comboAjustarBorda);
+  }, 20);
+}
+function comboIniciarAjuste(){
+  try{
+    new MutationObserver(muts=>{
+      for(const mu of muts){
+        const el = mu.target;
+        if(el && el.classList && el.classList.contains('combo-dropdown')){ comboAgendarAjuste(); return; }
+      }
+    }).observe(document.body, { attributes:true, attributeFilter:['class'], subtree:true });
+  }catch(e){ console.warn(e); }
+  window.addEventListener('resize', comboAgendarAjuste);
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', comboIniciarAjuste);
+else comboIniciarAjuste();
 
 /* =========================================================
    X DE FECHAR EM TODA JANELA
@@ -50134,7 +50190,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 02:20';
+const SISTEMA_VERSAO = '04/11/2026 03:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
