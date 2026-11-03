@@ -38613,6 +38613,12 @@ const NFE_TOKEN_KEY = 'mizu_nfe_token';
 // depender de já estarem na pasta. { [chave]: xml }
 const NFE_XML_EM_MEMORIA = {};
 
+/* Quantos números seguidos o sistema tenta quando a Receita responde 539
+   ("esse número já existe aqui"). Ela pediu que ele resolva sozinho, sem
+   perguntar — mas não pode ser infinito: se a numeração daqui estiver
+   MUITO atrás da de lá, vale parar e avisar em vez de varrer o talão. */
+const NFE_MAX_TENTATIVAS_539 = 30;
+
 /* Os dois modelos de nota que a Mizu emite. */
 const NFE_MODELO = { NFE: 55, NFCE: 65 };
 const NFE_MODELO_NOME = { 55: 'NF-e', 65: 'NFC-e' };
@@ -40426,17 +40432,31 @@ async function nfeEmitir(origem, modelo, opcoes){
       if(String(r.codigoStatus) === '539'){
         const usado = num.proximo;
         STATE.config[num.campoProximo] = usado + 1;
+        /* Fica registrado na trilha de auditoria, não na tela: ela pediu
+           pra não ser interrompida, mas o número pulado precisa existir
+           em algum lugar — se um dia o contador perguntar "e a nota 7?",
+           a resposta está lá. */
+        try{ registrarAuditoria('nota_fiscal',
+          `${nomeModelo} nº ${usado} (série ${num.serie}) pulada: a Receita respondeu 539 — esse número já existe lá, com outra chave`,
+          null); }catch(e){}
         saveState();
-        confirmAction(
-          'Esse número já foi usado na Receita',
-          `A Receita respondeu que a ${nomeModelo} nº ${usado} da série ${num.serie} já existe, `
-          + `emitida com outra chave de acesso. Isso quer dizer que a numeração daqui estava atrás da dela.\n\n`
-          + `Já adiantei o contador para o nº ${usado + 1}. Quer tentar de novo com esse número?\n\n`
-          + `Se der 539 de novo, é só repetir — cada tentativa avança um número, até achar um livre. `
-          + `Nada é cobrado nem emitido enquanto a Receita recusa.`,
-          ()=>{ nfeEmitir(origem, modelo, opcoes); },
-          'Tentar com o nº ' + (usado + 1));
-        return null;
+
+        const tentativa = (opcoes.tentativas || 0) + 1;
+        if(tentativa > NFE_MAX_TENTATIVAS_539){
+          showToast(`Tentei ${NFE_MAX_TENTATIVAS_539} números seguidos e a Receita recusou todos com o código 539. `
+            + `A numeração daqui está muito atrás da dela — confira o último número emitido no portal da Receita `
+            + `e ajuste em Configurar Nota Fiscal.`, 'error');
+          return null;
+        }
+        /* A venda já foi fechada na primeira tentativa: repetir o
+           antesDeEnviar fecharia de novo e baixaria o estoque duas
+           vezes. */
+        const seguir = Object.assign({}, opcoes, {
+          semConfirmacao: true,
+          tentativas: tentativa,
+          antesDeEnviar: null
+        });
+        return await nfeEmitir(origem, modelo, seguir);
       }
       showToast(`A Receita rejeitou a nota (código ${r.codigoStatus}): ${r.mensagem}`, 'error');
       return null;
@@ -49223,7 +49243,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '03/11/2026 17:05';
+const SISTEMA_VERSAO = '03/11/2026 17:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
