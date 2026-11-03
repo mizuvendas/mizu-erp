@@ -14309,6 +14309,7 @@ const ORC_LIC_SITUACAO = {
   proposta: { t:'Montando',   cor:'var(--ink-soft)',   fundo:'#F2F5F7' },
   enviada:  { t:'Aguardando', cor:'var(--warning)',    fundo:'var(--warning-soft)' },
   ganhou:   { t:'🏆 Ganhamos', cor:'var(--positive)',  fundo:'var(--positive-soft)' },
+  ganhou_parcial: { t:'🏆 Em parte', cor:'var(--positive)', fundo:'var(--positive-soft)' },
   entregue: { t:'🏆 Entregue', cor:'var(--positive)',  fundo:'var(--positive-soft)' },
   perdeu:   { t:'Perdemos',   cor:'var(--negative)',   fundo:'var(--negative-soft)' }
 };
@@ -14359,9 +14360,19 @@ function renderOrcamentosLicitacao(){
     porSituacao[e] = (porSituacao[e]||0) + 1;
   });
   const aguardando = porSituacao.enviada || 0;
-  const ganhas = (porSituacao.ganhou||0) + (porSituacao.entregue||0);
+  const parciais = porSituacao.ganhou_parcial || 0;
+  const ganhas = (porSituacao.ganhou||0) + (porSituacao.entregue||0) + parciais;
   const perdidas = porSituacao.perdeu || 0;
   const decididas = ganhas + perdidas;
+
+  /* Em ganho parcial o que ganhamos é só parte da proposta — somar o
+     valor cheio inflaria o número. Soma o que de fato ficou. */
+  const valorGanho = lista.reduce((s,o)=>{
+    const l = licDoOrcamento(o); if(!l) return s;
+    if(l.etapa === 'ganhou_parcial') return s + licSomaItens(licItensGanhos(l));
+    if(l.etapa === 'ganhou' || l.etapa === 'entregue') return s + calcularVenda(o).bruto;
+    return s;
+  }, 0);
 
   box.innerHTML = `
     <div class="kpi-row" style="margin-bottom:12px;">
@@ -14370,7 +14381,7 @@ function renderOrcamentosLicitacao(){
         <div class="kpi-sub">enviadas, sem retorno</div></div>
       <div class="kpi-card"><div class="kpi-label">Ganhamos</div>
         <div class="kpi-value positive">${ganhas}</div>
-        <div class="kpi-sub">${decididas?`${((ganhas/decididas)*100).toFixed(0)}% das decididas`:''}</div></div>
+        <div class="kpi-sub">${parciais?`${parciais} em parte`:''}${parciais && decididas?' · ':''}${decididas?`${((ganhas/decididas)*100).toFixed(0)}% das decididas`:''}</div></div>
       <div class="kpi-card"><div class="kpi-label">Perdemos</div>
         <div class="kpi-value ${perdidas?'negative':''}">${perdidas}</div>
         <div class="kpi-sub">${perdidas?'o preço do vencedor fica guardado':''}</div></div>
@@ -14379,6 +14390,9 @@ function renderOrcamentosLicitacao(){
           const l=licDoOrcamento(o); return l && l.etapa==='enviada';
         }).reduce((s,o)=>s+calcularVenda(o).bruto,0))}</div>
         <div class="kpi-sub">em disputa agora</div></div>
+      <div class="kpi-card"><div class="kpi-label">Valor ganho</div>
+        <div class="kpi-value positive" style="font-size:19px;">${fmtMoney(valorGanho)}</div>
+        <div class="kpi-sub">${parciais?'contando só os itens ganhos nas parciais':'o que fechou'}</div></div>
     </div>
 
     ${(()=>{
@@ -14406,7 +14420,8 @@ function renderOrcamentosLicitacao(){
             const sit = ORC_LIC_SITUACAO[etapa] || ORC_LIC_SITUACAO.proposta;
             const tipo = (o.publico && o.publico.modalidade) || (l && l.modalidadeNome) || '—';
             const valor = calcularVenda(o).bruto;
-            const decidida = etapa==='ganhou' || etapa==='perdeu' || etapa==='entregue';
+            const decidida = etapa==='ganhou' || etapa==='perdeu' || etapa==='entregue' || etapa==='ganhou_parcial';
+            const resParcial = l ? licResumoParcial(l) : null;
             const virouVenda = o.status==='convertido' || !!o.vendaGeradaId;
             return `<tr>
               <td>#${o.numero}</td>
@@ -14417,6 +14432,7 @@ function renderOrcamentosLicitacao(){
               <td>${escapeHtml(o.vendedor||'—')}</td>
               <td style="text-align:right;font-family:var(--font-num);">${fmtMoney(valor)}</td>
               <td><span class="badge" style="background:${sit.fundo};color:${sit.cor};">${sit.t}</span>
+                ${resParcial?`<div style="font-size:11px;color:var(--positive);margin-top:2px;">${resParcial.qtdGanhos} de ${resParcial.qtdTotal} itens</div>`:''}
                 ${virouVenda?'<div style="font-size:11px;color:var(--positive);">✅ virou venda</div>':''}
                 ${l && etapa==='enviada' ? (()=>{
                   const dias = licDiasEsperando(l);
@@ -14425,13 +14441,18 @@ function renderOrcamentosLicitacao(){
                     ? `<div style="font-size:11px;color:var(--warning);font-weight:600;margin-top:2px;">⏰ ${dias} dias — cobre o resultado</div>`
                     : `<div style="font-size:11px;color:var(--ink-faint);margin-top:2px;">${dias===0?'desde hoje':`há ${dias} dia${dias===1?'':'s'}`}</div>`;
                 })() : ''}</td>
-              <td>${decidida && l && l.valorResultado
+              <td>${resParcial
+                    ? `<span style="font-size:12px;color:var(--positive);font-weight:600;">ganho: ${fmtMoney(resParcial.valorGanho)}</span>
+                       <div style="font-size:11px;color:var(--ink-faint);">perdido: ${fmtMoney(resParcial.valorPerdido)}</div>`
+                    : decidida && l && l.valorResultado
                     ? `<span style="font-size:12px;">${etapa==='perdeu'?'vencedor: ':'homologado: '}${fmtMoney(l.valorResultado)}</span>`
                     : '<span style="color:var(--ink-faint);font-size:12px;">—</span>'}</td>
               <td style="text-align:right;white-space:nowrap;">
                 ${l && etapa==='enviada' ? `
                   <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+                  <button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Ganhamos alguns itens e perdemos outros — marque item por item">🏆 Em parte</button>
                   <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>` : ''}
+                ${l && etapa==='ganhou_parcial' ? `<button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Mudar quais itens ganhamos">✎ Corrigir</button>` : ''}
                 ${l && etapa==='proposta' ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','proposta')">Abrir proposta</button>` : ''}
                 ${l && decidida ? `<button class="btn btn-sm" onclick="licAbrirDoOrcamento('${l.id}','compra')">Ver</button>` : ''}
                 ${l ? `<button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Custo x venda, item por item">📊 Análise</button>` : ''}
@@ -28489,6 +28510,7 @@ const LIC_ETAPAS = {
   proposta:     { aba:'propostas',    n:3, rotulo:'Montando a proposta' },
   enviada:      { aba:'enviadas',     n:4, rotulo:'Enviada — aguardando retorno' },
   ganhou:       { aba:'enviadas',     n:4, rotulo:'Ganhamos' },
+  ganhou_parcial:{ aba:'enviadas',    n:4, rotulo:'Ganhamos em parte' },
   perdeu:       { aba:'perdidas',    n:3, rotulo:'Perdemos' },
   entregue:     { aba:'enviadas',     n:4, rotulo:'Entregue' },
   desistiu:     { aba:'perdidas',    n:3, rotulo:'Desistimos' }
@@ -29240,7 +29262,8 @@ function licHistoricoProdutos(){
         vencedorUnit: (it.vencedor && it.vencedor.precoUnit) || null,
         vencedorTotal: (it.vencedor && it.vencedor.total) || null,
         vencedorQuem: (it.vencedor && it.vencedor.empresa) || '',
-        resultado: l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
+        resultado: licEhParcial(l) ? (it.ganhamos === false ? 'perdeu' : 'ganhou')
+                 : l.etapa==='ganhou'||l.etapa==='entregue' ? 'ganhou'
                  : l.etapa==='perdeu' ? 'perdeu'
                  : l.etapa==='desistiu' ? 'desistiu'
                  : l.etapa==='enviada' ? 'enviado' : 'pendente'
@@ -29370,7 +29393,7 @@ function licContagemAbas(){
     analise:       licPorEtapa(['analise']).length,
     precificacao:  licPorEtapa(['precificacao']).length,
     propostas:     licPorEtapa(['proposta']).length,
-    enviadas:      licPorEtapa(['enviada','ganhou','entregue']).length,
+    enviadas:      licPorEtapa(['enviada','ganhou','ganhou_parcial','entregue']).length,
     perdidas:      licPorEtapa(['perdeu','desistiu']).length,
     produtos:      licHistoricoProdutos().length
   };
@@ -32340,13 +32363,23 @@ function licPainelPerdidas(){
       if(nosso > 0 && venc > 0) comparaveis.push(((nosso/venc)-1)*100);
     });
   });
+  /* O item perdido dentro de um ganho parcial ensina o mesmo que o de uma
+     dispensa perdida inteira — então entra na mesma média. */
+  licPorEtapa(['ganhou_parcial','entregue']).forEach(l=>{
+    if(!licEhParcial(l)) return;
+    licItensPerdidos(l).forEach(it=>{
+      const nosso = licPrecoUnit(it);
+      const venc = licNumDireto((it.vencedor||{}).precoUnit);
+      if(nosso > 0 && venc > 0) comparaveis.push(((nosso/venc)-1)*100);
+    });
+  });
   const mediaAcima = comparaveis.length
     ? comparaveis.reduce((a,b)=>a+b,0)/comparaveis.length : null;
 
   const semPreco = perdidas.filter(l=>!(l.itens||[]).some(it=>licNumDireto((it.vencedor||{}).precoUnit)>0));
   const valorPerdido = perdidas.reduce((s,l)=>s+licTotalLicitacao(l).venda, 0);
 
-  const ganhas = licPorEtapa(['ganhou','entregue']).length;
+  const ganhas = licPorEtapa(['ganhou','ganhou_parcial','entregue']).length;
   const decididas = ganhas + perdidas.length;
 
   return `
@@ -32492,10 +32525,11 @@ function licPainelPropostas(){
 }
 
 function licPainelEnviadas(){
-  const lista = licPorEtapa(['enviada','ganhou','entregue']);
+  const lista = licPorEtapa(['enviada','ganhou','ganhou_parcial','entregue']);
   const grupos = [
     { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
-    { etapas:['ganhou','entregue'], titulo:'Ganhamos' }
+    { etapas:['ganhou','entregue'], titulo:'Ganhamos' },
+    { etapas:['ganhou_parcial'], titulo:'Ganhamos em parte' }
   ];
   const cobrar = lista.filter(licPrecisaCobrar).length;
   return `
@@ -32600,6 +32634,9 @@ function licCartaoProposta(l){
         <div class="lic-tags">
           <span class="lic-tag">${(LIC_ETAPAS[l.etapa]||{}).rotulo||l.etapa}</span>
           <span class="lic-tag">${l.itens.length} item${l.itens.length===1?'':'ns'}</span>
+          ${(()=>{ const r = licResumoParcial(l); return r
+            ? `<span class="lic-tag" style="background:var(--positive-soft);color:var(--positive);font-weight:600;">ganhamos ${r.qtdGanhos} de ${r.qtdTotal} — ${fmtMoney(r.valorGanho)}</span>`
+            : ''; })()}
           ${l.dataEnvio?`<span class="lic-tag">Enviada ${fmtDate(String(l.dataEnvio).slice(0,10))}</span>`:''}
           ${licAvisoCobrar(l, true)}
         </div>
@@ -32618,13 +32655,15 @@ function licCartaoProposta(l){
             <button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','precificacao')">‹ Voltar</button>
             <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
         ${l.etapa==='enviada' ? `<button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+            <button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Ganhamos alguns itens e perdemos outros — marque item por item">🏆 Em parte</button>
             <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>
             <button class="btn btn-sm" onclick="licAbrir('${l.id}','proposta')">Ver proposta</button>
             <button class="btn btn-sm" onclick="licDesistir('${l.id}')">✕ Desistir</button>` : ''}
         <button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')" title="Custo x venda, item por item">📊 Análise</button>
         ${l.etapa==='desistiu' ? `<button class="btn btn-sm" onclick="licVoltarEtapa('${l.id}','proposta')">↩ Voltar a participar</button>
             <button class="btn btn-sm" onclick="licApagarDeVez('${l.id}')">🗑 Apagar de vez</button>` : ''}
-        ${(l.etapa==='ganhou'||l.etapa==='entregue') ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
+        ${licEtapaEhGanha(l.etapa) ? `<button class="btn btn-sm btn-primary" onclick="licAbrir('${l.id}','compra')">🛒 O que comprar →</button>
+            ${l.etapa==='ganhou_parcial' ? `<button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou_parcial')" title="Mudar quais itens ganhamos">✎ Corrigir o que ganhamos</button>` : ''}
             ${licNotaPendente(l)>0?`<div style="font-size:11.5px;color:var(--negative);text-align:right;">falta dado da nota em ${licNotaPendente(l)} ite${licNotaPendente(l)===1?'m':'ns'}</div>`:''}` : ''}
         ${l.etapa==='perdeu' ? `<button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>
             <button class="btn btn-sm" onclick="licResultado('${l.id}','perdeu')" title="Anotar por quanto o vencedor fechou cada item">✎ Preço do vencedor</button>` : ''}
@@ -32697,10 +32736,57 @@ function licApagarDeVez(id){
     });
 }
 
+/* =========================================================
+   GANHAMOS EM PARTE
+
+   Pedido dela: "aqui é quando ganharmos parcial precisa de ter um jeito
+   de colocar como ganhamos parcial". Em dispensa por item isso é a
+   regra, não a exceção: ganha-se o item 1 e o 4, perde-se o 2 e o 3.
+
+   Marcando item por item o sistema faz três coisas sozinho: soma o que
+   ganhou e o que perdeu, guarda o preço do vencedor dos itens perdidos
+   (que é o que ensina o preço da próxima) e leva pra venda SÓ os itens
+   ganhos — a proposta inteira fica guardada do lado, pra consulta.
+   ========================================================= */
+function licItensGanhos(l){
+  return (l && Array.isArray(l.itens)) ? l.itens.filter(it=>it.ganhamos === true) : [];
+}
+function licItensPerdidos(l){
+  return (l && Array.isArray(l.itens)) ? l.itens.filter(it=>it.ganhamos === false) : [];
+}
+function licSomaItens(itens){
+  return (itens||[]).reduce((s,it)=>s + licPrecoTotal(it), 0);
+}
+/* Resumo do ganho parcial, pronto pra mostrar em qualquer lugar. */
+function licResumoParcial(l){
+  if(!l) return null;
+  /* a marca fica mesmo depois de entregue — "ganhamos 3 de 7" é fato do
+     resultado, não da etapa */
+  if(l.etapa !== 'ganhou_parcial' && !(l.ganhouParcial && l.etapa === 'entregue')) return null;
+  const ganhos = licItensGanhos(l), perdidos = licItensPerdidos(l);
+  return {
+    qtdGanhos: ganhos.length,
+    qtdPerdidos: perdidos.length,
+    qtdTotal: (l.itens||[]).length,
+    valorGanho: +licSomaItens(ganhos).toFixed(2),
+    valorPerdido: +licSomaItens(perdidos).toFixed(2)
+  };
+}
+function licEtapaEhGanha(etapa){
+  return etapa==='ganhou' || etapa==='ganhou_parcial' || etapa==='entregue';
+}
+/* Ganhou em parte continua sendo "em parte" depois de entregue. */
+function licEhParcial(l){
+  if(!l) return false;
+  return l.etapa === 'ganhou_parcial' || (l.ganhouParcial === true && l.etapa === 'entregue');
+}
+
 function licResultado(id, resultado){
   const l = licAchar(id); if(!l) return;
   const perdeu = resultado === 'perdeu';
+  const parcial = resultado === 'ganhou_parcial';
   const itens = l.itens || [];
+  if(parcial) return licResultadoParcial(l);
 
   /* Perder sem anotar por quanto o vencedor fechou é perder duas vezes:
      da segunda, ela não sabe de quanto precisa baixar. E "o vencedor
@@ -32815,6 +32901,218 @@ function licResultado(id, resultado){
         ? (comPreco ? `Anotado. O preço do vencedor de ${comPreco} ite${comPreco===1?'m fica':'ns fica'} no histórico do produto.`
                     : 'Marcada como perdida — fica no histórico do produto.')
         : 'Marcada como ganha.','success');
+    }
+  };
+}
+
+/* ---------------------------------------------------------
+   A tela do ganho parcial: a lista dos itens com uma marca
+   em cada um. Ela marca o que ganhou; o resto o sistema faz.
+   --------------------------------------------------------- */
+function licResultadoParcial(l){
+  const itens = l.itens || [];
+  if(itens.length === 0){
+    showToast('Esta dispensa não tem item nenhum para marcar. Use 🏆 Ganhamos ou Perdemos.','error');
+    return;
+  }
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(900px,96vw);max-height:92vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">🏆 Ganhamos em parte</h3>
+      <p class="help-text">Marque os itens que <b>ganhamos</b>. O que ficar desmarcado conta como
+        perdido — e ali você anota por quanto o vencedor fechou, que é o preço que volta sozinho
+        na próxima vez que o produto aparecer. Só os itens marcados vão para a venda.</p>
+
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0 6px;">
+        <button type="button" class="btn btn-sm" id="lic-par-todos">Marcar todos</button>
+        <button type="button" class="btn btn-sm" id="lic-par-nenhum">Desmarcar todos</button>
+        <span class="help-text" style="margin:0;">${itens.length} ite${itens.length===1?'m':'ns'} na proposta</span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:78px;">Ganhamos?</th>
+            <th>Item</th><th class="num">Qtd</th>
+            <th class="num">Nosso un.</th><th class="num">Nosso total</th>
+            <th class="num">Vencedor un.</th>
+            <th>Quem ganhou / marca</th>
+          </tr></thead>
+          <tbody>
+            ${itens.map((it,i)=>{
+              const nosso = licPrecoUnit(it);
+              const qtd = Math.max(1, licNumDireto(it.qtd)||1);
+              const v = it.vencedor || {};
+              const marcado = it.ganhamos === true;
+              return `<tr data-parcial-linha="${it.id}">
+                <td style="text-align:center;">
+                  <input type="checkbox" data-parcial-ganhou="${it.id}" ${marcado?'checked':''}
+                    style="width:18px;height:18px;cursor:pointer;"></td>
+                <td>${String(i+1).padStart(2,'0')} — ${escapeHtml((it.descricaoProposta||it.descricao||'').slice(0,46))}
+                  ${it.marca?`<div style="font-size:11px;color:var(--ink-faint);">${escapeHtml(it.marca)}</div>`:''}</td>
+                <td class="num">${qtd} ${escapeHtml(it.unidade||'UND')}</td>
+                <td class="num" style="font-family:var(--font-num);">${nosso>0?fmtMoney(nosso):'—'}</td>
+                <td class="num" style="font-family:var(--font-num);">${fmtMoney(licPrecoTotal(it))}</td>
+                <td class="num" style="width:130px;">
+                  ${licCampoMoeda('parVencUnit_'+it.id, v.precoUnit)}</td>
+                <td style="width:200px;">
+                  <input type="text" data-parcial-quem="${it.id}" value="${escapeAttr(v.empresa||'')}"
+                    placeholder="empresa ou marca"
+                    style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:12.5px;"></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="help-text" style="margin-top:6px;">O preço do vencedor só vale para os itens
+        desmarcados. Deixe em branco o que você não souber — nada aqui é obrigatório.</div>
+
+      <div class="kpi-row" id="lic-par-resumo" style="margin:14px 0 4px;"></div>
+
+      <div class="field"><label>Observação</label>
+        <input type="text" id="lic-par-obs" value="${escapeAttr(l.resultadoObs||'')}"
+          placeholder="ex: ganhamos os itens 1 e 4; nos outros ficamos acima"></div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="lic-par-ok">Confirmar o resultado</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  const lerMarcados = ()=> itens.filter(it=>{
+    const c = m.querySelector(`[data-parcial-ganhou="${it.id}"]`);
+    return c && c.checked;
+  });
+
+  const pintar = ()=>{
+    const ganhos = lerMarcados();
+    const idsGanhos = new Set(ganhos.map(it=>it.id));
+    const perdidos = itens.filter(it=>!idsGanhos.has(it.id));
+    const vGanho = licSomaItens(ganhos), vPerdido = licSomaItens(perdidos);
+    const total = vGanho + vPerdido;
+
+    /* a linha perdida fica apagada, e os campos do vencedor só acendem nela */
+    itens.forEach(it=>{
+      const tr = m.querySelector(`[data-parcial-linha="${it.id}"]`);
+      if(!tr) return;
+      const ganhou = idsGanhos.has(it.id);
+      tr.style.opacity = ganhou ? '1' : '.72';
+      tr.style.background = ganhou ? 'var(--positive-soft)' : '';
+      const unit = tr.querySelector(`[data-campo="parVencUnit_${it.id}"]`);
+      const quem = tr.querySelector(`[data-parcial-quem="${it.id}"]`);
+      [unit, quem].forEach(el=>{ if(el){ el.disabled = ganhou; el.style.opacity = ganhou ? '.45' : '1'; } });
+    });
+
+    const resumo = m.querySelector('#lic-par-resumo');
+    if(resumo) resumo.innerHTML = `
+      <div class="kpi-card"><div class="kpi-label">Ganhamos</div>
+        <div class="kpi-value positive">${ganhos.length}</div>
+        <div class="kpi-sub">de ${itens.length} ite${itens.length===1?'m':'ns'}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Valor ganho</div>
+        <div class="kpi-value positive" style="font-size:19px;">${fmtMoney(vGanho)}</div>
+        <div class="kpi-sub">${total>0?`${((vGanho/total)*100).toFixed(0)}% da proposta`:''}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Perdemos</div>
+        <div class="kpi-value ${perdidos.length?'negative':''}">${perdidos.length}</div>
+        <div class="kpi-sub">${perdidos.length?'anote o preço do vencedor':'nenhum item perdido'}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Valor que não veio</div>
+        <div class="kpi-value" style="font-size:19px;">${fmtMoney(vPerdido)}</div>
+        <div class="kpi-sub">fica no histórico do produto</div></div>`;
+
+    const ok = m.querySelector('#lic-par-ok');
+    if(ok){
+      ok.disabled = false;
+      ok.textContent = ganhos.length === 0 ? 'Confirmar — perdemos tudo'
+        : ganhos.length === itens.length ? 'Confirmar — ganhamos tudo'
+        : `Confirmar — ganhamos ${ganhos.length} de ${itens.length}`;
+    }
+  };
+
+  m.querySelectorAll('[data-parcial-ganhou]').forEach(c=>{ c.onchange = pintar; });
+  m.querySelector('#lic-par-todos').onclick = ()=>{
+    m.querySelectorAll('[data-parcial-ganhou]').forEach(c=>{ c.checked = true; }); pintar(); };
+  m.querySelector('#lic-par-nenhum').onclick = ()=>{
+    m.querySelectorAll('[data-parcial-ganhou]').forEach(c=>{ c.checked = false; }); pintar(); };
+  pintar();
+
+  m.querySelector('#lic-par-ok').onclick = ()=>{
+    const ganhos = lerMarcados();
+    const idsGanhos = new Set(ganhos.map(it=>it.id));
+    const perdidos = itens.filter(it=>!idsGanhos.has(it.id));
+
+    /* Marcou tudo, ou nada? Então não é parcial — o sistema usa o caminho
+       inteiro, que já existe e já faz a coisa certa. */
+    if(ganhos.length === itens.length){
+      itens.forEach(it=>{ delete it.ganhamos; });
+      m.remove(); licResultado(l.id, 'ganhou'); return;
+    }
+    if(ganhos.length === 0){
+      itens.forEach(it=>{ delete it.ganhamos; });
+      m.remove(); licResultado(l.id, 'perdeu'); return;
+    }
+
+    let comPreco = 0;
+    itens.forEach(it=>{
+      const ganhou = idsGanhos.has(it.id);
+      it.ganhamos = ganhou;
+      if(ganhou){ delete it.vencedor; return; }
+      const campo = m.querySelector(`[data-campo="parVencUnit_${it.id}"]`);
+      const quem = m.querySelector(`[data-parcial-quem="${it.id}"]`);
+      const unit = campo ? licNumDireto(campo.value) : 0;
+      const empresa = quem ? quem.value.trim() : '';
+      if(unit > 0 || empresa){
+        const qtd = Math.max(1, licNumDireto(it.qtd)||1);
+        it.vencedor = { precoUnit: unit || null, total: unit>0 ? +(unit*qtd).toFixed(2) : null,
+                        empresa: empresa || '', quando: todayISO() };
+        if(unit > 0) comPreco++;
+      }else{
+        delete it.vencedor;
+      }
+    });
+
+    const vGanho = +licSomaItens(ganhos).toFixed(2);
+    const vPerdido = +licSomaItens(perdidos).toFixed(2);
+
+    l.etapa = 'ganhou_parcial';
+    l.status = 'Ganhamos em parte';
+    l.ganhouParcial = true;
+    l.dataResultado = todayISO();
+    l.valorResultado = vGanho;
+    l.valorPerdidoParcial = vPerdido;
+    l.resultadoObs = m.querySelector('#lic-par-obs').value.trim();
+
+    licRegistrar(l, `Ganhamos em parte — ${ganhos.length} de ${itens.length} itens, `
+      + `${fmtMoney(vGanho)} ganho e ${fmtMoney(vPerdido)} perdido`
+      + (comPreco?` · preço do vencedor em ${comPreco} ite${comPreco===1?'m':'ns'}`:'')
+      + (l.resultadoObs?` · ${l.resultadoObs}`:''));
+
+    /* O orçamento passa a ser só o que ganhamos. A proposta inteira fica
+       guardada em itensPropostaCompleta — é o que foi enviado ao órgão, e
+       ela precisa disso pra conferir depois. */
+    const orc = l.orcamentoId ? (STATE.orcamentos||[]).find(o=>o.id===l.orcamentoId) : null;
+    const jaVirouVenda = orc && (orc.status==='convertido' || !!orc.vendaGeradaId);
+    if(orc && !jaVirouVenda){
+      if(!Array.isArray(orc.itensPropostaCompleta)) orc.itensPropostaCompleta = orc.itens || [];
+      orc.itens = ganhos.map(licItemParaCarrinho);
+      orc.status = 'aprovado';
+      orc.ganhoParcial = { ganhos: ganhos.length, total: itens.length,
+                           valorGanho: vGanho, valorPerdido: vPerdido };
+    }
+
+    saveState(); m.remove(); renderPortalLicitacoes();
+    try{ if(typeof renderOrcamentosLicitacao === 'function') renderOrcamentosLicitacao(); }catch(e){}
+
+    if(orc && !jaVirouVenda){
+      confirmAction('Lançar a venda dos itens ganhos',
+        `Ganhamos ${ganhos.length} de ${itens.length} itens — ${fmtMoney(vGanho)}. `
+        + `O orçamento nº ${orc.numero} ficou só com esses itens; os outros ${perdidos.length} `
+        + `saíram dele e o preço do vencedor deles ficou guardado no histórico do produto. `
+        + `Quer lançar a venda agora?`,
+        ()=>{ converterOrcamentoEmVenda(orc.id); }, 'Lançar venda');
+    }else{
+      showToast(`Ganhamos ${ganhos.length} de ${itens.length} itens — ${fmtMoney(vGanho)}.`,'success');
     }
   };
 }
@@ -36226,6 +36524,7 @@ function licTelaProposta(l){
         <button class="btn" onclick="licBaixarPasta('${l.id}')">📦 Baixar a pasta (.zip)</button>
         ${l.etapa==='proposta'?`<button class="btn btn-primary" onclick="licMarcarEnviada('${l.id}')">✈ Marcar como enviada</button>`:''}
         ${l.etapa==='enviada'?`<button class="btn btn-primary" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+          <button class="btn" onclick="licResultado('${l.id}','ganhou_parcial')" title="Ganhamos alguns itens e perdemos outros">🏆 Em parte</button>
           <button class="btn" onclick="licResultado('${l.id}','perdeu')">Perdemos</button>`:''}
       </div>
       <div class="help-text" style="margin-top:8px;">Você assina digital, envia pelo e-mail ou pela plataforma, e marca aqui que enviou. A partir daí o sistema conta os dias aguardando o retorno.</div>
@@ -36266,6 +36565,7 @@ function licItemParaCarrinho(it){
   return {
     produtoId: null,
     licitacao: true,
+    licItemId: it.id || null,
     nome: it.descricaoProposta || it.descricao || '',
     marca: it.marca || '',
     fornecedor: it.contatoFornecedor || '',
@@ -36399,14 +36699,33 @@ function licMarcarEnviada(id){
    --------------------------------------------------------- */
 function licTelaCompra(l){
   const t = licTotalLicitacao(l);
-  const ganhou = l.etapa==='ganhou' || l.etapa==='entregue';
+  const ganhou = licEtapaEhGanha(l.etapa);
+  const parcial = licEhParcial(l);
+  /* Ganhando em parte, "o que comprar" é só o que ganhamos — comprar o
+     item perdido seria comprar o que ninguém vai pagar. Os perdidos vão
+     num quadro embaixo, com o preço do vencedor. */
+  const itensCompra = parcial ? licItensGanhos(l) : (l.itens || []);
+  const itensPerdidosAqui = parcial ? licItensPerdidos(l) : [];
+  const tp = itensCompra.reduce((a,it)=>{
+    const c = licCustoItem(it, l);
+    a.venda += licPrecoTotal(it); a.custo += c.total; return a;
+  }, {venda:0, custo:0});
+  const vendaCompra = parcial ? tp.venda : t.venda;
+  const lucroCompra = parcial ? (tp.venda - tp.custo) : t.lucro;
+  const margemCompra = vendaCompra > 0 ? (lucroCompra / vendaCompra * 100) : 0;
   return `
     ${licCabecalho(l, l.objeto||'', `${escapeHtml(l.orgao||'')} · ${fmtMoney(t.venda)}`,
       ganhou && l.etapa!=='entregue' ? `<button class="btn btn-primary" onclick="licMarcarEntregue('${l.id}')">✓ Marcar como entregue</button>` : '')}
 
     ${ganhou ? `
+    ${parcial ? `<div class="lic-res ok" style="margin-bottom:12px;">
+      <b>🏆 Ganhamos em parte:</b> ${itensCompra.length} de ${(l.itens||[]).length} itens —
+      <b>${fmtMoney(vendaCompra)}</b> ganho${itensPerdidosAqui.length?`, ${fmtMoney(licSomaItens(itensPerdidosAqui))} em ${itensPerdidosAqui.length} ite${itensPerdidosAqui.length===1?'m que ficou':'ns que ficaram'} com outro fornecedor`:''}.
+      <div style="margin-top:4px;font-size:12.5px;">Abaixo só os itens que ganhamos. Os outros estão no quadro do fim desta tela.</div>
+      ${l.resultadoObs?`<div style="margin-top:6px;font-size:12.5px;">“${escapeHtml(l.resultadoObs)}”</div>`:''}
+    </div>`:''}
     <div class="card">
-      <h3 style="margin-top:0;">O que comprar</h3>
+      <h3 style="margin-top:0;">O que comprar${parcial?' (só os itens ganhos)':''}</h3>
       <p class="help-text">Os fornecedores que você anotou na precificação.</p>
       <div class="table-wrap">
         <table class="data-table">
@@ -36414,7 +36733,7 @@ function licTelaCompra(l){
             <th style="text-align:right;">Custo previsto</th><th style="text-align:right;">Vendemos por</th>
             <th>Onde comprar</th></tr></thead>
           <tbody>
-            ${l.itens.map((it,i)=>{
+            ${itensCompra.map((it,i)=>{
               const c = licCustoItem(it);
               return `<tr>
                 <td>${String(i+1).padStart(2,'0')}. ${escapeHtml(it.descricaoProposta||it.descricao||'')}</td>
@@ -36430,10 +36749,45 @@ function licTelaCompra(l){
         </table>
       </div>
       <div class="lic-res ok" style="margin-top:12px;">
-        Lucro previsto nesta licitação: <b>${fmtMoney(t.lucro)}</b>${t.venda>0?` (${t.margem.toFixed(1)}%)`:''}.
-        ${l.valorResultado?` Homologado em ${fmtMoney(l.valorResultado)}.`:''}
+        Lucro previsto ${parcial?'nos itens que ganhamos':'nesta licitação'}: <b>${fmtMoney(lucroCompra)}</b>${vendaCompra>0?` (${margemCompra.toFixed(1)}%)`:''}.
+        ${l.valorResultado?` ${parcial?'Ganho de':'Homologado em'} ${fmtMoney(l.valorResultado)}.`:''}
       </div>
     </div>
+
+    ${itensPerdidosAqui.length ? `<div class="card">
+      <h3 style="margin-top:0;">Os itens que não ganhamos (${itensPerdidosAqui.length})</h3>
+      <p class="help-text">Estes saíram do orçamento e não entram na venda. O preço do vencedor
+        anotado aqui volta sozinho na próxima vez que o produto aparecer na precificação.</p>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Item</th><th class="num">Qtd</th><th class="num">Nosso un.</th>
+            <th class="num">Vencedor un.</th><th class="num">Diferença</th><th>Quem venceu</th><th></th></tr></thead>
+          <tbody>
+            ${itensPerdidosAqui.map((it,i)=>{
+              const v = it.vencedor || {};
+              const venc = licNumDireto(v.precoUnit);
+              const nosso = licPrecoUnit(it);
+              const dif = (venc>0 && nosso>0) ? ((nosso/venc)-1)*100 : null;
+              const chave = licChaveProduto(it.descricaoProposta||it.descricao, it.marca);
+              return `<tr>
+                <td>${String(i+1).padStart(2,'0')} — ${escapeHtml((it.descricaoProposta||it.descricao||'').slice(0,50))}</td>
+                <td class="num">${licNumDireto(it.qtd)||1} ${escapeHtml(it.unidade||'UND')}</td>
+                <td class="num" style="font-family:var(--font-num);">${nosso>0?fmtMoney(nosso):'—'}</td>
+                <td class="num" style="color:var(--negative);font-family:var(--font-num);">${venc>0?fmtMoney(venc):'—'}</td>
+                <td class="num" style="color:${dif!=null && dif>0?'var(--negative)':'var(--positive)'};">
+                  ${dif!=null?`${dif>0?'+':''}${dif.toFixed(1)}%`:'—'}</td>
+                <td>${escapeHtml(v.empresa||'—')}</td>
+                <td style="text-align:right;"><button class="btn btn-sm" onclick="licVerProdutoDaPrecificacao('${escapeAttr(chave)}')">Histórico</button></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','ganhou_parcial')">✎ Corrigir o que ganhamos / o preço do vencedor</button>
+      </div>
+    </div>`:''}
+
     ${licNotaHtml(l)}` : `
     <div class="card">
       <h3 style="margin-top:0;">O que aconteceu</h3>
@@ -36503,8 +36857,14 @@ function licPendenciasNota(it){
   return { bloqueia, completar, ok: bloqueia.length === 0 };
 }
 
+/* Ganhando em parte, a nota sai só dos itens ganhos — cobrar NCM de um
+   item que não vendemos é cobrar por nada. */
+function licItensDaNota(l){
+  if(licEhParcial(l)) return licItensGanhos(l);
+  return (l && l.itens) || [];
+}
 function licNotaPendente(l){
-  return (l.itens||[]).filter(it=>!licPendenciasNota(it).ok).length;
+  return licItensDaNota(l).filter(it=>!licPendenciasNota(it).ok).length;
 }
 
 /* A descrição da nota costuma precisar ser mais curta que a da
@@ -36556,7 +36916,7 @@ function licSugerirDadosNota(it){
 
 /* O bloco que aparece na tela de "ganhamos". */
 function licNotaHtml(l){
-  const itens = l.itens || [];
+  const itens = licItensDaNota(l);
   if(itens.length === 0) return '';
   const faltando = licNotaPendente(l);
 
@@ -49243,7 +49603,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '03/11/2026 17:40';
+const SISTEMA_VERSAO = '03/11/2026 21:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -50065,7 +50425,7 @@ async function nuvemBaixar(){
    fora é mais pobre, a daqui fica E sobe de novo — é ela que corrige
    a outra máquina, não o contrário.
    ========================================================= */
-const LIC_ORDEM_ETAPA = ['analise','precificacao','proposta','enviada','ganhou','entregue','perdeu','desistiu'];
+const LIC_ORDEM_ETAPA = ['analise','precificacao','proposta','enviada','ganhou_parcial','ganhou','entregue','perdeu','desistiu'];
 function licPassoDaEtapa(e){
   const i = LIC_ORDEM_ETAPA.indexOf(String(e || 'analise'));
   return i < 0 ? 0 : i;

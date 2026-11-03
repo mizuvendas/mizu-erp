@@ -1,1 +1,1 @@
-{"versao":"03/11/2026 17:40","notas":"O erro 539 da Receita (numero de nota ja usado na serie) passou a se resolver sozinho: o sistema avanca o numero e reenvia na hora, sem perguntar, ate a Receita aceitar. Cada numero pulado fica registrado na Trilha de Auditoria. Depois de 30 recusas seguidas ele para e avisa, em vez de varrer o talao."}
+{"versao":"03/11/2026 21:10"}
