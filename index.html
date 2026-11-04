@@ -34288,6 +34288,20 @@ AS TRÊS REGRAS QUE NÃO SE QUEBRAM
    característica que não bate me desclassifica a proposta inteira. Prefiro
    "não achei" a informação inventada.
 
+PRIMEIRO PERGUNTE: PRA QUEM ESTE EDITAL FOI ESCRITO?
+Antes de sair procurando, olhe o conjunto de exigências de cada item como
+um todo. Em dispensa, a lista quase sempre foi copiada da ficha técnica de
+UM produto específico, e reconhecer qual é vale mais que qualquer busca.
+O sinal é o número exato: "bateria mínima de 8.000 mAh" quando existe um
+aparelho de exatamente 8.000; "microSD de até 2 TB" quando o concorrente
+dele só vai até 1 TB; uma resolução esquisita que é a de um modelo só.
+Responda em "pareceEscritoPara": a marca, o modelo e o código, e QUAIS
+exigências te fizeram pensar nele. Se as exigências forem genéricas e não
+apontarem pra ninguém, escreva "generico" — isso também é resposta.
+Depois disso, procure esse produto PRIMEIRO, e procure os concorrentes
+dele. Não aceite "parecido": o item 7 pode dizer 1 TB onde o edital
+pede 2 TB, e isso sozinho desclassifica.
+
 A DISPENSA
 ${d.join('\n')}${listaArq}
 
@@ -34306,12 +34320,50 @@ COMO LER O EDITAL
 - Liste TODOS os e-mails do documento, cada um com a finalidade.
 - Habilitação: só o que ESTE edital exige, com a cláusula de onde saiu.
 
+ANTES DE PROCURAR: PRA QUEM ESTE EDITAL FOI ESCRITO?
+Esta é a primeira pergunta a responder em cada item, e vai no campo
+"pareceEscritoPara". Olhe o CONJUNTO das exigências e repare nos números
+exatos. Quando o edital pede "bateria mínima de 8.000 mAh", "resolução
+mínima 2304x1440" e "microSD de até 2 TB", esses não são requisitos
+genéricos: são a ficha técnica de UM aparelho, copiada. Diga qual é esse
+aparelho — marca, modelo e o código de fábrica se você souber — e
+aponte quais exigências te levaram até ele.
+Se as exigências forem mesmo genéricas e não descreverem nenhum produto
+em particular, responda "generico" e siga.
+Isso muda tudo o que vem depois: achado o aparelho de origem, ele é o
+primeiro candidato, e os outros são comparados contra ele.
+ATENÇÃO AO ERRO QUE JÁ ME CUSTOU CARO: um critério só, lido por cima,
+inverte a conclusão. Antes de escrever "atende", releia a lista de
+exigências de cima a baixo conferindo UM POR UM contra a ficha, inclusive
+os que parecem bobos (capacidade máxima do cartão de memória, versão do
+Bluetooth, padrão do carregador). Se você anotou um número na observação,
+compare esse número com o do edital antes de dar o veredicto.
+
 COMO PESQUISAR OS PRODUTOS
 - Busque pela ESPECIFICAÇÃO, não pelo nome genérico. Monte a busca com as
   exigências: material, medida, capacidade, voltagem, norma, numeração, cor.
   "sandália PVC solado antiderrapante numeração 38 ao 44", não "sandália".
 - Se o edital citar marca de referência ("tipo Havaianas"), procure essa E
   as equivalentes, e diga qual é qual em "observacao".
+- Se o edital NÃO citar marca nenhuma, olhe pelo menos TRÊS FABRICANTES
+  diferentes antes de concluir qualquer coisa. Concluir "não existe
+  produto que atenda" depois de olhar uma marca só é o erro que mais me
+  custa dinheiro: já perdi dispensa boa assim. Se de fato só um fabricante
+  atende, diga isso em "observacao" dizendo quais outros você olhou.
+- CONFIRA OS NÚMEROS UM A UM, não a impressão geral. O produto errado
+  costuma acertar 21 exigências de 22. Antes de escrever "atende", releia
+  cada veredicto que você mesmo escreveu e compare com a exigência: se em
+  "observacao" você anotou "até 1 TB" e a exigência pede 2 TB, isso é
+  NAO_ATENDE, por mais que o resto bata. "resultado": "atende" só com
+  todos os veredictos ATENDE — confira antes de escrever.
+- Se o edital NÃO citar marca nenhuma, não fique num fabricante só:
+  procure em pelo menos TRÊS fabricantes diferentes antes de concluir
+  qualquer coisa. Se só um atender, diga isso em "observacao" — "procurei
+  em A, B e C; só o A atende, por causa de X". Conclusão tirada de uma
+  marca só não me serve pra decidir se participo.
+- Dentro do mesmo fabricante, confira a LINHA INTEIRA e as gerações
+  vizinhas antes de descartar. Modelo novo costuma cumprir o que o
+  anterior não cumpria, e às vezes custa menos.
 - UM REGISTRO POR MODELO, nunca um por loja. O mesmo produto em cinco lojas
   é um modelo só: traga o MENOR preço e diga a loja em "fornecedor".
 - "marca" é o fabricante, "modelo" é o nome na embalagem. Nome de loja ou
@@ -34377,9 +34429,18 @@ Ponto como separador decimal. Não escreva "R$".
       "marcaReferencia": "",
       "aceitaEquivalente": "",
       "exigeAmostra": "",
+      "pareceEscritoPara": {
+        "produto": "marca, modelo e código — ou \"generico\"",
+        "porque": "quais exigências apontam pra ele, com os números",
+        "fabricantesQueOlhei": ["", "", ""]
+      },
       "exigencias": [
         "uma linha por característica exigida, na ordem"
       ],
+      "pareceEscritoPara": {
+        "produto": "marca, modelo e código de fábrica — ou \"generico\"",
+        "porque": "quais exigências, com os números, levaram até ele"
+      },
       "produtos": [
         {
           "marca": "", "modelo": "", "fabricante": "",
@@ -34452,6 +34513,15 @@ REGRAS DOS CAMPOS
 ANTES DE ENVIAR, CONFIRA
 - o número de itens bate com o do edital?
 - TODO item tem "exigencias" preenchida?
+- TODO item tem "pareceEscritoPara" respondido, com os fabricantes que
+  você olhou?
+- Algum produto tem veredicto cujo número que você anotou não bate com a
+  exigência? Releia um por um — é aí que o erro mora.
+- TODO item tem "pareceEscritoPara" respondido?
+- Você conferiu CADA exigência contra a ficha, uma por uma, antes de
+  escrever "atende"? Inclusive as miúdas — cartão de memória, Bluetooth,
+  carregador? Um critério lido por cima inverte a conclusão inteira.
+- Se o edital não cita marca, você procurou em três fabricantes?
 - TODO item tem pelo menos um produto em "produtos", ou uma explicação em
   "observacoes" de por que não achou?
 - TODO produto tem "tituloNaPagina" e "loja" preenchidos?
@@ -35048,6 +35118,12 @@ function licJuntarModelos(lista){
     if(!String(ganha.tituloNaPagina||'').trim() && perde.tituloNaPagina && ganha.link === perde.link)
       ganha.tituloNaPagina = perde.tituloNaPagina;
     if(!String(ganha.loja||'').trim() && perde.loja) ganha.loja = perde.loja;
+    /* o que ELA conferiu com os próprios olhos não se perde numa
+       releitura: vale mais que qualquer coisa que a IA mandou depois */
+    if(ganha.linkConferido === undefined && perde.linkConferido !== undefined){
+      ganha.linkConferido = perde.linkConferido;
+      ganha.conferidoEm = perde.conferidoEm;
+    }
     if((!ganha.veredictos || !ganha.veredictos.length) && perde.veredictos && perde.veredictos.length)
       ganha.veredictos = perde.veredictos;
     porChave.set(k, ganha);
@@ -35065,6 +35141,8 @@ function licJuntarModelos(lista){
       avisos.push('a IA não copiou o título da página — não dá pra saber se ela abriu o link ou adivinhou o endereço');
     if(licTituloNaoBate(m))
       avisos.push(`o link é de outro produto: a página se chama “${String(m.tituloNaPagina).slice(0,70)}”`);
+    if(m.linkConferido === 'quebrado')
+      avisos.push('link quebrado: você abriu e a página não existe, ou é outro produto');
     m.avisos = avisos;
   });
   return juntos;
@@ -35248,6 +35326,17 @@ function licAplicarRespostaIA(l, dado){
     it.aceitaEquivalente = licSimNao(ia.aceitaEquivalente);
     it.exigeAmostra = licSimNao(ia.exigeAmostra);
     it.observacoesEdital = ia.observacoes || '';
+    /* Pra quem o edital foi escrito. Em dispensa, essa costuma ser a
+       informação mais valiosa do item inteiro: bateria de exatamente
+       8.000 mAh e cartão de exatamente 2 TB não são requisitos, são a
+       ficha de um aparelho. */
+    const pe = ia.pareceEscritoPara;
+    if(pe){
+      const produto = (typeof pe === 'string') ? pe : (pe.produto || '');
+      const porque  = (typeof pe === 'string') ? '' : (pe.porque || '');
+      const generico = /^\s*gen[eé]rico\s*$/i.test(String(produto||'').trim());
+      it.escritoPara = generico ? null : { produto: String(produto||'').trim(), porque: String(porque||'').trim() };
+    }
   });
   l.itens.sort((a,b)=>(Number(a.numero)||99) - (Number(b.numero)||99));
 
@@ -35350,28 +35439,35 @@ function licTituloNaoBate(m){
     .normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9]+/g,' ').trim();
   const t = alvo(titulo);
   const marca = alvo(m.marca);
-  /* a marca tem que aparecer no título; é o teste que erra menos */
-  if(marca && marca.length >= 3 && !t.includes(marca)) return true;
-
   const palavrasDe = (s)=>alvo(s).split(' ').filter(Boolean);
   /* O que separa um modelo do outro quase nunca é a palavra: é o código.
      "Galaxy Tab" é igual no S9 e no S10 — o que muda é o "s9", o "x716b",
      o "500ml". Então o teste forte é esse: se o modelo declarado tem
      código, pelo menos um deles tem que estar no título da página.
-     Foi assim que passou um link do "Tab S10 FE" dizendo ser um "S9". */
-  const ehCodigo = p => /[a-z]/.test(p) && /[0-9]/.test(p);
+     Foi assim que passou um link do "Tab S10 FE" dizendo ser um "S9".
+
+     Medida não é código: "128gb", "500ml", "8000mah" dizem o tamanho, não
+     o modelo, e aparecem em anúncio de qualquer marca. Ficam de fora dos
+     dois lados, senão "Tablet Samsung 128GB" seria tratado como outro
+     produto. */
+  const ehMedida = p => /^[0-9]+(gb|tb|mb|kb|ml|l|mah|hz|w|v|cm|mm|m|pol|un|kg|g)$/.test(p);
+  const ehCodigo = p => /[a-z]/.test(p) && /[0-9]/.test(p) && !ehMedida(p);
   const codigos = palavrasDe(m.modelo).filter(ehCodigo);
   const codigosNoTitulo = palavrasDe(titulo).filter(ehCodigo);
   if(codigos.length && codigosNoTitulo.length){
-    if(!codigos.some(c=>codigosNoTitulo.includes(c))) return true;
+    /* os dois lados têm código: isso decide, e nada mais. O fabricante
+       costuma omitir a própria marca no título da página dele. */
+    return !codigos.some(c=>codigosNoTitulo.includes(c));
   }
-  /* Sem código nenhum dos dois lados, vale a palavra: pelo menos uma
-     palavra forte do modelo tem que aparecer. */
+
+  /* Sem código dos dois lados, vale o nome: a marca OU uma palavra forte
+     do modelo tem que aparecer. Exigir as duas acusaria à toa. */
   const genericas = new Set(['com','sem','para','de','da','do','e','ou','un','kit',
                              'gb','tb','ml','cm','mm','polegadas','pol','novo','original']);
   const palavras = palavrasDe(m.modelo).filter(p=>p.length>=3 && !genericas.has(p) && !ehCodigo(p));
-  if(palavras.length && !palavras.some(p=>t.includes(p))) return true;
-  return false;
+  const marcaBate = !marca || marca.length < 3 || t.includes(marca);
+  const palavraBate = !palavras.length || palavras.some(p=>t.includes(p));
+  return !(marcaBate || palavraBate);
 }
 
 function licContarOQueFaltou(l, dado, itensIA, modelos, ehContinuacao){
@@ -35528,6 +35624,20 @@ function licPendencias(l){
   LIC_CAMPOS_LEITURA.filter(c=>c.trava).forEach(c=>{
     if(!(l.leitura||{})[c.id]) faltam.push(c);
   });
+  /* Marca e modelo que ninguém conferiu contra o edital. É a pendência
+     mais cara da lista: uma exigência que não bate desclassifica a
+     proposta inteira, e a IA já errou uma. */
+  const porConferir = licItensPorConferir(l);
+  if(porConferir.length){
+    faltam.push({ id:'conferencia',
+      rotulo: `Conferir contra o edital: ${porConferir.length} ite${porConferir.length===1?'m':'ns'} com marca escolhida e sem conferência` });
+  }
+  const reprovados = ((l.itens)||[]).filter(it=>licPlacarConferencia(it).nao > 0);
+  if(reprovados.length){
+    faltam.push({ id:'reprovado',
+      rotulo: `${reprovados.length} ite${reprovados.length===1?'m':'ns'} com exigência NÃO cumprida pelo produto escolhido — isso desclassifica` });
+  }
+
   /* Escola tem cabeçalho próprio no orçamento. Faltando quem assina, o
      PDF sai com o rodapé vazio e a escola devolve. */
   const cli = l.clienteId ? (STATE.clientes||[]).find(c=>c.id===l.clienteId) : null;
@@ -35543,12 +35653,24 @@ function licPendencias(l){
 function licPendenciasHtml(l){
   const faltam = licPendencias(l);
   if(faltam.length===0) return '';
+  /* As do produto são de outra natureza: não se resolvem preenchendo um
+     campo do edital, e sim abrindo a ficha técnica. Então ganham o botão
+     que leva pro lugar certo. */
+  const doProduto = faltam.filter(c=>c.id==='conferencia' || c.id==='reprovado');
+  const porConferir = licItensPorConferir(l);
+  const primeiro = porConferir[0]
+    || ((l.itens)||[]).find(it=>licPlacarConferencia(it).nao > 0);
   return `<div class="lic-doc aviso" style="display:block;">
     <b>⚠️ Falta resolver ${faltam.length} coisa${faltam.length===1?'':'s'} antes de enviar a proposta</b>
     <div style="margin-top:5px;font-size:12.5px;">
       ${faltam.map(c=>escapeHtml(c.rotulo)).join(' · ')}
     </div>
-    <button class="btn btn-sm" style="margin-top:8px;" onclick="licEditarLeitura('${l.id}')">Preencher à mão</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      ${doProduto.length && primeiro
+        ? `<button class="btn btn-sm btn-primary" onclick="licAbrirConferencia('${l.id}',${Number(primeiro.numero)||1})">✅ Conferir o produto contra o edital</button>`
+        : ''}
+      <button class="btn btn-sm" onclick="licEditarLeitura('${l.id}')">Preencher à mão</button>
+    </div>
   </div>`;
 }
 
@@ -36365,6 +36487,51 @@ function licComparacaoHtml(l){
       </div>
     </div>`:''}
 
+    ${(()=>{
+      /* Pra quem o edital foi escrito. Em dispensa é quase sempre a
+         informação mais valiosa do item: quando os números são exatos,
+         o edital é a ficha de um aparelho, e saber qual é poupa a
+         pesquisa inteira — e evita ofertar o modelo errado. */
+      const ep = item && item.escritoPara;
+      if(!ep || !ep.produto) return '';
+      return `<div class="lic-achado" style="margin:0 0 10px;border-left:3px solid var(--warning);">
+        <b>🎯 Este item parece escrito para um produto específico: ${escapeHtml(ep.produto)}</b>
+        ${ep.porque?`<div class="hist">${escapeHtml(ep.porque)}</div>`:''}
+        <div class="hist" style="color:var(--ink-faint);">Confira este modelo primeiro. Se as exigências
+          batem com a ficha dele número a número, é ele que o órgão quer — e qualquer outro vai reprovar
+          em algum detalhe.</div>
+      </div>`;
+    })()}
+
+    ${(()=>{
+      /* A CONFERÊNCIA DOS NÚMEROS.
+
+         "A IA estava convicta e errada": ela conferiu 22 critérios um a
+         um, anotou "microSD até 1 TB" onde o edital pede 2 TB, e mesmo
+         assim escreveu ATENDE. Marca e modelo vão impressos na proposta
+         — então nenhum item passa daqui sem alguém ter visto os dois
+         números lado a lado. O veredicto da IA fica como sugestão. */
+      if(!licItemTemMarcaEscolhida(item)) return '';
+      if(!(item.exigencias||[]).length) return '';
+      const p = licPlacarConferencia(item);
+      const nome = `${item.marca||''} ${item.modelo||''}`.replace(/\s+/g,' ').trim();
+      if(p.nao > 0) return `<div class="lic-doc aviso" style="display:block;margin:0 0 10px;">
+        <b>⛔ ${escapeHtml(nome)}: ${p.nao} exigência${p.nao===1?'':'s'} que o edital pede e o produto não cumpre.</b>
+        <small>Ofertar assim desclassifica. Troque o modelo, ou reveja a conferência.</small>
+        <button class="btn btn-sm" style="margin-top:6px;" onclick="licAbrirConferencia('${l.id}',${Number(item.numero)||1})">Rever a conferência</button>
+      </div>`;
+      if(p.falta === 0) return `<div class="lic-doc ok" style="display:block;margin:0 0 10px;">
+        <b>✅ ${escapeHtml(nome)}: você conferiu as ${p.total} exigências e o produto cumpre todas.</b>
+        <button class="btn btn-sm" style="margin-top:6px;" onclick="licAbrirConferencia('${l.id}',${Number(item.numero)||1})">Rever</button>
+      </div>`;
+      return `<div class="lic-doc falta" style="display:block;margin:0 0 10px;">
+        <b>⚠️ ${escapeHtml(nome)} ainda não foi conferido contra o edital${p.vistos?` (${p.vistos} de ${p.total})`:''}.</b>
+        <small>Marca e modelo vão impressos na sua proposta. Abra a ficha técnica do fabricante e
+          marque exigência por exigência — foi num detalhe assim que a IA quase fez ofertar o aparelho errado.</small>
+        <button class="btn btn-sm btn-primary" style="margin-top:6px;" onclick="licAbrirConferencia('${l.id}',${Number(item.numero)||1})">✅ Conferir contra o edital</button>
+      </div>`;
+    })()}
+
     ${(()=>{ const h = licHistoricoDoItem(item); if(!h) return '';
       const u = h.ultimo;
       return `<div class="lic-achado" style="margin:0 0 10px;">
@@ -36400,6 +36567,7 @@ function licComparacaoHtml(l){
           <div style="text-align:right;">
             <div style="font-size:17px;font-weight:700;font-family:var(--font-num);">${m.preco>0?fmtMoney(m.preco):'sem preço'}</div>
             ${m.link && /^https?:/i.test(m.link)?`<a href="${escapeAttr(m.link)}" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary);">🔗 abrir anúncio</a>`:''}
+            ${licSeloDoLink(m)}
             ${(m.tambemEm||[]).length?`<div style="font-size:11.5px;color:var(--ink-faint);margin-top:3px;">também em ${(m.tambemEm||[]).map(o=>escapeHtml(o.loja)+(o.preco>0?' '+fmtMoney(o.preco):'')).join(' · ')}</div>`:''}
           </div>
         </div>
@@ -36427,9 +36595,13 @@ function licComparacaoHtml(l){
         </div>`:''}
 
         <div class="acoes-modelo">
+          ${m.link && /^https?:/i.test(m.link) && m.linkConferido !== true && m.linkConferido !== 'quebrado'
+            ? `<button class="btn btn-sm btn-primary" onclick="licConferirLink('${l.id}',${idx})"
+                 title="Abre o anúncio numa aba nova e pergunta se é esse produto mesmo">🔗 Abrir e conferir</button>`
+            : ''}
           <button class="btn btn-sm" onclick="licDetalharModelo('${l.id}',${idx})">ver exigência por exigência</button>
           ${m.resultado!=='reprova'
-            ? `<button class="btn btn-sm btn-primary" onclick="licUsarModelo('${l.id}',${idx})">Escolher este${licItemFoco < nums.length-1?' e ir pro próximo':''}</button>`
+            ? `<button class="btn btn-sm ${m.linkConferido===true?'btn-primary':''}" onclick="licUsarModelo('${l.id}',${idx})">Escolher este${licItemFoco < nums.length-1?' e ir pro próximo':''}</button>`
             : `<button class="btn btn-sm" onclick="licUsarModelo('${l.id}',${idx})" title="Reprova numa exigência — só use se você souber que a ficha está errada">usar mesmo assim</button>`}
         </div>
       </div>`;
@@ -36502,6 +36674,18 @@ jaVistos.length ? `JÁ PESQUISADOS — não repita estes:` : '',
 `monte a busca com material, medida, capacidade, norma, numeração, cor,`,
 `o que estiver nas exigências. Buscar só o nome devolve qualquer coisa,`,
 `e qualquer coisa me desclassifica.`,
+`Antes de procurar: olhe o CONJUNTO das exigências e me diga em`,
+`"pareceEscritoPara" se esses números são a ficha técnica de um produto`,
+`específico — qual marca, modelo e código. Número exato (bateria de`,
+`8.000 mAh, cartão de até 2 TB) é impressão digital de aparelho, não`,
+`requisito genérico. Achado ele, é o primeiro candidato.`,
+`Procure em pelo menos TRÊS fabricantes diferentes, e dentro de cada um`,
+`confira a linha inteira e as gerações vizinhas: o modelo novo costuma`,
+`cumprir o que o anterior não cumpria, às vezes por menos dinheiro.`,
+`CONFIRA UMA POR UMA, inclusive as exigências miúdas (capacidade máxima`,
+`do cartão, versão do Bluetooth, padrão do carregador). Se você anotou um`,
+`número na observação, compare ele com o do edital antes do veredicto —`,
+`um critério lido por cima inverte a conclusão inteira.`,
 ``,
 `Procure mais 5 produtos DIFERENTES destes, reais, à venda no Brasil`,
 `HOJE, com link e preço visível na página (nada de "a partir de", nada`,
@@ -36605,12 +36789,310 @@ function licCopiarPerguntasItem(id, numItem){
   licCopiarNaMao(txt);
 }
 
+/* =========================================================
+   CONFERIR OS NÚMEROS, UM POR UM
+
+   O caso que gerou isto: numa dispensa de tablets, a IA conferiu 22
+   exigências, anotou "MicroSD de até 1 TB" na observação do critério 7 —
+   e deu ATENDE nele, sem reparar que o edital pedia 2 TB. Escreveu
+   resultado "atende" e concluiu, convicta, que esse era o único modelo
+   possível. Era o modelo errado.
+
+   Contra IA que mente, basta pedir prova. Contra IA convicta e errada,
+   só existe um jeito: a pessoa ver os dois números lado a lado. Então o
+   veredicto dela vira sugestão, e o que vale é o que ELA marca aqui.
+
+   Não trava o trabalho: dá pra seguir sem conferir. Mas aí fica
+   registrado, e a pendência aparece na hora de gerar a proposta — que é
+   o último momento em que ainda dá pra consertar de graça.
+   ========================================================= */
+function licConferenciaDoItem(it){
+  if(!it || !it.conferencia || typeof it.conferencia !== 'object') return {};
+  return it.conferencia;
+}
+function licItemTemMarcaEscolhida(it){
+  return !!(it && (String(it.marca||'').trim() || String(it.modelo||'').trim()));
+}
+/* Quantas exigências ela já conferiu neste item, e quantas reprovaram. */
+function licPlacarConferencia(it){
+  const exig = (it && it.exigencias) || [];
+  const c = licConferenciaDoItem(it);
+  let ok = 0, nao = 0, vistos = 0;
+  exig.forEach((e,i)=>{
+    const v = c[String(i+1)];
+    if(!v) return;
+    vistos++;
+    if(v === 'nao') nao++; else if(v === 'ok') ok++;
+  });
+  return { total: exig.length, vistos, ok, nao, falta: exig.length - vistos };
+}
+function licItemConferido(it){
+  const p = licPlacarConferencia(it);
+  return p.total > 0 && p.falta === 0;
+}
+/* Itens que já têm marca escolhida mas ninguém conferiu contra o edital. */
+function licItensPorConferir(l){
+  return ((l && l.itens) || []).filter(it=>
+    licItemTemMarcaEscolhida(it) && (it.exigencias||[]).length > 0 && !licItemConferido(it));
+}
+
+function licAbrirConferencia(id, numItem){
+  const l = licAchar(id); if(!l) return;
+  const it = l.itens.find(x=>Number(x.numero)===Number(numItem)) || l.itens[0];
+  if(!it){ showToast('Item não encontrado.','error'); return; }
+  const exig = it.exigencias || [];
+  if(exig.length === 0){
+    showToast('Este item não tem a lista de exigências do edital. Rode a análise, ou escreva as exigências à mão na precificação.','error');
+    return;
+  }
+  /* o veredicto da IA, pra mostrar do lado como sugestão */
+  const modelo = (l.comparacao && typeof it.modeloEscolhido === 'number')
+    ? l.comparacao.modelos[it.modeloEscolhido] : null;
+  const vere = (modelo && Array.isArray(modelo.veredictos)) ? modelo.veredictos : [];
+  const sugestao = (n)=> vere.find(v=>Number(v.exigencia)===n) || null;
+
+  const antigo = document.getElementById('modal-lic-conferir');
+  if(antigo) antigo.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-lic-conferir';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(980px,96vw);max-height:92vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Conferir o item ${String(Number(it.numero)||1).padStart(2,'0')} contra o edital</h3>
+      <p class="help-text">Você vai ofertar <b>${escapeHtml(`${it.marca||''} ${it.modelo||''}`.trim() || 'sem marca definida')}</b>.
+        Abra a ficha técnica do fabricante e marque, exigência por exigência, se o produto cumpre.
+        <b>O que a IA disse fica do lado, como sugestão</b> — ela já errou um critério e quase me fez ofertar
+        o aparelho errado. Vale o que você marcar.</p>
+
+      ${it.escritoPara && it.escritoPara.produto ? `<div class="lic-doc aviso" style="display:block;">
+        <b>🎯 A análise achou que este item foi escrito para: ${escapeHtml(it.escritoPara.produto)}</b>
+        <small>Se não é isso que você vai ofertar, confira com mais cuidado ainda.</small>
+      </div>`:''}
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0 6px;">
+        <button type="button" class="btn btn-sm" id="lic-conf-aceitar">Aceitar o que a IA disse</button>
+        <button type="button" class="btn btn-sm" id="lic-conf-limpar">Limpar tudo</button>
+        <span class="help-text" style="margin:0;">${exig.length} exigência${exig.length===1?'':'s'} no edital</span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="lic-comp">
+          <thead><tr>
+            <th style="width:42%;">O que o edital exige</th>
+            <th style="width:24%;">O que a IA disse</th>
+            <th style="width:34%;">O produto cumpre?</th>
+          </tr></thead>
+          <tbody>
+            ${exig.map((e,i)=>{
+              const n = i+1;
+              const s = sugestao(n);
+              const cl = s ? licVeredictoClasse(s.situacao) : '';
+              const atual = licConferenciaDoItem(it)[String(n)] || '';
+              return `<tr data-conf-linha="${n}">
+                <td><b>${String(n).padStart(2,'0')}.</b> ${escapeHtml(String(e))}</td>
+                <td>${s
+                  ? `<span class="${cl}">${escapeHtml(String(s.situacao||''))}</span>
+                     ${s.observacao?`<div style="font-size:11.5px;color:var(--ink-faint);margin-top:2px;">${escapeHtml(String(s.observacao))}</div>`:''}`
+                  : '<span style="color:var(--ink-faint);">não analisou</span>'}</td>
+                <td style="white-space:nowrap;">
+                  <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;cursor:pointer;">
+                    <input type="radio" name="conf-${n}" value="ok" ${atual==='ok'?'checked':''}> cumpre</label>
+                  <label style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;cursor:pointer;">
+                    <input type="radio" name="conf-${n}" value="nao" ${atual==='nao'?'checked':''}> <span style="color:var(--negative);">não cumpre</span></label>
+                  <label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">
+                    <input type="radio" name="conf-${n}" value="duvida" ${atual==='duvida'?'checked':''}> perguntar</label>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="lic-doc" style="display:block;margin-top:12px;" id="lic-conf-placar"></div>
+
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar sem salvar</button>
+        <button class="btn btn-primary" id="lic-conf-ok">Salvar a conferência</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+
+  const lerMarcados = ()=>{
+    const r = {};
+    exig.forEach((e,i)=>{
+      const n = i+1;
+      const sel = m.querySelector(`input[name="conf-${n}"]:checked`);
+      if(sel) r[String(n)] = sel.value;
+    });
+    return r;
+  };
+
+  const pintar = ()=>{
+    const r = lerMarcados();
+    const vistos = Object.keys(r).length;
+    const nao = Object.values(r).filter(v=>v==='nao').length;
+    const duvida = Object.values(r).filter(v=>v==='duvida').length;
+    const falta = exig.length - vistos;
+    const caixa = m.querySelector('#lic-conf-placar');
+    if(!caixa) return;
+    caixa.className = 'lic-doc' + (nao>0 || falta>0 ? ' aviso' : ' ok');
+    caixa.innerHTML = nao>0
+      ? `<b>⚠️ ${nao} exigência${nao===1?'':'s'} que o produto NÃO cumpre.</b>
+         <small>Uma só já desclassifica a proposta inteira. Ou você troca de produto, ou não participa deste item.</small>`
+      : falta>0
+      ? `<b>Faltam ${falta} de ${exig.length} para conferir.</b>
+         <small>${duvida?`${duvida} ficou pra perguntar ao distribuidor. `:''}Enquanto faltar, a proposta avisa que este item não foi conferido.</small>`
+      : `<b>✓ Conferido: o produto cumpre as ${exig.length} exigências.</b>
+         <small>${duvida?`${duvida} você marcou pra perguntar ao distribuidor — confirme por escrito antes de enviar.`:'Pode seguir tranquila.'}</small>`;
+    exig.forEach((e,i)=>{
+      const tr = m.querySelector(`[data-conf-linha="${i+1}"]`);
+      if(!tr) return;
+      const v = r[String(i+1)];
+      tr.style.background = v==='nao' ? 'var(--negative-soft)' : (v==='duvida' ? 'var(--warning-soft)' : '');
+    });
+  };
+
+  m.querySelectorAll('input[type="radio"]').forEach(r=>{ r.onchange = pintar; });
+  m.querySelector('#lic-conf-aceitar').onclick = ()=>{
+    exig.forEach((e,i)=>{
+      const s = sugestao(i+1);
+      if(!s) return;
+      const cl = licVeredictoClasse(s.situacao);
+      const v = cl==='atende' ? 'ok' : (cl==='naoatende' ? 'nao' : 'duvida');
+      const alvo = m.querySelector(`input[name="conf-${i+1}"][value="${v}"]`);
+      if(alvo) alvo.checked = true;
+    });
+    pintar();
+    showToast('Copiei o veredicto da IA. Confira os números antes de salvar — foi exatamente aí que ela errou.','info');
+  };
+  m.querySelector('#lic-conf-limpar').onclick = ()=>{
+    m.querySelectorAll('input[type="radio"]').forEach(r=>{ r.checked = false; });
+    pintar();
+  };
+  pintar();
+
+  m.querySelector('#lic-conf-ok').onclick = ()=>{
+    it.conferencia = lerMarcados();
+    it.conferidoEm = new Date().toISOString();
+    const p = licPlacarConferencia(it);
+    licRegistrar(l, `Item ${Number(it.numero)||1} conferido contra o edital: `
+      + `${p.ok} cumpre, ${p.nao} não cumpre, ${p.falta} sem conferir`
+      + (it.marca||it.modelo?` — ${`${it.marca||''} ${it.modelo||''}`.trim()}`:''));
+    saveState(); m.remove(); renderPortalLicitacoes();
+    showToast(p.nao>0
+      ? `Salvo. ${p.nao} exigência${p.nao===1?'':'s'} não cumprida${p.nao===1?'':'s'} — esse produto desclassifica.`
+      : (p.falta>0 ? `Salvo. Ainda faltam ${p.falta} para conferir.` : 'Conferido. O produto cumpre tudo.'),
+      p.nao>0 ? 'error' : 'success');
+  };
+}
+
+/* =========================================================
+   CONFERIR O LINK — UM CLIQUE SEU, PORQUE O SISTEMA NÃO PODE
+
+   O navegador não deixa uma página ler o conteúdo de outro site, então
+   o sistema não tem como abrir o anúncio e ver se o produto está lá.
+   Pelo endereço ele já desconfia (domínio interno, busca, categoria) e
+   pelo título declarado ele já pega a troca de modelo — mas um link
+   bem formado que dá 404 só o olho humano pega. Foi o que aconteceu:
+   samsung.com.br/.../galaxy-tab-s9-fe-5g-... "A página que você procura
+   não está disponível ou não existe".
+
+   Então: abre numa aba e pergunta. Um clique por produto, e em troca
+   nenhum preço inventado entra na precificação.
+   ========================================================= */
+function licSeloDoLink(m){
+  if(!m) return '';
+  if(m.linkConferido === 'quebrado')
+    return `<div style="font-size:11.5px;color:var(--negative);margin-top:3px;font-weight:600;">✕ link quebrado — preço não confere</div>`;
+  if(m.linkConferido === true)
+    return `<div style="font-size:11.5px;color:var(--positive);margin-top:3px;">✓ você conferiu este anúncio</div>`;
+  if(m.link && /^https?:/i.test(m.link))
+    return `<div style="font-size:11.5px;color:var(--warning);margin-top:3px;">não conferido</div>`;
+  return '';
+}
+
+function licConferirLink(id, idx){
+  const l = licAchar(id); if(!l || !l.comparacao) return;
+  const m = l.comparacao.modelos[idx]; if(!m || !m.link) return;
+  const nome = `${m.marca||''} ${m.modelo||''}`.replace(/\s+/g,' ').trim();
+
+  try{ window.open(m.link, '_blank', 'noopener'); }catch(e){ console.warn(e); }
+
+  const mm = document.createElement('div');
+  mm.className = 'modal-overlay open';
+  mm.innerHTML = `
+    <div class="modal-box" style="max-width:min(560px,94vw);">
+      <h3 style="margin-top:0;">Abriu o anúncio?</h3>
+      <p class="help-text">Abri numa aba nova. Olhe lá e me diga o que você viu.</p>
+      <div class="lic-doc" style="display:block;">
+        <b>${escapeHtml(nome || 'produto sem nome')}</b>
+        <small>${m.preco>0?fmtMoney(m.preco):'sem preço'}${m.loja?' · '+escapeHtml(m.loja):''}</small>
+        ${m.tituloNaPagina?`<small>A IA disse que a página se chama: “${escapeHtml(String(m.tituloNaPagina).slice(0,120))}”</small>`:''}
+        <small style="word-break:break-all;color:var(--ink-faint);">${escapeHtml(m.link)}</small>
+      </div>
+      <p class="help-text" style="margin-top:10px;">A página abriu, é esse produto mesmo e o preço está lá?</p>
+      <div class="modal-actions" style="flex-wrap:wrap;">
+        <button class="btn" id="lic-link-depois">Agora não</button>
+        <button class="btn" id="lic-link-quebrado" style="color:var(--negative);">✕ Não abriu, ou é outro produto</button>
+        <button class="btn btn-primary" id="lic-link-ok">✓ Sim, confere</button>
+      </div>
+    </div>`;
+  document.body.appendChild(mm);
+
+  mm.querySelector('#lic-link-depois').onclick = ()=>mm.remove();
+
+  mm.querySelector('#lic-link-ok').onclick = ()=>{
+    m.linkConferido = true;
+    m.conferidoEm = new Date().toISOString();
+    licRegistrar(l, `Link conferido: ${nome}${m.preco>0?` a ${fmtMoney(m.preco)}`:''}.`);
+    saveState(); mm.remove(); renderPortalLicitacoes();
+    showToast('Anotado. Esse anúncio você viu com os próprios olhos.','success');
+  };
+
+  /* Quebrado não some da lista: fica riscado, com o preço fora da conta.
+     Sumir faria a mesma IA sugerir ele de novo na semana que vem. */
+  mm.querySelector('#lic-link-quebrado').onclick = ()=>{
+    m.linkConferido = 'quebrado';
+    m.conferidoEm = new Date().toISOString();
+    m.avisos = (m.avisos||[]).filter(a=>!/link quebrado/i.test(a));
+    m.avisos.push('link quebrado: você abriu e a página não existe, ou é outro produto');
+    licRegistrar(l, `Link quebrado: ${nome}. O preço ${m.preco>0?fmtMoney(m.preco)+' ':''}não vale.`);
+    saveState(); mm.remove(); renderPortalLicitacoes();
+    showToast('Marcado como quebrado. O preço dele sai da conta.','info');
+  };
+}
+
 /* Leva o modelo escolhido pro item certo da precificação e, se houver
    próximo item, já avança — é o passo-a-passo que ela pediu. */
-function licUsarModelo(id, idx){
+function licUsarModelo(id, idx, jaAvisado){
   const l = licAchar(id); if(!l || !l.comparacao) return;
   const m = l.comparacao.modelos[idx]; if(!m) return;
   const num = Number(m.item) || 1;
+  const nome = `${m.marca||''} ${m.modelo||''}`.replace(/\s+/g,' ').trim();
+
+  /* Só atrapalha quando vale a pena atrapalhar: link que ela mesma marcou
+     como quebrado, ou que o sistema já desconfia (endereço que não é de
+     loja, título de outro produto). Link normal ainda não aberto não
+     pergunta nada aqui — a precificação cobra a conferência depois, e a
+     proposta não sai sem ela. Perguntar a cada clique só ensinaria a
+     clicar sem ler. */
+  const duvidoso = m.linkConferido === 'quebrado'
+    || (m.linkConferido !== true && (
+         (String(m.link||'').trim() && !licLinkDeProduto(m.link)) || licTituloNaoBate(m)
+       ));
+  if(!jaAvisado && duvidoso){
+    const quebrado = m.linkConferido === 'quebrado';
+    confirmAction(quebrado ? 'Esse link está quebrado' : 'Este anúncio tem problema',
+      (quebrado
+        ? `Você marcou o link de ${nome} como quebrado. O preço ${m.preco>0?fmtMoney(m.preco)+' ':''}não foi confirmado em lugar nenhum. `
+        : `O anúncio de ${nome} tem problema: ${licTituloNaoBate(m)
+             ? `o link é de outro produto — a página se chama “${String(m.tituloNaPagina||'').slice(0,70)}”`
+             : 'o endereço não é a página de um produto à venda'}. `)
+      + `Marca e modelo vão impressos na sua proposta: se não baterem com o edital, desclassifica. `
+      + `Quer usar assim mesmo?`,
+      ()=>{ licUsarModelo(id, idx, true); }, 'Usar assim mesmo');
+    return;
+  }
 
   let it = l.itens.find(x=>Number(x.numero)===num);
   if(!it){
@@ -50318,7 +50800,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 04:10';
+const SISTEMA_VERSAO = '04/11/2026 15:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
