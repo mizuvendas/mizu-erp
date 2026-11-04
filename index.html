@@ -1371,7 +1371,7 @@ body.orc-gaveta-travada{ overflow:hidden; }
       <div class="page-header">
         <div>
           <h2>Sugestão de Compra</h2>
-          <p class="subtitle">Duas páginas: primeiro tudo que vendeu, onde você decide a quantidade e o grupo de cada produto — depois como ficou separado, onde você marca quem vende cada um</p>
+          <p class="subtitle">Quatro etapas: o que vendeu → como ficou separado → a lista de cada fornecedor → o relatório de quem ficou mais barato</p>
         </div>
       </div>
       <div id="sugestao-compra-content"></div>
@@ -1919,6 +1919,7 @@ function defaultState(){
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     planosCompra: [], // ...ordemFornecedores:[] = ordem das colunas da Cotação, escolhida arrastando // { id, nome, periodoInicio, periodoFim, percentual, status, itens:[{...,opcoes:[{fornecedor,preco}]}], fornecedores:{}, observacoes } — ver MÓDULO: PLANO DE COMPRA
     fornecedoresProduto: [], // { id, produtoId, fornecedor, criadoEm } — quem vende cada produto, usado SÓ na Sugestão de Compra. Mora aqui, e não dentro do produto, de propósito: não mexe no cadastro e sincroniza registro a registro entre as máquinas. Ver MÓDULO: SUGESTÃO DE COMPRA.
+    gruposCompra: [], // { id, nome, produtoIds:[], criadoEm } — os grupos de PRATELEIRA da Sugestão de Compra: marcas que disputam o mesmo lugar (Ypê premium / Vit mais em conta). NÃO confundir com gruposProdutos, que é do Vincular produtos e quer dizer "é o mesmo produto". Ver MÓDULO: SUGESTÃO DE COMPRA.
     novidadeVista: '', // id da última novidade lida (ver NOVIDADES) — só pra não repetir o aviso de atualização
     gruposProdutos: [], // { id, nome, produtoIds:[], criadoEm } — produtos que são "o mesmo produto" na prática (ver abrirVincularProdutos). AGRUPAMENTO só para análise: não mexe no cadastro nem no histórico de vendas, e pode ser desfeito.
     substituicoesProdutos: {}, // { [produtoIdAntigo]: produtoIdNovo } — item antigo do histórico de um cliente apontado para um produto REAL. Fica FORA do produto de propósito: sobrevive quando o cadastro antigo é apagado. Ver MÓDULO: PRODUTOS TEMPORÁRIOS.
@@ -2896,6 +2897,7 @@ const REPESCA_NOMES = {
   contasReceber:'Contas a receber', notasRecebidas:'Notas recebidas', entregas:'Entregas',
   licitacoesDescartadas:'Dispensas descartadas', contasReceberManuais:'Contas a receber lançadas à mão',
   gruposProdutos:'Grupos de produtos', fornecedoresProduto:'Fornecedores por produto',
+  gruposCompra:'Grupos de compra',
   lembretes:'Lembretes', notasFiscais:'Notas fiscais', valeFuncionarios:'Vales de funcionário',
   marcas:'Marcas', locaisCompra:'Locais de compra', pagadores:'Pagadores de repasse'
 };
@@ -43044,19 +43046,26 @@ function cpHaQuantoTempo(iso){
   return `há ${meses} meses`;
 }
 
-/* ---------- o grupo ---------- */
+/* ---------- o grupo ----------
+
+   LISTA PRÓPRIA, de propósito. No começo isto usava STATE.gruposProdutos, e
+   ela abriu a tela com 79 grupos que nunca criou: aquela lista é do
+   "Vincular produtos", onde grupo quer dizer "estes dois registros são O
+   MESMO produto". Aqui grupo quer dizer "estas marcas disputam a mesma
+   prateleira" — significado diferente, lista diferente. As duas convivem
+   sem se misturar. */
 function cpGrupos(){
-  if(!Array.isArray(STATE.gruposProdutos)) STATE.gruposProdutos = [];
-  return STATE.gruposProdutos;
+  if(!Array.isArray(STATE.gruposCompra)) STATE.gruposCompra = [];
+  return STATE.gruposCompra;
 }
-function cpGrupoDe(produtoId){
-  return cpGrupos().find(g=>(g.produtoIds||[]).includes(produtoId)) || null;
+function cpGrupoDe(chave){
+  return cpGrupos().find(g=>(g.produtoIds||[]).includes(chave)) || null;
 }
-function cpDefinirGrupo(produtoId, grupoId){
-  cpGrupos().forEach(g=>{ g.produtoIds = (g.produtoIds||[]).filter(id=>id!==produtoId); });
+function cpDefinirGrupo(chave, grupoId){
+  cpGrupos().forEach(g=>{ g.produtoIds = (g.produtoIds||[]).filter(id=>id!==chave); });
   if(grupoId){
     const g = cpGrupos().find(x=>x.id===grupoId);
-    if(g){ g.produtoIds = (g.produtoIds||[]).concat([produtoId]); }
+    if(g){ g.produtoIds = (g.produtoIds||[]).concat([chave]); }
   }
   /* grupo que ficou sem ninguém continua existindo: ela criou o nome,
      e vai querer usar de novo no mês que vem */
@@ -43067,9 +43076,80 @@ function cpCriarGrupo(nome){
   if(!limpo) return null;
   const existe = cpGrupos().find(g=>g.nome.toLowerCase()===limpo.toLowerCase());
   if(existe) return existe;
-  const novo = { id: uid('grp'), nome: limpo, produtoIds: [], criadoEm: todayISO() };
+  const novo = { id: uid('gc'), nome: limpo, produtoIds: [], criadoEm: todayISO() };
   cpGrupos().push(novo);
   return novo;
+}
+function cpRenomearGrupo(grupoId, nome){
+  const limpo = String(nome||'').trim();
+  if(!limpo) return false;
+  const g = cpGrupos().find(x=>x.id===grupoId);
+  if(!g) return false;
+  const choque = cpGrupos().find(x=>x.id!==grupoId && x.nome.toLowerCase()===limpo.toLowerCase());
+  if(choque) return false;
+  g.nome = limpo; saveState(); return true;
+}
+/* Apagar o grupo não apaga produto nenhum: eles só voltam pra "sem grupo". */
+function cpApagarGrupo(grupoId){
+  STATE.gruposCompra = cpGrupos().filter(g=>g.id!==grupoId);
+  saveState();
+}
+
+/* ---------- o apelido ----------
+
+   Os nomes do cadastro vieram de importação e estão ásperos: "#DETERGENTE
+   NEUTRO 500ML", "''FIBRA LIMPEZA PESADA - NOBRE". Ela quis poder arrumar
+   isso, mas SÓ AQUI: o cadastro, a nota e o histórico continuam com o nome
+   de origem, porque é o nome que casa com as vendas antigas. O apelido é
+   uma camada por cima — e a tela mostra o nome de origem embaixo, pequeno,
+   pra nunca restar dúvida de qual produto é. */
+function cpApelidos(){
+  const c = cpCfg();
+  if(!c.apelidos || typeof c.apelidos !== 'object') c.apelidos = {};
+  return c.apelidos;
+}
+function cpNome(chave, original){
+  const a = cpApelidos()[chave];
+  return (a && String(a).trim()) ? String(a).trim() : (original || '');
+}
+function cpTemApelido(chave){
+  const a = cpApelidos()[chave];
+  return !!(a && String(a).trim());
+}
+function cpRenomear(chave, nome){
+  const limpo = String(nome||'').trim();
+  const a = cpApelidos();
+  if(limpo) a[chave] = limpo; else delete a[chave];
+  saveState();
+}
+
+/* ---------- item que ainda não existe no cadastro ----------
+
+   "PODE SER PRODUTOS NOVOS TAMBÉM": item que a Mizu ainda não vende e que
+   ela quer pedir junto. Ele vive só na compra — não vira produto, não entra
+   no estoque, não aparece em orçamento. Quando ela decidir cadastrar, cadastra. */
+function cpItensLivres(){
+  const c = cpCfg();
+  if(!Array.isArray(c.itensLivres)) c.itensLivres = [];
+  return c.itensLivres;
+}
+function cpCriarItemLivre(nome, unidade){
+  const limpo = String(nome||'').trim();
+  if(!limpo) return null;
+  const novo = { id: uid('cpl'), nome: limpo, unidade: String(unidade||'UN').trim().toUpperCase() || 'UN',
+                 criadoEm: todayISO() };
+  cpItensLivres().push(novo);
+  saveState();
+  return novo;
+}
+function cpRemoverItemLivre(id){
+  const c = cpCfg();
+  c.itensLivres = cpItensLivres().filter(i=>i.id!==id);
+  delete c.decisao[id];
+  delete cpApelidos()[id];
+  cpDefinirGrupo(id, '');
+  STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId!==id);
+  saveState();
 }
 
 /* ---------- o período e a decisão ---------- */
@@ -43083,8 +43163,24 @@ function cpCfg(){
   if(!c.inicio) c.inicio = mesRelativo(-2);
   if(!c.fim) c.fim = todayISO().slice(0,7);
   if(!(c.percentual > 0)) c.percentual = 70;
+  if(c.ordem !== 'vendas' && c.ordem !== 'nome') c.ordem = 'nome';
   if(!c.decisao || typeof c.decisao !== 'object') c.decisao = {};
   return c;
+}
+function cpOrdem(){ return cpCfg().ordem; }
+function cpSetOrdem(valor){
+  cpCfg().ordem = (valor === 'vendas') ? 'vendas' : 'nome';
+  saveState(); renderSugestaoCompra();
+}
+/* Uma linha está PRONTA quando tem as duas decisões dela: quanto comprar e
+   em que grupo fica. Com uma só, está pela metade — e a tira na lateral diz
+   isso de relance, que foi o que ela pediu pra não se perder em 256 linhas. */
+function cpEstadoDaLinha(l){
+  if(!l.editavel) return '';
+  const q = l.comprar > 0, g = !!l.grupoId;
+  if(q && g) return 'pronta';
+  if(q || g) return 'meio';
+  return '';
 }
 function cpQuanto(produtoId){
   const v = cpCfg().decisao[produtoId];
@@ -43099,8 +43195,17 @@ function cpDecidir(produtoId, qtd){
 
 /* ---------- os números ---------- */
 
-/* Uma linha por PRODUTO que vendeu no período, com a quantidade de cada
-   mês. O produto é a unidade: o grupo não soma nada. */
+/* Uma linha por PRODUTO, com a quantidade de cada mês. O produto é a
+   unidade: o grupo não soma nada.
+
+   Entram três origens, e a página 1 mostra as três — senão ela acrescenta
+   um item e ele some da tela até a página 2:
+     1. o que vendeu no período;
+     2. produto do cadastro que não vendeu mas já tem quantidade decidida;
+     3. item livre, que nem existe no cadastro.
+
+   `chave` é a identidade de tudo o mais (decisão, grupo, apelido,
+   fornecedor): é o id do produto, ou o id do item livre. */
 function cpLinhas(){
   const c = cpCfg();
   const meses = mesesEntre(c.inicio, c.fim);
@@ -43108,32 +43213,57 @@ function cpLinhas(){
 
   getLinhasVenda().forEach(l=>{
     if(!l.mes || l.mes < c.inicio || l.mes > c.fim) return;
-    const id = l.produtoId || ('livre:' + l.produtoNome);
+    const id = l.produtoId || ('sumido:' + l.produtoNome);
     if(!porProduto[id]){
-      porProduto[id] = { produtoId: l.produtoId || null, chave: id,
-                         nome: l.produtoNome, marca: l.marca || '', porMes: {}, total: 0 };
+      porProduto[id] = { produtoId: l.produtoId || null, chave: id, livre: false,
+                         nomeOriginal: l.produtoNome, marca: l.marca || '', porMes: {}, total: 0 };
     }
     const p = porProduto[id];
     p.porMes[l.mes] = (p.porMes[l.mes] || 0) + l.qtd;
     p.total += l.qtd;
   });
 
+  /* decidido sem ter vendido: ela mandou comprar, então tem que aparecer */
+  Object.keys(c.decisao || {}).forEach(id=>{
+    if(porProduto[id]) return;
+    const prod = (STATE.produtos||[]).find(x=>x.id===id);
+    if(!prod) return;
+    porProduto[id] = { produtoId: id, chave: id, livre: false,
+                       nomeOriginal: prod.nome, marca: prod.marca || '', porMes: {}, total: 0 };
+  });
+
+  /* item livre: não existe no cadastro, vive só aqui */
+  cpItensLivres().forEach(i=>{
+    porProduto[i.id] = { produtoId: null, chave: i.id, livre: true,
+                         nomeOriginal: i.nome, marca: '', porMes: {}, total: 0,
+                         unidadeLivre: i.unidade || 'UN' };
+  });
+
   const quantosMeses = Math.max(1, meses.length);
   return Object.values(porProduto).map(p=>{
     const prod = p.produtoId ? (STATE.produtos||[]).find(x=>x.id===p.produtoId) : null;
-    const grupo = p.produtoId ? cpGrupoDe(p.produtoId) : null;
+    const editavel = !!p.produtoId || p.livre;   // produto sumido do cadastro não dá pra comprar
+    const grupo = editavel ? cpGrupoDe(p.chave) : null;
     return Object.assign(p, {
-      unidade: prod ? (prod.unidade || 'UN') : 'UN',
+      editavel,
+      nome: cpNome(p.chave, p.nomeOriginal),
+      renomeado: cpTemApelido(p.chave),
+      unidade: prod ? (prod.unidade || 'UN') : (p.unidadeLivre || 'UN'),
       estoque: prod ? (prod.estoqueAtual || 0) : 0,
       custo: prod ? (Number(prod.custo) || 0) : 0,
       mediaMensal: p.total / quantosMeses,
       sugestao: Math.round(p.total * (c.percentual/100)),
       grupoId: grupo ? grupo.id : '',
       grupoNome: grupo ? grupo.nome : '',
-      comprar: p.produtoId ? cpQuanto(p.produtoId) : 0,
-      fornecedores: p.produtoId ? cpFornecedoresDe(p.produtoId) : []
+      comprar: editavel ? cpQuanto(p.chave) : 0,
+      fornecedores: editavel ? cpFornecedoresDe(p.chave) : []
     });
-  }).sort((a,b)=> b.total - a.total || a.nome.localeCompare(b.nome,'pt-BR'));
+  }).sort(cpOrdem()==='vendas'
+    ? ((a,b)=> b.total - a.total || a.nome.localeCompare(b.nome,'pt-BR'))
+    /* Ordem alfabética pelo nome que ela LÊ: renomeou, o item anda pro
+       lugar certo na hora; acrescentou, ele nasce no lugar certo. Era o
+       que faltava — antes o item novo caía no fim da lista e sumia. */
+    : ((a,b)=> a.nome.localeCompare(b.nome,'pt-BR')));
 }
 
 function cpResumo(linhas){
@@ -43145,13 +43275,127 @@ function cpResumo(linhas){
   return { total: linhas.length, decididos, agrupados, custo };
 }
 
+/* ---------- o custo que cada fornecedor respondeu ----------
+
+   Mora em config.compra.custos[chave][NOME DO FORNECEDOR]. É o preço POR
+   UNIDADE, na mesma unidade da quantidade — nada de fator de conversão
+   aqui: a versão antiga tinha embalagem e fator e era justamente a parte
+   que atrapalhava. Se um dia o fornecedor responder por caixa, a conversa
+   volta. */
+function cpCustos(){
+  const c = cpCfg();
+  if(!c.custos || typeof c.custos !== 'object') c.custos = {};
+  return c.custos;
+}
+function cpCusto(chave, fornecedor){
+  const t = cpCustos()[chave];
+  const v = t ? t[fornecedor] : null;
+  return (v === null || v === undefined || v === '') ? null : (Number(v) || 0);
+}
+function cpSetCusto(chave, fornecedor, valor){
+  const t = cpCustos();
+  if(!t[chave]) t[chave] = {};
+  const n = parseFloat(String(valor).replace(',', '.'));
+  if(valor === '' || isNaN(n) || n < 0) delete t[chave][fornecedor];
+  else t[chave][fornecedor] = n;
+  if(Object.keys(t[chave]).length === 0) delete t[chave];
+  saveState();
+}
+
+/* Quem respondeu mais barato naquele item, entre os que ele já respondeu. */
+function cpMaisBarato(linha){
+  let melhor = null;
+  (linha.fornecedores||[]).forEach(f=>{
+    const p = cpCusto(linha.chave, f);
+    if(p === null) return;
+    if(!melhor || p < melhor.preco) melhor = { fornecedor: f, preco: p };
+  });
+  return melhor;
+}
+
+/* Só o que ela mandou comprar. Serve às páginas 2, 3 e 4. */
+function cpDaCompra(){
+  return cpLinhas().filter(l=>l.comprar > 0);
+}
+
+/* As listas por fornecedor saem das marcações: ninguém monta na mão. */
+function cpListasPorFornecedor(){
+  const porNome = {};
+  cpDaCompra().forEach(l=>{
+    (l.fornecedores||[]).forEach(f=>{
+      if(!porNome[f]) porNome[f] = { fornecedor: f, itens: [] };
+      porNome[f].itens.push(l);
+    });
+  });
+  return Object.values(porNome).sort((a,b)=>a.fornecedor.localeCompare(b.fornecedor,'pt-BR'));
+}
+
+/* ---------- colunas que ela quer ver ----------
+
+   A tabela real tem 256 linhas e mais uma coluna por mês: fica larga demais
+   e ela pediu pra poder esconder o que não usa naquele dia. A escolha fica
+   salva — ninguém quer remarcar isso toda vez que abre a tela. */
+const CP_COLUNAS = [
+  { id:'meses',    rotulo:'Um por mês',  ajuda:'as colunas ago26, set26…' },
+  { id:'total',    rotulo:'Total',       ajuda:'quanto vendeu no período inteiro' },
+  { id:'estoque',  rotulo:'Estoque',     ajuda:'o saldo de hoje' },
+  { id:'sugestao', rotulo:'Sugestão',    ajuda:'o percentual aplicado sobre o total' },
+  { id:'unidade',  rotulo:'Unidade e marca', ajuda:'a linha cinza embaixo do nome' }
+];
+function cpColunas(){
+  const c = cpCfg();
+  if(!c.colunas || typeof c.colunas !== 'object') c.colunas = {};
+  CP_COLUNAS.forEach(k=>{ if(c.colunas[k.id] === undefined) c.colunas[k.id] = true; });
+  return c.colunas;
+}
+function cpVer(id){ return cpColunas()[id] !== false; }
+function cpAlternarColuna(id, ligada){
+  cpColunas()[id] = !!ligada;
+  saveState();
+  renderSugestaoCompra();
+}
+function cpAbrirColunas(){
+  const col = cpColunas();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(520px,94vw);">
+      <h3 style="margin-top:0;">O que mostrar na tabela</h3>
+      <p class="help-text">Produto, "Vou comprar" e "Grupo" ficam sempre — são onde você trabalha.
+        O resto é com você. A escolha fica salva.</p>
+      <div style="display:flex;flex-direction:column;gap:10px;margin:12px 0;">
+        ${CP_COLUNAS.map(k=>`
+          <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer;">
+            <input type="checkbox" ${col[k.id]!==false?'checked':''}
+              onchange="cpAlternarColuna('${k.id}', this.checked)" style="margin-top:3px;">
+            <span><b>${escapeHtml(k.rotulo)}</b><div class="cp-sub">${escapeHtml(k.ajuda)}</div></span>
+          </label>`).join('')}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Pronto</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
 /* ---------- a tela ---------- */
 let cpPagina = 1;
+let cpFornecedorAberto = '';
+
+const CP_PASSOS = [
+  { n:1, titulo:'O que vendeu',  resumo:'quantidade e grupo de cada produto' },
+  { n:2, titulo:'Como ficou',    resumo:'separado por grupo, quem vende cada um' },
+  { n:3, titulo:'Por fornecedor',resumo:'a lista de cada um, e o custo que ele respondeu' },
+  { n:4, titulo:'Relatório',     resumo:'quem ficou mais barato, e quanto fica a compra' }
+];
 
 function renderSugestaoCompra(){
   const box = document.getElementById('sugestao-compra-content');
   if(!box) return;
-  if(cpPagina === 2) cpRenderPagina2(box); else cpRenderPagina1(box);
+  if(cpPagina === 4) cpRenderPagina4(box);
+  else if(cpPagina === 3) cpRenderPagina3(box);
+  else if(cpPagina === 2) cpRenderPagina2(box);
+  else cpRenderPagina1(box);
 }
 
 function cpIrPara(pagina){
@@ -43161,21 +43405,36 @@ function cpIrPara(pagina){
   if(topo) topo.scrollIntoView({ behavior:'smooth', block:'start' });
 }
 
+/* A trilha das quatro etapas. Dá pra voltar clicando: a etapa já cumprida
+   não some, e ela precisa poder corrigir uma quantidade no meio do caminho
+   sem refazer nada. */
+function cpTrilhaHtml(){
+  const decididos = cpDaCompra().length;
+  return `<div class="cp-trilha">
+    ${CP_PASSOS.map(p=>{
+      const bloqueada = p.n > 1 && decididos === 0;
+      return `<button type="button" class="cp-etapa ${p.n===cpPagina?'atual':''} ${p.n<cpPagina?'feita':''}"
+        ${bloqueada?'disabled title="Decida a quantidade de pelo menos um produto na etapa 1"':`onclick="cpIrPara(${p.n})"`}>
+        <span class="cp-etapa-n">${p.n}</span>
+        <span><b>${p.titulo}</b><small>${p.resumo}</small></span>
+      </button>`;
+    }).join('<span class="cp-seta">›</span>')}
+  </div>`;
+}
+
 function cpCabecalhoHtml(linhas, pagina){
   const r = cpResumo(linhas);
-  const c = cpCfg();
   return `
-    <div class="card" style="padding:13px 16px;margin-bottom:12px;display:flex;flex-wrap:wrap;gap:24px;align-items:center;">
-      <div><div class="cp-rot">Produtos que venderam</div><div class="cp-num">${r.total}</div></div>
+    <div class="card cp-kpis">
+      <div><div class="cp-rot">Produtos na lista</div><div class="cp-num">${r.total}</div></div>
       <div><div class="cp-rot">Quantidade decidida</div><div class="cp-num" style="color:var(--positive);">${r.decididos} de ${r.total}</div></div>
       <div><div class="cp-rot">Já têm grupo</div><div class="cp-num">${r.agrupados} de ${r.total}</div></div>
       <div><div class="cp-rot">Custo estimado</div><div class="cp-num" style="font-family:var(--font-num);">${fmtMoney(r.custo)}</div></div>
-      <div style="margin-left:auto;display:flex;gap:8px;flex-wrap:wrap;">
-        ${pagina===1
-          ? `<button class="btn btn-sm" onclick="cpAbrirItemManual()">+ Item manual</button>
-             <button class="btn btn-sm btn-primary" onclick="cpIrPara(2)" ${r.decididos?'':'disabled title="Decida a quantidade de pelo menos um produto"'}>Ver como ficou →</button>`
-          : `<button class="btn btn-sm" onclick="cpIrPara(1)">‹ Voltar e ajustar</button>`}
-      </div>
+      ${pagina===1?`<div class="cp-acoes">
+        <button class="btn btn-sm" onclick="cpAbrirColunas()">Colunas</button>
+        <button class="btn btn-sm" onclick="cpAbrirGrupos()">Grupos (${cpGrupos().length})</button>
+        <button class="btn btn-sm" onclick="cpAbrirItemManual()">+ Acrescentar item</button>
+      </div>`:''}
     </div>`;
 }
 
@@ -43195,10 +43454,18 @@ function cpFiltrosHtml(){
           </div>
           <div class="help-text">Vendeu 100 e você põe 70% → sugestão de 70.</div>
         </div>
+        <div class="field"><label>Ordem da lista</label>
+          <select id="cp-ordem">
+            <option value="nome" ${c.ordem!=='vendas'?'selected':''}>Alfabética, pelo nome</option>
+            <option value="vendas" ${c.ordem==='vendas'?'selected':''}>Quem vendeu mais primeiro</option>
+          </select>
+          <div class="help-text">Na alfabética, o item que você renomeia ou acrescenta já aparece no lugar certo.</div>
+        </div>
       </div>
     </div>`;
 }
 
+/* ===================== PÁGINA 1 ===================== */
 function cpRenderPagina1(box){
   const linhas = cpLinhas();
   const grupos = cpGrupos().slice().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
@@ -43207,42 +43474,54 @@ function cpRenderPagina1(box){
 
   box.innerHTML = `
     ${cpEstiloHtml()}
-    <div class="cp-passo">Página 1 de 2 — o que vendeu</div>
+    ${cpTrilhaHtml()}
     ${cpFiltrosHtml()}
     ${cpCabecalhoHtml(linhas, 1)}
-    ${linhas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">Nenhuma venda nesse período.</p></div>` : `
+    ${linhas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">Nenhuma venda nesse período. Use <b>+ Acrescentar item</b> pra montar a compra mesmo assim.</p></div>` : `
     <div class="card" style="overflow:hidden;">
-      <div class="table-wrap">
+      <div class="cp-wrap">
         <table class="data-table cp-tabela">
           <thead><tr>
-            <th style="min-width:250px;">Produto</th>
-            ${meses.map(m=>`<th class="num">${escapeHtml(cpMesCurto(m))}</th>`).join('')}
-            <th class="num">Total</th>
-            <th class="num">Estoque</th>
-            <th class="num">Sugestão</th>
+            <th style="min-width:260px;">Produto</th>
+            ${cpVer('meses')?meses.map(m=>`<th class="num">${escapeHtml(cpMesCurto(m))}</th>`).join(''):''}
+            ${cpVer('total')?'<th class="num">Total</th>':''}
+            ${cpVer('estoque')?'<th class="num">Estoque</th>':''}
+            ${cpVer('sugestao')?'<th class="num">Sugestão</th>':''}
             <th class="num cp-th-decide">Vou comprar</th>
-            <th class="cp-th-grupo" style="min-width:250px;">Grupo</th>
+            <th class="cp-th-grupo" style="min-width:240px;">Grupo</th>
           </tr></thead>
           <tbody>
             ${linhas.map(l=>`
-              <tr>
-                <td><strong>${escapeHtml(l.nome)}</strong>
-                  <div class="cp-sub">${escapeHtml(l.unidade)}${l.marca?' · '+escapeHtml(l.marca):''}</div></td>
-                ${meses.map(m=>`<td class="num cp-mes">${fmtNum(l.porMes[m]||0)}</td>`).join('')}
-                <td class="num" style="font-weight:700;">${fmtNum(l.total)}</td>
-                <td class="num" style="color:${l.estoque>=l.sugestao?'var(--positive)':(l.estoque<=10?'var(--negative)':'var(--ink)')};">${fmtNum(l.estoque)}</td>
-                <td class="num" style="color:var(--ink-soft);">${fmtNum(l.sugestao)}</td>
+              <tr class="cp-l-${cpEstadoDaLinha(l)||'nada'}">
+                <td>
+                  <div class="cp-nome-cel">
+                    <div style="min-width:0;">
+                      <strong>${escapeHtml(l.nome)}</strong>
+                      ${l.renomeado?`<div class="cp-sub" title="nome de origem, o que está no cadastro">de origem: ${escapeHtml(l.nomeOriginal)}</div>`:''}
+                      ${cpVer('unidade')?`<div class="cp-sub">${escapeHtml(l.unidade)}${l.marca?' · '+escapeHtml(l.marca):''}${l.livre?' · <b>item novo</b>':''}${!l.editavel?' · <b>fora do cadastro</b>':''}</div>`
+                        :(l.livre||!l.editavel?`<div class="cp-sub">${l.livre?'<b>item novo</b>':'<b>fora do cadastro</b>'}</div>`:'')}
+                    </div>
+                    ${l.editavel?`<button type="button" class="cp-mini" title="Renomear aqui (não muda o cadastro)"
+                      onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>`:''}
+                    ${l.livre?`<button type="button" class="cp-mini" title="Tirar este item da compra"
+                      onclick="cpConfirmarRemoverLivre('${escapeAttr(l.chave)}')">✕</button>`:''}
+                  </div>
+                </td>
+                ${cpVer('meses')?meses.map(m=>`<td class="num cp-mes">${fmtNum(l.porMes[m]||0)}</td>`).join(''):''}
+                ${cpVer('total')?`<td class="num" style="font-weight:700;">${fmtNum(l.total)}</td>`:''}
+                ${cpVer('estoque')?`<td class="num" style="color:${l.estoque>=l.sugestao?'var(--positive)':(l.estoque<=10?'var(--negative)':'var(--ink)')};">${fmtNum(l.estoque)}</td>`:''}
+                ${cpVer('sugestao')?`<td class="num" style="color:var(--ink-soft);">${fmtNum(l.sugestao)}</td>`:''}
                 <td class="num cp-td-decide">
-                  ${l.produtoId
+                  ${l.editavel
                     ? `<input class="cp-qtd" type="number" min="0" value="${l.comprar||''}" placeholder="0"
                         aria-label="Quantidade a comprar de ${escapeAttr(l.nome)}"
-                        onchange="cpDecidir('${escapeAttr(l.produtoId)}', this.value); cpRedesenharResumo();">`
+                        onchange="cpDecidir('${escapeAttr(l.chave)}', this.value); cpPintarLinha(this, '${escapeAttr(l.chave)}'); cpRedesenharResumo();">`
                     : `<span class="cp-sub" title="Produto que não existe mais no cadastro">—</span>`}
                 </td>
                 <td class="cp-td-grupo">
-                  ${l.produtoId
+                  ${l.editavel
                     ? `<select class="cp-grupo ${l.grupoId?'':'vazio'}" aria-label="Grupo de ${escapeAttr(l.nome)}"
-                        onchange="cpEscolherGrupo('${escapeAttr(l.produtoId)}', this.value)">
+                        onchange="cpEscolherGrupo('${escapeAttr(l.chave)}', this.value)">
                         <option value="">— sem grupo —</option>
                         ${grupos.map(g=>`<option value="${escapeAttr(g.id)}" ${l.grupoId===g.id?'selected':''}>${escapeHtml(g.nome)}</option>`).join('')}
                         <option value="__novo">+ criar um grupo novo…</option>
@@ -43253,11 +43532,17 @@ function cpRenderPagina1(box){
           </tbody>
         </table>
       </div>
+      <div class="cp-legenda">
+        <span><i style="background:var(--positive);"></i> pronta — tem quantidade e grupo</span>
+        <span><i style="background:var(--warning);"></i> falta uma das duas</span>
+        <span><i style="background:var(--border);"></i> ainda não mexeu</span>
+        <span style="margin-left:auto;">${linhas.filter(l=>cpEstadoDaLinha(l)==='pronta').length} de ${linhas.length} prontas</span>
+      </div>
     </div>`}
     <p class="help-text" style="margin:12px 2px 0;">
       O grupo junta as marcas que disputam a mesma prateleira — e não soma a venda delas.
-      Cada produto continua com a quantidade dele; o grupo serve pra comparar fornecedor na página 2.
-      Nada disso mexe no cadastro de produtos nem no estoque.
+      Cada produto continua com a quantidade dele; o grupo serve pra comparar fornecedor depois.
+      Renomear aqui é só um apelido da compra: o cadastro, a nota e o histórico ficam com o nome de origem.
     </p>`;
 
   const liga = (id, fn)=>{ const e = document.getElementById(id); if(e) e.addEventListener('change', fn); };
@@ -43267,6 +43552,23 @@ function cpRenderPagina1(box){
     if(c2.fim < c2.inicio) c2.inicio = c2.fim; saveState(); renderSugestaoCompra(); });
   liga('cp-percentual', e=>{ const c2 = cpCfg(); c2.percentual = Math.max(1, parseFloat(e.target.value)||70);
     saveState(); renderSugestaoCompra(); });
+  liga('cp-ordem', e=>cpSetOrdem(e.target.value));
+}
+
+/* A tira da linha muda assim que ela digita a quantidade. Repintar só
+   aquela linha, e não a tabela, é o que mantém o cursor no campo seguinte —
+   em 256 linhas, redesenhar tudo a cada tecla tornaria a tela inutilizável. */
+function cpPintarLinha(campo, chave){
+  const tr = campo.closest('tr');
+  if(!tr) return;
+  const l = cpLinhas().find(x=>x.chave===chave);
+  if(!l) return;
+  tr.className = 'cp-l-' + (cpEstadoDaLinha(l) || 'nada');
+  const legenda = document.querySelector('.cp-legenda span:last-child');
+  if(legenda){
+    const todas = cpLinhas();
+    legenda.textContent = `${todas.filter(x=>cpEstadoDaLinha(x)==='pronta').length} de ${todas.length} prontas`;
+  }
 }
 
 /* Só o cabeçalho se redesenha quando ela digita uma quantidade — a
@@ -43274,27 +43576,25 @@ function cpRenderPagina1(box){
 function cpRedesenharResumo(){
   const box = document.getElementById('sugestao-compra-content');
   if(!box) return;
-  const alvo = box.querySelector('.card');
-  const linhas = cpLinhas();
+  const antigo = box.querySelector('.cp-kpis');
+  if(!antigo) return;
   const novo = document.createElement('div');
-  novo.innerHTML = cpCabecalhoHtml(linhas, cpPagina);
-  const cartoes = box.querySelectorAll('.card');
-  const cabecalho = cpPagina === 1 ? cartoes[1] : cartoes[0];
-  if(cabecalho && novo.firstElementChild) cabecalho.replaceWith(novo.firstElementChild);
+  novo.innerHTML = cpCabecalhoHtml(cpLinhas(), cpPagina);
+  if(novo.firstElementChild) antigo.replaceWith(novo.firstElementChild);
 }
 
-function cpEscolherGrupo(produtoId, valor){
+function cpEscolherGrupo(chave, valor){
   if(valor === '__novo'){
-    cpPerguntarNomeDoGrupo(produtoId);
+    cpPerguntarNomeDoGrupo(chave);
     renderSugestaoCompra();
     return;
   }
-  cpDefinirGrupo(produtoId, valor);
+  cpDefinirGrupo(chave, valor);
   renderSugestaoCompra();
 }
 
-function cpPerguntarNomeDoGrupo(produtoId){
-  const prod = (STATE.produtos||[]).find(p=>p.id===produtoId);
+function cpPerguntarNomeDoGrupo(chave){
+  const linha = cpLinhas().find(l=>l.chave===chave);
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
   m.innerHTML = `
@@ -43304,7 +43604,7 @@ function cpPerguntarNomeDoGrupo(produtoId){
         faixa no nome — é o que te faz achar depois.</p>
       <div class="field"><label>Nome do grupo</label>
         <input type="text" id="cp-novo-grupo" placeholder="ex: Detergente neutro 500ml premium"></div>
-      ${prod?`<div class="lic-doc" style="display:block;"><b>${escapeHtml(prod.nome)}</b>
+      ${linha?`<div class="lic-doc" style="display:block;"><b>${escapeHtml(linha.nome)}</b>
         <small>entra neste grupo assim que você salvar</small></div>`:''}
       <div class="modal-actions">
         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
@@ -43318,7 +43618,7 @@ function cpPerguntarNomeDoGrupo(produtoId){
     const nome = campo ? campo.value.trim() : '';
     if(!nome){ showToast('Dê um nome ao grupo.','error'); return; }
     const g = cpCriarGrupo(nome);
-    if(g && produtoId) cpDefinirGrupo(produtoId, g.id);
+    if(g && chave) cpDefinirGrupo(chave, g.id);
     saveState(); m.remove(); renderSugestaoCompra();
     showToast(`Grupo "${nome}" criado.`,'success');
   };
@@ -43326,57 +43626,201 @@ function cpPerguntarNomeDoGrupo(produtoId){
   if(campo) campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); salvar(); } });
 }
 
-/* Item que não vendeu no período e mesmo assim ela quer comprar. */
+/* Renomear, apagar e ver quantos itens cada grupo tem. */
+function cpAbrirGrupos(){
+  const linhas = cpLinhas();
+  const conta = id=>linhas.filter(l=>l.grupoId===id).length;
+  const grupos = cpGrupos().slice().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(620px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Seus grupos de compra</h3>
+      <p class="help-text">Esta lista é só da compra. Ela não tem nada a ver com o
+        <b>Vincular produtos</b>, onde grupo quer dizer "é o mesmo produto".</p>
+      ${grupos.length===0?`<p class="help-text">Você ainda não criou nenhum grupo. Crie pela coluna
+        <b>Grupo</b> da tabela, na opção "+ criar um grupo novo…".</p>`:`
+      <div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
+        ${grupos.map(g=>`
+          <div class="cp-linha-grupo">
+            <span style="flex:1 1 auto;min-width:0;"><b>${escapeHtml(g.nome)}</b>
+              <span class="cp-sub"> · ${conta(g.id)} ${conta(g.id)===1?'produto':'produtos'}</span></span>
+            <button type="button" class="btn btn-sm" onclick="cpRenomearGrupoPergunta('${escapeAttr(g.id)}')">Renomear</button>
+            <button type="button" class="btn btn-sm" onclick="cpApagarGrupoPergunta('${escapeAttr(g.id)}')">Apagar</button>
+          </div>`).join('')}
+      </div>`}
+      <div class="field" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
+        <label>Criar um grupo agora</label>
+        <input type="text" id="cp-grupo-avulso" placeholder="ex: Papel higiênico 300m premium">
+      </div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+        <button class="btn btn-primary" id="cp-grupo-avulso-ok">Criar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const campo = m.querySelector('#cp-grupo-avulso');
+  const criar = ()=>{
+    const nome = campo ? campo.value.trim() : '';
+    if(!nome){ showToast('Dê um nome ao grupo.','error'); return; }
+    cpCriarGrupo(nome); saveState(); m.remove();
+    renderSugestaoCompra(); cpAbrirGrupos();
+    showToast(`Grupo "${nome}" criado.`,'success');
+  };
+  m.querySelector('#cp-grupo-avulso-ok').onclick = criar;
+  if(campo) campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); criar(); } });
+}
+
+function cpRenomearGrupoPergunta(grupoId){
+  const g = cpGrupos().find(x=>x.id===grupoId);
+  if(!g) return;
+  cpCaixaDeTexto('Renomear o grupo', 'Nome do grupo', g.nome, nome=>{
+    if(!cpRenomearGrupo(grupoId, nome)){ showToast('Já existe um grupo com esse nome.','error'); return false; }
+    document.querySelectorAll('.modal-overlay.open').forEach(x=>{ if(!x.dataset.modalFixo) x.remove(); });
+    renderSugestaoCompra(); cpAbrirGrupos();
+    showToast('Grupo renomeado.','success');
+    return true;
+  });
+}
+
+function cpApagarGrupoPergunta(grupoId){
+  const g = cpGrupos().find(x=>x.id===grupoId);
+  if(!g) return;
+  const quantos = cpLinhas().filter(l=>l.grupoId===grupoId).length;
+  confirmAction('Apagar o grupo "' + g.nome + '"?',
+    quantos ? `${quantos} ${quantos===1?'produto volta':'produtos voltam'} pra "sem grupo". Nenhum produto é apagado, e nenhuma quantidade se perde.`
+            : 'O grupo está vazio. Nada mais muda.',
+    ()=>{ cpApagarGrupo(grupoId);
+          document.querySelectorAll('.modal-overlay.open').forEach(x=>{ if(!x.dataset.modalFixo) x.remove(); });
+          renderSugestaoCompra(); cpAbrirGrupos(); showToast('Grupo apagado.','success'); },
+    'Apagar');
+}
+
+/* Uma caixinha de texto reaproveitável. onOk devolvendo false mantém aberta. */
+function cpCaixaDeTexto(titulo, rotulo, valor, onOk, ajuda){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.style.zIndex = '1200';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(540px,94vw);">
+      <h3 style="margin-top:0;">${escapeHtml(titulo)}</h3>
+      ${ajuda?`<p class="help-text">${ajuda}</p>`:''}
+      <div class="field"><label>${escapeHtml(rotulo)}</label>
+        <input type="text" id="cp-caixa-texto" value="${escapeAttr(valor||'')}"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="cp-caixa-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const campo = m.querySelector('#cp-caixa-texto');
+  setTimeout(()=>{ campo.focus(); campo.select(); }, 60);
+  const ok = ()=>{ if(onOk(campo.value) !== false) m.remove(); };
+  m.querySelector('#cp-caixa-ok').onclick = ok;
+  campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); ok(); } });
+}
+
+function cpAbrirRenomear(chave){
+  const l = cpLinhas().find(x=>x.chave===chave);
+  if(!l) return;
+  cpCaixaDeTexto('Renomear nesta lista', 'Como você quer ler este item',
+    cpTemApelido(chave) ? l.nome : l.nomeOriginal,
+    nome=>{ cpRenomear(chave, nome); renderSugestaoCompra();
+            showToast(String(nome||'').trim()?'Nome trocado aqui na compra.':'Voltou ao nome de origem.','success'); },
+    `No cadastro ele continua <b>${escapeHtml(l.nomeOriginal)}</b> — e é assim que ele aparece na nota, `
+    + `no orçamento e no histórico. Aqui é só pra você ler melhor; deixe em branco pra voltar ao de origem.`);
+}
+
+function cpConfirmarRemoverLivre(chave){
+  const l = cpLinhas().find(x=>x.chave===chave);
+  confirmAction('Tirar da compra?',
+    `"${l?l.nome:'Este item'}" foi acrescentado por você e não existe no cadastro. Some da compra junto com a quantidade e os fornecedores marcados.`,
+    ()=>{ cpRemoverItemLivre(chave); renderSugestaoCompra(); showToast('Item tirado da compra.','success'); },
+    'Tirar');
+}
+
+/* Acrescentar item: do cadastro, ou um que a Mizu ainda nem vende. */
 function cpAbrirItemManual(){
   const produtos = (STATE.produtos||[]).slice().sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'));
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
   m.innerHTML = `
-    <div class="modal-box" style="max-width:min(560px,94vw);">
-      <h3 style="margin-top:0;">Adicionar um item à compra</h3>
-      <p class="help-text">Produto que não vendeu nesse período, mas você quer comprar assim mesmo —
-        reposição, item novo, pedido de cliente.</p>
-      <div class="field"><label>Produto</label>
-        <select id="cp-manual-produto">
-          <option value="">— escolha —</option>
-          ${produtos.map(p=>`<option value="${escapeAttr(p.id)}">${escapeHtml(p.nome)}</option>`).join('')}
-        </select></div>
-      <div class="field"><label>Quantidade</label>
-        <input type="number" id="cp-manual-qtd" min="1" value="1"></div>
+    <div class="modal-box" style="max-width:min(600px,94vw);">
+      <h3 style="margin-top:0;">Acrescentar um item à compra</h3>
+      <div class="cp-abas-mini">
+        <button type="button" class="cp-aba-mini ativa" data-aba="cad">Produto já cadastrado</button>
+        <button type="button" class="cp-aba-mini" data-aba="novo">Item que ainda não vendemos</button>
+      </div>
+
+      <div data-painel="cad">
+        <p class="help-text">Produto que não vendeu nesse período, mas você quer comprar assim mesmo —
+          reposição, item parado, pedido de cliente.</p>
+        <div class="field"><label>Produto</label>
+          <select id="cp-manual-produto">
+            <option value="">— escolha —</option>
+            ${produtos.map(p=>`<option value="${escapeAttr(p.id)}">${escapeHtml(p.nome)}</option>`).join('')}
+          </select></div>
+        <div class="field"><label>Quantidade</label>
+          <input type="number" id="cp-manual-qtd" min="1" value="1"></div>
+      </div>
+
+      <div data-painel="novo" hidden>
+        <p class="help-text">Item que a Mizu ainda não vende. Ele fica <b>só na compra</b>: não vira
+          produto no cadastro, não entra no estoque e não aparece em orçamento. Quando chegar e você
+          decidir vender, aí cadastra.</p>
+        <div class="field"><label>Nome do item</label>
+          <input type="text" id="cp-novo-nome" placeholder="ex: Rodo de alumínio 60cm"></div>
+        <div class="form-grid">
+          <div class="field"><label>Unidade</label>
+            <input type="text" id="cp-novo-un" value="UN" maxlength="6"></div>
+          <div class="field"><label>Quantidade</label>
+            <input type="number" id="cp-novo-qtd" min="1" value="1"></div>
+        </div>
+      </div>
+
       <div class="modal-actions">
         <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
-        <button class="btn btn-primary" id="cp-manual-ok">Adicionar</button>
+        <button class="btn btn-primary" id="cp-manual-ok">Acrescentar</button>
       </div>
     </div>`;
   document.body.appendChild(m);
+
+  let aba = 'cad';
+  m.querySelectorAll('.cp-aba-mini').forEach(b=>{
+    b.onclick = ()=>{
+      aba = b.dataset.aba;
+      m.querySelectorAll('.cp-aba-mini').forEach(x=>x.classList.toggle('ativa', x===b));
+      m.querySelectorAll('[data-painel]').forEach(p=>{ p.hidden = (p.dataset.painel !== aba); });
+    };
+  });
+
   m.querySelector('#cp-manual-ok').onclick = ()=>{
-    const id = m.querySelector('#cp-manual-produto').value;
-    const qtd = Math.max(1, parseInt(m.querySelector('#cp-manual-qtd').value,10) || 1);
-    if(!id){ showToast('Escolha o produto.','error'); return; }
-    cpDecidir(id, qtd);
-    m.remove(); renderSugestaoCompra();
-    showToast('Item adicionado à compra.','success');
+    if(aba === 'cad'){
+      const id = m.querySelector('#cp-manual-produto').value;
+      const qtd = Math.max(1, parseInt(m.querySelector('#cp-manual-qtd').value,10) || 1);
+      if(!id){ showToast('Escolha o produto.','error'); return; }
+      cpDecidir(id, qtd);
+      m.remove(); renderSugestaoCompra();
+      showToast('Item acrescentado à compra.','success');
+    }else{
+      const nome = m.querySelector('#cp-novo-nome').value.trim();
+      const un = m.querySelector('#cp-novo-un').value.trim() || 'UN';
+      const qtd = Math.max(1, parseInt(m.querySelector('#cp-novo-qtd').value,10) || 1);
+      if(!nome){ showToast('Escreva o nome do item.','error'); return; }
+      const novo = cpCriarItemLivre(nome, un);
+      if(novo) cpDecidir(novo.id, qtd);
+      m.remove(); renderSugestaoCompra();
+      showToast(`"${nome}" entrou na compra.`,'success');
+    }
   };
 }
 
-/* ---------- página 2 ---------- */
+/* ===================== PÁGINA 2 ===================== */
+/* Era uma pilha de caixas que se desmontava na tela larga, e ela disse que
+   ficou bagunçada. Virou tabela: uma linha por produto, os fornecedores na
+   própria coluna. */
 function cpRenderPagina2(box){
-  const linhas = cpLinhas().filter(l=>l.comprar > 0);
-  const avulsos = [];
-  const decisao = cpCfg().decisao;
-  const naLista = new Set(linhas.map(l=>l.produtoId));
-  Object.keys(decisao).forEach(id=>{
-    if(naLista.has(id)) return;
-    const p = (STATE.produtos||[]).find(x=>x.id===id);
-    if(!p) return;
-    const g = cpGrupoDe(id);
-    avulsos.push({ produtoId:id, nome:p.nome, marca:p.marca||'', unidade:p.unidade||'UN',
-                   estoque:p.estoqueAtual||0, custo:Number(p.custo)||0, total:0, porMes:{},
-                   grupoId:g?g.id:'', grupoNome:g?g.nome:'',
-                   comprar: cpQuanto(id), fornecedores: cpFornecedoresDe(id) });
-  });
-  const todos = linhas.concat(avulsos);
-
+  const todos = cpDaCompra();
   const blocos = [];
   cpGrupos().forEach(g=>{
     const itens = todos.filter(l=>l.grupoId===g.id);
@@ -43384,75 +43828,86 @@ function cpRenderPagina2(box){
   });
   const soltos = todos.filter(l=>!l.grupoId);
   if(soltos.length) blocos.push({ nome:'Sem grupo', itens:soltos, solto:true });
-
   const semForn = todos.filter(l=>l.fornecedores.length===0).length;
 
   box.innerHTML = `
     ${cpEstiloHtml()}
-    <div class="cp-passo">Página 2 de 2 — como ficou, e quem vende cada um</div>
+    ${cpTrilhaHtml()}
     ${cpCabecalhoHtml(todos, 2)}
     ${semForn>0?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
       <b>⚠️ ${semForn} produto${semForn===1?'':'s'} sem fornecedor nenhum.</b>
       <small>Produto sem fornecedor não entra em lista nenhuma — não tem pra quem pedir preço.</small>
     </div>`:''}
     ${blocos.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">
-      Nenhum produto com quantidade decidida. Volte à página 1 e diga quanto comprar.</p></div>` : ''}
+      Nenhum produto com quantidade decidida. Volte à etapa 1 e diga quanto comprar.</p></div>` : ''}
     ${blocos.map(b=>`
-      <div class="card" style="margin-bottom:14px;overflow:visible;">
+      <div class="card" style="margin-bottom:14px;overflow:hidden;">
         <div class="cp-faixa">
           <h3 style="margin:0;font-size:15px;">${escapeHtml(b.nome)}</h3>
           <span class="cp-sub">${b.itens.length} ${b.itens.length===1?'produto':'produtos'} ·
             ${fmtNum(b.itens.reduce((s,i)=>s+i.comprar,0))} un. ·
             ${fmtMoney(b.itens.reduce((s,i)=>s+i.comprar*i.custo,0))}</span>
         </div>
-        ${b.itens.map(i=>`
-          <div class="cp-linha">
-            <div style="flex:1 1 250px;min-width:0;">
-              <strong style="font-size:13.5px;">${escapeHtml(i.nome)}</strong>
-              <div class="cp-sub">${i.total>0?`vendeu ${fmtNum(i.total)} no período · `:'não vendeu no período · '}estoque ${fmtNum(i.estoque)}</div>
-            </div>
-            <div style="text-align:right;">
-              <div class="cp-rot" style="margin-bottom:3px;">Vou comprar</div>
-              <input class="cp-qtd" type="number" min="0" value="${i.comprar}"
-                aria-label="Quantidade a comprar de ${escapeAttr(i.nome)}"
-                onchange="cpDecidir('${escapeAttr(i.produtoId)}', this.value); renderSugestaoCompra();">
-            </div>
-            <div style="flex:2 1 400px;min-width:0;">
-              <div class="cp-rot" style="margin-bottom:4px;">Quem vende este produto</div>
-              ${i.fornecedores.map(nome=>{
-                const u = cpUltimaCompra(i.produtoId, nome);
-                return `<span class="cp-chip">${escapeHtml(nome)}${u
-                  ? ` <span class="cp-sub">· ${fmtMoney(u.custo)} ${escapeHtml(cpHaQuantoTempo(u.data))}</span>`
-                  : ` <span class="cp-sub">· sem compra ainda</span>`}
-                  <button type="button" aria-label="Tirar ${escapeAttr(nome)}"
-                    onclick="cpTirarFornecedor('${escapeAttr(i.produtoId)}', ${JSON.stringify(nome).replace(/"/g,'&quot;')}); saveState(); renderSugestaoCompra();">✕</button></span>`;
-              }).join('')}
-              ${i.fornecedores.length===0?`<span style="font-size:12px;color:var(--negative);font-weight:600;">nenhum fornecedor ainda</span> `:''}
-              <button type="button" class="cp-chip add" onclick="cpAbrirFornecedores('${escapeAttr(i.produtoId)}')">+ fornecedor</button>
-            </div>
-          </div>`).join('')}
+        <div class="cp-wrap">
+          <table class="data-table cp-tabela">
+            <thead><tr>
+              <th style="min-width:240px;">Produto</th>
+              <th class="num" style="width:110px;">Vou comprar</th>
+              <th class="num" style="width:120px;">Vendeu / estoque</th>
+              <th style="min-width:340px;">Quem vende este produto</th>
+            </tr></thead>
+            <tbody>
+              ${b.itens.map(i=>`
+                <tr>
+                  <td><strong>${escapeHtml(i.nome)}</strong>
+                    <div class="cp-sub">${escapeHtml(i.unidade)}${i.marca?' · '+escapeHtml(i.marca):''}${i.livre?' · <b>item novo</b>':''}</div></td>
+                  <td class="num cp-td-decide">
+                    <input class="cp-qtd" type="number" min="0" value="${i.comprar}"
+                      aria-label="Quantidade a comprar de ${escapeAttr(i.nome)}"
+                      onchange="cpDecidir('${escapeAttr(i.chave)}', this.value); renderSugestaoCompra();"></td>
+                  <td class="num cp-sub" style="white-space:nowrap;">
+                    ${i.total>0?fmtNum(i.total)+' vendidos':'não vendeu'}<br>${fmtNum(i.estoque)} em estoque</td>
+                  <td>
+                    ${i.fornecedores.map(nome=>{
+                      const u = cpUltimaCompra(i.chave, nome);
+                      return `<span class="cp-chip">${escapeHtml(nome)}<span class="cp-sub">· ${u
+                        ? fmtMoney(u.custo)+' '+escapeHtml(cpHaQuantoTempo(u.data))
+                        : 'sem compra ainda'}</span>
+                        <button type="button" aria-label="Tirar ${escapeAttr(nome)}"
+                          onclick="cpTirarFornecedor('${escapeAttr(i.chave)}', ${escapeAttr(JSON.stringify(nome))}); saveState(); renderSugestaoCompra();">✕</button></span>`;
+                    }).join('')}
+                    ${i.fornecedores.length===0?`<span class="cp-vazio">nenhum fornecedor ainda</span> `:''}
+                    <button type="button" class="cp-chip add" onclick="cpAbrirFornecedores('${escapeAttr(i.chave)}')">+ fornecedor</button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>
       </div>`).join('')}
+    ${todos.length?`<div style="display:flex;justify-content:flex-end;margin-top:4px;">
+      <button class="btn btn-primary" onclick="cpIrPara(3)" ${semForn===todos.length?'disabled title="Marque pelo menos um fornecedor"':''}>
+        Montar a lista de cada fornecedor →</button></div>`:''}
     <p class="help-text" style="margin:12px 2px 0;">
       O preço do lado do fornecedor é o da sua última compra — ele aparece sozinho, você não digita.
       Fornecedor que você ainda não comprou entra sem preço.
     </p>`;
 }
 
-function cpAbrirFornecedores(produtoId){
-  const prod = (STATE.produtos||[]).find(p=>p.id===produtoId);
-  const jaTem = cpFornecedoresDe(produtoId);
+function cpAbrirFornecedores(chave){
+  const l = cpLinhas().find(x=>x.chave===chave);
+  const jaTem = cpFornecedoresDe(chave);
   const candidatos = cpTodosFornecedores().filter(n=>jaTem.indexOf(n) < 0);
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(560px,94vw);max-height:88vh;overflow-y:auto;">
-      <h3 style="margin-top:0;">Quem vende ${escapeHtml(prod?prod.nome:'este produto')}</h3>
+      <h3 style="margin-top:0;">Quem vende ${escapeHtml(l?l.nome:'este produto')}</h3>
       <p class="help-text">Marque quantos quiser. Isso não mexe no fornecedor do cadastro do produto.</p>
       ${candidatos.length?`<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
         ${candidatos.map(n=>{
-          const u = cpUltimaCompra(produtoId, n);
+          const u = cpUltimaCompra(chave, n);
           return `<button type="button" class="btn" style="justify-content:space-between;text-align:left;"
-            onclick="cpPorFornecedor('${escapeAttr(produtoId)}', ${JSON.stringify(n).replace(/"/g,'&quot;')}); saveState(); this.closest('.modal-overlay').remove(); renderSugestaoCompra();">
+            onclick="cpPorFornecedor('${escapeAttr(chave)}', ${escapeAttr(JSON.stringify(n))}); saveState(); this.closest('.modal-overlay').remove(); renderSugestaoCompra();">
             <span>${escapeHtml(n)}</span>
             <span class="cp-sub">${u?`${fmtMoney(u.custo)} · ${escapeHtml(cpHaQuantoTempo(u.data))}`:'sem compra ainda'}</span>
           </button>`;
@@ -43472,12 +43927,381 @@ function cpAbrirFornecedores(produtoId){
   const salvar = ()=>{
     const nome = campo ? campo.value.trim() : '';
     if(!nome){ showToast('Escreva o nome do fornecedor.','error'); return; }
-    cpPorFornecedor(produtoId, nome);
+    cpPorFornecedor(chave, nome);
     saveState(); m.remove(); renderSugestaoCompra();
     showToast(`${nome} marcado como fornecedor deste produto.`,'success');
   };
   m.querySelector('#cp-forn-ok').onclick = salvar;
   if(campo) campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); salvar(); } });
+}
+
+/* ===================== PÁGINA 3 ===================== */
+/* A lista de UM fornecedor por vez: é assim que ela manda, um de cada vez,
+   normalmente pelo WhatsApp. A mesma tela recebe o preço quando ele
+   responde — sair e voltar pra digitar seria duas telas pra uma conversa só. */
+function cpRenderPagina3(box){
+  const listas = cpListasPorFornecedor();
+  if(listas.length && !listas.some(l=>l.fornecedor===cpFornecedorAberto)) cpFornecedorAberto = listas[0].fornecedor;
+  const atual = listas.find(l=>l.fornecedor===cpFornecedorAberto) || null;
+  const respondidos = atual ? atual.itens.filter(i=>cpCusto(i.chave, atual.fornecedor)!==null).length : 0;
+  const totalAtual = atual ? atual.itens.reduce((s,i)=>{
+    const p = cpCusto(i.chave, atual.fornecedor); return s + (p===null?0:p*i.comprar); }, 0) : 0;
+
+  box.innerHTML = `
+    ${cpEstiloHtml()}
+    ${cpTrilhaHtml()}
+    ${listas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">
+      Nenhum fornecedor marcado ainda. Volte à etapa 2 e diga quem vende cada produto.</p></div>` : `
+    <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+      <div class="cp-rot" style="margin-bottom:8px;">Fornecedor</div>
+      <div class="cp-fornecedores">
+        ${listas.map(l=>{
+          const resp = l.itens.filter(i=>cpCusto(i.chave, l.fornecedor)!==null).length;
+          return `<button type="button" class="cp-forn-aba ${l.fornecedor===cpFornecedorAberto?'ativa':''}"
+            onclick="cpAbrirListaFornecedor(${escapeAttr(JSON.stringify(l.fornecedor))})">
+            ${escapeHtml(l.fornecedor)}
+            <small>${resp}/${l.itens.length} ${resp===l.itens.length?'respondido':'respondidos'}</small>
+          </button>`;
+        }).join('')}
+      </div>
+    </div>
+
+    <div class="card cp-kpis">
+      <div><div class="cp-rot">Itens para este fornecedor</div><div class="cp-num">${atual?atual.itens.length:0}</div></div>
+      <div><div class="cp-rot">Já respondidos</div><div class="cp-num" style="color:${respondidos===(atual?atual.itens.length:0)?'var(--positive)':'var(--ink)'};">${respondidos}</div></div>
+      <div><div class="cp-rot">Total do que ele respondeu</div><div class="cp-num" style="font-family:var(--font-num);">${fmtMoney(totalAtual)}</div></div>
+      <div class="cp-acoes">
+        <button class="btn btn-sm" onclick="cpCopiarLista()">📋 Copiar a lista</button>
+        <button class="btn btn-sm" onclick="cpExportarListas()">📊 Excel de todos</button>
+      </div>
+    </div>
+
+    ${atual?`
+    <div class="card" style="overflow:hidden;">
+      <div class="cp-faixa">
+        <h3 style="margin:0;font-size:15px;">${escapeHtml(atual.fornecedor)}</h3>
+        <span class="cp-sub">Mande a lista, e digite aqui o que ele responder — por unidade (${escapeHtml(atual.itens[0]?atual.itens[0].unidade:'UN')}, e assim por diante)</span>
+      </div>
+      <div class="cp-wrap">
+        <table class="data-table cp-tabela">
+          <thead><tr>
+            <th style="min-width:260px;">Produto</th>
+            <th>Grupo</th>
+            <th class="num">Quantidade</th>
+            <th class="num">Última compra aqui</th>
+            <th class="num cp-th-decide" style="width:150px;">Custo por unidade</th>
+            <th class="num">Total da linha</th>
+          </tr></thead>
+          <tbody>
+            ${atual.itens.map(i=>{
+              const p = cpCusto(i.chave, atual.fornecedor);
+              const u = cpUltimaCompra(i.chave, atual.fornecedor);
+              return `<tr>
+                <td><strong>${escapeHtml(i.nome)}</strong>
+                  <div class="cp-sub">${escapeHtml(i.unidade)}${i.marca?' · '+escapeHtml(i.marca):''}</div></td>
+                <td class="cp-sub">${i.grupoNome?escapeHtml(i.grupoNome):'—'}</td>
+                <td class="num" style="font-weight:700;">${fmtNum(i.comprar)}</td>
+                <td class="num cp-sub">${u?fmtMoney(u.custo)+'<br>'+escapeHtml(cpHaQuantoTempo(u.data)):'—'}</td>
+                <td class="num cp-td-decide">
+                  <input class="cp-qtd cp-preco" type="text" inputmode="decimal"
+                    value="${p===null?'':p.toFixed(2).replace('.',',')}" placeholder="—"
+                    aria-label="Custo de ${escapeAttr(i.nome)} em ${escapeAttr(atual.fornecedor)}"
+                    onchange="cpSetCusto('${escapeAttr(i.chave)}', ${escapeAttr(JSON.stringify(atual.fornecedor))}, this.value); renderSugestaoCompra();"></td>
+                <td class="num" style="font-family:var(--font-num);${p===null?'color:var(--ink-faint);':'font-weight:700;'}">
+                  ${p===null?'—':fmtMoney(p*i.comprar)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr>
+            <td colspan="5" style="text-align:right;font-weight:600;">Total respondido</td>
+            <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(totalAtual)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`:''}
+
+    <div style="display:flex;justify-content:flex-end;margin-top:12px;">
+      <button class="btn btn-primary" onclick="cpIrPara(4)">Ver o relatório →</button>
+    </div>
+    <p class="help-text" style="margin:12px 2px 0;">
+      O custo é <b>por unidade</b>, na mesma unidade da quantidade. Item que ele não respondeu
+      fica em branco e sai do comparativo — ninguém ganha a compra com preço que não existe.
+    </p>`}`;
+}
+
+function cpAbrirListaFornecedor(nome){
+  cpFornecedorAberto = nome;
+  renderSugestaoCompra();
+}
+
+/* O texto pro WhatsApp: é assim que o pedido sai na prática, não por
+   planilha. Vai o nome do jeito que ela lê na tela — foi o que ela pediu. */
+function cpTextoDaLista(lista){
+  const linhas = [`*Pedido de cotação — Mizu Materiais de Limpeza*`, ''];
+  lista.itens.forEach((i, k)=>{
+    linhas.push(`${k+1}. ${i.nome} — ${fmtNum(i.comprar)} ${i.unidade}`);
+  });
+  linhas.push('', `Total: ${lista.itens.length} ${lista.itens.length===1?'item':'itens'}.`,
+                  'Pode me passar o preço por unidade de cada um, por favor?');
+  return linhas.join('\n');
+}
+
+async function cpCopiarLista(){
+  const lista = cpListasPorFornecedor().find(l=>l.fornecedor===cpFornecedorAberto);
+  if(!lista){ showToast('Escolha um fornecedor primeiro.','error'); return; }
+  const txt = cpTextoDaLista(lista);
+  try{
+    await navigator.clipboard.writeText(txt);
+    showToast('Lista copiada. Cole no WhatsApp do fornecedor.','success');
+  }catch(e){
+    cpMostrarTexto('Lista de ' + lista.fornecedor, txt);
+  }
+}
+
+function cpMostrarTexto(titulo, texto){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(640px,94vw);">
+      <h3 style="margin-top:0;">${escapeHtml(titulo)}</h3>
+      <p class="help-text">Não consegui copiar sozinho. Selecione o texto abaixo e copie.</p>
+      <textarea readonly style="width:100%;height:280px;font:inherit;font-size:13px;padding:10px;
+        border:1px solid var(--border);border-radius:var(--radius-sm);">${escapeHtml(texto)}</textarea>
+      <div class="modal-actions">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const t = m.querySelector('textarea');
+  setTimeout(()=>{ t.focus(); t.select(); }, 60);
+}
+
+/* Uma aba por fornecedor, com a coluna de preço vazia pra ele preencher. */
+async function cpExportarListas(){
+  const listas = cpListasPorFornecedor();
+  if(!listas.length){ showToast('Nenhum fornecedor marcado.','error'); return; }
+  if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.','error'); return; }
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Mizu Materiais de Limpeza';
+
+  listas.forEach(lista=>{
+    const nomeAba = String(lista.fornecedor).replace(/[\\\/\?\*\[\]:]/g,' ').slice(0,28) || 'Fornecedor';
+    const ws = wb.addWorksheet(nomeAba);
+    ws.columns = [
+      { header:'Produto', key:'p', width:46 },
+      { header:'Unidade', key:'u', width:10 },
+      { header:'Quantidade', key:'q', width:13 },
+      { header:'Preço por unidade', key:'v', width:19 },
+      { header:'Total', key:'t', width:14 }
+    ];
+    ws.mergeCells('A1:E1');
+    ws.getCell('A1').value = 'Pedido de cotação — Mizu Materiais de Limpeza — ' + lista.fornecedor;
+    ws.getCell('A1').font = { bold:true, size:13, color:{argb:'FF'+COR.escuro} };
+    ws.mergeCells('A2:E2');
+    ws.getCell('A2').value = 'Preencha só a coluna "Preço por unidade". O total se calcula sozinho.';
+    ws.getCell('A2').font = { size:10, color:{argb:'FF'+COR.cinza} };
+    ws.addRow([]);
+    const cab = ws.addRow(['Produto','Unidade','Quantidade','Preço por unidade','Total']);
+    cab.font = { bold:true, color:{argb:'FFFFFFFF'} };
+    cab.eachCell(c=>{ c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} }; });
+    lista.itens.forEach(i=>{
+      const p = cpCusto(i.chave, lista.fornecedor);
+      const r = ws.addRow([i.nome, i.unidade, i.comprar, p===null?null:p, null]);
+      r.getCell(3).numFmt = '#,##0';
+      r.getCell(4).numFmt = 'R$ #,##0.00';
+      r.getCell(5).numFmt = 'R$ #,##0.00';
+      r.getCell(5).value = { formula: `C${r.number}*D${r.number}` };
+      r.getCell(4).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.ambarFraco} };
+    });
+    const ult = ws.lastRow.number;
+    const tot = ws.addRow(['Total', '', '', '', null]);
+    tot.font = { bold:true };
+    tot.getCell(5).value = { formula: `SUM(E5:E${ult})` };
+    tot.getCell(5).numFmt = 'R$ #,##0.00';
+  });
+
+  const buf = await wb.xlsx.writeBuffer();
+  baixarArquivo(buf, 'cotacao-fornecedores-' + todayISO() + '.xlsx');
+  showToast('Planilha gerada: uma aba por fornecedor.','success');
+}
+
+/* ===================== PÁGINA 4 ===================== */
+function cpRenderPagina4(box){
+  const todos = cpDaCompra();
+  const comPreco = todos.filter(l=>cpMaisBarato(l));
+  const semPreco = todos.filter(l=>!cpMaisBarato(l));
+
+  /* o que comprar de cada fornecedor, levando sempre o mais barato */
+  const porFornecedor = {};
+  comPreco.forEach(l=>{
+    const m = cpMaisBarato(l);
+    if(!porFornecedor[m.fornecedor]) porFornecedor[m.fornecedor] = { fornecedor:m.fornecedor, itens:[], total:0 };
+    porFornecedor[m.fornecedor].itens.push({ linha:l, preco:m.preco });
+    porFornecedor[m.fornecedor].total += m.preco * l.comprar;
+  });
+  const escolhidos = Object.values(porFornecedor).sort((a,b)=>b.total - a.total);
+  const totalGeral = escolhidos.reduce((s,f)=>s+f.total, 0);
+
+  /* quanto o preço mais caro custaria: é a conta que mostra pra que serviu cotar */
+  let totalCaro = 0;
+  comPreco.forEach(l=>{
+    let caro = 0;
+    (l.fornecedores||[]).forEach(f=>{ const p = cpCusto(l.chave, f); if(p!==null && p>caro) caro = p; });
+    totalCaro += caro * l.comprar;
+  });
+  const economia = totalCaro - totalGeral;
+
+  const blocos = [];
+  cpGrupos().forEach(g=>{
+    const itens = todos.filter(l=>l.grupoId===g.id);
+    if(itens.length) blocos.push({ nome:g.nome, itens });
+  });
+  const soltos = todos.filter(l=>!l.grupoId);
+  if(soltos.length) blocos.push({ nome:'Sem grupo', itens:soltos });
+
+  box.innerHTML = `
+    ${cpEstiloHtml()}
+    ${cpTrilhaHtml()}
+    <div class="card cp-kpis">
+      <div><div class="cp-rot">Itens com preço</div><div class="cp-num">${comPreco.length} de ${todos.length}</div></div>
+      <div><div class="cp-rot">Total da compra</div><div class="cp-num" style="font-family:var(--font-num);color:var(--positive);">${fmtMoney(totalGeral)}</div></div>
+      <div><div class="cp-rot">Levando sempre o mais caro</div><div class="cp-num" style="font-family:var(--font-num);color:var(--ink-soft);">${fmtMoney(totalCaro)}</div></div>
+      <div><div class="cp-rot">Diferença</div><div class="cp-num" style="font-family:var(--font-num);color:${economia>0?'var(--positive)':'var(--ink-soft)'};">${fmtMoney(economia)}</div></div>
+      <div class="cp-acoes">
+        <button class="btn btn-sm" onclick="cpExportarRelatorio()">📊 Exportar o relatório</button>
+      </div>
+    </div>
+
+    ${semPreco.length?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+      <b>⚠️ ${semPreco.length} ${semPreco.length===1?'item ainda sem preço nenhum':'itens ainda sem preço nenhum'}.</b>
+      <small>Eles ficam de fora das contas acima até algum fornecedor responder: ${escapeHtml(semPreco.slice(0,4).map(l=>l.nome).join(', '))}${semPreco.length>4?'…':''}</small>
+    </div>`:''}
+
+    ${comPreco.length===0?`<div class="card"><p class="help-text" style="margin:0;">
+      Nenhum preço preenchido ainda. Volte à etapa 3 e digite o que cada fornecedor respondeu.</p></div>`:`
+
+    <div class="card" style="margin-bottom:14px;overflow:hidden;">
+      <div class="cp-faixa"><h3 style="margin:0;font-size:15px;">O pedido de cada fornecedor</h3>
+        <span class="cp-sub">levando sempre o mais barato de cada item</span></div>
+      <div class="cp-wrap">
+        <table class="data-table cp-tabela">
+          <thead><tr><th>Fornecedor</th><th class="num">Itens</th><th class="num">Unidades</th><th class="num">Total</th></tr></thead>
+          <tbody>
+            ${escolhidos.map(f=>`<tr>
+              <td><strong>${escapeHtml(f.fornecedor)}</strong></td>
+              <td class="num">${f.itens.length}</td>
+              <td class="num">${fmtNum(f.itens.reduce((s,i)=>s+i.linha.comprar,0))}</td>
+              <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(f.total)}</td>
+            </tr>`).join('')}
+          </tbody>
+          <tfoot><tr><td colspan="3" style="text-align:right;font-weight:600;">Total</td>
+            <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(totalGeral)}</td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+
+    ${blocos.map(b=>`
+      <div class="card" style="margin-bottom:14px;overflow:hidden;">
+        <div class="cp-faixa"><h3 style="margin:0;font-size:15px;">${escapeHtml(b.nome)}</h3></div>
+        <div class="cp-wrap">
+          <table class="data-table cp-tabela">
+            <thead><tr>
+              <th style="min-width:240px;">Produto</th>
+              <th class="num">Qtd</th>
+              <th style="min-width:320px;">O que cada um respondeu</th>
+              <th class="num">Mais barato</th>
+              <th class="num">Total</th>
+            </tr></thead>
+            <tbody>
+              ${b.itens.map(i=>{
+                const m = cpMaisBarato(i);
+                return `<tr>
+                  <td><strong>${escapeHtml(i.nome)}</strong>
+                    <div class="cp-sub">${escapeHtml(i.unidade)}</div></td>
+                  <td class="num" style="font-weight:700;">${fmtNum(i.comprar)}</td>
+                  <td>
+                    ${(i.fornecedores||[]).length===0?`<span class="cp-vazio">sem fornecedor</span>`:
+                      i.fornecedores.map(f=>{
+                        const p = cpCusto(i.chave, f);
+                        const venceu = m && m.fornecedor===f;
+                        return `<span class="cp-chip ${venceu?'ganhou':''}">${escapeHtml(f)}
+                          <span class="cp-sub">· ${p===null?'não respondeu':fmtMoney(p)}</span></span>`;
+                      }).join('')}
+                  </td>
+                  <td class="num">${m?`<b>${escapeHtml(m.fornecedor)}</b><div class="cp-sub">${fmtMoney(m.preco)} cada</div>`:'<span class="cp-vazio">—</span>'}</td>
+                  <td class="num" style="font-family:var(--font-num);${m?'font-weight:700;':'color:var(--ink-faint);'}">${m?fmtMoney(m.preco*i.comprar):'—'}</td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`).join('')}`}
+
+    <p class="help-text" style="margin:12px 2px 0;">
+      A comparação é por unidade, dentro do mesmo produto. O grupo serve pra você olhar lado a lado
+      as marcas que disputam a mesma prateleira — mas a quantidade de cada uma continua sendo a sua.
+    </p>`;
+}
+
+async function cpExportarRelatorio(){
+  const todos = cpDaCompra();
+  if(!todos.length){ showToast('Nada decidido ainda.','error'); return; }
+  if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.','error'); return; }
+  const fornecedores = [...new Set(todos.flatMap(l=>l.fornecedores||[]))].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Mizu Materiais de Limpeza';
+  const ws = wb.addWorksheet('Comparativo');
+
+  ws.mergeCells(1, 1, 1, 4 + fornecedores.length + 2);
+  ws.getCell('A1').value = 'Comparativo de compra — Mizu Materiais de Limpeza — ' + todayISO().split('-').reverse().join('/');
+  ws.getCell('A1').font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+  ws.addRow([]);
+
+  const cab = ws.addRow(['Grupo','Produto','Unidade','Quantidade', ...fornecedores, 'Mais barato','Total']);
+  cab.font = { bold:true, color:{argb:'FFFFFFFF'} };
+  cab.eachCell(c=>{ c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} }; });
+  ws.getColumn(1).width = 30; ws.getColumn(2).width = 44; ws.getColumn(3).width = 10; ws.getColumn(4).width = 12;
+  fornecedores.forEach((f,k)=>{ ws.getColumn(5+k).width = Math.max(14, Math.min(26, f.length+3)); });
+  ws.getColumn(5+fornecedores.length).width = 26;
+  ws.getColumn(6+fornecedores.length).width = 15;
+
+  const ordenadas = todos.slice().sort((a,b)=>
+    String(a.grupoNome||'zzz').localeCompare(String(b.grupoNome||'zzz'),'pt-BR') ||
+    a.nome.localeCompare(b.nome,'pt-BR'));
+
+  ordenadas.forEach(l=>{
+    const m = cpMaisBarato(l);
+    const r = ws.addRow([ l.grupoNome || '(sem grupo)', l.nome, l.unidade, l.comprar,
+      ...fornecedores.map(f=>{
+        if((l.fornecedores||[]).indexOf(f) < 0) return null;
+        const p = cpCusto(l.chave, f);
+        return p === null ? 'não respondeu' : p;
+      }),
+      m ? m.fornecedor : '—',
+      m ? m.preco * l.comprar : null ]);
+    r.getCell(4).numFmt = '#,##0';
+    fornecedores.forEach((f,k)=>{
+      const cel = r.getCell(5+k);
+      cel.numFmt = 'R$ #,##0.00';
+      if(m && m.fornecedor === f){
+        cel.font = { bold:true, color:{argb:'FF'+COR.verde} };
+        cel.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} };
+      }
+    });
+    r.getCell(6+fornecedores.length).numFmt = 'R$ #,##0.00';
+    r.getCell(6+fornecedores.length).font = { bold:true };
+  });
+
+  const ult = ws.lastRow.number;
+  const tot = ws.addRow(['Total', '', '', '', ...fornecedores.map(()=>null), '', null]);
+  tot.font = { bold:true };
+  const colTotal = 6 + fornecedores.length;
+  tot.getCell(colTotal).value = { formula: `SUM(${ws.getColumn(colTotal).letter}4:${ws.getColumn(colTotal).letter}${ult})` };
+  tot.getCell(colTotal).numFmt = 'R$ #,##0.00';
+
+  const buf = await wb.xlsx.writeBuffer();
+  baixarArquivo(buf, 'comparativo-compra-' + todayISO() + '.xlsx');
+  showToast('Relatório exportado.','success');
 }
 
 function cpMesCurto(mes){
@@ -43487,35 +44311,118 @@ function cpMesCurto(mes){
   return nomes[m-1] + (String(a).slice(2));
 }
 
+/* O estilo mora no <head>, e não dentro da caixa da tela.
+
+   Já morou dentro, e quebrou: cada página faz box.innerHTML = ..., e isso
+   apaga o <style> junto. Como a função só devolvia o CSS na primeira vez,
+   da segunda página em diante a tela aparecia sem estilo nenhum — foi o que
+   ela viu quando disse que a página 2 estava bagunçada. No <head> ninguém
+   apaga. Devolve string vazia pra não mudar quem a chama. */
 function cpEstiloHtml(){
   if(document.getElementById('cp-estilo')) return '';
-  return `<style id="cp-estilo">
-    .cp-passo{ font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:8px; }
+  const tag = document.createElement('style');
+  tag.id = 'cp-estilo';
+  tag.textContent = cpEstiloCss();
+  document.head.appendChild(tag);
+  return '';
+}
+
+function cpEstiloCss(){
+  return `
+    /* ---- a trilha das quatro etapas ---- */
+    .cp-trilha{ display:flex; flex-wrap:wrap; align-items:stretch; gap:4px; margin-bottom:12px; }
+    .cp-etapa{ display:flex; align-items:center; gap:9px; padding:9px 13px; border:1px solid var(--border);
+      border-radius:var(--radius-sm); background:#fff; cursor:pointer; font:inherit; text-align:left;
+      color:var(--ink); min-width:0; }
+    .cp-etapa:disabled{ opacity:.45; cursor:not-allowed; }
+    .cp-etapa b{ display:block; font-size:13px; line-height:1.25; white-space:nowrap; }
+    .cp-etapa small{ display:block; font-size:11px; color:var(--ink-faint); line-height:1.3; }
+    .cp-etapa-n{ flex:0 0 auto; width:22px; height:22px; border-radius:50%; background:var(--bg-app);
+      color:var(--ink-soft); display:flex; align-items:center; justify-content:center;
+      font-size:12px; font-weight:700; font-family:var(--font-num); }
+    .cp-etapa.feita .cp-etapa-n{ background:var(--positive); color:#fff; }
+    .cp-etapa.atual{ border-color:var(--primary); background:var(--primary-soft); }
+    .cp-etapa.atual .cp-etapa-n{ background:var(--primary); color:#fff; }
+    .cp-etapa.atual b{ color:var(--primary-escuro); }
+    .cp-seta{ align-self:center; color:var(--ink-faint); font-size:17px; }
+    @media (max-width: 900px){
+      .cp-etapa small{ display:none; }
+      .cp-seta{ display:none; }
+    }
+
+    /* ---- cartão dos números ---- */
+    .cp-kpis{ padding:13px 16px; margin-bottom:12px; display:flex; flex-wrap:wrap; gap:24px; align-items:center; }
+    .cp-acoes{ margin-left:auto; display:flex; gap:8px; flex-wrap:wrap; }
     .cp-rot{ font-size:11px; letter-spacing:.05em; text-transform:uppercase; color:var(--ink-soft); }
     .cp-num{ font-size:20px; font-weight:700; }
     .cp-sub{ font-size:11.5px; color:var(--ink-faint); }
+    .cp-vazio{ font-size:12px; color:var(--negative); font-weight:600; }
+
+    /* ---- a tabela, com o cabeçalho grudado ----
+       Ela pediu que a descrição não suma ao rolar. Pra isso o próprio quadro
+       é quem rola (não a página), e aí o thead pode grudar no topo dele. */
+    .cp-wrap{ max-height:calc(100vh - 250px); overflow:auto; }
+    .cp-tabela thead th{ position:sticky; top:0; z-index:3; }
+    .cp-tabela tfoot td{ position:sticky; bottom:0; z-index:2; background:var(--bg-app); }
     .cp-tabela td{ vertical-align:middle; }
     .cp-mes{ color:var(--ink-soft); }
     .cp-th-decide{ background:var(--primary) !important; }
     .cp-th-grupo{ background:var(--positive) !important; }
     .cp-td-decide{ background:#F2F9FB; }
     .cp-td-grupo{ background:#F4FAF7; }
+    /* ---- a tira que diz o que já foi decidido ----
+       Verde = tem quantidade E grupo, está pronta. Âmbar = falta uma das
+       duas. Sem tira = ainda não mexeu. É pra ela achar o que falta numa
+       lista de 256 linhas sem conferir uma por uma. */
+    .cp-tabela tbody tr.cp-l-pronta > td:first-child{ box-shadow: inset 4px 0 0 var(--positive); }
+    .cp-tabela tbody tr.cp-l-meio > td:first-child{ box-shadow: inset 4px 0 0 var(--warning); }
+    .cp-tabela tbody tr.cp-l-pronta > td{ background:#F6FBF8; }
+    .cp-tabela tbody tr.cp-l-pronta > td.cp-td-decide{ background:#EAF6EF; }
+    .cp-tabela tbody tr.cp-l-pronta > td.cp-td-grupo{ background:#EAF6EF; }
+    .cp-legenda{ display:flex; flex-wrap:wrap; gap:16px; align-items:center;
+      padding:9px 16px; border-top:1px solid var(--border); background:var(--bg-app); font-size:12px; }
+    .cp-legenda span{ display:inline-flex; align-items:center; gap:6px; color:var(--ink-soft); }
+    .cp-legenda i{ width:4px; height:15px; border-radius:2px; display:inline-block; font-style:normal; }
+    .cp-nome-cel{ display:flex; gap:6px; align-items:flex-start; }
+    .cp-mini{ flex:0 0 auto; background:none; border:1px solid transparent; border-radius:var(--radius-sm);
+      cursor:pointer; font-size:12px; line-height:1; padding:4px 5px; color:var(--ink-soft); opacity:.45; }
+    tr:hover .cp-mini{ opacity:1; }
+    .cp-mini:hover{ border-color:var(--border); background:#fff; }
     .cp-qtd{ width:84px; padding:7px 8px; border:1px solid var(--border); border-radius:var(--radius-sm);
       font:inherit; font-size:14px; text-align:right; font-weight:700; font-family:var(--font-num); }
-    .cp-grupo{ width:100%; max-width:270px; padding:7px 9px; border:1px solid var(--border);
+    .cp-preco{ width:110px; }
+    .cp-grupo{ width:100%; max-width:260px; padding:7px 9px; border:1px solid var(--border);
       border-radius:var(--radius-sm); font:inherit; font-size:12.5px; background:#fff; }
     .cp-grupo.vazio{ color:var(--ink-faint); border-style:dashed; }
+
+    /* ---- blocos de grupo ---- */
     .cp-faixa{ display:flex; flex-wrap:wrap; gap:10px; align-items:baseline; justify-content:space-between;
       padding:12px 16px; background:var(--bg-app); border-bottom:1px solid var(--border); }
-    .cp-linha{ display:flex; flex-wrap:wrap; gap:14px; align-items:center; padding:12px 16px;
-      border-bottom:1px solid var(--border); }
-    .cp-linha:last-child{ border-bottom:none; }
-    .cp-chip{ display:inline-flex; align-items:center; gap:6px; padding:4px 10px; border-radius:999px;
+    .cp-linha-grupo{ display:flex; gap:8px; align-items:center; padding:9px 12px;
+      border:1px solid var(--border); border-radius:var(--radius-sm); }
+
+    /* ---- fornecedores ---- */
+    .cp-chip{ display:inline-flex; align-items:center; gap:5px; padding:4px 10px; border-radius:999px;
       background:var(--primary-soft); color:var(--primary-escuro); font-size:12px; margin:2px 5px 2px 0; }
+    .cp-chip .cp-sub{ color:var(--primary-escuro); opacity:.75; }
     .cp-chip button{ background:none; border:none; color:var(--ink-soft); font-size:13px; line-height:1;
       cursor:pointer; padding:0; }
     .cp-chip.add{ background:#fff; border:1px dashed var(--border); color:var(--ink-soft); cursor:pointer; }
-  </style>`;
+    .cp-chip.ganhou{ background:var(--positive); color:#fff; font-weight:600; }
+    .cp-chip.ganhou .cp-sub{ color:#fff; opacity:.9; }
+    .cp-fornecedores{ display:flex; flex-wrap:wrap; gap:6px; }
+    .cp-forn-aba{ padding:7px 13px; border:1px solid var(--border); border-radius:var(--radius-sm);
+      background:#fff; cursor:pointer; font:inherit; font-size:13px; text-align:left; color:var(--ink); }
+    .cp-forn-aba small{ display:block; font-size:10.5px; color:var(--ink-faint); }
+    .cp-forn-aba.ativa{ border-color:var(--primary); background:var(--primary-soft); color:var(--primary-escuro); font-weight:600; }
+    .cp-forn-aba.ativa small{ color:var(--primary-escuro); opacity:.8; }
+
+    /* ---- abas da janelinha de acrescentar item ---- */
+    .cp-abas-mini{ display:flex; gap:4px; margin:6px 0 14px; border-bottom:1px solid var(--border); }
+    .cp-aba-mini{ padding:8px 13px; border:none; background:none; cursor:pointer; font:inherit; font-size:13px;
+      color:var(--ink-soft); border-bottom:2px solid transparent; margin-bottom:-1px; }
+    .cp-aba-mini.ativa{ color:var(--primary-escuro); border-bottom-color:var(--primary); font-weight:600; }
+  `;
 }
 
 RENDERERS['sugestao-compra'] = renderSugestaoCompra;
@@ -43537,6 +44444,24 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-04-b',
+    data: '2026-11-04',
+    titulo: 'Sugestão de Compra: agora são quatro etapas, até o relatório',
+    itens: [
+      'ETAPA 3 — POR FORNECEDOR: a lista de cada fornecedor sai pronta das marcações que você fez na etapa 2. Escolhe o fornecedor na faixa de cima e vê só o que é dele. O botão "Copiar a lista" põe o texto pronto pra colar no WhatsApp dele; "Excel de todos" gera uma planilha com uma aba por fornecedor, e a coluna de preço em branco pra ele preencher.',
+      'Na mesma tela você digita o CUSTO que ele respondeu, por unidade. O total de cada linha e o total do fornecedor se calculam sozinhos, e a faixa de cima mostra quantos ele já respondeu — 2/3, 3/3.',
+      'ETAPA 4 — RELATÓRIO: quem ficou mais barato em cada item, marcado em verde. Mostra o pedido de cada fornecedor (levando sempre o mais barato), o total da compra, quanto custaria levando sempre o mais caro, e a diferença entre os dois — é a conta que mostra pra que serviu cotar. Exporta em Excel com uma coluna por fornecedor.',
+      'OS GRUPOS COMEÇAM VAZIOS. Antes a tela abria com grupos que você nunca criou: ela estava usando a lista do "Vincular produtos", onde grupo quer dizer "é o mesmo produto". Agora a compra tem a lista dela, separada. O botão "Grupos" renomeia, apaga e cria — apagar um grupo não apaga produto nenhum.',
+      'RENOMEAR ITEM: o lápis ao lado do nome troca como ele aparece AQUI. O cadastro, a nota, o orçamento e o histórico continuam com o nome de origem, que aparece em cinza embaixo. É pra arrumar nome de importação ("#DETERGENTE NEUTRO 500ML") sem mexer em nada.',
+      'ACRESCENTAR ITEM: duas abas. Produto já cadastrado que não vendeu no período, ou item que a Mizu ainda NÃO VENDE — esse fica só na compra, não vira produto nem entra no estoque. Os dois aparecem já na etapa 1, não só na 2.',
+      'ESCONDER COLUNAS: o botão "Colunas" tira estoque, sugestão, total, os meses ou a linha de unidade/marca. A escolha fica salva.',
+      'O CABEÇALHO DA TABELA NÃO SOME MAIS ao rolar — fica grudado no topo.',
+      'ORDEM ALFABÉTICA por padrão: o item que você renomeia ou acrescenta já aparece no lugar certo. Dá pra voltar pra "quem vendeu mais primeiro" no filtro de cima.',
+      'TIRA DO LADO DA LINHA: verde quando aquele produto já tem quantidade E grupo, âmbar quando falta uma das duas, nada quando você ainda não mexeu. No rodapé, quantas já estão prontas.',
+      'A etapa 2 virou tabela — antes era uma pilha de caixas que se desmontava na tela larga.'
+    ]
+  },
   {
     id: '2026-11-04-a',
     data: '2026-11-04',
@@ -47403,6 +48328,7 @@ const ARMAZ_NOMES = {
   haverClientes:'Haver de clientes',
   contasReceberManuais:'Contas a receber lançadas à mão',
   gruposProdutos:'Grupos de produtos', fornecedoresProduto:'Fornecedores por produto',
+  gruposCompra:'Grupos de compra',
   simulacaoSemTemporarios:'Simulação de margem', planosEntrega:'Planos de entrega',
   usuarios:'Usuários', rotas:'Rotas de entrega'
 };
@@ -47508,7 +48434,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 19:20';
+const SISTEMA_VERSAO = '04/11/2026 21:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');

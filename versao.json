@@ -1,4 +1,4 @@
 {
-  "versao": "04/11/2026 19:20",
-  "nota": "Sugestao de Compra refeita em duas paginas: o que vendeu (mes a mes, quantidade por item, grupo) e como ficou (separado por grupo, quem vende cada produto, preco da ultima compra)."
+  "versao": "04/11/2026 21:05",
+  "nota": "Sugestao de Compra em quatro etapas: o que vendeu, como ficou, a lista de cada fornecedor com o custo, e o relatorio de quem ficou mais barato. Grupos proprios, renomear item, acrescentar item novo, esconder colunas, cabecalho fixo, ordem alfabetica e tira de progresso."
 }
