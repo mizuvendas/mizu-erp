@@ -43380,6 +43380,50 @@ function cpAbrirColunas(){
 
 /* ---------- a tela ---------- */
 let cpPagina = 1;
+
+/* A busca é de momento, não fica salva: reabrir a tela e encontrar uma lista
+   quase vazia por causa de um filtro de semana passada é cilada conhecida. */
+let cpBusca = '';
+
+/* Mesma regra da busca de produto do orçamento: as palavras podem vir em
+   qualquer ordem e em pedaços — "ype 500" acha "DETERGENTE NEUTRO 500ML YPE",
+   e acento não atrapalha. Procura no nome que ela lê, no nome de origem, na
+   marca, na unidade, no grupo e em quem vende. */
+function cpFiltrar(linhas){
+  const palavras = normalizarBusca(cpBusca).split(/[\s#\-\/]+/).filter(Boolean);
+  if(!palavras.length) return linhas;
+  return linhas.filter(l=>{
+    const tudo = [l.nome, l.nomeOriginal, l.marca, l.unidade, l.grupoNome]
+      .concat(l.fornecedores||[]).map(normalizarBusca).join(' ');
+    return palavras.every(p=>tudo.includes(p));
+  });
+}
+
+/* Redesenhar a tela inteira a cada tecla apagaria o campo de busca e o
+   cursor junto. Guarda onde o cursor estava e devolve depois. */
+function cpBuscar(valor){
+  cpBusca = valor;
+  const onde = (()=>{ const e = document.getElementById('cp-busca');
+                      return e ? e.selectionStart : null; })();
+  renderSugestaoCompra();
+  const campo = document.getElementById('cp-busca');
+  if(campo){
+    campo.focus();
+    if(onde !== null){ try{ campo.setSelectionRange(onde, onde); }catch(e){} }
+  }
+}
+
+function cpBuscaHtml(mostrando, total){
+  return `
+    <div class="cp-busca-caixa">
+      <input type="search" id="cp-busca" value="${escapeAttr(cpBusca)}" autocomplete="off"
+        placeholder="Procurar item — pode digitar as palavras em qualquer ordem (ex: ype 500)"
+        aria-label="Procurar item na lista"
+        oninput="cpBuscar(this.value)">
+      ${cpBusca.trim()?`<button type="button" class="btn btn-sm" onclick="cpBuscar('')">Limpar</button>
+        <span class="cp-sub">${mostrando} de ${total}</span>`:''}
+    </div>`;
+}
 let cpFornecedorAberto = '';
 
 const CP_PASSOS = [
@@ -43400,6 +43444,7 @@ function renderSugestaoCompra(){
 
 function cpIrPara(pagina){
   cpPagina = pagina;
+  cpBusca = '';   /* trocar de etapa limpa a busca: filtro de uma etapa escondendo item na outra confunde */
   renderSugestaoCompra();
   const topo = document.getElementById('sugestao-compra-content');
   if(topo) topo.scrollIntoView({ behavior:'smooth', block:'start' });
@@ -43467,7 +43512,8 @@ function cpFiltrosHtml(){
 
 /* ===================== PÁGINA 1 ===================== */
 function cpRenderPagina1(box){
-  const linhas = cpLinhas();
+  const todas = cpLinhas();
+  const linhas = cpFiltrar(todas);
   const grupos = cpGrupos().slice().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
   const c = cpCfg();
   const meses = mesesEntre(c.inicio, c.fim);
@@ -43476,8 +43522,10 @@ function cpRenderPagina1(box){
     ${cpEstiloHtml()}
     ${cpTrilhaHtml()}
     ${cpFiltrosHtml()}
-    ${cpCabecalhoHtml(linhas, 1)}
-    ${linhas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">Nenhuma venda nesse período. Use <b>+ Acrescentar item</b> pra montar a compra mesmo assim.</p></div>` : `
+    ${cpCabecalhoHtml(todas, 1)}
+    ${cpBuscaHtml(linhas.length, todas.length)}
+    ${todas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">Nenhuma venda nesse período. Use <b>+ Acrescentar item</b> pra montar a compra mesmo assim.</p></div>`
+     : linhas.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">Nenhum item casa com <b>${escapeHtml(cpBusca)}</b>. <button type="button" class="btn btn-sm" onclick="cpBuscar('')">Limpar a busca</button></p></div>` : `
     <div class="card" style="overflow:hidden;">
       <div class="cp-wrap">
         <table class="data-table cp-tabela">
@@ -43536,7 +43584,7 @@ function cpRenderPagina1(box){
         <span><i style="background:var(--positive);"></i> pronta — tem quantidade e grupo</span>
         <span><i style="background:var(--warning);"></i> falta uma das duas</span>
         <span><i style="background:var(--border);"></i> ainda não mexeu</span>
-        <span style="margin-left:auto;">${linhas.filter(l=>cpEstadoDaLinha(l)==='pronta').length} de ${linhas.length} prontas</span>
+        <span style="margin-left:auto;">${todas.filter(l=>cpEstadoDaLinha(l)==='pronta').length} de ${todas.length} prontas</span>
       </div>
     </div>`}
     <p class="help-text" style="margin:12px 2px 0;">
@@ -43820,7 +43868,8 @@ function cpAbrirItemManual(){
    ficou bagunçada. Virou tabela: uma linha por produto, os fornecedores na
    própria coluna. */
 function cpRenderPagina2(box){
-  const todos = cpDaCompra();
+  const completa = cpDaCompra();
+  const todos = cpFiltrar(completa);
   const blocos = [];
   cpGrupos().forEach(g=>{
     const itens = todos.filter(l=>l.grupoId===g.id);
@@ -43828,18 +43877,21 @@ function cpRenderPagina2(box){
   });
   const soltos = todos.filter(l=>!l.grupoId);
   if(soltos.length) blocos.push({ nome:'Sem grupo', itens:soltos, solto:true });
-  const semForn = todos.filter(l=>l.fornecedores.length===0).length;
+  const semForn = completa.filter(l=>l.fornecedores.length===0).length;
 
   box.innerHTML = `
     ${cpEstiloHtml()}
     ${cpTrilhaHtml()}
-    ${cpCabecalhoHtml(todos, 2)}
+    ${cpCabecalhoHtml(completa, 2)}
+    ${cpBuscaHtml(todos.length, completa.length)}
     ${semForn>0?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
       <b>⚠️ ${semForn} produto${semForn===1?'':'s'} sem fornecedor nenhum.</b>
       <small>Produto sem fornecedor não entra em lista nenhuma — não tem pra quem pedir preço.</small>
     </div>`:''}
-    ${blocos.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">
-      Nenhum produto com quantidade decidida. Volte à etapa 1 e diga quanto comprar.</p></div>` : ''}
+    ${completa.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">
+      Nenhum produto com quantidade decidida. Volte à etapa 1 e diga quanto comprar.</p></div>`
+     : blocos.length===0 ? `<div class="card"><p class="help-text" style="margin:0;">
+      Nenhum item casa com <b>${escapeHtml(cpBusca)}</b>. <button type="button" class="btn btn-sm" onclick="cpBuscar('')">Limpar a busca</button></p></div>` : ''}
     ${blocos.map(b=>`
       <div class="card" style="margin-bottom:14px;overflow:hidden;">
         <div class="cp-faixa">
@@ -43884,8 +43936,8 @@ function cpRenderPagina2(box){
           </table>
         </div>
       </div>`).join('')}
-    ${todos.length?`<div style="display:flex;justify-content:flex-end;margin-top:4px;">
-      <button class="btn btn-primary" onclick="cpIrPara(3)" ${semForn===todos.length?'disabled title="Marque pelo menos um fornecedor"':''}>
+    ${completa.length?`<div style="display:flex;justify-content:flex-end;margin-top:4px;">
+      <button class="btn btn-primary" onclick="cpIrPara(3)" ${semForn===completa.length?'disabled title="Marque pelo menos um fornecedor"':''}>
         Montar a lista de cada fornecedor →</button></div>`:''}
     <p class="help-text" style="margin:12px 2px 0;">
       O preço do lado do fornecedor é o da sua última compra — ele aparece sozinho, você não digita.
@@ -44383,6 +44435,12 @@ function cpEstiloCss(){
       padding:9px 16px; border-top:1px solid var(--border); background:var(--bg-app); font-size:12px; }
     .cp-legenda span{ display:inline-flex; align-items:center; gap:6px; color:var(--ink-soft); }
     .cp-legenda i{ width:4px; height:15px; border-radius:2px; display:inline-block; font-style:normal; }
+    /* ---- a caixa de procurar ---- */
+    .cp-busca-caixa{ display:flex; gap:8px; align-items:center; margin-bottom:12px; }
+    .cp-busca-caixa input{ flex:1 1 auto; min-width:0; padding:10px 13px; border:1px solid var(--border);
+      border-radius:var(--radius-sm); font:inherit; font-size:14px; background:#fff; }
+    .cp-busca-caixa input:focus{ outline:none; border-color:var(--primary);
+      box-shadow:0 0 0 3px var(--primary-soft); }
     .cp-nome-cel{ display:flex; gap:6px; align-items:flex-start; }
     .cp-mini{ flex:0 0 auto; background:none; border:1px solid transparent; border-radius:var(--radius-sm);
       cursor:pointer; font-size:12px; line-height:1; padding:4px 5px; color:var(--ink-soft); opacity:.45; }
@@ -44444,6 +44502,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-04-c',
+    data: '2026-11-04',
+    titulo: 'Sugestão de Compra: campo pra procurar item',
+    itens: [
+      'As etapas 1 e 2 ganharam um campo de PROCURAR, com a mesma regra da busca de produto do orçamento: as palavras podem vir em qualquer ordem e em pedaços. "ype 500" acha o DETERGENTE NEUTRO 500ML YPE, e "500 ype" acha o mesmo. Acento não atrapalha.',
+      'Ele procura no nome que você lê, no nome de origem (o do cadastro), na marca, na unidade, no grupo e em quem vende o produto.',
+      'Ao lado do campo aparece quantos itens casaram — "3 de 256" — e um botão de limpar. A contagem de quantas linhas já estão prontas NÃO muda com o filtro: ela continua contando a lista inteira.',
+      'A busca é do momento e não fica salva. Trocar de etapa limpa ela, pra você não abrir a tela depois e achar que sumiu item.'
+    ]
+  },
   {
     id: '2026-11-04-b',
     data: '2026-11-04',
@@ -48434,7 +48503,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 21:05';
+const SISTEMA_VERSAO = '04/11/2026 21:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
