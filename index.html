@@ -43735,7 +43735,7 @@ function cpRenderPagina1(box){
                         :(l.livre||!l.editavel?`<div class="cp-sub">${l.livre?'<b>item novo</b>':'<b>fora do cadastro</b>'}</div>`:'')}
                     </div>
                     ${l.mescla
-                      ? `<button type="button" class="cp-mini" title="Renomear esta linha juntada"
+                      ? `<button type="button" class="cp-mini" title="Decidir esta linha: nome, quantidade e grupo"
                            onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>
                          <button type="button" class="cp-mini" title="Juntar mais um item nesta linha"
                            onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
@@ -43965,15 +43965,9 @@ function cpCaixaDeTexto(titulo, rotulo, valor, onOk, ajuda){
 function cpAbrirRenomear(chave){
   const l = cpLinhas().find(x=>x.chave===chave);
   if(!l) return;
-  /* linha juntada não tem "nome de origem": o nome dela É o nome */
-  if(l.mescla){
-    cpCaixaDeTexto('Renomear a linha juntada', 'Nome da linha', l.nome, nome=>{
-      if(!cpRenomearMescla(chave, nome)){ showToast('Dê um nome à linha.','error'); return false; }
-      renderSugestaoCompra(); showToast('Nome trocado.','success');
-    }, 'Junta ' + l.juntados.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' + ')
-       + '. O cadastro de cada um continua como está.');
-    return;
-  }
+  /* Linha juntada abre a tela cheia: nome, o mês a mês somado, quanto comprar
+     e o grupo, tudo de uma vez — é onde ela decide essa linha. */
+  if(l.mescla){ cpAbrirDecisaoMescla(chave, 0); return; }
   cpCaixaDeTexto('Renomear nesta lista', 'Como você quer ler este item',
     cpTemApelido(chave) ? l.nome : l.nomeOriginal,
     nome=>{ cpRenomear(chave, nome); renderSugestaoCompra();
@@ -44082,21 +44076,134 @@ function cpConfirmarJuntar(){
   if(cpMarcados.length < 2){ showToast('Marque pelo menos dois itens.','error'); return; }
   const escolhidas = cpMarcados.slice();
   const linhas = cpLinhas().filter(l=>escolhidas.includes(l.chave));
-  const sugestao = linhas.map(l=>l.nome).sort((a,b)=>a.length-b.length)[0] || '';
+  const nomeProvisorio = linhas.map(l=>l.nome).sort((a,b)=>a.length-b.length)[0] || 'Itens juntados';
   const quantos = linhas.reduce((s,l)=>s + ((l.mescla && l.mescla.chaves) ? l.mescla.chaves.length : 1), 0);
-  const modal = document.getElementById('cp-modal-juntar');
 
-  cpCaixaDeTexto('Que nome fica?', 'Nome da linha juntada', sugestao, nome=>{
-    const limpo = String(nome||'').trim();
-    if(!limpo){ showToast('Dê um nome à linha.','error'); return false; }
-    cpJuntar(escolhidas, limpo);
-    if(modal) modal.remove();
-    cpMarcados = [];
-    renderSugestaoCompra();
-    showToast(`${quantos} itens viraram "${limpo}".`,'success');
-  }, `${quantos} itens viram uma linha só, e a venda deles passa a somar mês a mês:<br>`
-     + linhas.map(l=>`• ${escapeHtml(l.nome)} <span class="cp-sub">(${fmtNum(l.total)} vendidos)</span>`).join('<br>')
-     + `<br><br>O cadastro de cada um continua como está.`);
+  /* Junta JÁ, com um nome provisório: só depois de juntar dá pra mostrar as
+     vendas somadas mês a mês — e é olhando esse somado que ela decide a
+     quantidade. Cancelar na tela seguinte não desfaz a junção; o ✂️ da linha
+     desfaz, e o aviso diz isso. */
+  const m = cpJuntar(escolhidas, nomeProvisorio);
+  const modal = document.getElementById('cp-modal-juntar');
+  if(modal) modal.remove();
+  cpMarcados = [];
+  renderSugestaoCompra();
+  if(m) cpAbrirDecisaoMescla(m.id, quantos);
+}
+
+/* A tela que ela pediu: depois de juntar, tudo numa vez só — o nome, o mês a
+   mês já somado, quanto comprar e o grupo (podendo criar ali mesmo). Antes
+   eram três paradas: renomeia aqui, volta pra tabela, acha a linha, digita a
+   quantidade, acha de novo, escolhe o grupo. */
+function cpAbrirDecisaoMescla(mesclaId, quantosJuntados){
+  const l = cpLinhas().find(x=>x.chave===mesclaId);
+  if(!l){ renderSugestaoCompra(); return; }
+  const c = cpCfg();
+  const meses = mesesEntre(c.inicio, c.fim);
+  const grupos = cpGrupos().slice().sort((a,b)=>a.nome.localeCompare(b.nome,'pt-BR'));
+  const novaLinha = !!quantosJuntados;
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'cp-modal-decisao';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(680px,95vw);max-height:90vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">${novaLinha ? 'Pronto — agora decida esta linha' : 'A linha juntada'}</h3>
+      ${novaLinha?`<p class="help-text">${quantosJuntados} itens viraram uma linha só, e a venda deles
+        agora soma mês a mês. O cadastro de cada um continua como está.</p>`:''}
+      <div class="lic-doc" style="display:block;margin-bottom:12px;">
+        <b>Juntou:</b> <small>${escapeHtml(l.juntados.join('  +  '))}</small>
+      </div>
+
+      <div class="field"><label>Nome da linha</label>
+        <input type="text" id="cp-dec-nome" value="${escapeAttr(l.nome)}"></div>
+
+      <div class="cp-rot" style="margin:14px 0 6px;">O que essa linha vendeu, somado</div>
+      <div class="cp-wrap" style="max-height:none;border:1px solid var(--border);border-radius:var(--radius-sm);">
+        <table class="data-table cp-tabela" style="margin:0;">
+          <thead><tr>${meses.map(x=>`<th class="num">${escapeHtml(cpMesCurto(x))}</th>`).join('')}
+            <th class="num">Total</th><th class="num">Estoque</th><th class="num">Sugestão</th></tr></thead>
+          <tbody><tr>
+            ${meses.map(x=>`<td class="num cp-mes">${fmtNum(l.porMes[x]||0)}</td>`).join('')}
+            <td class="num" style="font-weight:700;">${fmtNum(l.total)}</td>
+            <td class="num">${fmtNum(l.estoque)}</td>
+            <td class="num" style="color:var(--ink-soft);">${fmtNum(l.sugestao)}</td>
+          </tr></tbody>
+        </table>
+      </div>
+      <div class="help-text" style="margin-top:6px;">
+        A sugestão é ${c.percentual}% do total. O ritmo é o que decide: 40, 62, 78 é um produto
+        subindo; 78, 62, 40 soma o mesmo e está caindo.
+      </div>
+
+      <div class="form-grid" style="margin-top:14px;">
+        <div class="field"><label>Vou comprar</label>
+          <input type="number" id="cp-dec-qtd" min="0" value="${l.comprar || ''}" placeholder="${l.sugestao}">
+          <div class="help-text">Em branco fica sem decisão.
+            <a href="#" onclick="document.getElementById('cp-dec-qtd').value=${l.sugestao};return false;">usar a sugestão de ${fmtNum(l.sugestao)}</a></div>
+        </div>
+        <div class="field"><label>Grupo</label>
+          <select id="cp-dec-grupo" onchange="cpDecGrupoMudou()">
+            <option value="">— sem grupo —</option>
+            ${grupos.map(g=>`<option value="${escapeAttr(g.id)}" ${l.grupoId===g.id?'selected':''}>${escapeHtml(g.nome)}</option>`).join('')}
+            <option value="__novo">+ criar um grupo novo…</option>
+          </select>
+          <input type="text" id="cp-dec-grupo-novo" placeholder="nome do grupo novo" hidden
+            style="margin-top:6px;padding:9px 11px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;">
+          <div class="help-text">O grupo junta as marcas que disputam a mesma prateleira — e não soma a venda delas.</div>
+        </div>
+      </div>
+
+      <div class="modal-actions">
+        ${novaLinha?`<button class="btn" onclick="cpDecCancelar('${escapeAttr(mesclaId)}')">Separar de volta</button>`
+                   :`<button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>`}
+        <button class="btn btn-primary" id="cp-dec-ok">Salvar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const campo = m.querySelector('#cp-dec-nome');
+  setTimeout(()=>{ campo.focus(); campo.select(); }, 60);
+
+  m.querySelector('#cp-dec-ok').onclick = ()=>{
+    const nome = campo.value.trim();
+    if(!nome){ showToast('Dê um nome à linha.','error'); return; }
+    cpRenomearMescla(mesclaId, nome);
+
+    const qtd = m.querySelector('#cp-dec-qtd').value;
+    cpDecidir(mesclaId, qtd);
+
+    const sel = m.querySelector('#cp-dec-grupo');
+    if(sel.value === '__novo'){
+      const nomeGrupo = m.querySelector('#cp-dec-grupo-novo').value.trim();
+      if(!nomeGrupo){ showToast('Dê um nome ao grupo novo.','error'); return; }
+      const g = cpCriarGrupo(nomeGrupo);
+      if(g) cpDefinirGrupo(mesclaId, g.id);
+    }else{
+      cpDefinirGrupo(mesclaId, sel.value);
+    }
+
+    saveState(); m.remove(); renderSugestaoCompra();
+    showToast(`"${nome}" pronta.`,'success');
+  };
+  campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); m.querySelector('#cp-dec-ok').click(); } });
+}
+
+function cpDecGrupoMudou(){
+  const sel = document.getElementById('cp-dec-grupo');
+  const campo = document.getElementById('cp-dec-grupo-novo');
+  if(!sel || !campo) return;
+  campo.hidden = sel.value !== '__novo';
+  if(!campo.hidden) campo.focus();
+}
+
+/* "Separar de volta" na tela de decisão: ela juntou, olhou o somado e viu que
+   não era isso. Desfaz a junção inteira. */
+function cpDecCancelar(mesclaId){
+  const modal = document.getElementById('cp-modal-decisao');
+  if(modal) modal.remove();
+  cpDesjuntar(mesclaId);
+  renderSugestaoCompra();
+  showToast('Itens separados de volta.','success');
 }
 
 function cpConfirmarDesjuntar(mesclaId){
@@ -44834,6 +44941,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-05-d',
+    data: '2026-11-05',
+    titulo: 'Juntou os itens? Agora decide tudo numa tela só',
+    itens: [
+      'Depois de marcar os itens e clicar em "Juntar os marcados", abre uma tela com TUDO o que você precisa decidir sobre aquela linha, de uma vez: o nome, o mês a mês JÁ SOMADO, quanto vai comprar e o grupo.',
+      'Antes eram três paradas: renomeava ali, voltava pra tabela, procurava a linha, digitava a quantidade, procurava de novo e escolhia o grupo.',
+      'O mês a mês aparece somado porque é olhando o somado que dá pra decidir. Separados, cada item contava metade da história.',
+      'O grupo pode ser CRIADO ali mesmo: escolhendo "+ criar um grupo novo…", aparece o campo do nome logo abaixo, sem abrir outra janela.',
+      'Tem um atalho "usar a sugestão de X" ao lado da quantidade, que já preenche com o percentual do período.',
+      'O botão "Separar de volta" desfaz a junção, pro caso de você olhar o somado e ver que não era aquilo.',
+      'O lápis (✏️) da linha juntada reabre essa mesma tela, já com o que você decidiu antes — pra voltar e ajustar quando quiser.'
+    ]
+  },
   {
     id: '2026-11-05-c',
     data: '2026-11-05',
@@ -48880,7 +49001,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 13:20';
+const SISTEMA_VERSAO = '05/11/2026 14:45';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
