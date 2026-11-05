@@ -43274,6 +43274,86 @@ function cpRenomearMescla(mesclaId, nome){
   return true;
 }
 
+/* ---------- esconder o que ela não vai comprar ----------
+
+   A lista real tem 256 linhas, e boa parte dela é coisa que ela não compra
+   neste mês. Esconder tira da frente sem apagar nada: o produto, a venda e o
+   histórico ficam intactos, e o contador no topo diz quantos estão escondidos
+   pra ninguém achar que sumiu item.
+
+   Esconder ZERA a quantidade daquele item, de propósito: "escondido" quer
+   dizer "não vou comprar", e deixar uma quantidade decidida escondida faria
+   o item reaparecer sozinho na etapa 2. */
+function cpEscondidos(){
+  const c = cpCfg();
+  if(!c.escondidos || typeof c.escondidos !== 'object') c.escondidos = {};
+  return c.escondidos;
+}
+function cpEstaEscondido(chave){ return cpEscondidos()[chave] === true; }
+function cpQuantosEscondidos(){ return Object.keys(cpEscondidos()).length; }
+function cpEsconder(chave){
+  cpEscondidos()[chave] = true;
+  delete cpCfg().decisao[chave];
+  saveState();
+}
+function cpMostrar(chave){
+  delete cpEscondidos()[chave];
+  saveState();
+}
+function cpMostrarTodos(){
+  cpCfg().escondidos = {};
+  saveState();
+}
+
+/* Um painel com os escondidos, pra ela trazer de volta quem quiser. Sem isso,
+   esconder seria uma porta sem maçaneta do outro lado. */
+function cpAbrirEscondidos(){
+  const chaves = Object.keys(cpEscondidos());
+  /* o nome sai da linha quando ela ainda existe; se o produto saiu do
+     cadastro ou o período mudou, mostra a chave pra ela poder soltar assim mesmo */
+  const todas = cpLinhasBrutas();
+  const nome = k=>{ const l = todas.find(x=>x.chave===k); return l ? l.nome : '(item fora do período atual)'; };
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(600px,94vw);max-height:88vh;overflow-y:auto;">
+      <h3 style="margin-top:0;">Itens escondidos</h3>
+      <p class="help-text">Escondido é só nesta lista. O produto, as vendas e o estoque continuam
+        intactos — e você traz de volta quando quiser.</p>
+      ${chaves.length===0?`<p class="help-text">Nenhum item escondido.</p>`:`
+      <div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
+        ${chaves.map(k=>`
+          <div class="cp-linha-grupo">
+            <span style="flex:1 1 auto;min-width:0;">${escapeHtml(nome(k))}</span>
+            <button type="button" class="btn btn-sm" onclick="cpMostrar('${escapeAttr(k)}'); this.closest('.modal-overlay').remove(); renderSugestaoCompra(); cpAbrirEscondidos();">Trazer de volta</button>
+          </div>`).join('')}
+      </div>`}
+      <div class="modal-actions">
+        ${chaves.length?`<button class="btn" style="margin-right:auto;"
+          onclick="cpMostrarTodos(); this.closest('.modal-overlay').remove(); renderSugestaoCompra(); showToast('Todos de volta na lista.','success');">Trazer todos de volta</button>`:''}
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+}
+
+function cpConfirmarEsconder(chave){
+  const l = cpLinhas().find(x=>x.chave===chave);
+  if(!l) return;
+  if(l.comprar > 0){
+    confirmAction('Esconder "' + l.nome + '"?',
+      `Ele está com ${fmtNum(l.comprar)} na coluna "Vou comprar". Escondendo, essa quantidade é zerada — `
+      + 'escondido quer dizer que você não vai comprar. O produto, as vendas e o estoque não mudam, '
+      + 'e dá pra trazer de volta pelo botão "Escondidos" lá em cima.',
+      ()=>{ cpEsconder(chave); renderSugestaoCompra(); showToast('Item escondido.','success'); },
+      'Esconder');
+    return;
+  }
+  cpEsconder(chave);
+  renderSugestaoCompra();
+  showToast('Item escondido. Pra trazer de volta, use "Escondidos" lá em cima.','success');
+}
+
 /* ---------- item que ainda não existe no cadastro ----------
 
    "PODE SER PRODUTOS NOVOS TAMBÉM": item que a Mizu ainda não vende e que
@@ -43357,7 +43437,13 @@ function cpDecidir(produtoId, qtd){
 
    `chave` é a identidade de tudo o mais (decisão, grupo, apelido,
    fornecedor): é o id do produto, ou o id do item livre. */
+/* A lista COM os escondidos. Só o painel de escondidos e a busca interna
+   precisam dela; o resto do sistema usa cpLinhas(), já sem eles. */
 function cpLinhas(){
+  return cpLinhasBrutas().filter(l=>!cpEstaEscondido(l.chave));
+}
+
+function cpLinhasBrutas(){
   const c = cpCfg();
   const meses = mesesEntre(c.inicio, c.fim);
   const porProduto = {};
@@ -43658,6 +43744,7 @@ function cpCabecalhoHtml(linhas, pagina){
       <div><div class="cp-rot">Já têm grupo</div><div class="cp-num">${r.agrupados} de ${r.total}</div></div>
       <div><div class="cp-rot">Custo estimado</div><div class="cp-num" style="font-family:var(--font-num);">${fmtMoney(r.custo)}</div></div>
       ${pagina===1?`<div class="cp-acoes">
+        ${cpQuantosEscondidos() ? `<button class="btn btn-sm" onclick="cpAbrirEscondidos()">Escondidos (${cpQuantosEscondidos()})</button>` : ''}
         <button class="btn btn-sm" onclick="cpAbrirJuntar()">Juntar itens</button>
         <button class="btn btn-sm" onclick="cpAbrirColunas()">Colunas</button>
         <button class="btn btn-sm" onclick="cpAbrirGrupos()">Grupos (${cpGrupos().length})</button>
@@ -43740,11 +43827,15 @@ function cpRenderPagina1(box){
                          <button type="button" class="cp-mini" title="Juntar mais um item nesta linha"
                            onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
                          <button type="button" class="cp-mini" title="Separar de volta"
-                           onclick="cpConfirmarDesjuntar('${escapeAttr(l.chave)}')">✂️</button>`
+                           onclick="cpConfirmarDesjuntar('${escapeAttr(l.chave)}')">✂️</button>
+                         <button type="button" class="cp-mini" title="Esconder — não vou comprar esta"
+                           onclick="cpConfirmarEsconder('${escapeAttr(l.chave)}')">🚫</button>`
                       : `${l.editavel?`<button type="button" class="cp-mini" title="Renomear aqui (não muda o cadastro)"
                            onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>
                          <button type="button" class="cp-mini" title="Juntar este item com outro igual"
-                           onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>`:''}
+                           onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
+                         <button type="button" class="cp-mini" title="Esconder — não vou comprar este"
+                           onclick="cpConfirmarEsconder('${escapeAttr(l.chave)}')">🚫</button>`:''}
                          ${l.livre?`<button type="button" class="cp-mini" title="Tirar este item da compra"
                            onclick="cpConfirmarRemoverLivre('${escapeAttr(l.chave)}')">✕</button>`:''}`}
                   </div>
@@ -44941,6 +45032,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-05-e',
+    data: '2026-11-05',
+    titulo: 'Esconder da lista o que você não vai comprar',
+    itens: [
+      'Cada linha ganhou o botãozinho 🚫 — "não vou comprar este". Clicou, ele sai da lista e para de atrapalhar. Numa lista de 256 produtos, boa parte é coisa que você não compra naquele mês.',
+      'NADA É APAGADO. O produto continua no cadastro, as vendas continuam no histórico e o estoque não muda. É só esta lista que para de mostrar.',
+      'No topo aparece o botão "Escondidos (N)" com a conta de quantos estão fora. Ele abre um painel pra você trazer um de volta, ou todos de uma vez.',
+      'Esconder um item que estava com quantidade na coluna "Vou comprar" zera essa quantidade — escondido quer dizer que você não vai comprar. O sistema pergunta antes, nesse caso.',
+      'Item escondido também não aparece no seletor de "Juntar itens" nem nas etapas seguintes.'
+    ]
+  },
   {
     id: '2026-11-05-d',
     data: '2026-11-05',
@@ -49001,7 +49104,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 14:45';
+const SISTEMA_VERSAO = '05/11/2026 16:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
