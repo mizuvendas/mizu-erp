@@ -1125,6 +1125,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="sugestao-compra" href="#">
       <span class="ic ic-relatorios">🛒</span> Sugestão de Compra
     </a>
+    <a class="nav-item" data-page="imposto-simples" href="#">
+      <span class="ic ic-relatorios">🧾</span> Imposto e Simples
+    </a>
     <a class="nav-item" data-page="saude-margem" href="#">
       <span class="ic ic-relatorios">🩺</span> Saúde de Margem <span class="nav-badge" id="nav-badge-margem" style="display:none;"></span>
     </a>
@@ -1378,6 +1381,17 @@ body.orc-gaveta-travada{ overflow:hidden; }
     </section>
 
     <!-- ============ SAÚDE DE MARGEM ============ -->
+    <!-- ============ IMPOSTO E SIMPLES ============ -->
+    <section class="page" id="page-imposto-simples">
+      <div class="page-header">
+        <div>
+          <h2>Imposto e Simples</h2>
+          <p class="subtitle">Quanto você faturou nos últimos 12 meses, em que faixa do Simples isso te coloca, e quanto da sua receita é de produto com ST</p>
+        </div>
+      </div>
+      <div id="imposto-simples-content"></div>
+    </section>
+
     <section class="page" id="page-saude-margem">
       <div id="saude-margem-content"></div>
     </section>
@@ -3029,6 +3043,27 @@ document.getElementById('file-import').addEventListener('change', (e)=>{
 /* =========================================================
    CÁLCULOS DE NEGÓCIO (imposto + comissão)
    ========================================================= */
+/* A alíquota do item depende de ele ter ST ou não.
+
+   Produto com ICMS-ST já recolhido lá atrás tem essa receita SEGREGADA no
+   PGDAS-D, e a parcela do ICMS (34% do total, no Anexo I) sai da conta. Na
+   1ª faixa: 4,00% vira 2,64%. A contadora dela já faz essa segregação, então
+   o número só precisava chegar aqui — até hoje o sistema cobrava 4% de tudo
+   e mostrava a margem dos produtos com ST menor do que ela é.
+
+   Só "stConfirmado === true" conta. O que o fornecedor praticou (temST) é
+   pista, não decisão: emitir com a alíquota reduzida sem a contadora ter
+   confirmado seria declarar que o ICMS foi pago sem saber se foi. */
+function impostoPctDoProduto(produtoId){
+  const cfg = STATE.config || {};
+  const cheio = Number(cfg.impostoPct) || 0;
+  const comST = (cfg.impostoPctST != null && cfg.impostoPctST !== '') ? Number(cfg.impostoPctST) : cheio;
+  if(!produtoId) return cheio;
+  const p = (STATE.produtos||[]).find(x=>x.id===produtoId);
+  return (p && p.stConfirmado === true) ? comST : cheio;
+}
+function impostoPctDoItem(item){ return impostoPctDoProduto(item && item.produtoId); }
+
 function calcularItemVenda(item, temComissao){
   const brutoOriginal = item.qtd * item.precoUnit;
   const custoTotal = item.qtd * item.custoUnit;
@@ -3041,7 +3076,7 @@ function calcularItemVenda(item, temComissao){
   let bruto = brutoOriginal;
   if(d.valor!=null) bruto = Math.max(0, brutoOriginal-d.valor);
   else if(d.pct!=null) bruto = brutoOriginal*(1-d.pct/100);
-  const imposto = bruto * (STATE.config.impostoPct/100);
+  const imposto = bruto * (impostoPctDoItem(item)/100);
   const comissao = temComissao ? bruto * (STATE.config.comissaoPct/100) : 0;
   const lucro = bruto - custoTotal - imposto - comissao;
   return { bruto, brutoOriginal, custoTotal, imposto, comissao, lucro };
@@ -3096,7 +3131,20 @@ function calcularVenda(venda){
      não deveria ser em cima do que o cliente paga?" e "a comissão pode ser
      feita em cima dos 620". O frete entra na base porque vai na nota. */
   const brutoOriginal = brutoTotalmenteOriginal + acrescimo;
-  imposto = bruto * (STATE.config.impostoPct/100);
+
+  /* O imposto é somado ITEM A ITEM, porque a alíquota muda por produto: o que
+     tem ST paga menos. `fator` é o quanto do total sobreviveu ao desconto
+     geral — cada item entra com a parte dele já descontada. O acréscimo
+     (frete) entra pela alíquota cheia: frete não tem ST. */
+  const fator = antesDoDesconto > 0 ? (bruto / antesDoDesconto) : 0;
+  const pctCheio = Number((STATE.config||{}).impostoPct) || 0;
+  imposto = 0;
+  (venda.itens||[]).forEach(it=>{
+    const c = calcularItemVenda(it, false);
+    imposto += c.bruto * fator * (impostoPctDoItem(it)/100);
+  });
+  imposto += acrescimo * fator * (pctCheio/100);
+
   const comissao = temComissao ? bruto * (STATE.config.comissaoPct/100) : 0;
 
   /* o frete sai do bolso dela: é custo */
@@ -3104,7 +3152,7 @@ function calcularVenda(venda){
 
   const lucro = bruto - custo - imposto - comissao;
 
-  return {bruto,brutoOriginal,custo,imposto,comissao,lucro,acrescimo,temComissao,
+  return {bruto,brutoOriginal,custo,imposto,comissao,lucro,acrescimo,fator,temComissao,
           temDesconto: valorDesconto > 0 || brutoAposDescontoItem < brutoTotalmenteOriginal};
 }
 
@@ -6657,6 +6705,12 @@ function formProdutoHTML(produto, paginaInteira){
               <option value="nao" ${temST===false?'selected':''}>Não tem ST</option>
             </select>
             <div class="help-text">${p.temST?'Nas notas de compra este produto <strong>veio com ST</strong>. ':''}É o que decide o CSOSN da nota.</div>
+            ${p.stHerdadoDe?`<div class="help-text" style="color:var(--primary-escuro);">↳ herdado de <b>${escapeHtml(p.stHerdadoDe)}</b>, que tem o mesmo NCM e já foi confirmado.</div>`:''}
+            ${p.stDivergente?`<div class="lic-doc aviso" style="display:block;margin-top:6px;border-left-color:var(--negative);">
+              <b>⚠️ A última nota contradiz isto.</b>
+              <small>${escapeHtml(p.stDivergente.diz)}, mas ${escapeHtml(p.stDivergente.confirmado)} —
+              nota ${escapeHtml(String(p.stDivergente.nota||'—'))}${p.stDivergente.fornecedor?' de '+escapeHtml(p.stDivergente.fornecedor):''}.
+              Confirme com a contadora antes de emitir.</small></div>`:''}
           </div>
           <div class="field">
             <label>Regime de PIS e COFINS</label>
@@ -19179,7 +19233,10 @@ function getLinhasVenda(incluirCanceladas){
       const c = calcularItemVenda(it, !!v.temComissao);
       const fracao = totalBrutoVenda > 0 ? (it.qtd*it.precoUnit)/totalBrutoVenda : (1/quantosItens);
       const brutoComDesconto = cv.bruto*fracao*fatorRepasse;
-      const impostoItem = cv.imposto*fracao;
+      /* o imposto da linha sai da alíquota DAQUELE produto (com ST paga menos),
+         mais a parte do frete que coube a ele, essa sempre na alíquota cheia */
+      const impostoItem = c.bruto*cv.fator*(impostoPctDoItem(it)/100)
+                        + acrescimoVenda*fracao*cv.fator*((Number((STATE.config||{}).impostoPct)||0)/100);
       const comissaoComDesconto = cv.comissao*fracao;
       const custoItem = c.custoTotal + acrescimoVenda*fracao;   // o frete cabe a cada item na proporção dele
       const lucroComDesconto = brutoComDesconto - custoItem - impostoItem - comissaoComDesconto;
@@ -21158,6 +21215,299 @@ function renderSaudeMargem(){
 }
 
 RENDERERS['saude-margem'] = renderSaudeMargem;
+
+/* =========================================================
+   MÓDULO: IMPOSTO E SIMPLES
+
+   Os dois percentuais do sistema (4% e 2,64%) eram chute parado numa
+   configuração. Esta tela mostra de onde eles deveriam sair:
+
+     1. o faturamento dos últimos 12 meses (RBT12), que é o que define a
+        faixa do Simples — os 4% só valem abaixo de R$ 180 mil;
+     2. a alíquota EFETIVA daquela faixa, que não é a da tabela: tem a
+        parcela a deduzir;
+     3. a mesma alíquota sem a parte do ICMS, que é o que vale para o
+        produto com ST, cuja receita a contadora segrega no PGDAS-D;
+     4. quanto da receita de cada mês veio de produto com ST e quanto não —
+        é o relatório que ela entrega pra contadora fazer a segregação.
+
+   Nada aqui declara nada. É conferência: o DAS que chegou bate com o que
+   era de se esperar? E o percentual configurado ainda é o certo?
+   ========================================================= */
+
+/* Anexo I — Comércio. Alíquota da tabela, parcela a deduzir, e quanto do
+   total é ICMS (é essa parte que sai quando a receita é segregada). */
+const SIMPLES_ANEXO_I = [
+  { ate:        180000, aliq:  4.00, deduz:      0, icms: 34.00 },
+  { ate:        360000, aliq:  7.30, deduz:   5940, icms: 34.00 },
+  { ate:        720000, aliq:  9.50, deduz:  13860, icms: 33.50 },
+  { ate:       1800000, aliq: 10.70, deduz:  22500, icms: 33.50 },
+  { ate:       3600000, aliq: 14.30, deduz:  87300, icms: 33.50 },
+  { ate:       4800000, aliq: 19.00, deduz: 378000, icms:  0.00 }  // 6ª faixa não tem ICMS na tabela
+];
+
+function simplesFaixa(rbt12){
+  const v = Number(rbt12) || 0;
+  for(let i=0;i<SIMPLES_ANEXO_I.length;i++){
+    if(v <= SIMPLES_ANEXO_I[i].ate) return Object.assign({ n:i+1 }, SIMPLES_ANEXO_I[i]);
+  }
+  return Object.assign({ n:6, acima:true }, SIMPLES_ANEXO_I[5]);
+}
+
+/* A conta oficial: (RBT12 × alíquota − parcela a deduzir) ÷ RBT12.
+   Com faturamento baixo a fórmula não se aplica (divisão por zero), e aí
+   vale a alíquota da 1ª faixa, que é o que a empresa nova paga. */
+function simplesEfetiva(rbt12){
+  const v = Number(rbt12) || 0;
+  const f = simplesFaixa(v);
+  if(v <= 0) return { faixa:f, efetiva: SIMPLES_ANEXO_I[0].aliq, efetivaST: SIMPLES_ANEXO_I[0].aliq*(1-SIMPLES_ANEXO_I[0].icms/100), semBase:true };
+  const efetiva = ((v * (f.aliq/100)) - f.deduz) / v * 100;
+  const efetivaST = efetiva * (1 - f.icms/100);
+  return { faixa:f, efetiva, efetivaST, semBase:false };
+}
+
+/* Os 12 meses fechados anteriores ao mês corrente — é assim que o RBT12 é
+   contado. O mês que está correndo não entra. */
+function impMesesRBT12(){
+  const hoje = new Date();
+  const lista = [];
+  for(let k=12;k>=1;k--){
+    const d = new Date(hoje.getFullYear(), hoje.getMonth()-k, 1);
+    lista.push(d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0'));
+  }
+  return lista;
+}
+
+/* Receita por mês, separada entre produto COM ST e SEM ST — a divisão que a
+   contadora precisa fazer no PGDAS-D. Sai das linhas de venda, então já vem
+   com desconto, frete e cancelamento tratados do mesmo jeito do resto. */
+function impReceitaPorMes(meses){
+  const porMes = {};
+  meses.forEach(m=>{ porMes[m] = { mes:m, comST:0, semST:0, impostoComST:0, impostoSemST:0 }; });
+  getLinhasVenda().forEach(l=>{
+    const alvo = porMes[l.mes];
+    if(!alvo) return;
+    const p = l.produtoId ? (STATE.produtos||[]).find(x=>x.id===l.produtoId) : null;
+    if(p && p.stConfirmado === true){ alvo.comST += l.bruto; alvo.impostoComST += l.imposto; }
+    else { alvo.semST += l.bruto; alvo.impostoSemST += l.imposto; }
+  });
+  return meses.map(m=>porMes[m]);
+}
+
+function impMesNome(mes){
+  const nomes = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
+  const [a,m] = String(mes||'').split('-').map(Number);
+  if(!a || !m) return mes || '';
+  return nomes[m-1] + '/' + String(a).slice(2);
+}
+
+function renderImpostoSimples(){
+  const box = document.getElementById('imposto-simples-content');
+  if(!box) return;
+
+  const meses = impMesesRBT12();
+  const linhas = impReceitaPorMes(meses);
+  const rbt12 = linhas.reduce((s,l)=>s + l.comST + l.semST, 0);
+  const e = simplesEfetiva(rbt12);
+
+  const cfg = STATE.config || {};
+  const pctAtual = Number(cfg.impostoPct) || 0;
+  const pctAtualST = (cfg.impostoPctST != null) ? Number(cfg.impostoPctST) : pctAtual;
+  const difere = Math.abs(pctAtual - e.efetiva) > 0.05 || Math.abs(pctAtualST - e.efetivaST) > 0.05;
+
+  /* o mês fechado mais recente, que é o que ela acabou de entregar */
+  const ultimo = linhas[linhas.length-1] || { comST:0, semST:0, impostoComST:0, impostoSemST:0, mes:'' };
+  const totalComST = linhas.reduce((s,l)=>s+l.comST, 0);
+  const totalSemST = linhas.reduce((s,l)=>s+l.semST, 0);
+  const quantosST = (STATE.produtos||[]).filter(p=>p.stConfirmado===true).length;
+  const semConfirmar = (STATE.produtos||[]).filter(p=>p.stConfirmado==null).length;
+
+  box.innerHTML = `
+    ${impEstiloHtml()}
+    <div class="card cp-kpis">
+      <div><div class="cp-rot">Faturamento 12 meses</div>
+        <div class="cp-num" style="font-family:var(--font-num);">${fmtMoney(rbt12)}</div>
+        <div class="cp-sub">${impMesNome(meses[0])} a ${impMesNome(meses[meses.length-1])}</div></div>
+      <div><div class="cp-rot">Faixa do Simples</div>
+        <div class="cp-num">${e.faixa.n}ª</div>
+        <div class="cp-sub">tabela: ${e.faixa.aliq.toFixed(2).replace('.',',')}%${e.faixa.deduz?' · deduz '+fmtMoney(e.faixa.deduz):''}</div></div>
+      <div><div class="cp-rot">Alíquota efetiva</div>
+        <div class="cp-num" style="color:var(--primary-escuro);">${e.efetiva.toFixed(2).replace('.',',')}%</div>
+        <div class="cp-sub">produto sem ST</div></div>
+      <div><div class="cp-rot">Efetiva com ST</div>
+        <div class="cp-num" style="color:var(--positive);">${e.efetivaST.toFixed(2).replace('.',',')}%</div>
+        <div class="cp-sub">tirando ${e.faixa.icms.toFixed(2).replace('.',',')}% de ICMS</div></div>
+    </div>
+
+    ${(()=>{
+      const div = (STATE.produtos||[]).filter(p=>p.stDivergente);
+      if(!div.length) return '';
+      return `<div class="lic-doc aviso" style="display:block;margin-bottom:12px;border-left-color:var(--negative);background:var(--vermelho-fraco, #FBEAE8);">
+        <b>⚠️ ${div.length} ${div.length===1?'produto chegou numa nota contradizendo':'produtos chegaram em notas contradizendo'} o que foi confirmado.</b>
+        <small>Ou o fornecedor errou, ou a regra mudou. Leve estes casos pra contadora — enquanto isso
+        não se resolve, a nota desses produtos pode estar saindo com o código errado:</small>
+        <div style="margin-top:8px;display:flex;flex-direction:column;gap:5px;">
+          ${div.slice(0,10).map(p=>`<div style="font-size:12.5px;">
+            <b>${escapeHtml(p.nome||'')}</b> — ${escapeHtml(p.stDivergente.diz)},
+            mas ${escapeHtml(p.stDivergente.confirmado)}
+            <span class="cp-sub">(nota ${escapeHtml(String(p.stDivergente.nota||'—'))} · ${escapeHtml(p.stDivergente.fornecedor||'')})</span>
+          </div>`).join('')}
+          ${div.length>10?`<div class="cp-sub">e mais ${div.length-10}…</div>`:''}
+        </div>
+      </div>`;
+    })()}
+
+    ${e.semBase?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+      <b>⚠️ Ainda não há 12 meses de venda lançada aqui.</b>
+      <small>Enquanto não houver, a conta usa a 1ª faixa. Se a Mizu já faturava antes de usar este
+      sistema, o RBT12 de verdade é maior — pegue o número com a contadora.</small>
+    </div>`:''}
+
+    ${difere && !e.semBase?`<div class="lic-doc aviso" style="display:block;margin-bottom:12px;">
+      <b>⚠️ O percentual configurado não é o que esta conta dá.</b>
+      <small>Está configurado <b>${pctAtual.toFixed(2).replace('.',',')}%</b> (sem ST) e
+      <b>${pctAtualST.toFixed(2).replace('.',',')}%</b> (com ST).
+      Pelo seu faturamento, daria <b>${e.efetiva.toFixed(2).replace('.',',')}%</b> e
+      <b>${e.efetivaST.toFixed(2).replace('.',',')}%</b>.
+      Cada orçamento está mostrando uma margem ${pctAtual < e.efetiva ? 'MAIOR' : 'menor'} do que a real.</small>
+      <div style="margin-top:8px;">
+        <button class="btn btn-sm btn-primary" onclick="impUsarEfetiva(${e.efetiva.toFixed(2)}, ${e.efetivaST.toFixed(2)})">
+          Usar ${e.efetiva.toFixed(2).replace('.',',')}% e ${e.efetivaST.toFixed(2).replace('.',',')}%</button>
+      </div>
+    </div>`:''}
+
+    <div class="card" style="padding:14px 16px;margin-bottom:12px;">
+      <div class="form-grid">
+        <div class="field"><label>Imposto sobre produto SEM ST</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" id="imp-pct" step="0.01" min="0" value="${pctAtual}" style="max-width:120px;">
+            <span style="font-size:14px;">%</span>
+          </div>
+          <div class="help-text">A alíquota efetiva cheia do Simples.</div>
+        </div>
+        <div class="field"><label>Imposto sobre produto COM ST</label>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <input type="number" id="imp-pct-st" step="0.01" min="0" value="${pctAtualST}" style="max-width:120px;">
+            <span style="font-size:14px;">%</span>
+          </div>
+          <div class="help-text">A mesma, sem a parcela do ICMS — só vale se a contadora segregar a receita.</div>
+        </div>
+      </div>
+      <div class="help-text" style="margin-top:4px;">
+        Todo orçamento e toda venda usam esses dois: cada item entra com o percentual do produto dele.
+        Hoje <b>${quantosST}</b> ${quantosST===1?'produto está marcado':'produtos estão marcados'} com ST${semConfirmar?`, e <b>${semConfirmar}</b> ainda ${semConfirmar===1?'está':'estão'} sem a contadora confirmar`:''}.
+      </div>
+    </div>
+
+    <div class="card" style="overflow:hidden;">
+      <div class="cp-faixa">
+        <h3 style="margin:0;font-size:15px;">Receita separada por mês — com ST e sem ST</h3>
+        <span class="cp-sub">é esta divisão que a contadora usa pra segregar no PGDAS-D</span>
+      </div>
+      <div class="cp-wrap">
+        <table class="data-table cp-tabela">
+          <thead><tr>
+            <th>Mês</th>
+            <th class="num">Receita com ST</th>
+            <th class="num">Receita sem ST</th>
+            <th class="num">Total do mês</th>
+            <th class="num">Imposto estimado</th>
+          </tr></thead>
+          <tbody>
+            ${linhas.map(l=>{
+              const tot = l.comST + l.semST;
+              return `<tr${l.mes===ultimo.mes?' style="font-weight:600;"':''}>
+                <td>${escapeHtml(impMesNome(l.mes))}</td>
+                <td class="num" style="color:${l.comST>0?'var(--positive)':'var(--ink-faint)'};">${fmtMoney(l.comST)}</td>
+                <td class="num">${fmtMoney(l.semST)}</td>
+                <td class="num" style="font-family:var(--font-num);">${fmtMoney(tot)}</td>
+                <td class="num" style="font-family:var(--font-num);">${fmtMoney(l.impostoComST + l.impostoSemST)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+          <tfoot><tr>
+            <td style="font-weight:700;">12 meses</td>
+            <td class="num" style="font-weight:700;color:var(--positive);">${fmtMoney(totalComST)}</td>
+            <td class="num" style="font-weight:700;">${fmtMoney(totalSemST)}</td>
+            <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(rbt12)}</td>
+            <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(linhas.reduce((s,l)=>s+l.impostoComST+l.impostoSemST,0))}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+      <div class="cp-legenda">
+        <span>Produto com ST tem o ICMS fora da conta — por isso paga menos.</span>
+        <span style="margin-left:auto;">
+          <button class="btn btn-sm" onclick="impExportar()">📊 Exportar pra contadora</button>
+        </span>
+      </div>
+    </div>
+
+    <p class="help-text" style="margin:12px 2px 0;">
+      Esta tela não declara nada e não substitui a contadora — ela confere. A conta do Simples aqui é
+      a do <b>Anexo I (comércio)</b>: (faturamento × alíquota da faixa − parcela a deduzir) ÷ faturamento.
+      Se a Mizu tiver outra atividade em outro anexo, ou faturamento anterior a este sistema, o número
+      real é o dela.
+    </p>`;
+
+  const liga = (id, fn)=>{ const el = document.getElementById(id); if(el) el.addEventListener('change', fn); };
+  liga('imp-pct', ev=>{ STATE.config.impostoPct = Math.max(0, parseFloat(ev.target.value)||0); saveState(); renderImpostoSimples(); showToast('Imposto atualizado.','success'); });
+  liga('imp-pct-st', ev=>{ STATE.config.impostoPctST = Math.max(0, parseFloat(ev.target.value)||0); saveState(); renderImpostoSimples(); showToast('Imposto com ST atualizado.','success'); });
+}
+
+function impUsarEfetiva(pct, pctST){
+  STATE.config.impostoPct = Number(pct);
+  STATE.config.impostoPctST = Number(pctST);
+  saveState();
+  renderImpostoSimples();
+  showToast('Pronto: os orçamentos passam a usar esses percentuais.','success');
+}
+
+async function impExportar(){
+  if(!await carregarExcelJs()){ showToast('Sem internet para gerar a planilha.','error'); return; }
+  const meses = impMesesRBT12();
+  const linhas = impReceitaPorMes(meses);
+  const rbt12 = linhas.reduce((s,l)=>s+l.comST+l.semST, 0);
+  const e = simplesEfetiva(rbt12);
+
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Mizu Materiais de Limpeza';
+  const ws = wb.addWorksheet('Receita segregada');
+  ws.columns = [{width:14},{width:20},{width:20},{width:18},{width:18}];
+
+  ws.mergeCells('A1:E1');
+  ws.getCell('A1').value = 'Receita segregada — Mizu Materiais de Limpeza';
+  ws.getCell('A1').font = { bold:true, size:14, color:{argb:'FF'+COR.escuro} };
+  ws.mergeCells('A2:E2');
+  ws.getCell('A2').value = 'Receita de produto COM substituição tributária x SEM, para a segregação no PGDAS-D. '
+    + 'Faturamento 12 meses: ' + fmtMoney(rbt12) + ' — ' + e.faixa.n + 'ª faixa do Anexo I.';
+  ws.getCell('A2').font = { size:10, color:{argb:'FF'+COR.cinza} };
+  ws.getCell('A2').alignment = { wrapText:true };
+  ws.addRow([]);
+
+  const cab = ws.addRow(['Mês','Receita com ST','Receita sem ST','Total do mês','Imposto estimado']);
+  cab.font = { bold:true, color:{argb:'FFFFFFFF'} };
+  cab.eachCell(c=>{ c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} }; });
+
+  linhas.forEach(l=>{
+    const r = ws.addRow([impMesNome(l.mes), l.comST, l.semST, l.comST+l.semST, l.impostoComST+l.impostoSemST]);
+    for(let k=2;k<=5;k++) r.getCell(k).numFmt = 'R$ #,##0.00';
+    r.getCell(2).fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.verdeFraco} };
+  });
+  const ult = ws.lastRow.number;
+  const tot = ws.addRow(['12 meses',
+    { formula:`SUM(B5:B${ult})` }, { formula:`SUM(C5:C${ult})` },
+    { formula:`SUM(D5:D${ult})` }, { formula:`SUM(E5:E${ult})` }]);
+  tot.font = { bold:true };
+  for(let k=2;k<=5;k++) tot.getCell(k).numFmt = 'R$ #,##0.00';
+
+  const buf = await wb.xlsx.writeBuffer();
+  baixarArquivo(buf, 'receita-segregada-' + todayISO() + '.xlsx');
+  showToast('Planilha gerada.','success');
+}
+
+function impEstiloHtml(){ return cpEstiloHtml(); }
+
+RENDERERS['imposto-simples'] = renderImpostoSimples;
 
 /* =========================================================
    MÓDULO: TRILHA DE AUDITORIA FINANCEIRA
@@ -45033,6 +45383,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-05-f',
+    data: '2026-11-05',
+    titulo: 'Produto com ST paga menos imposto — e agora o sistema sabe disso',
+    itens: [
+      'DOIS PERCENTUAIS no lugar de um. Produto com ST tem a receita segregada no PGDAS-D e a parcela do ICMS sai da conta: na 1ª faixa, 4,00% vira 2,64%. Até hoje o sistema cobrava 4% de tudo — a margem dos produtos com ST aparecia MENOR do que ela é.',
+      'Cada item do orçamento entra com o percentual do produto dele. Numa venda misturada, um item paga 2,64% e o outro 4%, na mesma nota. O frete entra sempre pela alíquota cheia, porque frete não tem ST.',
+      'Só vale com a contadora confirmando: produto em "ainda não confirmado" paga a alíquota cheia, por segurança. O que o fornecedor praticou é pista, não decisão.',
+      'TELA NOVA — IMPOSTO E SIMPLES (em Relatórios). Mostra o seu faturamento dos últimos 12 meses, em que faixa do Simples isso te coloca e a ALÍQUOTA EFETIVA de verdade — que não é a da tabela, porque tem a parcela a deduzir. Com R$ 300 mil, por exemplo, a tabela diz 7,30% mas a efetiva é 5,32%.',
+      'Se o percentual configurado não bate com o que a conta dá, ela avisa e oferece um botão pra corrigir os dois de uma vez. Os 4% só valem enquanto você estiver abaixo de R$ 180 mil nos últimos 12 meses.',
+      'RECEITA SEGREGADA, mês a mês: quanto você vendeu de produto com ST e quanto sem, com o imposto de cada lado. É a divisão que a contadora usa no PGDAS-D — tem botão pra exportar e mandar pra ela.',
+      'NA ENTRADA DE NOTA: produto novo HERDA sozinho o ST já confirmado em outro produto do mesmo NCM. A decisão é por NCM, não por linha de nota — é o que evita 200 perguntas à contadora.',
+      'E se a nota CONTRADIZ o que foi confirmado — chegou com ST num produto marcado como sem, ou o contrário — o sistema marca e avisa, no cadastro do produto e na tela de Imposto e Simples. Ou o fornecedor errou, ou a regra mudou: é caso pra contadora, e o sistema não decide sozinho.'
+    ]
+  },
+  {
     id: '2026-11-05-e',
     data: '2026-11-05',
     titulo: 'Esconder da lista o que você não vai comprar',
@@ -48721,6 +49086,34 @@ function enConcluir(entradaId){
         // nenhuma sobrescreve, e so ele muda a tributacao.
         prod.temST = !!it.comST;
         if(prod.stConfirmado === undefined) prod.stConfirmado = null;
+
+        /* Já resolveu esse NCM antes? Então não pergunta de novo: herda o que
+           a contadora disse no outro produto do mesmo NCM. É o que poupa as
+           200 perguntas — a decisão é por NCM, não por linha de nota. */
+        if(prod.stConfirmado === null && prod.ncm){
+          const irmao = (STATE.produtos||[]).find(x=>x !== prod && x.stConfirmado != null
+                          && ncmSo8(x.ncm) && ncmSo8(x.ncm) === ncmSo8(prod.ncm));
+          if(irmao){
+            prod.stConfirmado = irmao.stConfirmado;
+            prod.stHerdadoDe = irmao.nome || '';
+          }
+        }
+
+        /* A nota contradiz o que a contadora confirmou? Isso tem que gritar.
+           Ou o fornecedor errou, ou a regra mudou — e emitir enquanto isso
+           está em pé é emitir errado. O sistema NÃO decide sozinho: só marca
+           pra ela levar o caso. */
+        if(prod.stConfirmado === false && it.comST){
+          prod.stDivergente = { quando: todayISO(), nota: e.numero || '',
+            fornecedor: e.fornecedorNome || '', diz: 'a nota veio COM ST',
+            confirmado: 'você confirmou que NÃO tem' };
+        }else if(prod.stConfirmado === true && !it.comST){
+          prod.stDivergente = { quando: todayISO(), nota: e.numero || '',
+            fornecedor: e.fornecedorNome || '', diz: 'a nota veio SEM ST',
+            confirmado: 'você confirmou que TEM' };
+        }else if(prod.stDivergente && ((prod.stConfirmado === true && it.comST) || (prod.stConfirmado === false && !it.comST))){
+          delete prod.stDivergente;   /* voltou a bater: o aviso sai sozinho */
+        }
         if(it.impostoPct != null) prod.impostoPct = it.impostoPct;
 
         // A operação decide o que a entrada faz: bonificação entra sem custo
@@ -49104,7 +49497,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 16:05';
+const SISTEMA_VERSAO = '05/11/2026 18:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');

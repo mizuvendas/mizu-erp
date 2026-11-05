@@ -1,4 +1,4 @@
 {
-  "versao": "05/11/2026 16:05",
-  "nota": "Esconder da lista de compra os itens que nao vai comprar, com contador e painel pra trazer de volta."
+  "versao": "05/11/2026 18:30",
+  "nota": "Imposto por produto: com ST paga a aliquota sem a parcela do ICMS. Tela nova Imposto e Simples com faturamento 12 meses, faixa, aliquota efetiva e receita segregada. Entrada de nota herda o ST confirmado por NCM e avisa divergencia."
 }
