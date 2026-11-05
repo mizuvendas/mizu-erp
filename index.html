@@ -43123,6 +43123,93 @@ function cpRenomear(chave, nome){
   saveState();
 }
 
+/* ---------- juntar o mesmo produto cadastrado duas vezes ----------
+
+   MESCLA não é GRUPO, e a diferença é o coração das duas coisas:
+     grupo  — marcas que disputam a mesma prateleira (Ypê × Vit). NÃO soma:
+              quem leva uma não leva a outra, e cada uma tem a quantidade dela.
+     mescla — o MESMO produto cadastrado duas vezes. SOMA mês a mês, porque
+              a venda dele está partida e nenhuma das partes conta a verdade.
+
+   A mescla vive só aqui: não apaga, não funde e não toca os cadastros. Desfez,
+   os itens voltam inteiros. */
+function cpMesclas(){
+  const c = cpCfg();
+  if(!Array.isArray(c.mesclas)) c.mesclas = [];
+  return c.mesclas;
+}
+function cpMesclaDe(chave){
+  return cpMesclas().find(m=>(m.chaves||[]).includes(chave)) || null;
+}
+
+/* Junta as chaves escolhidas. Se alguma já for uma mescla, as outras entram
+   nela em vez de nascer uma segunda mescla por cima. O que estava decidido
+   nas partes vem junto: a quantidade SOMA, os fornecedores se unem, e o que
+   ficou nas partes é limpo pra não sobrar decisão órfã. */
+function cpJuntar(chaves, nome){
+  const limpas = [...new Set((chaves||[]).filter(Boolean))];
+  if(limpas.length < 2) return null;
+
+  const existente = limpas.map(k=>cpMesclas().find(m=>m.id===k)).find(Boolean);
+  const alvo = existente || { id: uid('mc'), nome: '', chaves: [], criadoEm: todayISO() };
+
+  let qtd = cpQuanto(alvo.id);
+  const fornecedores = new Set(cpFornecedoresDe(alvo.id));
+  let grupoId = (cpGrupoDe(alvo.id) || {}).id || '';
+
+  limpas.forEach(k=>{
+    if(k === alvo.id) return;
+    const outra = cpMesclas().find(m=>m.id===k);
+    const membros = outra ? (outra.chaves||[]) : [k];
+    membros.forEach(x=>{ if(!alvo.chaves.includes(x)) alvo.chaves.push(x); });
+
+    qtd += cpQuanto(k);
+    cpFornecedoresDe(k).forEach(f=>fornecedores.add(f));
+    if(!grupoId){ const g = cpGrupoDe(k); if(g) grupoId = g.id; }
+
+    /* limpa o que era da parte */
+    delete cpCfg().decisao[k];
+    delete cpApelidos()[k];
+    cpDefinirGrupo(k, '');
+    STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== k);
+    if(outra) cpCfg().mesclas = cpMesclas().filter(m=>m.id!==k);
+  });
+
+  alvo.nome = String(nome||'').trim() || alvo.nome || 'Itens juntados';
+  if(!existente) cpMesclas().push(alvo);
+
+  if(qtd > 0) cpCfg().decisao[alvo.id] = qtd;
+  fornecedores.forEach(f=>cpPorFornecedor(alvo.id, f));
+  if(grupoId) cpDefinirGrupo(alvo.id, grupoId);
+
+  saveState();
+  return alvo;
+}
+
+/* Desfazer devolve os itens inteiros: o histórico deles nunca foi tocado,
+   só estava sendo somado na hora de montar a tela. A quantidade e os
+   fornecedores que ela pôs na linha junta ficam na mescla e somem com ela —
+   dividir 260 entre dois itens seria chutar por ela. */
+function cpDesjuntar(mesclaId){
+  const c = cpCfg();
+  c.mesclas = cpMesclas().filter(m=>m.id!==mesclaId);
+  delete c.decisao[mesclaId];
+  delete cpApelidos()[mesclaId];
+  cpDefinirGrupo(mesclaId, '');
+  STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== mesclaId);
+  saveState();
+}
+function cpRenomearMescla(mesclaId, nome){
+  const limpo = String(nome||'').trim();
+  if(!limpo) return false;
+  const m = cpMesclas().find(x=>x.id===mesclaId);
+  if(!m) return false;
+  m.nome = limpo;
+  delete cpApelidos()[mesclaId];   /* o nome da mescla É o nome: apelido por cima só confundiria */
+  saveState();
+  return true;
+}
+
 /* ---------- item que ainda não existe no cadastro ----------
 
    "PODE SER PRODUTOS NOVOS TAMBÉM": item que a Mizu ainda não vende e que
@@ -43239,18 +43326,49 @@ function cpLinhas(){
                          unidadeLivre: i.unidade || 'UN' };
   });
 
+  /* MESCLA: o mesmo produto cadastrado duas vezes vira UMA linha, e aí sim a
+     venda SOMA mês a mês — é o contrário do grupo, que junta marcas rivais e
+     de propósito não soma. "#DETERGENTE NEUTRO 500ML" e "DETERGENTE NEUTRO
+     500ML - YPE" são o mesmo detergente; a venda dele está partida em duas
+     linhas e nenhuma das duas conta a história certa. */
+  cpMesclas().forEach(m=>{
+    const partes = (m.chaves||[]).map(k=>porProduto[k]).filter(Boolean);
+    if(!partes.length) return;
+    const junto = { produtoId: null, chave: m.id, livre: false, mescla: m,
+                    nomeOriginal: m.nome, marca: '', porMes: {}, total: 0,
+                    unidadeLivre: partes[0].produtoId
+                      ? (((STATE.produtos||[]).find(x=>x.id===partes[0].produtoId)||{}).unidade || 'UN')
+                      : (partes[0].unidadeLivre || 'UN'),
+                    estoqueJunto: 0, custoJunto: 0, juntados: [] };
+    let pesoCusto = 0;
+    partes.forEach(p=>{
+      Object.keys(p.porMes).forEach(mes=>{ junto.porMes[mes] = (junto.porMes[mes]||0) + p.porMes[mes]; });
+      junto.total += p.total;
+      const prod = p.produtoId ? (STATE.produtos||[]).find(x=>x.id===p.produtoId) : null;
+      junto.estoqueJunto += prod ? (prod.estoqueAtual || 0) : 0;
+      /* custo médio ponderado pelo que cada um vendeu: a linha junta tem um
+         custo só, e o do item que quase não saiu não pode mandar nele */
+      const custo = prod ? (Number(prod.custo) || 0) : 0;
+      if(custo > 0){ const peso = p.total || 1; junto.custoJunto += custo * peso; pesoCusto += peso; }
+      junto.juntados.push(p.nomeOriginal);
+      delete porProduto[p.chave];
+    });
+    junto.custoJunto = pesoCusto ? (junto.custoJunto / pesoCusto) : 0;
+    porProduto[m.id] = junto;
+  });
+
   const quantosMeses = Math.max(1, meses.length);
   return Object.values(porProduto).map(p=>{
     const prod = p.produtoId ? (STATE.produtos||[]).find(x=>x.id===p.produtoId) : null;
-    const editavel = !!p.produtoId || p.livre;   // produto sumido do cadastro não dá pra comprar
+    const editavel = !!p.produtoId || p.livre || !!p.mescla;   // produto sumido do cadastro não dá pra comprar
     const grupo = editavel ? cpGrupoDe(p.chave) : null;
     return Object.assign(p, {
       editavel,
       nome: cpNome(p.chave, p.nomeOriginal),
       renomeado: cpTemApelido(p.chave),
       unidade: prod ? (prod.unidade || 'UN') : (p.unidadeLivre || 'UN'),
-      estoque: prod ? (prod.estoqueAtual || 0) : 0,
-      custo: prod ? (Number(prod.custo) || 0) : 0,
+      estoque: prod ? (prod.estoqueAtual || 0) : (p.mescla ? p.estoqueJunto : 0),
+      custo: prod ? (Number(prod.custo) || 0) : (p.mescla ? p.custoJunto : 0),
       mediaMensal: p.total / quantosMeses,
       sugestao: Math.round(p.total * (c.percentual/100)),
       grupoId: grupo ? grupo.id : '',
@@ -43476,6 +43594,7 @@ function cpCabecalhoHtml(linhas, pagina){
       <div><div class="cp-rot">Já têm grupo</div><div class="cp-num">${r.agrupados} de ${r.total}</div></div>
       <div><div class="cp-rot">Custo estimado</div><div class="cp-num" style="font-family:var(--font-num);">${fmtMoney(r.custo)}</div></div>
       ${pagina===1?`<div class="cp-acoes">
+        <button class="btn btn-sm" onclick="cpAbrirJuntar()">Juntar itens</button>
         <button class="btn btn-sm" onclick="cpAbrirColunas()">Colunas</button>
         <button class="btn btn-sm" onclick="cpAbrirGrupos()">Grupos (${cpGrupos().length})</button>
         <button class="btn btn-sm" onclick="cpAbrirItemManual()">+ Acrescentar item</button>
@@ -43546,13 +43665,24 @@ function cpRenderPagina1(box){
                     <div style="min-width:0;">
                       <strong>${escapeHtml(l.nome)}</strong>
                       ${l.renomeado?`<div class="cp-sub" title="nome de origem, o que está no cadastro">de origem: ${escapeHtml(l.nomeOriginal)}</div>`:''}
+                      ${l.mescla?`<div class="cp-sub" title="${escapeAttr(l.juntados.join(' + '))}">
+                        <b>${(l.mescla.chaves||[]).length} itens juntados</b> · a venda soma mês a mês</div>`:''}
                       ${cpVer('unidade')?`<div class="cp-sub">${escapeHtml(l.unidade)}${l.marca?' · '+escapeHtml(l.marca):''}${l.livre?' · <b>item novo</b>':''}${!l.editavel?' · <b>fora do cadastro</b>':''}</div>`
                         :(l.livre||!l.editavel?`<div class="cp-sub">${l.livre?'<b>item novo</b>':'<b>fora do cadastro</b>'}</div>`:'')}
                     </div>
-                    ${l.editavel?`<button type="button" class="cp-mini" title="Renomear aqui (não muda o cadastro)"
-                      onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>`:''}
-                    ${l.livre?`<button type="button" class="cp-mini" title="Tirar este item da compra"
-                      onclick="cpConfirmarRemoverLivre('${escapeAttr(l.chave)}')">✕</button>`:''}
+                    ${l.mescla
+                      ? `<button type="button" class="cp-mini" title="Renomear esta linha juntada"
+                           onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>
+                         <button type="button" class="cp-mini" title="Juntar mais um item nesta linha"
+                           onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
+                         <button type="button" class="cp-mini" title="Separar de volta"
+                           onclick="cpConfirmarDesjuntar('${escapeAttr(l.chave)}')">✂️</button>`
+                      : `${l.editavel?`<button type="button" class="cp-mini" title="Renomear aqui (não muda o cadastro)"
+                           onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>
+                         <button type="button" class="cp-mini" title="Juntar este item com outro igual"
+                           onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>`:''}
+                         ${l.livre?`<button type="button" class="cp-mini" title="Tirar este item da compra"
+                           onclick="cpConfirmarRemoverLivre('${escapeAttr(l.chave)}')">✕</button>`:''}`}
                   </div>
                 </td>
                 ${cpVer('meses')?meses.map(m=>`<td class="num cp-mes">${fmtNum(l.porMes[m]||0)}</td>`).join(''):''}
@@ -43771,6 +43901,15 @@ function cpCaixaDeTexto(titulo, rotulo, valor, onOk, ajuda){
 function cpAbrirRenomear(chave){
   const l = cpLinhas().find(x=>x.chave===chave);
   if(!l) return;
+  /* linha juntada não tem "nome de origem": o nome dela É o nome */
+  if(l.mescla){
+    cpCaixaDeTexto('Renomear a linha juntada', 'Nome da linha', l.nome, nome=>{
+      if(!cpRenomearMescla(chave, nome)){ showToast('Dê um nome à linha.','error'); return false; }
+      renderSugestaoCompra(); showToast('Nome trocado.','success');
+    }, 'Junta ' + l.juntados.map(n=>'<b>'+escapeHtml(n)+'</b>').join(' + ')
+       + '. O cadastro de cada um continua como está.');
+    return;
+  }
   cpCaixaDeTexto('Renomear nesta lista', 'Como você quer ler este item',
     cpTemApelido(chave) ? l.nome : l.nomeOriginal,
     nome=>{ cpRenomear(chave, nome); renderSugestaoCompra();
@@ -43785,6 +43924,127 @@ function cpConfirmarRemoverLivre(chave){
     `"${l?l.nome:'Este item'}" foi acrescentado por você e não existe no cadastro. Some da compra junto com a quantidade e os fornecedores marcados.`,
     ()=>{ cpRemoverItemLivre(chave); renderSugestaoCompra(); showToast('Item tirado da compra.','success'); },
     'Tirar');
+}
+
+/* O seletor de juntar: ela marca quantos quiser de uma vez, em vez de
+   acrescentar um por um. Tem a mesma busca de palavras fora de ordem, porque
+   achar "multiuso" em 256 linhas rolando é o que torna isso impraticável. */
+let cpMarcados = [];
+let cpBuscaJuntar = '';
+
+function cpAbrirJuntar(preMarcada){
+  cpMarcados = preMarcada ? [preMarcada] : [];
+  cpBuscaJuntar = '';
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'cp-modal-juntar';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(760px,95vw);display:flex;flex-direction:column;max-height:88vh;">
+      <h3 style="margin-top:0;">Juntar itens que são o mesmo produto</h3>
+      <p class="help-text" style="margin-bottom:10px;">
+        Marque os que são <b>o mesmo produto cadastrado mais de uma vez</b> — "Multiuso 500ml" e
+        "MULTIUSO 500 ML OESTE", por exemplo. A venda dos dois <b>soma mês a mês</b> e vira uma linha só.
+        <br>Isto <b>não</b> é grupo: grupo junta marcas rivais e não soma. E não mexe no cadastro —
+        dá pra desfazer quando quiser.
+      </p>
+      <input type="search" id="cp-juntar-busca" autocomplete="off"
+        placeholder="Procurar — palavras em qualquer ordem (ex: multiuso 500)"
+        style="padding:10px 13px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:14px;margin-bottom:10px;"
+        oninput="cpJuntarBuscar(this.value)">
+      <div id="cp-juntar-lista" style="flex:1 1 auto;overflow-y:auto;border:1px solid var(--border);border-radius:var(--radius-sm);"></div>
+      <div class="modal-actions" style="align-items:center;">
+        <span id="cp-juntar-conta" class="cp-sub" style="margin-right:auto;"></span>
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="cp-juntar-ok" onclick="cpConfirmarJuntar()">Juntar os marcados</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  cpDesenharListaJuntar();
+  const busca = m.querySelector('#cp-juntar-busca');
+  if(busca) setTimeout(()=>busca.focus(), 60);
+}
+
+function cpJuntarBuscar(valor){
+  cpBuscaJuntar = valor;
+  cpDesenharListaJuntar();
+}
+
+function cpAlternarMarcado(chave, marcada){
+  if(marcada){ if(!cpMarcados.includes(chave)) cpMarcados.push(chave); }
+  else cpMarcados = cpMarcados.filter(k=>k!==chave);
+  cpAtualizarContaJuntar();
+}
+
+function cpAtualizarContaJuntar(){
+  const conta = document.getElementById('cp-juntar-conta');
+  const ok = document.getElementById('cp-juntar-ok');
+  if(conta) conta.textContent = cpMarcados.length
+    ? `${cpMarcados.length} ${cpMarcados.length===1?'item marcado':'itens marcados'}`
+    : 'marque pelo menos dois';
+  if(ok) ok.disabled = cpMarcados.length < 2;
+}
+
+function cpDesenharListaJuntar(){
+  const caixa = document.getElementById('cp-juntar-lista');
+  if(!caixa) return;
+  const palavras = normalizarBusca(cpBuscaJuntar).split(/[\s#\-\/]+/).filter(Boolean);
+  const linhas = cpLinhas().filter(l=>{
+    if(!l.editavel) return false;
+    if(!palavras.length) return true;
+    const tudo = [l.nome, l.nomeOriginal, l.marca].concat(l.juntados||[]).map(normalizarBusca).join(' ');
+    return palavras.every(p=>tudo.includes(p));
+  });
+  caixa.innerHTML = linhas.length === 0
+    ? `<p class="help-text" style="padding:14px;margin:0;">Nenhum item casa com essa busca.</p>`
+    : linhas.map(l=>`
+        <label class="cp-marcar">
+          <input type="checkbox" ${cpMarcados.includes(l.chave)?'checked':''}
+            onchange="cpAlternarMarcado('${escapeAttr(l.chave)}', this.checked)">
+          <span style="flex:1 1 auto;min-width:0;">
+            <b>${escapeHtml(l.nome)}</b>
+            <div class="cp-sub">${escapeHtml(l.unidade)}${l.marca?' · '+escapeHtml(l.marca):''}
+              ${l.mescla?` · <b>já é ${(l.mescla.chaves||[]).length} itens juntados</b>`:''}
+              ${l.livre?' · item novo':''}</div>
+          </span>
+          <span class="cp-sub" style="white-space:nowrap;">${fmtNum(l.total)} vendidos</span>
+        </label>`).join('');
+  cpAtualizarContaJuntar();
+}
+
+/* Juntou, já pergunta o nome — foi o que ela pediu: "automaticamente ele já
+   vai pedir para renomear o nome que vai ficar". O campo vem preenchido com o
+   nome mais curto dos marcados, que costuma ser o mais limpo. */
+function cpConfirmarJuntar(){
+  if(cpMarcados.length < 2){ showToast('Marque pelo menos dois itens.','error'); return; }
+  const escolhidas = cpMarcados.slice();
+  const linhas = cpLinhas().filter(l=>escolhidas.includes(l.chave));
+  const sugestao = linhas.map(l=>l.nome).sort((a,b)=>a.length-b.length)[0] || '';
+  const quantos = linhas.reduce((s,l)=>s + ((l.mescla && l.mescla.chaves) ? l.mescla.chaves.length : 1), 0);
+  const modal = document.getElementById('cp-modal-juntar');
+
+  cpCaixaDeTexto('Que nome fica?', 'Nome da linha juntada', sugestao, nome=>{
+    const limpo = String(nome||'').trim();
+    if(!limpo){ showToast('Dê um nome à linha.','error'); return false; }
+    cpJuntar(escolhidas, limpo);
+    if(modal) modal.remove();
+    cpMarcados = [];
+    renderSugestaoCompra();
+    showToast(`${quantos} itens viraram "${limpo}".`,'success');
+  }, `${quantos} itens viram uma linha só, e a venda deles passa a somar mês a mês:<br>`
+     + linhas.map(l=>`• ${escapeHtml(l.nome)} <span class="cp-sub">(${fmtNum(l.total)} vendidos)</span>`).join('<br>')
+     + `<br><br>O cadastro de cada um continua como está.`);
+}
+
+function cpConfirmarDesjuntar(mesclaId){
+  const l = cpLinhas().find(x=>x.chave===mesclaId);
+  const partes = l && l.juntados ? l.juntados : [];
+  confirmAction('Separar de volta?',
+    `"${l?l.nome:'Esta linha'}" volta a ser ${partes.length} ${partes.length===1?'item':'itens'}: `
+    + partes.map(n=>'"'+n+'"').join(', ') + '. '
+    + 'O histórico de venda de cada um nunca foi tocado. A quantidade e os fornecedores '
+    + 'que você marcou nesta linha junta se perdem — eu não tenho como dividir isso por você.',
+    ()=>{ cpDesjuntar(mesclaId); renderSugestaoCompra(); showToast('Itens separados de volta.','success'); },
+    'Separar');
 }
 
 /* Acrescentar item: do cadastro, ou um que a Mizu ainda nem vende. */
@@ -44435,6 +44695,14 @@ function cpEstiloCss(){
       padding:9px 16px; border-top:1px solid var(--border); background:var(--bg-app); font-size:12px; }
     .cp-legenda span{ display:inline-flex; align-items:center; gap:6px; color:var(--ink-soft); }
     .cp-legenda i{ width:4px; height:15px; border-radius:2px; display:inline-block; font-style:normal; }
+    /* ---- o seletor de juntar ---- */
+    .cp-marcar{ display:flex; gap:11px; align-items:center; padding:9px 13px; cursor:pointer;
+      border-bottom:1px solid var(--border); }
+    .cp-marcar:last-child{ border-bottom:none; }
+    .cp-marcar:hover{ background:var(--bg-app); }
+    .cp-marcar input{ flex:0 0 auto; width:17px; height:17px; cursor:pointer; }
+    .cp-marcar b{ font-size:13.5px; }
+
     /* ---- a caixa de procurar ---- */
     .cp-busca-caixa{ display:flex; gap:8px; align-items:center; margin-bottom:12px; }
     .cp-busca-caixa input{ flex:1 1 auto; min-width:0; padding:10px 13px; border:1px solid var(--border);
@@ -44502,6 +44770,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-05-a',
+    data: '2026-11-05',
+    titulo: 'Juntar itens que são o mesmo produto cadastrado duas vezes',
+    itens: [
+      'O botão "Juntar itens", na etapa 1, abre um seletor com CAIXAS DE MARCAR: você marca quantos quiser de uma vez, com busca de palavras em qualquer ordem, em vez de acrescentar um por um.',
+      'A venda dos itens juntados SOMA MÊS A MÊS. "Multiuso 500ml" e "MULTIUSO 500 ML OESTE" são o mesmo produto: separados, cada linha contava metade da história; juntos, o ritmo real aparece.',
+      'Assim que você confirma, ele JÁ PERGUNTA O NOME que vai ficar, com o campo preenchido com o nome mais curto dos marcados.',
+      'JUNTAR não é GRUPO: grupo junta marcas rivais (Ypê × Vit) e de propósito NÃO soma, porque quem leva uma não leva a outra. Juntar é pro mesmo produto repetido no cadastro, e aí somar é o certo.',
+      'O estoque dos itens também soma, e o custo vira a média ponderada pelo que cada um vendeu — o item que quase não saiu não manda no custo da linha.',
+      'O que você já tinha decidido nas partes vem junto: a quantidade soma, os fornecedores se unem e o grupo é mantido. Não fica decisão órfã pra trás.',
+      'Os três botõezinhos na linha juntada: ✏️ renomeia, ⊕ junta mais um item nela, ✂️ separa de volta. Separando, cada item volta inteiro com o histórico dele — nada nunca foi apagado.',
+      'NADA DISSO MEXE NO CADASTRO. Os dois produtos continuam existindo, com o estoque e o preço deles. A junção vive só na Sugestão de Compra.'
+    ]
+  },
   {
     id: '2026-11-04-c',
     data: '2026-11-04',
@@ -48503,7 +48786,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '04/11/2026 21:40';
+const SISTEMA_VERSAO = '05/11/2026 09:35';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
