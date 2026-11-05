@@ -3045,10 +3045,23 @@ function calcularItemVenda(item, temComissao){
   return { bruto, brutoOriginal, custoTotal, imposto, comissao, lucro };
 }
 
+/* O ACRÉSCIMO (frete, na prática) é dinheiro que o cliente paga E que SAI do
+   bolso dela: ela cobra o frete do cliente e paga o transportador. Então ele
+   entra nos dois lados — no que o cliente deve e no custo — e o que sobra dele
+   é zero. Até aqui o acréscimo era somado POR FORA em umas trinta telas
+   (`c.bruto + acrescimo`), e em todas elas ele virava lucro puro: um orçamento
+   de 450 com 235 de frete aparecia com 56,9% de margem. Agora mora dentro do
+   cálculo, e as telas só leem o resultado. */
+function vendaAcrescimo(venda){
+  return (venda && venda.acrescimo && Number(venda.acrescimo.valor) > 0)
+    ? Number(venda.acrescimo.valor) : 0;
+}
+
 function calcularVenda(venda){
   // temComissao é uma decisão explícita tomada no lançamento da venda (checkbox),
   // não mais inferida pelo campo vendedor estar preenchido ou não.
   const temComissao = !!venda.temComissao;
+  const acrescimo = vendaAcrescimo(venda);
   // "brutoTotalmenteOriginal" é o valor CHEIO da venda, sem NENHUM desconto —
   // nem o desconto por item, nem o desconto geral da venda. É esse valor que
   // deve aparecer como "Valor Original"/"Valor Venda" em qualquer tela.
@@ -3067,17 +3080,30 @@ function calcularVenda(venda){
   // Regra fixa já confirmada: o IMPOSTO nunca recalcula sobre o valor com
   // desconto, sempre sobre o bruto original; só o lucro final é reduzido.
   const desconto = venda.desconto || {};
-  let fatorDesconto = 1;
-  if(desconto.valor!=null && brutoAposDescontoItem>0){
-    fatorDesconto = Math.max(0, 1 - (desconto.valor/brutoAposDescontoItem));
-  }else if(desconto.pct!=null){
-    fatorDesconto = Math.max(0, 1 - (desconto.pct/100));
-  }
-  const bruto = brutoAposDescontoItem*fatorDesconto;
-  const comissao = comissaoAntesDescVenda*fatorDesconto; // comissão incide sobre o valor recebido de fato
+
+  /* O desconto é dado sobre o TOTAL que o cliente vê, frete incluído: ela
+     fecha "620" olhando os 685 da proposta, não os 450 das mercadorias. */
+  const antesDoDesconto = brutoAposDescontoItem + acrescimo;
+  let valorDesconto = 0;
+  if(desconto.valor!=null) valorDesconto = Math.min(antesDoDesconto, Math.max(0, desconto.valor));
+  else if(desconto.pct!=null) valorDesconto = antesDoDesconto * Math.max(0, desconto.pct)/100;
+  const bruto = Math.max(0, antesDoDesconto - valorDesconto);
+
+  /* Imposto e comissão sobre o valor ORIGINAL, com o frete dentro. O imposto
+     já era assim nas mercadorias (regra fixa: nunca recalcula sobre o valor
+     com desconto) e passa a incluir o acréscimo, porque o frete que vai na
+     nota compõe a base. A comissão passa a seguir a mesma régua. */
+  const brutoOriginal = brutoTotalmenteOriginal + acrescimo;
+  imposto = brutoOriginal * (STATE.config.impostoPct/100);
+  const comissao = temComissao ? brutoOriginal * (STATE.config.comissaoPct/100) : 0;
+
+  /* o frete sai do bolso dela: é custo */
+  custo += acrescimo;
+
   const lucro = bruto - custo - imposto - comissao;
 
-  return {bruto,brutoOriginal:brutoTotalmenteOriginal,custo,imposto,comissao,lucro,temComissao,temDesconto:bruto<brutoTotalmenteOriginal};
+  return {bruto,brutoOriginal,custo,imposto,comissao,lucro,acrescimo,temComissao,
+          temDesconto: valorDesconto > 0 || brutoAposDescontoItem < brutoTotalmenteOriginal};
 }
 
 /* =========================================================
@@ -3355,8 +3381,7 @@ function renderPerfilClienteResumo(cliente){
   const vendasCliente = STATE.vendas.filter(v=>v.clienteId===cliente.id && v.status!=='cancelada');
   const valores = vendasCliente.map(v=>{
     const c = calcularVenda(v);
-    const acrescimo = v.acrescimo ? v.acrescimo.valor : 0;
-    return c.bruto + acrescimo;
+    return c.bruto;   /* o acréscimo já está dentro */
   });
   const totalComprado = valores.reduce((s,v)=>s+v,0);
   const ticketMedio = vendasCliente.length>0 ? totalComprado/vendasCliente.length : 0;
@@ -7913,6 +7938,18 @@ function getVendedoresUnicos(){
    orçamento antigo gravado com outro nome não pode perder o vendedor só
    porque a lista encolheu — mas esse nome aparece marcado como antigo e
    não volta a ser oferecido em lançamento novo. */
+/* A comissão era uma caixinha solta: ela escolhia "NETO" e a comissão
+   continuava zerada, porque ninguém marcava nada. Agora escolher o vendedor
+   liga a comissão, e tirar o vendedor desliga. A caixinha continua ali pro
+   caso de uma venda que, por acordo, não comissiona. */
+function orcVendedorMudou(){
+  const sel = document.getElementById('orc-vendedor');
+  const com = document.getElementById('orc-tem-comissao');
+  if(!sel || !com) return;
+  com.checked = !!sel.value.trim();
+  com.dispatchEvent(new Event('change', { bubbles:true }));
+}
+
 function opcoesVendedorHtml(valorAtual){
   const lista = getVendedoresUnicos();
   const atual = String(valorAtual||'').trim();
@@ -10411,14 +10448,14 @@ function atualizarResumoVenda(){
   const c = calcularVenda(vendaTmp);
   const acrescimoEl = document.getElementById('v-acrescimo-valor');
   const acrescimo = acrescimoEl ? (parseFloat(acrescimoEl.value)||0) : 0;
-  const brutoTotal = c.bruto+acrescimo;
+  const brutoTotal = c.bruto;
   document.getElementById('v-kpi-bruto').textContent = fmtMoney(brutoTotal);
   document.getElementById('v-kpi-custo').textContent = fmtMoney(c.custo);
   document.getElementById('v-kpi-imposto').textContent = fmtMoney(c.imposto);
   document.getElementById('v-kpi-comissao').textContent = fmtMoney(c.comissao);
   const lucroEl = document.getElementById('v-kpi-lucro');
-  lucroEl.textContent = fmtMoney(c.lucro+acrescimo);
-  lucroEl.className = 'kpi-value ' + ((c.lucro+acrescimo)>=0?'positive':'negative');
+  lucroEl.textContent = fmtMoney(c.lucro);
+  lucroEl.className = 'kpi-value ' + (c.lucro>=0?'positive':'negative');
 
   const temRepasseEl = document.getElementById('v-tem-repasse');
   const kpiRepasseCard = document.getElementById('v-kpi-repasse-card');
@@ -11090,7 +11127,7 @@ function orcHtmlPainelDoDia(){
      quatro quadradinhos davam sempre R$ 0,00. */
   const soma = (lista) => lista.reduce((s, o) => {
     const c = calcularVenda(o);
-    return s + c.bruto + (o.acrescimo ? o.acrescimo.valor : 0);
+    return s + c.bruto;
   }, 0);
 
   const tile = (rotulo, lista, cor, rodape) => `
@@ -11311,8 +11348,8 @@ function orcAtualizarRodapeBalcao(){
   const c = calcularVenda(montarVendaLikeDoFormularioOrcamento());
   const acrescimoEl = document.getElementById('orc-acrescimo-valor');
   const acrescimo = acrescimoEl ? (parseFloat(acrescimoEl.value) || 0) : 0;
-  const total = c.bruto + acrescimo;
-  const sobra = c.lucro + acrescimo;
+  const total = c.bruto;
+  const sobra = c.lucro;
   const n = (carrinhoOrcamentoAtual || []).length;
 
   const põe = (id, texto, cor) => {
@@ -11736,8 +11773,8 @@ function orcBalcaoPainelPintar(){
 function orcBalcaoPainelLinha(reg, aba){
   const cli = STATE.clientes.find(c => c.id === reg.clienteId);
   const c = calcularVenda(reg);
-  const acrescimo = reg.acrescimo ? reg.acrescimo.valor : 0;
-  const total = c.bruto + acrescimo;
+  const acrescimo = vendaAcrescimo(reg);
+  const total = c.bruto;
   const nItens = (reg.itens || []).length;
   const nota = (aba === 'vendas')
     ? ((typeof nfeNotaDaVenda === 'function') ? nfeNotaDaVenda(reg.id) : null)
@@ -11949,7 +11986,7 @@ let orcBalcaoForma = 'vista';
 function orcBalcaoAbrirPagamento(modo){
   const c = calcularVenda(montarVendaLikeDoFormularioOrcamento());
   const acrescimoEl = document.getElementById('orc-acrescimo-valor');
-  const total = c.bruto + (acrescimoEl ? (parseFloat(acrescimoEl.value) || 0) : 0);
+  const total = c.bruto;
 
   document.getElementById('modal-balcao-pagamento')?.remove();
   const modal = document.createElement('div');
@@ -12114,8 +12151,8 @@ function orcBalcaoPronto(orcamentoId, modo){
   if(!o) return;
   const cli = STATE.clientes.find(c => c.id === o.clienteId);
   const c = calcularVenda(o);
-  const acrescimo = o.acrescimo ? o.acrescimo.valor : 0;
-  const total = c.bruto + acrescimo;
+  const acrescimo = vendaAcrescimo(o);
+  const total = c.bruto;
   const virouVenda = !!o.vendaGeradaId;
   const nota = (typeof nfeNotaDoOrcamento === 'function') ? nfeNotaDoOrcamento(o.id) : null;
   const pago = o.condicaoPagamento === 'vista' ? total : 0;
@@ -12233,8 +12270,8 @@ function orcAtualizarFaixa(){
   const c = calcularVenda(montarVendaLikeDoFormularioOrcamento());
   const acrescimoEl = document.getElementById('orc-acrescimo-valor');
   const acrescimo = acrescimoEl ? (parseFloat(acrescimoEl.value) || 0) : 0;
-  const total = c.bruto + acrescimo;
-  const lucro = c.lucro + acrescimo;
+  const total = c.bruto;
+  const lucro = c.lucro;
   const margem = total > 0 ? (lucro / total * 100) : 0;
   const itens = (carrinhoOrcamentoAtual || []).length;
 
@@ -12437,8 +12474,9 @@ function renderOrcamentos(){
           <input type="number" id="orc-validade" min="1" step="1" value="7">
         </div>
         <div class="field">
-          <label>Vendedor / Comissionado</label>
-          <select id="orc-vendedor">${opcoesVendedorHtml('')}</select>
+          <label>Vendedor / Comissionado <span style="color:var(--negative);">*</span></label>
+          <select id="orc-vendedor" onchange="orcVendedorMudou()">${opcoesVendedorHtml('')}</select>
+          <div class="help-text">Obrigatório. Escolhendo, a comissão de ${STATE.config.comissaoPct}% entra sozinha.</div>
         </div>
         <div class="field">
           <label>Prazo de entrega</label>
@@ -12988,16 +13026,16 @@ function atualizarResumoOrcamento(){
   const c = calcularVenda(vendaLike);
   const acrescimoEl = document.getElementById('orc-acrescimo-valor');
   const acrescimo = acrescimoEl ? (parseFloat(acrescimoEl.value)||0) : 0;
-  const brutoTotal = c.bruto+acrescimo;
+  const brutoTotal = c.bruto;
 
-  document.getElementById('orc-kpi-original').textContent = fmtMoney(c.brutoOriginal+acrescimo);
+  document.getElementById('orc-kpi-original').textContent = fmtMoney(c.brutoOriginal);
   document.getElementById('orc-kpi-desconto').textContent = fmtMoney(c.brutoOriginal-c.bruto);
   document.getElementById('orc-kpi-bruto').textContent = fmtMoney(brutoTotal);
   document.getElementById('orc-kpi-custo').textContent = fmtMoney(c.custo);
   document.getElementById('orc-kpi-imposto').textContent = fmtMoney(c.imposto);
   document.getElementById('orc-kpi-comissao').textContent = fmtMoney(c.comissao);
   const lucroEl = document.getElementById('orc-kpi-lucro');
-  const lucroTotal = c.lucro+acrescimo;
+  const lucroTotal = c.lucro;
   lucroEl.textContent = fmtMoney(lucroTotal);
   lucroEl.className = 'kpi-value ' + (lucroTotal>=0?'positive':'negative');
 
@@ -13826,7 +13864,7 @@ function renderOrcamentosEmAndamento(){
     return `
       <tr>
         <td>${cliente ? escapeHtml(cliente.nome) : '<span class="help-text">(cliente ainda não definido)</span>'}</td>
-        <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
+        <td class="num">${fmtMoney(c.bruto)}</td>
         <td>${statusOrcamentoLabel[o.status]}</td>
         <td class="help-text">${quando ? new Date(quando).toLocaleString('pt-BR') : '—'}</td>
         <td>
@@ -14017,6 +14055,11 @@ function salvarOrcamento(){
   const jaExisteComEsseNumero = STATE.orcamentos.some(o=>o.numero===numero && o.id!==orcamentoEmEdicaoId);
   if(jaExisteComEsseNumero){ showToast(`Já existe um orçamento com o número ${numero} — escolha outro.`, 'error'); return; }
   if(!clienteId){ showToast('Selecione o cliente.', 'error'); return; }
+  /* Vendedor obrigatório: sem ele a comissão não tem a quem pertencer, e
+     orçamento sem dono some do acerto do fim do mês. */
+  if(!vendedor){ showToast('Escolha o vendedor — todo orçamento precisa de um.', 'error');
+    const sel = document.getElementById('orc-vendedor'); if(sel){ sel.focus(); sel.scrollIntoView({block:'center'}); }
+    return; }
   if(!data){ showToast('Informe a data.', 'error'); return; }
   if(carrinhoOrcamentoAtual.length===0){ showToast('Adicione ao menos um item ao orçamento.', 'error'); return; }
   if(temRepasse && !pagadorId){ showToast('Selecione o pagador do repasse.', 'error'); return; }
@@ -14896,7 +14939,7 @@ function renderListaOrcamentos(){
         <td>${fmtDate(o.data)}</td>
         <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
         <td>${o.vendedor ? escapeHtml(o.vendedor) : '<span style="color:var(--ink-faint);">—</span>'}</td>
-        <td class="num">${fmtMoney(c.bruto+acrescimo)}</td>
+        <td class="num">${fmtMoney(c.bruto)}</td>
         <td>${celulaStatus}</td>
         ${mostraQuandoSai ? `<td>
           <select onchange="orcDefinirQuandoSai('${o.id}', this.value)" style="padding:4px 6px;font-size:12px;border-radius:6px;${quando.urgente?'background:#FBF0DC;color:#8A5A10;font-weight:600;':''}">
@@ -15062,7 +15105,7 @@ function orcDesenharAbas(){
   const cartoes = document.getElementById('orc-cartoes');
   if(!cartoes) return;
   const soma = (ids)=>ids.reduce((s,o)=>{
-    const c = calcularVenda(o); return s + c.bruto + (o.acrescimo?o.acrescimo.valor:0);
+    const c = calcularVenda(o); return s + c.bruto;
   }, 0);
   const aguardando = orcDaAba('aguardando');
   const aprovados  = orcDaAba('aprovados');
@@ -15282,8 +15325,8 @@ function itemMarcaExibicao(it){
 function gerarPdfPropostaPublica(orcamento, cliente){
   const E = dadosProposta();
   const c = calcularVenda(orcamento);
-  const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
-  const total = c.bruto + acrescimo;
+  const acrescimo = vendaAcrescimo(orcamento);
+  const total = c.bruto;
   const p = orcamento.publico || {};
 
   const linhaSeTiver = (rotulo, valor) => {
@@ -15589,7 +15632,7 @@ function gerarPdfOrcamento(id){
         <tbody>${linhasItens}</tbody>
         ${acrescimo>0 ? `<tr><td colspan="5" style="text-align:right;">Acréscimo${orcamento.acrescimo.descricao?' ('+escapeHtml(orcamento.acrescimo.descricao)+')':''}</td><td style="text-align:right;">${fmtMoney(acrescimo)}</td></tr>` : ''}
         ${c.temDesconto ? `<tr><td colspan="5" style="text-align:right;">Desconto</td><td style="text-align:right;">-${fmtMoney(c.brutoOriginal-c.bruto)}</td></tr>` : ''}
-        <tfoot><tr><td colspan="5" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto+acrescimo)}</td></tr></tfoot>
+        <tfoot><tr><td colspan="5" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto)}</td></tr></tfoot>
       </table>
 
       ${prazos ? `<div class="prazos">${prazos}</div>` : ''}
@@ -15669,8 +15712,8 @@ function gerarPdfControleEntrega(id, opcoes){
   if(!orcamento) return;
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   const c = calcularVenda(orcamento);
-  const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
-  const totalGeral = c.bruto + acrescimo;
+  const acrescimo = vendaAcrescimo(orcamento);
+  const totalGeral = c.bruto;
 
   // Documento pro CLIENTE conferir e assinar. A origem de coleta é
   // informação interna da loja e nunca entra aqui. Preço por item e total
@@ -15799,7 +15842,7 @@ function verDetalheOrcamento(id){
           ${orcamento.acrescimo ? `<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-soft);"><span>Acréscimo (${escapeHtml(orcamento.acrescimo.descricao)})</span><span>${fmtMoney(orcamento.acrescimo.valor)}</span></div>` : ''}
           ${c.temDesconto ? `<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--negative);"><span>Desconto</span><span>-${fmtMoney(c.brutoOriginal-c.bruto)}</span></div>` : ''}
           <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:700;color:var(--ink);margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
-            <span>Valor Final</span><span>${fmtMoney(c.bruto+acrescimo)}</span>
+            <span>Valor Final</span><span>${fmtMoney(c.bruto)}</span>
           </div>
           ${orcamento.pagadorId ? `<div style="display:flex;justify-content:space-between;font-size:12.5px;color:var(--ink-soft);margin-top:4px;"><span>Repasse (${orcamento.repassePct}%)</span><span>${escapeHtml((STATE.pagadores.find(p=>p.id===orcamento.pagadorId)||{}).nome||'')}</span></div>` : ''}
         </div>
@@ -16565,7 +16608,7 @@ function getDadosLogistica(){
       lat: cliente ? cliente.lat : null,
       lng: cliente ? cliente.lng : null,
       data: o.data,
-      valor: c.bruto + acrescimo,
+      valor: c.bruto,
       itens: o.itens.map(it=>({
         nome: it.nome, qtd: it.qtd,
         origemTipo: it.origemTipo, origemId: it.origemId, origemNome: it.origem
@@ -19090,14 +19133,15 @@ function getLinhasVenda(incluirCanceladas){
     // O desconto é distribuído proporcionalmente entre os itens da venda,
     // mas o IMPOSTO nunca recalcula sobre o valor com desconto (regra fixa
     // já confirmada antes: imposto sempre sobre o bruto original).
-    const desconto = v.desconto || {};
+    // Os totais saem de calcularVenda() — a MESMA conta da tela do orçamento,
+    // com o acréscimo (frete) dentro, como custo, e com imposto e comissão
+    // sobre o valor original. Aqui eles só são repartidos entre os itens, na
+    // proporção do que cada um vale. Repartir é a única divisão defensável:
+    // o frete é da entrega inteira, não de um item.
+    const cv = calcularVenda(v);
+    const acrescimoVenda = vendaAcrescimo(v);
     const totalBrutoVenda = (v.itens||[]).reduce((s,it)=>s+it.qtd*it.precoUnit, 0);
-    let fatorDesconto = 1; // 1 = sem desconto
-    if(desconto.valor!=null && totalBrutoVenda>0){
-      fatorDesconto = Math.max(0, 1 - (desconto.valor/totalBrutoVenda));
-    }else if(desconto.pct!=null){
-      fatorDesconto = Math.max(0, 1 - (desconto.pct/100));
-    }
+    const quantosItens = (v.itens||[]).length || 1;
     // Venda com pagador terceiro (repasse): o valor que fica de fato com a
     // Mizu é o bruto (já com o desconto da venda) MENOS o repasse — é esse
     // valor líquido que deve contar no total geral de vendas de relatórios
@@ -19106,7 +19150,7 @@ function getLinhasVenda(incluirCanceladas){
     // distribuída proporcionalmente por item pra manter as linhas coerentes.
     let fatorRepasse = 1;
     if(v.pagadorId){
-      const totalBrutoAposDescGeral = totalBrutoVenda*fatorDesconto;
+      const totalBrutoAposDescGeral = cv.bruto;
       const descontoRepasse = v.repasse && v.repasse.desconto ? v.repasse.desconto : {};
       let valorRepasseVenda = 0;
       if(descontoRepasse.valor!=null) valorRepasseVenda = Math.min(totalBrutoAposDescGeral, descontoRepasse.valor);
@@ -19116,9 +19160,12 @@ function getLinhasVenda(incluirCanceladas){
     (v.itens||[]).forEach(it=>{
       const produto = STATE.produtos.find(p=>p.id===it.produtoId);
       const c = calcularItemVenda(it, !!v.temComissao);
-      const brutoComDesconto = c.bruto*fatorDesconto*fatorRepasse;
-      const comissaoComDesconto = c.comissao*fatorDesconto; // comissão incide sobre o valor recebido de fato (antes do repasse, igual já era)
-      const lucroComDesconto = brutoComDesconto - c.custoTotal - c.imposto - comissaoComDesconto;
+      const fracao = totalBrutoVenda > 0 ? (it.qtd*it.precoUnit)/totalBrutoVenda : (1/quantosItens);
+      const brutoComDesconto = cv.bruto*fracao*fatorRepasse;
+      const impostoItem = cv.imposto*fracao;
+      const comissaoComDesconto = cv.comissao*fracao;
+      const custoItem = c.custoTotal + acrescimoVenda*fracao;   // o frete cabe a cada item na proporção dele
+      const lucroComDesconto = brutoComDesconto - custoItem - impostoItem - comissaoComDesconto;
       linhas.push({
         vendaId: v.id,
         data: v.data,
@@ -19144,9 +19191,9 @@ function getLinhasVenda(incluirCanceladas){
         // em modo "Bruto" de Repasses).
         bruto: brutoComDesconto,
         brutoOriginal: c.bruto,
-        temDesconto: fatorDesconto<1,
-        custo: c.custoTotal,
-        imposto: c.imposto,
+        temDesconto: cv.temDesconto,
+        custo: custoItem,
+        imposto: impostoItem,
         comissao: comissaoComDesconto,
         lucro: lucroComDesconto
       });
@@ -41749,7 +41796,7 @@ function parcelasBoletoDoOrcamento(orcamento){
    (ele entra como vOutro na NF-e), então é somado aqui — é esse número
    que as duplicatas têm que fechar. */
 function totalDocumentoParaNota(doc){
-  return calcularVenda(doc).bruto + (doc && doc.acrescimo ? (doc.acrescimo.valor||0) : 0);
+  return calcularVenda(doc).bruto;
 }
 
 /* ---------- tela do orçamento ---------- */
@@ -41934,7 +41981,7 @@ async function nfeEmitir(origem, modelo, opcoes){
 
   const num = nfeNumeracao(modelo);
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
-  const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
+  const total = calcularVenda(orcamento).bruto;
 
   // Em que ambiente o servidor está AGORA — perguntado antes de confirmar,
   // porque é a diferença entre um ensaio e um documento fiscal de verdade.
@@ -42218,7 +42265,7 @@ function abrirOpcoesFecharVenda(orcamentoId){
   }
 
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
-  const total = calcularVenda(orcamento).bruto + (orcamento.acrescimo?orcamento.acrescimo.valor:0);
+  const total = calcularVenda(orcamento).bruto;
   const configurado = nfeConfigurado();
 
   document.getElementById('modal-fechar-venda')?.remove();
@@ -44770,6 +44817,22 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-05-b',
+    data: '2026-11-05',
+    titulo: 'CORREÇÃO IMPORTANTE: o frete estava virando lucro, e a comissão não entrava',
+    itens: [
+      'O FRETE ERA CONTADO COMO LUCRO. Num orçamento de R$ 450 com R$ 235 de frete, o sistema mostrava R$ 353 de sobra e 56,9% de margem — número que nunca existiu. O frete é dinheiro que o cliente paga E que sai do seu bolso pro transportador: agora ele entra nos dois lados, no total e no custo, e o que sobra dele é zero.',
+      'A conta daquele orçamento agora fecha certo: 450 + 235 = 685, menos 65 de desconto = 620. Tira 484 de custo (249 do produto + 235 do frete), 27,40 de imposto e 13,70 de comissão. SOBRA R$ 94,90 — e não os R$ 353 de antes.',
+      'O IMPOSTO agora inclui o frete na base: 4% sobre 685, não sobre 450. Frete que vai na nota compõe a base de cálculo.',
+      'A COMISSÃO NÃO ENTRAVA. Você escolhia o vendedor e a comissão continuava zerada, porque dependia de uma caixinha que ninguém marcava. Agora escolher o vendedor liga a comissão de 2% sozinha, e tirar o vendedor desliga. A caixinha continua ali pra desmarcar numa venda que, por acordo, não comissiona.',
+      'A comissão também passou a incidir sobre o valor original com o frete (685), igual ao imposto — antes era sobre o valor já descontado e só sobre as mercadorias.',
+      'O DESCONTO agora é dado sobre o total que o cliente vê, frete incluído. Você fecha "620" olhando os 685 da proposta, não os 450 das mercadorias.',
+      'VENDEDOR VIROU OBRIGATÓRIO em todo orçamento. Sem ele a comissão não tem dono e o orçamento some do acerto do fim do mês.',
+      'ISSO VALE PRA TUDO: Análise de Vendas, Dashboard, Rentabilidade, Saúde de Margem, repasses e relatórios passam a mostrar o mesmo número da tela do orçamento. Em vendas com vários itens, o frete é repartido entre eles na proporção do valor de cada um.',
+      'ATENÇÃO: orçamentos e vendas antigos com frete vão mostrar uma sobra MENOR do que mostravam antes. O número de antes é que estava errado.'
+    ]
+  },
   {
     id: '2026-11-05-a',
     data: '2026-11-05',
@@ -48786,7 +48849,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 09:35';
+const SISTEMA_VERSAO = '05/11/2026 11:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');

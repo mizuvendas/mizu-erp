@@ -1,4 +1,4 @@
 {
-  "versao": "05/11/2026 09:35",
-  "nota": "Juntar itens que sao o mesmo produto cadastrado duas vezes: seletor com caixas de marcar, venda somando mes a mes, e pergunta o nome na hora."
+  "versao": "05/11/2026 11:10",
+  "nota": "Correcao: o frete deixou de ser contado como lucro e passou a ser custo; imposto e comissao incidem sobre o valor com frete; a comissao entra ao escolher o vendedor; vendedor virou obrigatorio."
 }
