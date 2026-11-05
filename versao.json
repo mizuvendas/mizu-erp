@@ -1,4 +1,4 @@
 {
-  "versao": "05/11/2026 11:10",
-  "nota": "Correcao: o frete deixou de ser contado como lucro e passou a ser custo; imposto e comissao incidem sobre o valor com frete; a comissao entra ao escolher o vendedor; vendedor virou obrigatorio."
+  "versao": "05/11/2026 13:20",
+  "nota": "Conta do orcamento fechada: frete como custo com quadradinho proprio, imposto e comissao sobre o valor que o cliente paga, comissao automatica pelo vendedor e vendedor obrigatorio."
 }

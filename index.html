@@ -3032,14 +3032,16 @@ document.getElementById('file-import').addEventListener('change', (e)=>{
 function calcularItemVenda(item, temComissao){
   const brutoOriginal = item.qtd * item.precoUnit;
   const custoTotal = item.qtd * item.custoUnit;
-  // desconto individual do item (opcional) — reduz o valor de venda recebido,
-  // mas o IMPOSTO sempre incide sobre o valor original, igual à regra já
-  // usada no desconto geral da venda. Comissão incide sobre o valor recebido.
+  // desconto individual do item (opcional) — reduz o valor de venda recebido.
+  // IMPOSTO e COMISSÃO incidem sobre o valor RECEBIDO: é o que vai na nota e
+  // é o que o vendedor de fato vendeu. (Até 05/11/2026 o imposto incidia
+  // sobre o valor cheio, antes do desconto — ela derrubou essa regra:
+  // "o imposto não deveria ser em cima do que o cliente paga?".)
   const d = item.desconto || {};
   let bruto = brutoOriginal;
   if(d.valor!=null) bruto = Math.max(0, brutoOriginal-d.valor);
   else if(d.pct!=null) bruto = brutoOriginal*(1-d.pct/100);
-  const imposto = brutoOriginal * (STATE.config.impostoPct/100);
+  const imposto = bruto * (STATE.config.impostoPct/100);
   const comissao = temComissao ? bruto * (STATE.config.comissaoPct/100) : 0;
   const lucro = bruto - custoTotal - imposto - comissao;
   return { bruto, brutoOriginal, custoTotal, imposto, comissao, lucro };
@@ -3089,13 +3091,13 @@ function calcularVenda(venda){
   else if(desconto.pct!=null) valorDesconto = antesDoDesconto * Math.max(0, desconto.pct)/100;
   const bruto = Math.max(0, antesDoDesconto - valorDesconto);
 
-  /* Imposto e comissão sobre o valor ORIGINAL, com o frete dentro. O imposto
-     já era assim nas mercadorias (regra fixa: nunca recalcula sobre o valor
-     com desconto) e passa a incluir o acréscimo, porque o frete que vai na
-     nota compõe a base. A comissão passa a seguir a mesma régua. */
+  /* Imposto e comissão sobre o VALOR FINAL — o que o cliente paga, já com o
+     desconto e com o frete dentro. Regra dela, nestas palavras: "o imposto
+     não deveria ser em cima do que o cliente paga?" e "a comissão pode ser
+     feita em cima dos 620". O frete entra na base porque vai na nota. */
   const brutoOriginal = brutoTotalmenteOriginal + acrescimo;
-  imposto = brutoOriginal * (STATE.config.impostoPct/100);
-  const comissao = temComissao ? brutoOriginal * (STATE.config.comissaoPct/100) : 0;
+  imposto = bruto * (STATE.config.impostoPct/100);
+  const comissao = temComissao ? bruto * (STATE.config.comissaoPct/100) : 0;
 
   /* o frete sai do bolso dela: é custo */
   custo += acrescimo;
@@ -10444,10 +10446,13 @@ function atualizarResumoVenda(){
       if(!isNaN(val) && val>0) desconto = { pct: null, valor: val };
     }
   }
-  const vendaTmp = { itens: carrinhoAtual, temComissao, desconto };
-  const c = calcularVenda(vendaTmp);
+  /* o acréscimo vai junto: sem ele o cálculo não enxerga o frete, e o
+     resumo mostrava 450 onde o cliente paga 685 */
   const acrescimoEl = document.getElementById('v-acrescimo-valor');
   const acrescimo = acrescimoEl ? (parseFloat(acrescimoEl.value)||0) : 0;
+  const vendaTmp = { itens: carrinhoAtual, temComissao, desconto,
+                     acrescimo: acrescimo>0 ? { valor: acrescimo } : undefined };
+  const c = calcularVenda(vendaTmp);
   const brutoTotal = c.bruto;
   document.getElementById('v-kpi-bruto').textContent = fmtMoney(brutoTotal);
   document.getElementById('v-kpi-custo').textContent = fmtMoney(c.custo);
@@ -12756,6 +12761,10 @@ function renderOrcamentos(){
       <div class="kpi-row" id="orc-resumo-kpis">
         <div class="kpi-card"><div class="kpi-label">Valor Original</div><div class="kpi-value" id="orc-kpi-original">R$ 0,00</div></div>
         <div class="kpi-card"><div class="kpi-label">Desconto</div><div class="kpi-value" id="orc-kpi-desconto">R$ 0,00</div></div>
+        <!-- Só aparece quando há acréscimo. O frete é cobrado do cliente E pago
+             por ela, então entra no total e sai no custo: o quadradinho diz isso,
+             pra ninguém procurar os 235 dentro do custo total. -->
+        <div class="kpi-card" id="orc-kpi-frete-card" style="display:none;"><div class="kpi-label">Frete (acréscimo)</div><div class="kpi-value" id="orc-kpi-frete">R$ 0,00</div><div class="help-text" style="margin-top:2px;">cobrado do cliente e pago por você — entra no custo</div></div>
         <div class="kpi-card"><div class="kpi-label">Valor Final</div><div class="kpi-value" id="orc-kpi-bruto">R$ 0,00</div></div>
         <div class="kpi-card"><div class="kpi-label">Custo Total</div><div class="kpi-value" id="orc-kpi-custo">R$ 0,00</div></div>
         <div class="kpi-card"><div class="kpi-label">Imposto (${STATE.config.impostoPct}%)</div><div class="kpi-value" id="orc-kpi-imposto">R$ 0,00</div></div>
@@ -13012,7 +13021,10 @@ function montarVendaLikeDoFormularioOrcamento(){
   const pagadorId = temRepasse ? (document.getElementById('orc-pagador').value || null) : null;
   const repassePct = temRepasse ? parseFloat(document.getElementById('orc-repasse-pct').value) : null;
 
-  const vendaLike = { itens: carrinhoOrcamentoAtual, temComissao, desconto, pagadorId };
+  const acrescimoForm = (()=>{ const e=document.getElementById('orc-acrescimo-valor');
+    const v = e ? (parseFloat(e.value)||0) : 0; return v>0 ? { valor: v } : undefined; })();
+  const vendaLike = { itens: carrinhoOrcamentoAtual, temComissao, desconto, pagadorId,
+                      acrescimo: acrescimoForm };
   if(pagadorId && !isNaN(repassePct) && repassePct>0){
     const brutoDaVenda = calcularVenda(vendaLike).bruto;
     const { valorRepasse } = calcularRepasseVenda(brutoDaVenda, repassePct);
@@ -13030,6 +13042,11 @@ function atualizarResumoOrcamento(){
 
   document.getElementById('orc-kpi-original').textContent = fmtMoney(c.brutoOriginal);
   document.getElementById('orc-kpi-desconto').textContent = fmtMoney(c.brutoOriginal-c.bruto);
+  const freteCard = document.getElementById('orc-kpi-frete-card');
+  if(freteCard){
+    freteCard.style.display = c.acrescimo > 0 ? '' : 'none';
+    document.getElementById('orc-kpi-frete').textContent = fmtMoney(c.acrescimo||0);
+  }
   document.getElementById('orc-kpi-bruto').textContent = fmtMoney(brutoTotal);
   document.getElementById('orc-kpi-custo').textContent = fmtMoney(c.custo);
   document.getElementById('orc-kpi-imposto').textContent = fmtMoney(c.imposto);
@@ -44818,6 +44835,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-05-c',
+    data: '2026-11-05',
+    titulo: 'Resumo do orçamento: a conta do frete, do imposto e da comissão fechada',
+    itens: [
+      'O FRETE aparece agora num quadradinho próprio, dizendo o que ele é: cobrado do cliente e pago por você — entra no custo. Ele soma no que o cliente paga E sai como custo seu, então não sobra nada dele.',
+      'O IMPOSTO passou a incidir sobre O QUE O CLIENTE PAGA (o valor final, já com o desconto e com o frete). Antes incidia sobre o valor cheio, ignorando o desconto e ignorando o frete.',
+      'A COMISSÃO segue a mesma régua: sobre o valor final. E agora ela entra sozinha quando você escolhe o vendedor — antes dependia de uma caixinha que ninguém marcava, e ficava zerada.',
+      'VENDEDOR virou obrigatório em todo orçamento.',
+      'O orçamento com produto de R$ 450, frete de R$ 235 e desconto de R$ 65 agora fecha assim: valor original 685 · desconto 65 · frete 235 · valor final 620 · custo 484 · imposto 24,80 · comissão 12,40 · SOBRA R$ 98,80 · margem 15,9%. Antes aparecia R$ 353 de sobra e 56,9% de margem — número que nunca existiu.',
+      'Vale pra tudo: Análise de Vendas, Dashboard, Rentabilidade, Saúde de Margem, repasses e relatórios mostram o mesmo número da tela do orçamento.',
+      'ATENÇÃO: orçamentos e vendas antigos vão mostrar números diferentes. Com frete, a sobra cai (o frete não é mais lucro). Com desconto, o imposto cai (deixou de ser cobrado sobre o valor cheio). Os números de antes é que estavam errados.'
+    ]
+  },
+  {
     id: '2026-11-05-b',
     data: '2026-11-05',
     titulo: 'CORREÇÃO IMPORTANTE: o frete estava virando lucro, e a comissão não entrava',
@@ -48849,7 +48880,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 11:10';
+const SISTEMA_VERSAO = '05/11/2026 13:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
