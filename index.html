@@ -45736,7 +45736,8 @@ const NOVIDADES = [
       'O PRODUTO QUE NASCEU NA NOTA continua cadastrado, de propósito: ele já pode ter venda, foto, preço ajustado à mão. A tela lista quais foram, e você apaga em Produtos se quiser.',
       'A nota volta para "a dar entrada" COM A CONFERÊNCIA QUE VOCÊ JÁ FEZ. Dá pra ajustar e concluir de novo, ou apagar e começar do XML.',
       'TUDO É DITO ANTES. A confirmação lista o que volta e o que não volta, inclusive o aviso de que entrada concluída numa versão anterior do sistema não tem o retrato — nessa, estoque e conta voltam, custo e preço não.',
-      'E EM NOTAS NA RECEITA: nota com entrada começada e não concluída conta como PENDENTE, com o botão "Continuar a entrada". Mostrá-la como resolvida esconderia o trabalho que ainda falta.'
+      'E EM NOTAS NA RECEITA: nota com entrada começada e não concluída conta como PENDENTE, com o botão "Continuar a entrada". Mostrá-la como resolvida esconderia o trabalho que ainda falta.',
+      'O BOTÃO FOI DESLIGADO a pedido dela, depois do teste: desfazer uma entrada concluída mexe em estoque, custo, preço e contas a pagar de uma vez, e um botão desses à mão no dia a dia é convite pra desfazer a nota errada. O mecanismo continua pronto por baixo, e o retrato continua sendo guardado em cada conclusão — no dia em que uma nota entrar errada de verdade, é só religar.'
     ]
   },
   {
@@ -47494,8 +47495,21 @@ function enDespesaTemParcelaPaga(d){
   return (d.parcelasDetalhe||[]).some(p=>p && (p.pago === true || !!p.dataPagamento));
 }
 
+/* O BOTÃO ESTÁ DESLIGADO, a pedido dela: "isso aí é só para mim fazer esse
+   teste, não pode acontecer de novo". Desfazer uma entrada concluída é uma
+   operação pesada — mexe em estoque, custo, preço e contas a pagar de uma
+   vez — e um botão desses à mão no dia a dia é convite pra desfazer a nota
+   errada.
+
+   O MOTOR CONTINUA AQUI, e o retrato continua sendo gravado em cada
+   conclusão (custa alguns bytes e não aparece em lugar nenhum). Assim, no
+   dia em que uma nota entrar errada de verdade, é um 'true' aqui em cima —
+   e a reversão é exata, com os valores de antes, em vez de remendo à mão.
+   Apagar o motor junto só garantiria que naquele dia não haveria saída. */
+const EN_MOSTRAR_DESFAZER = false;
+
 function enPodeDesfazer(e){
-  return !!e && e.status === 'concluida';
+  return EN_MOSTRAR_DESFAZER && !!e && e.status === 'concluida';
 }
 
 /* Resumo honesto do que vai e do que não vai voltar. É o que a tela mostra
@@ -47806,7 +47820,7 @@ function en3Cabecalho(titulo, texto, e, voltarPara){
         <div><strong>${escapeHtml(e.fornecedorNome || 'Entrada manual')}</strong></div>
         <div>${e.numero?`Nota ${escapeHtml(e.numero)}${e.serie?'/'+escapeHtml(e.serie):''} · `:''}${escapeHtml(enData(e.data)||'')}${e.valorNota?` · ${fmtMoney(e.valorNota)}`:''}</div>
         ${enCfopEntrada(e)?`<div>CFOP de entrada <strong>${enCfopEntrada(e)}</strong></div>`:''}
-        ${e.status==='concluida' ? `<div style="margin-top:6px;">
+        ${EN_MOSTRAR_DESFAZER && e.status==='concluida' ? `<div style="margin-top:6px;">
           <button class="btn btn-sm" onclick="enDesfazer('${e.id}')" title="Devolve estoque, custo e preço ao que eram antes desta nota">↩️ Desfazer a entrada</button>
         </div>` : ''}
       </div>
@@ -50826,7 +50840,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '06/11/2026 13:20';
+const SISTEMA_VERSAO = '06/11/2026 14:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
