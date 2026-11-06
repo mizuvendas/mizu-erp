@@ -1086,6 +1086,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="entrada-nota" href="#">
       <span class="ic ic-operacao">📥</span> Entrada de Nota
     </a>
+    <a class="nav-item" data-page="distribuicao" href="#">
+      <span class="ic ic-operacao">📨</span> Notas na Receita <span class="nav-badge" id="nav-badge-distribuicao" style="display:none;"></span>
+    </a>
     <a class="nav-item" data-page="estoque" href="#">
       <span class="ic ic-operacao">📊</span> Estoque
     </a>
@@ -1288,6 +1291,17 @@ body.orc-gaveta-travada{ overflow:hidden; }
       <datalist id="en-marcas"></datalist>
       <datalist id="en-categorias"></datalist>
       <div id="entrada-nota-content"></div>
+    </section>
+
+    <!-- ============ NOTAS NA RECEITA (DISTRIBUICAO DE DF-e) ============ -->
+    <section class="page" id="page-distribuicao">
+      <div class="page-header">
+        <div>
+          <h2>Notas na Receita</h2>
+          <p class="subtitle">As notas que os fornecedores emitiram contra o seu CNPJ &mdash; o que ainda n&atilde;o entrou no sistema fica aqui esperando</p>
+        </div>
+      </div>
+      <div id="distribuicao-content"></div>
     </section>
 
     <section class="page" id="page-estoque">
@@ -2443,6 +2457,21 @@ function atualizarBadgesMenu(){
       badgeProp.title = `${vencendo} proposta${vencendo===1?'':'s'} com a data de envio em cima ou já passada`;
     }
     else{ badgeProp.style.display = 'none'; }
+  }
+  /* Nota de compra que a Receita tem e que ainda nao entrou no sistema.
+     Esse numero no menu e o que evita a nota ficar esquecida ate o
+     contador cobrar — ela nao precisa abrir a tela pra descobrir. */
+  const badgeDist = document.getElementById('nav-badge-distribuicao');
+  if(badgeDist){
+    let pendentes = 0;
+    if(typeof distNotasPorStatus === 'function' && STATE.distribuicao){
+      try{ pendentes = distNotasPorStatus('pendente').length; }catch(e){ pendentes = 0; }
+    }
+    if(pendentes>0){
+      badgeDist.textContent = pendentes; badgeDist.style.display = '';
+      badgeDist.title = `${pendentes} nota${pendentes===1?'':'s'} de compra na Receita sem entrada no sistema`;
+    }
+    else{ badgeDist.style.display = 'none'; }
   }
   const badgeMargem = document.getElementById('nav-badge-margem');
   if(badgeMargem){
@@ -45696,6 +45725,23 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-06-b',
+    data: '2026-11-06',
+    titulo: 'NOTAS NA RECEITA — as compras aparecem sozinhas, sem você procurar XML',
+    itens: [
+      'TELA NOVA no menu: "Notas na Receita". Ela busca na Receita tudo que os fornecedores emitiram contra o seu CNPJ e mostra em lista. Acabou o "será que chegou alguma nota que eu não vi?".',
+      'O MENU AVISA. Aparece um número vermelho em "Notas na Receita" com quantas compras ainda não entraram no sistema. Você não precisa abrir a tela pra descobrir.',
+      'A TELA ABRE NAS PENDENTES. Com 3 pendentes e 800 já lançadas, você vê 3 linhas. As outras ficam atrás dos contadores 🟡 Pendentes · 🟢 Lançadas · ⚪ Ignoradas — um clique troca a lista.',
+      'BOTÃO "DAR ENTRADA" em cada pendente: abre a Entrada de Nota de sempre com o XML já carregado. Você não baixa nem arrasta arquivo nenhum.',
+      'NÃO TEM COMO LANÇAR DUAS VEZES. O casamento é pela CHAVE DE ACESSO da nota — então nota que você lançou à mão, antes desta tela existir, já aparece como 🟢 lançada. E se você apagar a entrada, ela volta pra pendente sozinha.',
+      '"NÃO VOU LANÇAR" tira da frente a nota que não vai entrar (devolução, nota errada). Nada é apagado: ela fica em ⚪ Ignoradas e volta pra pendente quando você quiser.',
+      'A CIÊNCIA DA EMISSÃO, quando precisa. A Receita só entrega o XML completo depois que você registra ciência da nota. Quando for o caso, o sistema PERGUNTA antes e explica: ciência diz só que você sabe que a nota existe — não confirma a compra nem recusa a mercadoria. O sistema nunca faz isso escondido.',
+      'O XML COMPLETO NÃO VAI PRO LOCALSTORAGE. Fica no IndexedDB, como as certidões. Na lista ficam só algumas linhas por nota — 800 notas ocupam menos que uma foto.',
+      'ARQUIVAMENTO: nota lançada há mais de 90 dias sai desta lista sozinha. A entrada continua no sistema, com itens, custo e estoque — e continua barrando lançamento repetido.',
+      'CONFERE A CHAVE ANTES DE LANÇAR: se o XML que voltar não for o da linha que você clicou, o sistema não lança nada e avisa. Lançar a nota errada traria os itens, os custos e o estoque de outra compra.'
+    ]
+  },
+  {
     id: '2026-11-06-a',
     data: '2026-11-06',
     titulo: 'Preço por MARKUP, fornecedor que nasce da nota e a tabela de produtos com cadeado',
@@ -47321,6 +47367,54 @@ function enHtmlLista(){
     </div>`;
 }
 
+/* UMA VIA SO pra carregar um XML de nota: tanto o arquivo que ela arrasta
+   quanto a nota baixada da Receita (Distribuicao) passam por aqui. Duas
+   copias desta logica significariam dois comportamentos diferentes pro mesmo
+   XML — e so um deles seria corrigido quando aparecesse um defeito. */
+function enImportarTexto(texto, nomeArquivo){
+  let nota;
+  try{ nota = enLerXml(texto, nomeArquivo); }
+  catch(e){ return { ok:false, erro: `${nomeArquivo}: ${e.message}` }; }
+
+  const cnpjMizu = (STATE.config.cnpj || '46836769000145').replace(/\D/g,'');
+  if(nota.destinatarioCnpj && cnpjMizu && nota.destinatarioCnpj.replace(/\D/g,'') !== cnpjMizu){
+    return { ok:false, erro: `${nomeArquivo}: esta nota não foi emitida para a Mizu (destinatário ${nota.destinatarioCnpj}).` };
+  }
+  /* A TRAVA CONTRA NOTA DUPLICADA. Vale pro arquivo arrastado e pra nota
+     vinda da Receita, porque as duas passam por aqui — e e pela CHAVE, nao
+     por numero ou fornecedor, entao nota lancada a mao antes tambem barra. */
+  const jaExiste = entradas().find(e=>e.chave && e.chave === nota.chave);
+  if(jaExiste){
+    return { ok:false, jaExiste:true, id: jaExiste.id,
+             erro: `${nomeArquivo}: esta nota já foi importada.` };
+  }
+
+  nota.itens.forEach(it=>{
+    const achou = enCasarItem(nota, it);
+    if(achou){
+      it.produtoId = achou.produto.id;
+      it.acao = 'vincular';
+      it.casadoPor = achou.como;
+      it.casamentoForte = achou.forte;
+      it.unidadesPorCaixa = achou.produto.unidadesPorCaixa || null;
+      it.precoVenda = achou.produto.precoVenda || null;
+      it.marca = achou.produto.marca || '';
+      it.categoria = achou.produto.categoria || '';
+      it.linha = achou.produto.linha || '';
+      it.unidadeVenda = achou.produto.unidade || '';
+    }else{
+      it.acao = 'novo';
+      it.nomeProduto = it.nomeNaNota;
+      it.codigoBarras = it.ean || '';
+    }
+  });
+
+  enRecalcularFrete(nota);
+  entradas().push(nota);
+  entradaAtualId = nota.id;
+  return { ok:true, id: nota.id, nota };
+}
+
 async function enImportarArquivos(files){
   const arquivos = [...(files||[])];
   if(arquivos.length === 0) return;
@@ -47328,47 +47422,9 @@ async function enImportarArquivos(files){
   for(const f of arquivos){
     try{
       const texto = await f.text();
-      const nota = enLerXml(texto, f.name);
-
-      const cnpjMizu = (STATE.config.cnpj || '46836769000145').replace(/\D/g,'');
-      if(nota.destinatarioCnpj && cnpjMizu && nota.destinatarioCnpj.replace(/\D/g,'') !== cnpjMizu){
-        erros.push(`${f.name}: esta nota não foi emitida para a Mizu (destinatário ${nota.destinatarioCnpj}).`);
-        continue;
-      }
-      if(entradas().some(e=>e.chave && e.chave === nota.chave)){
-        erros.push(`${f.name}: esta nota já foi importada.`);
-        continue;
-      }
-
-      // Casamento automático, feito na importação: ela abre a tela com o
-      // trabalho já meio andado em vez de uma lista crua.
-      nota.itens.forEach(it=>{
-        const achou = enCasarItem(nota, it);
-        if(achou){
-          it.produtoId = achou.produto.id;
-          it.acao = 'vincular';
-          it.casadoPor = achou.como;
-          it.casamentoForte = achou.forte;
-          it.unidadesPorCaixa = achou.produto.unidadesPorCaixa || null;
-          it.precoVenda = achou.produto.precoVenda || null;
-          it.marca = achou.produto.marca || '';
-          it.categoria = achou.produto.categoria || '';
-          it.linha = achou.produto.linha || '';
-          it.unidadeVenda = achou.produto.unidade || '';
-        }else{
-          it.acao = 'novo';
-          it.nomeProduto = it.nomeNaNota;
-          it.codigoBarras = it.ean || '';
-        }
-      });
-
-      // o frete que o fornecedor declarou no total e nao rateou por item
-      // tem de ser rateado agora, antes de qualquer custo aparecer na tela
-      enRecalcularFrete(nota);
-
-      entradas().push(nota);
+      const r = enImportarTexto(texto, f.name);
+      if(!r.ok){ erros.push(r.erro); continue; }
       ok++;
-      entradaAtualId = nota.id;
     }catch(e){
       erros.push(`${f.name}: ${e.message}`);
     }
@@ -49868,7 +49924,497 @@ function enAbrirLancarDespesa(entradaId){
   });
 }
 
+/* =========================================================
+   DISTRIBUIÇÃO DE DF-e — as notas que os fornecedores emitiram
+   contra o CNPJ da Mizu
+
+   "quero puxar todas as notas que eu comprei pelo XML lá, que vai
+   mostrar cada compra que eu fiz e consta o XML que eu não dei
+   entrada ainda"
+
+   O serviço de distribuição da Receita entrega tudo que foi emitido
+   contra o CNPJ. Três decisões de desenho, todas pensadas pra lista
+   grande:
+
+   1. A TELA ABRE NAS PENDENTES. Com 3 pendentes e 800 lançadas, ela
+      vê 3 linhas. O resto fica atrás de um contador clicável.
+
+   2. O STATUS NÃO É GUARDADO — é calculado pela CHAVE DE ACESSO
+      contra as entradas. Nota lançada à mão antes da distribuição
+      existir já aparece como lançada; entrada apagada volta a
+      aparecer como pendente. Guardar o status criaria duas verdades
+      sobre o mesmo fato.
+
+   3. NO STATE FICA SÓ O RESUMO (uma linha por nota, poucos bytes).
+      O XML inteiro vai pro IndexedDB — o mesmo motivo das certidões:
+      o localStorage tem 5 MB pro sistema todo, e um ano de XML não
+      cabe. Enchê-lo faria o saveState() falhar em silêncio e o
+      sistema pararia de salvar venda e orçamento.
+   ========================================================= */
+
+const DIST_EVENTO_CIENCIA = 210210;
+
+function distEstado(){
+  if(!STATE.distribuicao){
+    STATE.distribuicao = { ultNSU:0, maxNSU:0, atualizadoEm:null, notas:[], ignoradas:{} };
+  }
+  const d = STATE.distribuicao;
+  if(!Array.isArray(d.notas)) d.notas = [];
+  if(!d.ignoradas || typeof d.ignoradas !== 'object') d.ignoradas = {};
+  return d;
+}
+
+/* Banco próprio, versão 1. Não aproveitei o 'mizu-arquivos' das certidões de
+   propósito: criar um object store lá exigiria subir a versão do banco, e
+   qualquer código que ainda abrisse a versão 1 passaria a falhar. */
+function distXmlIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-distribuicao', 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains('xmls')) req.result.createObjectStore('xmls');
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('xmls', modo==='get'?'readonly':'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore('xmls');
+      const op = modo==='get'    ? store.get(chave)
+               : modo==='del'    ? store.delete(chave)
+               : modo==='chaves' ? store.getAllKeys()
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+function distEntradaDaChave(chave){
+  if(!chave) return null;
+  return (STATE.entradas||[]).find(e=>e.chave && e.chave === chave) || null;
+}
+
+/* Calculado, nunca guardado — ver a decisão 2 lá em cima. */
+function distStatus(n){
+  const d = distEstado();
+  if(d.ignoradas[n.chave]) return 'ignorada';
+  return distEntradaDaChave(n.chave) ? 'lancada' : 'pendente';
+}
+
+function distNotasPorStatus(status){
+  return distEstado().notas.filter(n=>distStatus(n)===status);
+}
+
+/* Guarda o resumo no STATE e, quando o documento veio completo, o XML no
+   IndexedDB. Chamar de novo com o mesmo NSU não duplica nem perde o XML que
+   já estava guardado. */
+async function distAbsorverDocumentos(documentos){
+  const d = distEstado();
+  let novas = 0, xmls = 0, eventos = 0;
+
+  for(const doc of (documentos||[])){
+    if(doc.tipo === 'evento'){ eventos++; continue; }
+    const chave = doc.chave || '';
+    if(!chave) continue;
+
+    let n = d.notas.find(x=>x.chave === chave);
+    if(!n){
+      n = { chave, nsu: doc.nsu || '', emitenteNome:'', emitenteCnpj:'',
+            dataEmissao:'', valor:0, temXml:false, vistoEm: todayISO() };
+      d.notas.push(n);
+      novas++;
+    }
+    // O resumo chega primeiro e a nota completa depois: cada campo é
+    // preenchido por quem tiver o dado, sem apagar o que já estava.
+    if(doc.emitenteNome) n.emitenteNome = doc.emitenteNome;
+    if(doc.emitenteCnpj) n.emitenteCnpj = doc.emitenteCnpj;
+    if(doc.dataEmissao)  n.dataEmissao  = doc.dataEmissao;
+    if(doc.valor)        n.valor        = doc.valor;
+    if(doc.nsu)          n.nsu          = doc.nsu;
+
+    if(doc.tipo === 'nota' && doc.xml){
+      try{
+        await distXmlIdb('put', chave, doc.xml);
+        n.temXml = true;
+        xmls++;
+      }catch(e){
+        console.warn('Não consegui guardar o XML da nota ' + chave, e);
+      }
+    }
+  }
+  d.atualizadoEm = new Date().toISOString();
+  return { novas, xmls, eventos };
+}
+
+/* O laço fica aqui, não no servidor: cada chamada à Receita demora e uma
+   requisição longa morre no tempo limite do Render. E PARAR quando ela diz
+   que acabou é obrigatório — insistir é "consumo indevido" e ela bloqueia o
+   CNPJ por uma hora. */
+async function distBuscar(){
+  const d = distEstado();
+  const btn = document.getElementById('dist-btn-buscar');
+  const prog = document.getElementById('dist-progresso');
+  if(btn){ btn.disabled = true; btn.textContent = 'Buscando...'; }
+
+  let paginas = 0, recebidos = 0, novas = 0, xmls = 0;
+  const LIMITE_PAGINAS = 40;   // 40 × 50 = 2000 documentos por clique
+  try{
+    while(paginas < LIMITE_PAGINAS){
+      if(prog) prog.innerHTML = `Consultando a Receita... página ${paginas+1}. A primeira chamada do dia pode levar até 1 minuto.`;
+      const r = await nfeChamar('/recebidas', { ultNSU: d.ultNSU || 0 });
+
+      if(!r.ok){
+        if(prog) prog.innerHTML = `<span style="color:var(--negative,#B02A37);">A Receita respondeu ${escapeHtml(r.codigoStatus||'?')}: ${escapeHtml(r.mensagem||'')}</span>`;
+        break;
+      }
+
+      const res = await distAbsorverDocumentos(r.documentos);
+      novas += res.novas; xmls += res.xmls;
+      recebidos += (r.docZipRecebidos || 0);
+      d.ultNSU = r.ultNSU || d.ultNSU;
+      d.maxNSU = r.maxNSU || d.maxNSU;
+      saveState();
+      paginas++;
+      renderDistribuicao();
+
+      if(prog) prog.innerHTML = `${d.notas.length} nota(s) na lista. Posição ${d.ultNSU} de ${d.maxNSU}.`;
+      if(r.acabou){
+        if(prog){
+          prog.innerHTML = recebidos === 0 && novas === 0
+            ? `✅ Nada novo. A Receita não tinha nenhum documento nesta consulta — não é falha do sistema.`
+            : `✅ Fim do histórico disponível. ${novas} nota(s) nova(s), ${xmls} com o XML completo já guardado.`;
+        }
+        break;
+      }
+    }
+    if(paginas >= LIMITE_PAGINAS && prog){
+      prog.innerHTML = `Parei em ${paginas} páginas pra não sobrecarregar. Clique de novo pra continuar de onde parou.`;
+    }
+  }catch(e){
+    console.error(e);
+    if(prog) prog.innerHTML = `<span style="color:var(--negative,#B02A37);">Não consegui buscar: ${escapeHtml(e.message)}</span>`;
+  }finally{
+    if(btn) btn.disabled = false;
+    saveState();
+    renderDistribuicao();
+  }
+}
+
+/* ---------------------------------------------------------------
+   PEGAR O XML DE UMA NOTA
+
+   Três tentativas, nesta ordem:
+   1. já está no IndexedDB (o caso comum depois de uma busca);
+   2. baixa só aquele NSU da Receita;
+   3. se ainda vier só o resumo, registra a CIÊNCIA DA EMISSÃO e
+      tenta de novo — antes da manifestação a Receita não entrega o
+      XML completo, e sem ele não há itens pra lançar.
+
+   O passo 3 é um evento fiscal em nome dela, então não acontece
+   escondido: a tela pergunta antes.
+   --------------------------------------------------------------- */
+async function distXmlDaNota(n, jaManifestou){
+  try{
+    const guardado = await distXmlIdb('get', n.chave);
+    if(guardado) return { xml: guardado, origem:'guardado' };
+  }catch(e){ console.warn(e); }
+
+  if(!n.nsu) return { erro: 'Esta nota não tem o NSU guardado — rode a busca de novo.' };
+
+  const r = await nfeChamar('/documento', { nsu: Number(n.nsu) });
+  const doc = (r.documentos||[]).find(x=>x.tipo === 'nota' && x.xml);
+  if(doc && doc.xml){
+    try{ await distXmlIdb('put', n.chave, doc.xml); n.temXml = true; saveState(); }catch(e){ console.warn(e); }
+    return { xml: doc.xml, origem: jaManifestou ? 'apos-ciencia' : 'receita' };
+  }
+  if(jaManifestou){
+    return { erro: 'Mesmo depois da ciência a Receita devolveu só o resumo. Pode levar alguns minutos — tente de novo daqui a pouco.' };
+  }
+  return { precisaCiencia: true };
+}
+
+async function distDarEntrada(chave){
+  const n = distEstado().notas.find(x=>x.chave === chave);
+  if(!n) return;
+
+  const jaTem = distEntradaDaChave(chave);
+  if(jaTem){
+    showToast('Esta nota já foi lançada.', 'info');
+    navigateTo('entrada-nota');
+    enAbrir(jaTem.id);
+    return;
+  }
+
+  showToast('Buscando o XML da nota...', 'info');
+  let r;
+  try{ r = await distXmlDaNota(n, false); }
+  catch(e){ showToast('Não consegui buscar o XML: ' + e.message, 'error'); return; }
+
+  if(r.precisaCiencia){
+    confirmAction('Preciso dar ciência na Receita',
+      `A Receita só entrega o XML completo depois que você registra a Ciência da Emissão desta nota. `
+      + `Isso diz apenas que você SABE QUE A NOTA EXISTE contra o seu CNPJ: não confirma a compra nem recusa a `
+      + `mercadoria — esses são outros eventos, e o sistema não faz nenhum deles sozinho. `
+      + `\n\nNota de ${n.emitenteNome || ''} — ${fmtMoney(n.valor||0)}`,
+      ()=>distCienciaEEntrada(chave), 'Dar ciência');
+    return;
+  }
+  if(r.erro){ showToast(r.erro, 'error'); return; }
+  distLancarXml(n, r.xml);
+}
+
+async function distCienciaEEntrada(chave){
+  const n = distEstado().notas.find(x=>x.chave === chave);
+  if(!n) return;
+  showToast('Registrando a ciência na Receita...', 'info');
+  try{
+    const m = await nfeChamar('/manifestar', { chave, evento: DIST_EVENTO_CIENCIA });
+    if(!m.ok){
+      showToast(`A Receita recusou a ciência (${m.codigoStatus||'?'}): ${m.mensagem||m.erro||''}`, 'error');
+      return;
+    }
+    n.cienciaEm = todayISO();
+    saveState();
+    showToast(m.jaRegistrado ? 'A ciência já estava registrada. Buscando o XML...' : 'Ciência registrada. Buscando o XML...', 'success');
+    const r = await distXmlDaNota(n, true);
+    if(r.erro){ showToast(r.erro, 'error'); renderDistribuicao(); return; }
+    distLancarXml(n, r.xml);
+  }catch(e){
+    showToast('Não consegui registrar a ciência: ' + e.message, 'error');
+  }
+}
+
+/* Entrega o XML pro mesmo caminho da importação por arquivo. Uma via só:
+   se a entrada por arquivo mudar, esta muda junto. */
+function distLancarXml(n, xml){
+  const nome = `nota-${n.chave.slice(25,34) || n.chave.slice(0,8)}.xml`;
+  /* CONFERE A CHAVE antes de lançar. Se o XML que voltou não for o da linha
+     que ela clicou, lançar seria registrar a compra errada — com os itens,
+     os custos e o estoque de outra nota. Melhor não lançar nada e dizer. */
+  const chaveNoXml = (xml.match(/Id="?NFe(\d{44})/) || [])[1] || '';
+  if(chaveNoXml && n.chave && chaveNoXml !== n.chave){
+    showToast('O XML que a Receita devolveu é de outra nota. Não lancei nada — rode a busca de novo.', 'error');
+    return;
+  }
+  const r = enImportarTexto(xml, nome);
+  if(!r.ok){ showToast(r.erro, 'error'); return; }
+  saveState();
+  showToast('Nota carregada. Confira os itens e conclua.', 'success');
+  navigateTo('entrada-nota');
+  enAbrir(r.id);
+}
+
+function distIgnorar(chave){
+  const n = distEstado().notas.find(x=>x.chave === chave);
+  if(!n) return;
+  confirmAction('Não vou lançar esta nota',
+    `A nota de ${n.emitenteNome||''} (${fmtMoney(n.valor||0)}) sai da lista de pendentes. `
+    + `Nada é apagado: ela continua guardada e você pode trazer de volta a qualquer momento.`,
+    ()=>{
+      distEstado().ignoradas[chave] = { em: todayISO() };
+      saveState(); renderDistribuicao();
+      showToast('Nota marcada como ignorada.', 'success');
+    }, 'Ignorar');
+}
+
+function distVoltarPendente(chave){
+  delete distEstado().ignoradas[chave];
+  saveState(); renderDistribuicao();
+  showToast('Nota voltou para as pendentes.', 'success');
+}
+
+/* ---------------------------------------------------------------
+   LIMPEZA
+
+   Nota lançada há mais de 90 dias sai da tela. Não some do sistema:
+   a entrada continua lá, com itens, custo e estoque — e a chave
+   continua barrando lançamento repetido, porque esse teste é feito
+   contra as ENTRADAS, não contra esta lista.
+   --------------------------------------------------------------- */
+const DIST_DIAS_ARQUIVO = 90;
+
+function distAntigaParaArquivar(n){
+  if(distStatus(n) !== 'lancada') return false;
+  const base = n.dataEmissao || n.vistoEm;
+  if(!base) return false;
+  const dias = (Date.now() - new Date(base + 'T00:00:00').getTime()) / 86400000;
+  return dias > DIST_DIAS_ARQUIVO;
+}
+
+async function distLimparAntigas(silencioso){
+  const d = distEstado();
+  const velhas = d.notas.filter(distAntigaParaArquivar);
+  if(velhas.length === 0){
+    if(!silencioso) showToast('Nenhuma nota antiga para arquivar.', 'info');
+    return 0;
+  }
+  const aplicar = async ()=>{
+    for(const n of velhas){
+      try{ await distXmlIdb('del', n.chave); }catch(e){ console.warn(e); }
+    }
+    const fora = new Set(velhas.map(n=>n.chave));
+    d.notas = d.notas.filter(n=>!fora.has(n.chave));
+    saveState(); renderDistribuicao();
+    if(!silencioso) showToast(`${velhas.length} nota(s) arquivada(s).`, 'success');
+  };
+  if(silencioso){ await aplicar(); return velhas.length; }
+  confirmAction('Arquivar as notas antigas',
+    `${velhas.length} nota(s) já lançada(s) há mais de ${DIST_DIAS_ARQUIVO} dias saem desta lista. `
+    + `As entradas continuam no sistema, com itens, custo e estoque. O que sai é só a linha daqui.`,
+    aplicar, 'Arquivar');
+  return velhas.length;
+}
+
+/* ---------------------------------------------------------------
+   A TELA
+   --------------------------------------------------------------- */
+let distAba = 'pendente';
+let distBusca = '';
+
+function distTrocarAba(qual){
+  distAba = qual;
+  renderDistribuicao();
+}
+
+function distFiltrarPorTexto(lista){
+  const t = (distBusca||'').trim().toLowerCase();
+  if(!t) return lista;
+  return lista.filter(n=>
+    (n.emitenteNome||'').toLowerCase().includes(t) ||
+    (n.emitenteCnpj||'').includes(t.replace(/\D/g,'')) ||
+    (n.chave||'').includes(t.replace(/\D/g,'')) ||
+    fmtMoney(n.valor||0).toLowerCase().includes(t)
+  );
+}
+
+function distContador(rotulo, qtd, aba, cor){
+  const ativo = distAba === aba;
+  return `<button class="btn btn-sm" onclick="distTrocarAba('${aba}')"
+    style="${ativo?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">
+    ${rotulo} <strong>${qtd}</strong></button>`;
+}
+
+function renderDistribuicao(){
+  const box = document.getElementById('distribuicao-content');
+  if(!box) return;
+  const d = distEstado();
+
+  const pendentes = distNotasPorStatus('pendente');
+  const lancadas  = distNotasPorStatus('lancada');
+  const ignoradas = distNotasPorStatus('ignorada');
+  const jaBuscou = (d.ultNSU||0) > 0 || !!d.atualizadoEm;
+
+  const lista = distFiltrarPorTexto(
+    distAba==='pendente' ? pendentes : distAba==='lancada' ? lancadas : ignoradas
+  ).sort((a,b)=>String(b.dataEmissao||'').localeCompare(String(a.dataEmissao||'')));
+
+  box.innerHTML = `
+    <div class="card">
+      <h3>📨 Notas de compra na Receita</h3>
+      <p class="help-text">Tudo que os fornecedores emitiram contra o seu CNPJ. O que você ainda não lançou aparece como
+        <strong>pendente</strong>; o que já entrou no sistema some da frente sozinho — o casamento é pela chave de acesso,
+        então nota lançada à mão também conta.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0;">
+        <button class="btn btn-primary" id="dist-btn-buscar" onclick="distBuscar()">
+          ${jaBuscou ? '🔄 Buscar notas novas' : '📥 Buscar notas na Receita'}
+        </button>
+        ${jaBuscou ? `<button class="btn btn-sm" onclick="distLimparAntigas(false)">🗂️ Arquivar as antigas</button>` : ''}
+        <div id="dist-progresso" class="help-text" style="margin:0;flex:1;min-width:200px;">
+          ${d.atualizadoEm ? `Última busca: ${new Date(d.atualizadoEm).toLocaleString('pt-BR')}` : ''}
+        </div>
+      </div>
+      ${!jaBuscou ? `
+        <div class="empty-state">
+          <div class="ic">📨</div>
+          <p>Ainda não busquei nada. Clique em <strong>Buscar notas na Receita</strong> — ela devolve tudo que foi
+             emitido contra o seu CNPJ nos últimos 90 dias.</p>
+        </div>` : `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px;">
+          ${distContador('🟡 Pendentes', pendentes.length, 'pendente', 'var(--warning)')}
+          ${distContador('🟢 Lançadas', lancadas.length, 'lancada', 'var(--positive)')}
+          ${distContador('⚪ Ignoradas', ignoradas.length, 'ignorada', 'var(--ink-faint)')}
+          <div class="field" style="max-width:280px;margin:0 0 0 auto;">
+            <input type="text" id="dist-busca" value="${escapeAttr(distBusca)}" placeholder="🔍 Fornecedor, valor ou chave...">
+          </div>
+        </div>
+        ${distTabela(lista)}
+      `}
+    </div>`;
+
+  const busca = document.getElementById('dist-busca');
+  if(busca){
+    busca.addEventListener('input', (e)=>{
+      distBusca = e.target.value;
+      const alvo = document.getElementById('dist-tabela-wrap');
+      if(alvo){
+        const base = distAba==='pendente' ? pendentes : distAba==='lancada' ? lancadas : ignoradas;
+        alvo.outerHTML = distTabela(distFiltrarPorTexto(base)
+          .sort((a,b)=>String(b.dataEmissao||'').localeCompare(String(a.dataEmissao||''))));
+        const b2 = document.getElementById('dist-busca');
+        if(b2){ b2.focus(); b2.setSelectionRange(b2.value.length, b2.value.length); }
+      }
+    });
+  }
+}
+
+function distTabela(lista){
+  if(lista.length === 0){
+    const vazio = distAba==='pendente'
+      ? 'Nenhuma nota pendente. Tudo que a Receita tem já foi lançado ou ignorado.'
+      : distAba==='lancada' ? 'Nenhuma nota lançada ainda.' : 'Nenhuma nota ignorada.';
+    return `<div id="dist-tabela-wrap" class="empty-state" style="padding:24px;"><p>${vazio}</p></div>`;
+  }
+  return `<div id="dist-tabela-wrap" class="table-wrap">
+    <table class="data-table">
+      <thead><tr>
+        <th>Fornecedor</th><th>Emissão</th><th class="num">Valor</th><th>Situação</th><th>Ações</th>
+      </tr></thead>
+      <tbody>${lista.map(n=>distLinha(n)).join('')}</tbody>
+    </table>
+  </div>`;
+}
+
+function distLinha(n){
+  const st = distStatus(n);
+  const entrada = distEntradaDaChave(n.chave);
+  const selo = st==='lancada'
+      ? `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 lançada${entrada && entrada.data ? ' em ' + fmtDate(entrada.data) : ''}</span>`
+    : st==='ignorada'
+      ? `<span class="badge badge-neutral">⚪ ignorada</span>`
+      : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 pendente</span>`;
+
+  const acoes = st==='lancada'
+      ? `<button class="btn btn-sm" onclick="distVerEntrada('${n.chave}')">Ver a entrada</button>`
+    : st==='ignorada'
+      ? `<button class="btn btn-sm" onclick="distVoltarPendente('${n.chave}')">Voltar pra pendente</button>`
+      : `<button class="btn btn-sm btn-primary" onclick="distDarEntrada('${n.chave}')">Dar entrada</button>
+         <button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`;
+
+  return `<tr>
+    <td>
+      <strong>${escapeHtml(n.emitenteNome || '(sem nome)')}</strong>
+      ${n.emitenteCnpj ? `<div class="help-text" style="margin:0;">CNPJ ${escapeHtml(fmtDocumento(n.emitenteCnpj))}</div>` : ''}
+      ${!n.temXml && st==='pendente' ? `<div class="help-text" style="margin:0;">só o resumo — o XML vem na hora de lançar</div>` : ''}
+    </td>
+    <td>${n.dataEmissao ? fmtDate(n.dataEmissao) : '—'}</td>
+    <td class="num">${fmtMoney(n.valor||0)}</td>
+    <td>${selo}</td>
+    <td><div class="cell-actions">${acoes}</div></td>
+  </tr>`;
+}
+
+function distVerEntrada(chave){
+  const e = distEntradaDaChave(chave);
+  if(!e){ showToast('Não achei a entrada desta nota.', 'error'); return; }
+  navigateTo('entrada-nota');
+  enAbrir(e.id);
+}
+
 RENDERERS['entrada-nota'] = renderEntradaNota;
+RENDERERS['distribuicao'] = renderDistribuicao;
 
 /* ---------- os arquivos ---------- */
 
@@ -50083,7 +50629,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '06/11/2026 09:10';
+const SISTEMA_VERSAO = '06/11/2026 11:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
