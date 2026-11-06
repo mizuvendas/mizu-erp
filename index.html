@@ -939,6 +939,8 @@ body.orc-gaveta-travada{ overflow:hidden; }
   border:1px solid transparent;
 }
 .cell-editavel:hover{ background:var(--primary-soft); border-color:var(--border); }
+.cell-travada{ cursor:default; }
+.cell-travada:hover{ background:transparent; border-color:transparent; }
 
 /* Célula de tabela editável em dois cliques. Ao contrário de .cell-editavel
    (que é usada em <span>), esta NÃO pode alterar 'display': um <td> com
@@ -3930,6 +3932,22 @@ function abrirFormCliente(id, onCriado){
         pagador: document.getElementById('f-papel-pagador').checked
       }),
     };
+    /* CNPJ/CPF repetido vira dois cadastros do mesmo cliente, e aí o
+       histórico de compras dele fica partido em dois — ela já tinha dois
+       #139 por um problema parecido. O documento é o que identifica de
+       verdade; nome igual acontece, documento igual não. */
+    const docNovo = (data.documento || '').replace(/\D/g,'');
+    if(docNovo){
+      const jaTem = (STATE.clientes||[]).find(c =>
+        c !== cliente && (c.documento || '').replace(/\D/g,'') === docNovo);
+      if(jaTem){
+        showToast(`Este ${docNovo.length>11?'CNPJ':'CPF'} já é de "${jaTem.nome}". Dois cadastros com o mesmo documento partem o histórico do cliente em dois.`, 'error');
+        const campo = document.getElementById('f-documento');
+        if(campo){ campo.focus(); campo.select(); }
+        return;
+      }
+    }
+
     let clienteFinal;
     if(cliente){
       Object.assign(cliente, data);
@@ -4521,6 +4539,15 @@ function ativarBotaoMapaEndereco(botaoId, inputEnderecoId, getLatLng, setLatLng)
    duplicar a mesma lógica duas vezes. O endereço aqui cadastrado é a
    origem de coleta usada mais tarde no Planejador de Rotas.
    ========================================================= */
+/* CNPJ/CPF com a pontuação de sempre — guardamos só os números, mas na
+   tela ela precisa ler do jeito que lê no papel. */
+function fmtDocumento(doc){
+  const d = String(doc||'').replace(/\D/g,'');
+  if(d.length===14) return d.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+  if(d.length===11) return d.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+  return d || '';
+}
+
 function criarModuloEndereco(config){
   const { chaveEstado, prefixoId, icone, tituloSingular, tituloPlural, contentId, tableBodyId, paginacaoId, sortVarNome } = config;
   let sortState = {key:'nome', dir:'asc'};
@@ -4593,6 +4620,9 @@ function criarModuloEndereco(config){
       <tr>
         <td>
           ${escapeHtml(item.nome)}
+          ${item.fantasia && item.fantasia.trim().toLowerCase()!==String(item.nome||'').trim().toLowerCase()
+            ? `<div class="help-text" style="margin-top:2px;">${escapeHtml(item.fantasia)}</div>` : ''}
+          ${item.cnpj ? `<div class="help-text" style="margin-top:2px;">CNPJ ${escapeHtml(fmtDocumento(item.cnpj))}</div>` : ''}
           ${!item.endereco ? `<div class="help-text" style="color:var(--warning);margin-top:2px;" title="Sem endereço cadastrado — isso impede o planejamento de rotas de coleta para este ${tituloSingular.toLowerCase()}.">⚠️ Endereço faltando</div>` : ''}
         </td>
         <td>${escapeHtml(item.endereco||'—')}</td>
@@ -4616,6 +4646,9 @@ function criarModuloEndereco(config){
   function abrirForm(id){
     const item = id ? STATE[chaveEstado].find(x=>x.id===id) : null;
     const prefixo = prefixoId;
+    /* Os campos fiscais (CNPJ, IE, fantasia) só fazem sentido no Fornecedor:
+       Local de Compra é o galpão/loja onde ela passa pra buscar. */
+    const temFiscal = chaveEstado === 'fornecedores';
 
     const modal = document.createElement('div');
     modal.className = 'modal-overlay open';
@@ -4633,13 +4666,35 @@ function criarModuloEndereco(config){
           <form id="form-${prefixo}">
             <div class="form-grid">
               <div class="field">
-                <label>Nome ${tituloSingular==='Fornecedor'?'/ Razão Social':''} <span class="req">*</span></label>
+                <label>Nome ${temFiscal?'/ Razão Social':''} <span class="req">*</span></label>
                 <input type="text" id="${prefixo}-nome" required value="${item?escapeAttr(item.nome):''}">
               </div>
+              ${temFiscal ? `
+              <div class="field">
+                <label>Nome fantasia</label>
+                <input type="text" id="${prefixo}-fantasia" value="${item?escapeAttr(item.fantasia||''):''}" placeholder="Como você chama no dia a dia">
+              </div>
+              <div class="field">
+                <label>CNPJ / CPF</label>
+                <input type="text" id="${prefixo}-cnpj" value="${item?escapeAttr(item.cnpj||item.documento||''):''}" placeholder="Só números">
+              </div>
+              <div class="field">
+                <label>Inscrição Estadual</label>
+                <input type="text" id="${prefixo}-ie" value="${item?escapeAttr(item.ie||''):''}" placeholder="ISENTO, se não tiver">
+              </div>` : ''}
               <div class="field">
                 <label>Telefone</label>
                 <input type="text" id="${prefixo}-telefone" value="${item?escapeAttr(item.telefone||''):''}">
               </div>
+              ${temFiscal ? `
+              <div class="field">
+                <label>E-mail</label>
+                <input type="text" id="${prefixo}-email" value="${item?escapeAttr(item.email||''):''}">
+              </div>
+              <div class="field">
+                <label>Contato (quem atende)</label>
+                <input type="text" id="${prefixo}-contato" value="${item?escapeAttr(item.contato||''):''}" placeholder="Nome do vendedor, ramal...">
+              </div>` : ''}
               <div class="field field-full">
                 <label>Endereço completo</label>
                 <div style="display:flex; gap:8px;">
@@ -4648,6 +4703,19 @@ function criarModuloEndereco(config){
                 </div>
                 <div id="${prefixo}-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;">${item&&item.lat?`Localização salva (${item.lat.toFixed(5)}, ${item.lng.toFixed(5)})`:''}</div>
               </div>
+              ${temFiscal ? `
+              <div class="field">
+                <label>Cidade</label>
+                <input type="text" id="${prefixo}-cidade" value="${item?escapeAttr(item.cidade||''):''}">
+              </div>
+              <div class="field">
+                <label>UF</label>
+                <input type="text" id="${prefixo}-uf" maxlength="2" value="${item?escapeAttr(item.uf||''):''}" style="text-transform:uppercase;">
+              </div>
+              <div class="field">
+                <label>CEP</label>
+                <input type="text" id="${prefixo}-cep" value="${item?escapeAttr(item.cep||''):''}">
+              </div>` : ''}
               <div class="field field-full">
                 <label>Observações</label>
                 <textarea id="${prefixo}-obs">${item?escapeHtml(item.obs||''):''}</textarea>
@@ -4679,13 +4747,40 @@ function criarModuloEndereco(config){
       e.preventDefault();
       const nome = document.getElementById(`${prefixo}-nome`).value.trim();
       if(!nome){ showToast(`Informe o nome do ${tituloSingular.toLowerCase()}.`, 'error'); return; }
+      const campo = (sufixo) => {
+        const el = document.getElementById(`${prefixo}-${sufixo}`);
+        return el ? el.value.trim() : '';
+      };
       const data = {
         nome,
-        telefone: document.getElementById(`${prefixo}-telefone`).value.trim(),
-        endereco: document.getElementById(`${prefixo}-endereco`).value.trim(),
-        obs: document.getElementById(`${prefixo}-obs`).value.trim(),
+        telefone: campo('telefone'),
+        endereco: campo('endereco'),
+        obs: campo('obs'),
         lat: latSelecionado, lng: lngSelecionado,
       };
+      if(temFiscal){
+        Object.assign(data, {
+          fantasia: campo('fantasia'),
+          cnpj: campo('cnpj').replace(/\D/g,''),
+          ie: campo('ie'),
+          email: campo('email'),
+          contato: campo('contato'),
+          cidade: campo('cidade'),
+          uf: campo('uf').toUpperCase(),
+          cep: campo('cep').replace(/\D/g,''),
+          razaoSocial: nome
+        });
+        /* Dois fornecedores com o mesmo CNPJ é a receita pra lista duplicada
+           — justamente o que já aconteceu com ela. */
+        if(data.cnpj){
+          const repetido = STATE[chaveEstado].find(x=>x!==item &&
+            String(x.cnpj||x.documento||'').replace(/\D/g,'')===data.cnpj);
+          if(repetido){
+            showToast(`Esse CNPJ já está cadastrado em "${repetido.nome}".`, 'error');
+            return;
+          }
+        }
+      }
       if(item){
         Object.assign(item, data);
         showToast(`${tituloSingular} atualizado.`, 'success');
@@ -4842,13 +4937,20 @@ function celulaEditavelProduto(produtoId, campo, valor, tipo, negrito){
     ? (campo==='custo'||campo==='precoVenda' ? fmtMoney(valor) : (valor===''?'—':fmtNum(valor)))
     : (valor || '—');
   const displayFinal = negrito ? `<strong>${escapeHtml(display)}</strong>` : escapeHtml(display);
-  return `<span class="cell-editavel" data-produto-id="${produtoId}" data-campo="${campo}" data-tipo="${tipo}" data-valor-raw="${escapeAttr(valor)}" title="Clique para editar">${displayFinal}</span>`;
+  const travada = (typeof produtosEdicaoLiberada !== 'undefined') && !produtosEdicaoLiberada;
+  const cls = travada ? 'cell-editavel cell-travada' : 'cell-editavel';
+  const tit = travada ? 'Edição travada — libere no cadeado acima' : 'Clique para editar';
+  return `<span class="${cls}" data-produto-id="${produtoId}" data-campo="${campo}" data-tipo="${tipo}" data-valor-raw="${escapeAttr(valor)}" title="${tit}">${displayFinal}</span>`;
 }
 
 function ativarEdicaoInlineProdutos(){
   document.querySelectorAll('#tbl-produtos-reais .cell-editavel, #tbl-produtos-temporarios .cell-editavel').forEach(span=>{
     span.addEventListener('click', function ativar(){
       if(span.querySelector('input')) return; // já está em edição
+      if(!produtosEdicaoLiberada){
+        showToast('A tabela está travada. Clique no cadeado 🔒 acima pra liberar a edição rápida.', 'info');
+        return;
+      }
       const produtoId = span.dataset.produtoId;
       const campo = span.dataset.campo;
       const tipo = span.dataset.tipo;
@@ -6146,6 +6248,10 @@ function sugerirNcmLocal(nomeProduto){
 }
 
 let produtosFiltroSetor = '';
+let produtosFiltroCategoria = '';
+/* A edição na tabela vem TRAVADA. Clicar no nome e editar sem querer, numa
+   lista de 970 produtos, é fácil demais — e ela só descobre depois. */
+let produtosEdicaoLiberada = false;
 let produtosFiltroSituacao = '';
 let carrinhoFiltroSetor = '';
 
@@ -6215,7 +6321,16 @@ function renderProdutos(){
   const cardLista = `
     <div class="card">
       <h3>📦 Produtos <span class="hint">${todos.length} cadastrado(s)</span></h3>
-      <p class="help-text" style="margin-bottom:10px;">💡 Clique em qualquer valor da tabela (nome, custo, preço, estoque) para editar na hora. A carinha compara o estoque atual com o mínimo — na triste, o botão 🛒 joga o produto na lista de compra.</p>
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+        <button class="btn btn-sm" onclick="produtosAlternarEdicao()"
+          style="${produtosEdicaoLiberada?'background:var(--warning);border-color:var(--warning);color:#fff;font-weight:600;':''}">
+          ${produtosEdicaoLiberada ? '🔓 Edição liberada — clique pra travar' : '🔒 Edição travada — clique pra liberar'}
+        </button>
+        <p class="help-text" style="margin:0;">${produtosEdicaoLiberada
+          ? 'Cuidado: clicar num valor da tabela (nome, custo, preço, estoque) altera na hora.'
+          : 'A tabela está só pra consulta. Use <strong>✎ Editar</strong> pra abrir o cadastro, ou libere a edição rápida aqui.'}
+          A carinha compara o estoque com o mínimo — na triste, o 🛒 joga na lista de compra.</p>
+      </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
         <div class="field" style="max-width:340px;margin:0;flex:1;">
           <label>🔍 Buscar</label>
@@ -6227,6 +6342,14 @@ function renderProdutos(){
             <option value="">Todos</option>
             ${SETORES_PRODUTO.map(s=>`<option value="${s.id}" ${produtosFiltroSetor===s.id?'selected':''}>${s.nome}</option>`).join('')}
             <option value="__sem" ${produtosFiltroSetor==='__sem'?'selected':''}>Sem setor</option>
+          </select>
+        </div>
+        <div class="field" style="max-width:230px;margin:0;">
+          <label>Categoria</label>
+          <select id="produtos-filtro-categoria">
+            <option value="">Todas</option>
+            ${getCategoriasUnicas().sort((a,b)=>a.localeCompare(b,'pt-BR')).map(c=>`<option value="${escapeAttr(c)}" ${produtosFiltroCategoria===c?'selected':''}>${escapeHtml(c)}</option>`).join('')}
+            <option value="__sem" ${produtosFiltroCategoria==='__sem'?'selected':''}>Sem categoria</option>
           </select>
         </div>
         <div class="field" style="max-width:230px;margin:0;">
@@ -6279,6 +6402,14 @@ function renderProdutos(){
       renderTabelaProdutosReais(todos);
     });
   }
+  const filtroCategoria = document.getElementById('produtos-filtro-categoria');
+  if(filtroCategoria){
+    filtroCategoria.addEventListener('change', (e)=>{
+      produtosFiltroCategoria = e.target.value;
+      getPaginacao('produtos-reais').paginaAtual = 0;
+      renderTabelaProdutosReais(todos);
+    });
+  }
   const filtroSituacao = document.getElementById('produtos-filtro-situacao');
   if(filtroSituacao){
     filtroSituacao.addEventListener('change', (e)=>{
@@ -6324,6 +6455,23 @@ function filtrarProdutosPorSetor(lista){
   return lista.filter(p=>p.setor===produtosFiltroSetor);
 }
 
+function filtrarProdutosPorCategoria(lista){
+  if(!produtosFiltroCategoria) return lista;
+  if(produtosFiltroCategoria==='__sem') return lista.filter(p=>!(p.categoria||'').trim());
+  return lista.filter(p=>(p.categoria||'').trim() === produtosFiltroCategoria);
+}
+
+/* O cadeado é só da sessão: fecha e abre o sistema, volta travado.
+   Assim ela nunca deixa a tabela destravada sem perceber. */
+function produtosAlternarEdicao(){
+  produtosEdicaoLiberada = !produtosEdicaoLiberada;
+  showToast(produtosEdicaoLiberada
+    ? 'Edição liberada. Clicar num valor da tabela altera na hora.'
+    : 'Edição travada. A tabela voltou a ser só de consulta.',
+    produtosEdicaoLiberada ? 'warning' : 'success');
+  renderProdutos();
+}
+
 function filtrarProdutosPorSituacao(lista){
   if(produtosFiltroSituacao==='incompletos') return lista.filter(produtoDadosIncompletos);
   if(produtosFiltroSituacao==='semnota')     return lista.filter(p=>produtoPendencias(p).bloqueia.length>0);
@@ -6332,7 +6480,7 @@ function filtrarProdutosPorSituacao(lista){
 }
 
 function renderTabelaProdutosReais(lista){
-  const filtrados = filtrarProdutosPorSituacao(filtrarProdutosPorSetor(filtrarProdutosPorTexto(lista, produtosBuscaReais)));
+  const filtrados = filtrarProdutosPorSituacao(filtrarProdutosPorCategoria(filtrarProdutosPorSetor(filtrarProdutosPorTexto(lista, produtosBuscaReais))));
   const ordenados = ordenarProdutos(filtrados, produtosSort);
   const pagina = aplicarPaginacao('produtos-reais', ordenados);
   const body = document.getElementById('tbl-produtos-reais-body');
@@ -6641,11 +6789,12 @@ function formProdutoHTML(produto, paginaInteira){
 
         <div class="form-grid" style="margin-top:12px;">
           <div class="field">
-            <label>Margem desejada (%)</label>
+            <label>Markup desejado (%)</label>
             <div style="display:flex;gap:6px;">
-              <input type="number" step="0.1" min="0" id="fp-margem-desejada" value="${p.margemDesejada!=null?p.margemDesejada:30}" style="flex:1;">
+              <input type="number" step="0.1" min="0" id="fp-margem-desejada" value="${p.margemDesejada!=null?p.margemDesejada:50}" style="flex:1;">
               <button type="button" class="btn btn-sm" id="fp-aplicar-margem">Aplicar</button>
             </div>
+            <div class="help-text">Sobre o CUSTO: 50% em cima de R$ 100 dá R$ 150. Imposto e comissão saem de dentro.</div>
           </div>
           <div class="field">
             <label>Preço de venda (R$) <span class="req">*</span></label>
@@ -6736,7 +6885,10 @@ function formProdutoHTML(produto, paginaInteira){
           </div>
           <div class="field">
             <label>Código</label>
-            <input type="text" id="fp-codigo-barras" value="${escapeAttr(v('codigoBarras'))}" placeholder="bipe ou digite o EAN">
+            <div style="display:flex;gap:6px;">
+              <input type="text" id="fp-codigo-barras" value="${escapeAttr(v('codigoBarras'))}" placeholder="bipe ou digite o EAN" style="flex:1;min-width:0;">
+              <button type="button" class="btn btn-sm" id="fp-gerar-barras" title="Gerar um código interno pra este produto">Gerar</button>
+            </div>
           </div>
           <div class="field field-full">
             <div class="help-text">Sem EAN, o sistema cadastra um código gerencial a partir do código interno. Na nota fiscal esse item sai como <strong>SEM GTIN</strong>, que é o certo pra produto sem código de fabricante.</div>
@@ -6926,15 +7078,109 @@ function ativarFormProduto(produto, acoes){
   });
   const precoEl = el('fp-preco'); if(precoEl) precoEl.addEventListener('input', atualizarLucro);
 
+  /* "quando não tiver código de barra, ele gerar o código automaticamente
+     para mim. Eu clico e ele vai gerar." — o sistema já gerava, mas só na
+     hora de salvar e sem ela ver. Agora é um botão.
+
+     Gera um EAN-13 com prefixo 2, a faixa reservada pra uso interno da loja:
+     esse código nunca colide com um de fabricante, e o dígito verificador é
+     calculado de verdade, então leitor nenhum recusa. */
+  /* Categoria e marca eram <datalist>: o navegador casa por começo, não
+     mostra sem acento e muita gente nem vê o dropdown. Resultado: ela
+     cadastrava "AR CONDICIONADO" de novo com uma letra trocada.
+
+     Agora é a busca do sistema: palavras em qualquer ordem e acento não
+     conta — "condicionado" e "ar cond" acham "AR CONDICIONADO". */
+  function ligarSugestaoTexto(idCampo, obterLista, rotulo){
+    const campo = el(idCampo);
+    if(!campo) return;
+    campo.removeAttribute('list');
+    campo.setAttribute('autocomplete','off');
+
+    const caixa = document.createElement('div');
+    caixa.style.cssText = 'position:relative;';
+    campo.parentNode.insertBefore(caixa, campo);
+    caixa.appendChild(campo);
+    const lista = document.createElement('div');
+    lista.className = 'fp-sugestao-lista';
+    lista.style.cssText = 'display:none;position:absolute;top:calc(100% + 2px);left:0;right:0;z-index:60;'
+      + 'background:#fff;border:1px solid var(--border);border-radius:var(--radius-sm);'
+      + 'box-shadow:0 6px 18px rgba(0,0,0,.10);max-height:220px;overflow-y:auto;';
+    caixa.appendChild(lista);
+
+    const fechar = ()=>{ lista.style.display='none'; };
+    const desenhar = ()=>{
+      const termo = campo.value || '';
+      const palavras = normalizarBusca(termo).split(/[\s#\-\/]+/).filter(Boolean);
+      const todas = (obterLista() || []).filter(Boolean);
+      const achadas = todas.filter(x=>{
+        const alvo = normalizarBusca(x);
+        /* só esconde quando é LITERALMENTE igual. Comparar sem acento
+           escondia "YPÊ" de quem digitou "ype" — justo o caso em que ela ia
+           cadastrar o duplicado. */
+        if(x === termo) return false;
+        return palavras.every(p=>alvo.includes(p));
+      }).slice(0, 12);
+      if(!achadas.length){ fechar(); return; }
+      lista.innerHTML = achadas.map(x=>
+        `<div data-v="${escapeAttr(x)}" style="padding:7px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid #EEF1F4;">${escapeHtml(x)}</div>`
+      ).join('') + (palavras.length
+        ? `<div style="padding:6px 10px;font-size:11.5px;color:var(--ink-faint);">clique pra usar ${rotulo} que já existe — evita cadastrar duplicado</div>`
+        : '');
+      lista.querySelectorAll('[data-v]').forEach(d=>{
+        d.addEventListener('mousedown', ev=>{ ev.preventDefault(); campo.value = d.dataset.v; fechar(); });
+        d.addEventListener('mouseover', ()=>{ d.style.background = 'var(--primary-soft)'; });
+        d.addEventListener('mouseout',  ()=>{ d.style.background = ''; });
+      });
+      lista.style.display = 'block';
+    };
+    campo.addEventListener('input', desenhar);
+    campo.addEventListener('focus', desenhar);
+    campo.addEventListener('blur', ()=>setTimeout(fechar, 120));
+    campo.addEventListener('keydown', ev=>{ if(ev.key==='Escape') fechar(); });
+  }
+  ligarSugestaoTexto('fp-categoria', getCategoriasUnicas, 'uma categoria');
+  ligarSugestaoTexto('fp-marca', getMarcasUnicas, 'uma marca');
+
+  const btnBarras = el('fp-gerar-barras');
+  if(btnBarras) btnBarras.addEventListener('click', ()=>{
+    const campo = el('fp-codigo-barras');
+    if(!campo) return;
+    const atual = (campo.value||'').trim();
+    const gerar = ()=>{
+      const corpo = '2' + String(Math.floor(Math.random()*1e11)).padStart(11,'0');
+      let soma = 0;
+      for(let i=0;i<12;i++) soma += Number(corpo[i]) * (i % 2 === 0 ? 1 : 3);
+      return corpo + String((10 - (soma % 10)) % 10);
+    };
+    let novo = gerar();
+    let tentativas = 0;
+    while((STATE.produtos||[]).some(x=>String(x.codigoBarras||'')===novo) && tentativas++ < 50) novo = gerar();
+    const aplicar = ()=>{
+      campo.value = novo;
+      const tipo = el('fp-tipo-barras');
+      if(tipo) tipo.value = 'gerencial';
+      showToast('Código gerado. É interno da loja — na nota o item continua saindo SEM GTIN.','success');
+    };
+    if(atual){
+      confirmAction('Trocar o código que já está aí?',
+        `O produto está com <b>${escapeHtml(atual)}</b>. Gerar um novo substitui esse — e se o antigo for `
+        + 'o código do fabricante, você perde a leitura do código impresso na embalagem.', aplicar, 'Gerar mesmo assim');
+    }else{
+      aplicar();
+    }
+  });
+
   const btnMargem = el('fp-aplicar-margem');
   if(btnMargem) btnMargem.addEventListener('click', ()=>{
     const custoUnit = valoresCusto().unitario;
     if(!(custoUnit>0)){ showToast('Preencha o custo antes de aplicar a margem.', 'error'); return; }
-    const margem = num('fp-margem-desejada');
-    const impostoPct = (STATE.config && STATE.config.impostoPct) || 0;
-    const divisor = 1 - (margem + impostoPct)/100;
-    if(divisor<=0){ showToast('Margem alta demais pra calcular — reduza.', 'error'); return; }
-    el('fp-preco').value = (custoUnit/divisor).toFixed(2);
+    /* MARKUP, igual à Entrada de Nota: preço = custo × (1 + markup).
+       Antes era margem sobre o preço e os dois números não batiam entre as
+       duas telas — 50% dava 4.950 numa e 7.500 na outra. */
+    const markup = num('fp-margem-desejada');
+    if(!(markup > -100)){ showToast('Informe o markup em %.', 'error'); return; }
+    el('fp-preco').value = (custoUnit * (1 + markup/100)).toFixed(2);
     atualizarLucro();
   });
   atualizarCusto();
@@ -7177,12 +7423,17 @@ function ativarFormProduto(produto, acoes){
     };
 
     // Código interno: se ficou vazio, o sistema gera um que não repete.
-    let sku = raw('fp-sku');
-    if(!sku){
-      let n = STATE.produtos.length + 1;
-      const existe = (s)=>STATE.produtos.some(x=>x.sku===s && (!produto || x.id!==produto.id));
-      while(existe('P'+String(n).padStart(4,'0'))) n++;
-      sku = 'P'+String(n).padStart(4,'0');
+    const sku = raw('fp-sku') || proximoSku(produto ? produto.id : null);
+    /* Dois produtos com o mesmo código interno quebram a busca do balcão e o
+       casamento de planilha: ela digita o código e vem o item errado. */
+    const skuRepetido = (STATE.produtos||[]).find(x =>
+      String(x.sku||'').trim().toUpperCase() === sku.trim().toUpperCase()
+      && (!produto || x.id !== produto.id));
+    if(skuRepetido){
+      showToast(`O código interno ${sku} já é do produto "${skuRepetido.nome}". Cada produto precisa do seu.`, 'error');
+      const campoSku = el('fp-sku');
+      if(campoSku){ campoSku.focus(); campoSku.select(); campoSku.scrollIntoView({block:'center'}); }
+      return;
     }
     dados.sku = sku;
     // Código gerencial: é interno. Na nota fiscal o item continua saindo
@@ -11231,6 +11482,25 @@ function orcHtmlTrilho(){
 function orcRodapePasso(n){
   const rod = document.createElement('div');
   rod.style.cssText = 'display:flex;gap:9px;justify-content:flex-end;margin:-4px 0 18px;';
+
+  /* O histórico do cliente faz falta JUSTO na parada dos itens: é ali que ela
+     decide o que pôr e por quanto, e o que ele já comprou é a melhor pista.
+     No clássico e no balcão o botão já existia; na esteira, não. */
+  if(n === 2){
+    const hist = document.createElement('button');
+    hist.className = 'btn';
+    hist.type = 'button';
+    hist.textContent = '🧾 Histórico do cliente';
+    hist.style.marginRight = 'auto';
+    hist.addEventListener('click', ()=>{
+      const sel = document.getElementById('orc-cliente');
+      const id = sel ? sel.value : '';
+      if(!id){ showToast('Escolha o cliente na parada anterior primeiro.','error'); return; }
+      abrirHistoricoComprasCliente(id, 'orcamento');
+    });
+    rod.appendChild(hist);
+  }
+
   if(n > 1){
     const voltar = document.createElement('button');
     voltar.className = 'btn';
@@ -11506,7 +11776,48 @@ function orcBalcaoBuscar(termo){
 /* Põe no carrinho usando o MESMO caminho do clássico: preenche os campos
    escondidos do formulário e chama adicionarItemAoOrcamento. Assim o
    preço, a origem de coleta e a venda em caixa saem iguais. */
+/* No balcão ela escolhia o produto e ele caía no carrinho com 1 — pra vender
+   12 era clicar 12 vezes, ou achar a linha e corrigir. Agora pergunta antes,
+   com o campo já selecionado: digita o número e dá Enter. Quem vende 1 só
+   aperta Enter, que é o mesmo trabalho de antes. */
 function orcBalcaoAdicionar(produtoId){
+  const p = STATE.produtos.find(x => x.id === produtoId);
+  if(!p) return;
+  cpCaixaDeQuantidade(p, qtd => orcBalcaoAdicionarComQtd(produtoId, qtd));
+}
+
+function cpCaixaDeQuantidade(p, onOk){
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(460px,94vw);">
+      <h3 style="margin-top:0;">Quantas unidades?</h3>
+      <div class="lic-doc" style="display:block;margin-bottom:10px;">
+        <b>${escapeHtml(p.nome||'')}</b>
+        <small>${escapeHtml(p.unidade||'UN')}${p.marca?' · '+escapeHtml(p.marca):''} ·
+        ${fmtMoney(p.precoVenda||0)} cada · ${fmtNum(p.estoqueAtual||0)} em estoque</small>
+      </div>
+      <div class="field"><label>Quantidade</label>
+        <input type="number" id="orc-qtd-balcao" min="0.001" step="any" value="1"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="orc-qtd-ok">Adicionar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
+  const campo = m.querySelector('#orc-qtd-balcao');
+  setTimeout(()=>{ campo.focus(); campo.select(); }, 60);
+  const ok = ()=>{
+    const n = parseFloat(String(campo.value).replace(',','.'));
+    if(!(n > 0)){ showToast('Informe uma quantidade maior que zero.','error'); return; }
+    m.remove();
+    onOk(n);
+  };
+  m.querySelector('#orc-qtd-ok').onclick = ok;
+  campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); ok(); } });
+}
+
+function orcBalcaoAdicionarComQtd(produtoId, quantidade){
   const hidden = document.getElementById('orc-item-produto');
   const qtd = document.getElementById('orc-item-qtd');
   const preco = document.getElementById('orc-item-preco');
@@ -11518,7 +11829,7 @@ function orcBalcaoAdicionar(produtoId){
   if(typeof tratarSelecaoProdutoOrcamento === 'function'){
     try { tratarSelecaoProdutoOrcamento(produtoId); } catch(e){}
   }
-  qtd.value = '1';
+  qtd.value = String(quantidade);
   if(!preco.value) preco.value = p.precoVenda || 0;
   adicionarItemAoOrcamento();
 
@@ -12595,6 +12906,7 @@ function renderOrcamentos(){
                 <label>Tipo</label>
                 <select id="orc-pub-tipo">
                   <option value="Menor preço global">Menor preço global</option>
+                  <option value="Menor preço">Menor preço</option>
                   <option value="Menor preço por item">Menor preço por item</option>
                 </select>
               </div>
@@ -38019,6 +38331,7 @@ function licTelaProposta(l){
           <select id="licp-tipo">
             <option value="MENOR PREÇO POR ITEM" ${pc.tipo==='MENOR PREÇO POR ITEM'?'selected':''}>Menor preço por item</option>
             <option value="MENOR PREÇO GLOBAL" ${pc.tipo==='MENOR PREÇO GLOBAL'?'selected':''}>Menor preço global</option>
+            <option value="MENOR PREÇO" ${pc.tipo==='MENOR PREÇO'?'selected':''}>Menor preço</option>
           </select></div>
         <div><label>Validade da proposta</label>
           <select id="licp-validade">
@@ -45383,6 +45696,25 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-06-a',
+    data: '2026-11-06',
+    titulo: 'Preço por MARKUP, fornecedor que nasce da nota e a tabela de produtos com cadeado',
+    itens: [
+      'MARKUP, não margem. Na entrada de nota e no cadastro do produto, a conta agora é a que você faz na cabeça: 50% em cima de um custo de R$ 3.300 dá R$ 4.950. A coluna mudou de nome pra MARKUP % e mostra, embaixo do lucro, quanto aquilo é do custo.',
+      'Dá pra mudar o markup item por item — e um botão ⧉ na linha copia aquele percentual pra todos os outros de uma vez.',
+      'FORNECEDOR NASCE DA NOTA, COMPLETO. Razão social, nome fantasia, CNPJ, inscrição estadual, endereço, cidade/UF, CEP, telefone e e-mail: tudo que vem no XML vira cadastro sozinho. Se o fornecedor já existe, o sistema só COMPLETA o que está em branco — nunca apaga o que você digitou.',
+      'O cadastro de fornecedor ganhou esses campos todos, e a lista mostra o nome fantasia e o CNPJ embaixo do nome. CNPJ repetido não cadastra duas vezes: ele avisa de quem já é.',
+      'CÓDIGO INTERNO AUTOMÁTICO (P0001, P0002...) pra produto que nasce pela entrada de nota — antes ficava um traço. E código repetido não passa.',
+      'CÓDIGO DE BARRAS: botão "Gerar" pra produto que não tem. Cria um EAN-13 interno, com dígito verificador de verdade, pra usar no leitor do balcão.',
+      'CATEGORIA E MARCA com sugestão enquanto você digita: digitou "ar", ele mostra o que já existe. É o que evita "AR CONDICIONADO" e "AR CONDICIONADOO" no mesmo cadastro.',
+      'PAGOU NO PIX, DINHEIRO OU DÉBITO? A nota não gera mais conta a pagar — entra como despesa já paga, com a data.',
+      'A DATA DE ENTRADA agora é o dia em que você está dando entrada, não o dia em que o fornecedor emitiu. A de emissão fica guardada à parte.',
+      'Ao concluir a entrada, aparece uma confirmação com o resumo e um botão pra fechar.',
+      'TABELA DE PRODUTOS COM CADEADO. Ela abre TRAVADA, só pra consulta — clicar sem querer no nome não altera mais nada. Tem um botão em cima pra liberar quando você quiser editar rápido, e ele volta a travar sozinho quando você fecha o sistema.',
+      'FILTRO POR CATEGORIA na lista de produtos, com a opção "Sem categoria" pra achar quem ficou sem.'
+    ]
+  },
+  {
     id: '2026-11-05-f',
     data: '2026-11-05',
     titulo: 'Produto com ST paga menos imposto — e agora o sistema sabe disso',
@@ -46447,10 +46779,19 @@ function enLerXml(texto, nomeArquivo){
     fornecedorNome: emit ? enTexto(emit,'xNome') : '',
     fornecedorCnpj: emit ? enTexto(emit,'CNPJ') : '',
     fornecedorUF:   emit ? enTexto(emit,'UF') : '',
+    /* O emitente da nota traz TUDO: fantasia, inscrição estadual, rua,
+       número, bairro, cidade, CEP e telefone. Guardar só o nome era jogar
+       fora o cadastro pronto — é daqui que o Fornecedor nasce completo. */
+    fornecedorDados: enDadosDoEmitente(emit),
     destinatarioCnpj: cnpjDest,
     numero: ide ? enTexto(ide,'nNF') : '',
     serie:  ide ? enTexto(ide,'serie') : '',
-    data: (ide ? enTexto(ide,'dhEmi') : '').slice(0,10),
+    /* A DATA DE ENTRADA é o dia em que a mercadoria entrou aqui, não o dia
+       em que o fornecedor emitiu. A nota de 29/10 pode chegar no dia 5 — e
+       era a de emissão que vinha, fazendo o estoque e o contas a pagar
+       nascerem com a data errada. A de emissão fica guardada à parte. */
+    data: todayISO(),
+    dataEmissao: (ide ? enTexto(ide,'dhEmi') : '').slice(0,10),
     valorNota: total ? enNum(total,'vNF') : 0,
     freteNota: total ? enNum(total,'vFrete') : 0,
     modFrete,
@@ -46673,6 +47014,88 @@ function impostoPadrao(){
 function impostoComST(){
   return (STATE.config.impostoPctST != null) ? Number(STATE.config.impostoPctST) : 2.64;
 }
+/* O código interno (P0001, P0002...) que o sistema gera sozinho quando ela
+   não digita um. Estava escondido dentro do formulário de produto, e por
+   isso produto que nasceu pela ENTRADA DE NOTA ficava sem código nenhum —
+   a lista mostrava um traço. */
+/* O fornecedor da nota VIRA CADASTRO. Antes o sistema guardava só o nome
+   dentro do produto, e o campo "Fornecedor" do cadastro ficava em
+   "Selecione..." — ela perguntou se precisava cadastrar antes. Não precisa:
+   é trabalho do sistema. Procura pelo CNPJ (que é o que não muda), depois
+   pelo nome, e só cria se não achar nenhum dos dois. */
+function enDadosDoEmitente(emit){
+  if(!emit) return null;
+  const ender = enFilho(emit,'enderEmit') || emit;
+  const partes = [
+    enTexto(ender,'xLgr'),
+    enTexto(ender,'nro'),
+    enTexto(ender,'xCpl'),
+    enTexto(ender,'xBairro')
+  ].filter(Boolean).join(', ');
+  const cidade = enTexto(ender,'xMun');
+  const uf = enTexto(ender,'UF');
+  const cidadeUF = [cidade, uf].filter(Boolean).join(' - ');
+  const cep = enTexto(ender,'CEP');
+  return {
+    razaoSocial: enTexto(emit,'xNome'),
+    fantasia: enTexto(emit,'xFant'),
+    cnpj: enTexto(emit,'CNPJ') || enTexto(emit,'CPF'),
+    ie: enTexto(emit,'IE'),
+    im: enTexto(emit,'IM'),
+    crt: enTexto(emit,'CRT'),
+    logradouro: enTexto(ender,'xLgr'),
+    numero: enTexto(ender,'nro'),
+    complemento: enTexto(ender,'xCpl'),
+    bairro: enTexto(ender,'xBairro'),
+    cidade, uf, cep,
+    telefone: enTexto(ender,'fone'),
+    email: enTexto(emit,'email'),
+    endereco: [partes, cidadeUF].filter(Boolean).join(' - ')
+  };
+}
+
+function enFornecedorDaNota(e){
+  if(!e) return null;
+  if(!Array.isArray(STATE.fornecedores)) STATE.fornecedores = [];
+  const cnpj = String(e.fornecedorCnpj||'').replace(/\D/g,'');
+  const nome = String(e.fornecedorNome||'').trim();
+  if(!cnpj && !nome) return null;
+
+  let f = cnpj ? STATE.fornecedores.find(x=>String(x.cnpj||x.documento||'').replace(/\D/g,'')===cnpj) : null;
+  if(!f && nome) f = STATE.fornecedores.find(x=>String(x.nome||'').trim().toLowerCase()===nome.toLowerCase());
+  const d = e.fornecedorDados || {};
+  if(!f){
+    f = { id: uid('forn'), nome: nome || ('CNPJ ' + cnpj), cnpj,
+          uf: d.uf || e.fornecedorUF || '', endereco:'', telefone:'', obs:'',
+          criadoPor: 'entrada de nota', criadoEm: todayISO() };
+    STATE.fornecedores.push(f);
+  }else if(cnpj && !String(f.cnpj||f.documento||'').replace(/\D/g,'')){
+    f.cnpj = cnpj;   /* já existia pelo nome, mas sem CNPJ: completa */
+  }
+  /* COMPLETA, NUNCA SOBRESCREVE: o que ela digitou à mão vale mais que o
+     que veio do XML. Só preenche o campo que está vazio. */
+  const completar = (campo, valor) => {
+    if(valor && !String(f[campo]||'').trim()) f[campo] = valor;
+  };
+  completar('fantasia', d.fantasia);
+  completar('razaoSocial', d.razaoSocial || nome);
+  completar('ie', d.ie);
+  completar('endereco', d.endereco);
+  completar('cidade', d.cidade);
+  completar('uf', d.uf || e.fornecedorUF);
+  completar('cep', d.cep);
+  completar('telefone', d.telefone);
+  completar('email', d.email);
+  return f;
+}
+
+function proximoSku(ignorarId){
+  let n = (STATE.produtos||[]).length + 1;
+  const existe = s => (STATE.produtos||[]).some(x => x.sku === s && x.id !== ignorarId);
+  while(existe('P'+String(n).padStart(4,'0'))) n++;
+  return 'P'+String(n).padStart(4,'0');
+}
+
 function impostoDoProduto(prod){
   return (prod && prod.stConfirmado === true) ? impostoComST() : impostoPadrao();
 }
@@ -46700,12 +47123,25 @@ function enConta(item, precoVenda){
 
 /* O caminho inverso: ela diz a margem que quer, o sistema diz o preço.
    preco = custo / (1 - margem - imposto - comissao) */
-function enPrecoPelaMargem(item, margemPct){
+/* MARKUP, não margem — decisão dela em 05/11/2026, nestas palavras: "quero
+   que no final quando eu colocar 50% ele vai ficar esse valor" (4.950 em
+   cima de um custo de 3.300).
+
+   Markup é sobre o CUSTO: custo × (1 + markup). Margem é sobre o PREÇO. Os
+   dois se chamam "50%" no comércio e dão preços bem diferentes: markup de
+   50% sobre 3.300 dá 4.950; margem de 50% daria 7.500.
+
+   O imposto e a comissão saem de DENTRO do markup, não por cima — por isso a
+   tela mostra, ao lado, o que de fato sobra. Markup de 50% aqui sobra 41% do
+   custo, porque 6% do preço vai em imposto e comissão. */
+function enPrecoPeloMarkup(item, markupPct){
   const custo = enCustoUnitario(item);
-  const divisor = 1 - (Number(margemPct)||0)/100 - enImpostoPct(item)/100 - Number(STATE.config.comissaoPct||0)/100;
-  if(divisor <= 0) return 0;
-  return custo / divisor;
+  const mk = Number(markupPct);
+  if(!(custo > 0) || !isFinite(mk) || mk < -99.99) return 0;
+  return custo * (1 + mk/100);
 }
+/* nome antigo mantido: havia chamadas espalhadas */
+function enPrecoPelaMargem(item, markupPct){ return enPrecoPeloMarkup(item, markupPct); }
 
 /* ---------- decisões que dependem do contador ---------- */
 
@@ -47709,16 +48145,18 @@ function en3CadastrarSelecionados(entradaId){
   const semNome = alvos.filter(it=>!((it.nomeProduto||it.nomeNaNota||'').trim()));
   if(semNome.length){ showToast('Tem produto sem nome.', 'error'); return; }
 
+  const forn = enFornecedorDaNota(e);
   alvos.forEach(it=>{
     const prod = {
       id: uid('prod'),
+      sku: proximoSku(null),
       nome: (it.nomeProduto || it.nomeNaNota || '').trim(),
       marca: (it.marca||'').trim(),
       categoria: (it.categoria||'').trim(),
       setor: it.setor || '',
       unidade: enUnidadeVenda(it),
-      fornecedor: e.fornecedorNome || '',
-      fornecedorId: e.fornecedorId || null,
+      fornecedor: forn ? forn.nome : (e.fornecedorNome || ''),
+      fornecedorId: forn ? forn.id : null,
       codigoNF: it.codigoFornecedor || '',
       codigoBarras: it.ean || '',
       ncm: (it.ncm||'').replace(/\D/g,''),
@@ -47855,7 +48293,15 @@ function en3Preco(e){
   const travado = e.status==='concluida';
   const itens = enItensAtivos(e);
   const impostoPct = (STATE.config && STATE.config.impostoPct) || 0;
+  const comissaoPct = (STATE.config && STATE.config.comissaoPct) || 0;
   const freteTotal = enFreteTotal(e);
+
+  /* O imposto não é mais um só: produto com ST paga menos. Mostrar "4%" numa
+     nota que tem item com ST seria mentir na cara dela. */
+  const pcts = [...new Set(enItensAtivos(e).map(it=>enImpostoPct(it)))].sort((a,b)=>a-b);
+  const impostosEmUso = pcts.length === 0 ? fmtNum(impostoPct) + '%'
+    : pcts.length === 1 ? fmtNum(pcts[0]) + '%'
+    : pcts.map(x=>fmtNum(x)+'%').join(' ou ') + ' (varia com a ST de cada produto)';
 
   // o erro que não dá sintoma: o custo subiu e o preço ficou igual
   const alertas = itens.map(it=>{
@@ -47879,15 +48325,18 @@ function en3Preco(e){
   return `
     ${en3Cabecalho('Por quanto vender',
       `Agora o custo por unidade está fechado — já com o frete rateado e com o fator de conversão.
-       Digite a margem que você quer, ou o preço: o outro se ajusta sozinho.`, e, 'fator')}
+       Digite o markup que você quer, ou o preço: o outro se ajusta sozinho.
+       Markup é sobre o custo — 50% em cima de R$ 100 dá R$ 150.`, e, 'fator')}
 
     <div style="display:flex;align-items:center;gap:11px;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:9px;padding:11px 15px;margin:15px 0 13px;">
       <span class="help-text" style="margin:0;">Em todos de uma vez:</span>
-      <label style="font-size:13px;">margem
-        <input type="number" step="0.1" id="en-margem-geral" placeholder="45" style="width:72px;text-align:right;margin-left:6px;"> %
+      <label style="font-size:13px;">markup
+        <input type="number" step="0.1" id="en-margem-geral" placeholder="50" style="width:72px;text-align:right;margin-left:6px;"> %
       </label>
       <button type="button" class="btn btn-sm btn-primary" ${travado?'disabled':''} onclick="enAplicarMargemTodos('${e.id}'); renderEntradaNota();">Aplicar</button>
-      <span class="help-text" style="margin-left:auto;margin-bottom:0;">imposto considerado: <strong>${fmtNum(impostoPct)}%</strong>${freteTotal>0?` · frete de <strong>${fmtMoney(freteTotal)}</strong> já rateado`:''}</span>
+      <span class="help-text" style="margin-left:auto;margin-bottom:0;">markup é sobre o custo:
+        <strong>custo × (1 + markup)</strong> · imposto <strong>${escapeHtml(impostosEmUso)}</strong>
+        e comissão <strong>${fmtNum(comissaoPct)}%</strong> saem de dentro dele${freteTotal>0?` · frete de <strong>${fmtMoney(freteTotal)}</strong> já rateado`:''}</span>
     </div>
 
     ${alertas.map(a=>`
@@ -47911,8 +48360,8 @@ function en3Preco(e){
             ${en3Th('CUSTO UN.','right')}
             ${en3Th('PREÇO HOJE','right')}
             ${en3Th('NOVO PREÇO','right')}
-            ${en3Th('MARGEM'+(itens.length>1&&!travado?` <span onclick="en3CopiarMargem('${e.id}')" title="copiar a margem da primeira linha para todas" style="cursor:pointer;opacity:.78;">⧉</span>`:''),'right')}
-            ${en3Th('LUCRO UN.','right')}
+            ${en3Th('MARKUP %'+(itens.length>1&&!travado?` <span onclick="en3CopiarMargem('${e.id}')" title="copiar o markup da primeira linha para todas" style="cursor:pointer;opacity:.78;">⧉</span>`:''),'right')}
+            ${en3Th('SOBRA UN.','right')}
             ${en3Th('LUCRO DO ITEM','right')}
           </tr>
         </thead>
@@ -47934,7 +48383,15 @@ function en3Preco(e){
             return `
             <tr style="border-bottom:1px solid #EEF1F4;${subiu && c && c.margemPct<10 ?'background:#FFFDF8;':''}">
               <td style="padding:9px 11px;">
-                ${escapeHtml(p?p.nome:(it.nomeProduto||it.nomeNaNota||''))}
+                <div style="display:flex;gap:6px;align-items:flex-start;">
+                  <span style="min-width:0;">${escapeHtml(p?p.nome:(it.nomeProduto||it.nomeNaNota||''))}</span>
+                  ${travado?'':`<button type="button" title="Trocar o nome deste produto"
+                    onclick="enRenomearItem('${e.id}','${it.id}')"
+                    style="flex:0 0 auto;background:none;border:1px solid transparent;border-radius:var(--radius-sm);
+                           cursor:pointer;font-size:11.5px;line-height:1;padding:3px 5px;color:var(--ink-soft);opacity:.55;"
+                    onmouseover="this.style.opacity=1;this.style.borderColor='var(--border)';"
+                    onmouseout="this.style.opacity=.55;this.style.borderColor='transparent';">✏️</button>`}
+                </div>
                 ${extras.length?`<div class="help-text" style="margin:2px 0 0;font-size:11px;">nesta nota: ${extras.join(' · ')}</div>`:''}
               </td>
               <td style="padding:9px 7px;text-align:right;white-space:nowrap;" id="en-entra-${it.id}">
@@ -47950,11 +48407,18 @@ function en3Preco(e){
                        oninput="enMudouPreco('${e.id}','${it.id}', this.value)" style="width:92px;text-align:right;">
               </td>
               <td style="padding:9px 7px;text-align:right;">
-                <input type="number" step="0.1" id="en-margem-${it.id}" value="${c?c.margemPct.toFixed(1):''}" ${travado?'disabled':''}
-                       oninput="enMudouMargem('${e.id}','${it.id}', this.value)" style="width:72px;text-align:right;">
+                <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end;">
+                  <input type="number" step="0.1" id="en-margem-${it.id}" value="${c?c.markupPct.toFixed(1):''}" ${travado?'disabled':''}
+                         oninput="enMudouMargem('${e.id}','${it.id}', this.value)" style="width:72px;text-align:right;">
+                  ${itens.length>1&&!travado?`<button type="button" title="usar este markup em todos os itens desta nota"
+                     onclick="enCopiarMarkupDaLinha('${e.id}','${it.id}')"
+                     style="background:none;border:1px solid var(--border);border-radius:var(--radius-sm);cursor:pointer;
+                            font-size:11px;padding:3px 6px;color:var(--ink-soft);white-space:nowrap;">⧉ todos</button>`:''}
+                </div>
               </td>
               <td style="padding:9px 7px;text-align:right;white-space:nowrap;">
                 <span id="en-conta-${it.id}" style="color:${c&&c.lucro>=0?'#1F6047':'var(--negative)'};font-weight:600;">${c?fmtMoney(c.lucro):'—'}</span>
+                ${c&&c.custo>0?`<div class="help-text" style="margin:0;" title="o que sobra de verdade, já tirando imposto e comissão">${(c.lucro/c.custo*100).toFixed(1)}% do custo</div>`:''}
               </td>
               <td style="padding:9px 11px;text-align:right;white-space:nowrap;">${c&&fator?fmtMoney(c.lucro*enUnidadesTotais(it)):'—'}</td>
             </tr>`;
@@ -47976,6 +48440,55 @@ function en3Preco(e){
     </div>`;
 }
 
+/* "poder fazer com que ele copie para todos os itens" — ela pediu assim.
+   Antes isso existia só como um ⧉ no cabeçalho, que copiava a PRIMEIRA
+   linha; agora cada linha tem o seu, e copia a dela. */
+/* Trocar o nome sem voltar etapa. O nome se escolhe em "Cadastro e
+   associação", mas ela só percebe que ficou ruim quando vê a linha aqui — e
+   voltar duas telas pra isso é o tipo de atrito que faz ela desistir.
+
+   Se o item já virou produto do cadastro, renomeia o produto. Se ainda não,
+   renomeia o que vai ser cadastrado. */
+function enRenomearItem(entradaId, itemId){
+  const [e, it] = enItem(entradaId, itemId);
+  if(!it) return;
+  const prod = it.produtoId ? (STATE.produtos||[]).find(p=>p.id===it.produtoId) : null;
+  const atual = prod ? prod.nome : (it.nomeProduto || it.nomeNaNota || '');
+
+  cpCaixaDeTexto('Trocar o nome do produto', 'Nome no seu cadastro', atual, nome=>{
+    const limpo = String(nome||'').trim();
+    if(!limpo){ showToast('O produto precisa de um nome.','error'); return false; }
+    if(prod){ prod.nome = limpo; } else { it.nomeProduto = limpo; }
+    saveState();
+    renderEntradaNota();
+    showToast('Nome trocado.','success');
+  }, prod
+     ? `Isto muda o nome <b>no cadastro</b>, então ele troca em todo o sistema.<br>`
+       + `Na nota do fornecedor ele se chama <b>${escapeHtml(it.nomeNaNota||'')}</b>, e isso não muda.`
+     : `Este produto ainda vai ser cadastrado — o nome que ficar aqui é o que vai pro cadastro.<br>`
+       + `Na nota do fornecedor ele se chama <b>${escapeHtml(it.nomeNaNota||'')}</b>.`);
+}
+
+function enCopiarMarkupDaLinha(entradaId, itemId){
+  const [e, base] = enItem(entradaId, itemId);
+  if(!e || !base) return;
+  if(!(Number(base.unidadesPorCaixa)>0) || !(Number(base.precoVenda)>0)){
+    showToast('Preencha o preço (ou o markup) desta linha antes de copiar.', 'error'); return;
+  }
+  const markup = enConta(base, base.precoVenda).markupPct;
+  let n = 0;
+  enItensAtivos(e).forEach(it=>{
+    if(it.id === base.id) return;
+    if(!(Number(it.unidadesPorCaixa)>0)) return;   // sem conversão o preço sairia errado
+    const preco = enPrecoPeloMarkup(it, markup);
+    if(preco > 0){ it.precoVenda = Math.round(preco*100)/100; n++; }
+  });
+  saveState();
+  renderEntradaNota();
+  showToast(n ? `Markup de ${markup.toFixed(1)}% aplicado em mais ${n} item(ns).`
+              : 'Os outros itens ainda estão sem o fator de conversão.', n?'success':'error');
+}
+
 function en3CopiarMargem(entradaId){
   const e = entradas().find(x=>x.id===entradaId);
   if(!e) return;
@@ -47985,14 +48498,14 @@ function en3CopiarMargem(entradaId){
   if(!(Number(base.unidadesPorCaixa)>0) || !(Number(base.precoVenda)>0)){
     showToast('Preencha o preço da primeira linha antes de copiar a margem.', 'error'); return;
   }
-  const margem = enConta(base, base.precoVenda).margemPct;
+  const margem = enConta(base, base.precoVenda).markupPct;
   itens.slice(1).forEach(it=>{
     const preco = enPrecoPelaMargem(it, margem);
     it.precoVenda = preco>0 ? Math.round(preco*100)/100 : null;
   });
   saveState();
   renderEntradaNota();
-  showToast(`Margem de ${margem.toFixed(1)}% aplicada nas outras linhas.`, 'success');
+  showToast(`Markup de ${margem.toFixed(1)}% aplicado nas outras linhas.`, 'success');
 }
 
 /* ---------- TELA 6: FINALIZAR (modal) ---------- */
@@ -48026,7 +48539,8 @@ function en3Finalizar(e){
             </select>
             <span class="help-text" style="display:block;margin-top:3px;">${enCfopEntrada(e)?`CFOP de entrada <strong style="color:var(--ink);">${enCfopEntrada(e)}</strong>`:'o CFOP aparece depois de escolher'}</span>`, true)}
           ${campo('Data de entrada', `<input type="date" value="${escapeAttr(e.data||todayISO())}" ${travado?'disabled':''}
-              onchange="enSetNota('${e.id}','data',this.value)" style="display:block;width:100%;box-sizing:border-box;margin-top:3px;">`, true)}
+              onchange="enSetNota('${e.id}','data',this.value)" style="display:block;width:100%;box-sizing:border-box;margin-top:3px;">
+              ${e.dataEmissao && e.dataEmissao !== e.data ? `<div class="help-text" style="margin:3px 0 0;">o fornecedor emitiu em ${escapeHtml(e.dataEmissao.split('-').reverse().join('/'))}</div>` : ''}`, true)}
           ${campo('Fornecedor', `<input type="text" value="${escapeAttr(e.fornecedorNome||'')}" ${travado||e.tipo!=='manual'?'disabled':''}
               onchange="enSetNota('${e.id}','fornecedorNome',this.value)" style="display:block;width:100%;box-sizing:border-box;margin-top:3px;">`)}
           ${campo('Número da nota', `<input type="text" value="${escapeAttr(e.numero||'')}" ${travado||e.tipo!=='manual'?'disabled':''}
@@ -48094,7 +48608,9 @@ function en3Finalizar(e){
         ${travado?'':`<div style="margin-top:10px;">
           <button type="button" class="btn btn-sm" onclick="enAdicionarParcela('${e.id}')">+ Acrescentar parcela</button>
         </div>`}
-        <div class="help-text" style="margin-top:11px;">As parcelas entram em <strong style="color:var(--ink);">Despesas / Contas a Pagar</strong> ao finalizar.</div>
+        <div class="help-text" style="margin-top:11px;">${enJaPaga(e)
+          ? `Pago à vista — entra em <strong style="color:var(--ink);">Despesas já quitada</strong>, sem virar conta a pagar.`
+          : `As parcelas entram em <strong style="color:var(--ink);">Despesas / Contas a Pagar</strong> ao finalizar.`}</div>
       </div>
     </div>`;
 
@@ -48652,7 +49168,7 @@ function enAplicarMargemTodos(entradaId){
   const campo = document.getElementById('en-margem-geral');
   if(!e || !campo) return;
   const margem = Number(campo.value);
-  if(!margem){ showToast('Informe a margem em %.', 'error'); return; }
+  if(!margem){ showToast('Informe o markup em %.', 'error'); return; }
   let n = 0;
   (e.itens||[]).forEach(it=>{
     if(it.acao === 'ignorar') return;
@@ -48662,7 +49178,7 @@ function enAplicarMargemTodos(entradaId){
   });
   saveState();
   renderEntradaNota();
-  showToast(n ? `Margem de ${margem}% aplicada em ${n} item(ns).`
+  showToast(n ? `Markup de ${margem}% aplicado em ${n} item(ns).`
               : 'Nenhum item tinha o fator de conversão preenchido ainda.', n?'success':'error');
 }
 
@@ -48686,7 +49202,7 @@ function enHtmlConta(it){
     return `<div class="help-text" style="margin:0;">Preencha o <strong>fator</strong> (quantas unidades vêm na embalagem) para ver o lucro. Sem ele a conta sairia pela embalagem inteira, não pela unidade.</div>`;
   }
   const c = enConta(it, it.precoVenda);
-  if(!c.preco) return `<div class="help-text" style="margin:0;">Informe o preço ou a margem para ver o lucro.</div>`;
+  if(!c.preco) return `<div class="help-text" style="margin:0;">Informe o preço ou o markup para ver o lucro.</div>`;
   const cor = c.lucro >= 0 ? 'var(--positive)' : 'var(--negative, #B02A37)';
   return `
     <div style="padding:8px;border-radius:var(--radius-sm);background:var(--surface-2);font-size:13px;">
@@ -48700,7 +49216,7 @@ function enHtmlConta(it){
         <strong style="color:${cor};">${fmtMoney(c.lucro)}</strong>
       </div>
       <div style="display:flex;justify-content:space-between;">
-        <span class="help-text" style="margin:0;">margem ${c.margemPct.toFixed(1)}% · markup ${c.markupPct.toFixed(0)}%</span>
+        <span class="help-text" style="margin:0;">markup ${c.markupPct.toFixed(1)}% · sobra ${c.custo>0?(c.lucro/c.custo*100).toFixed(1):'0'}% do custo · margem ${c.margemPct.toFixed(1)}%</span>
         <span class="help-text" style="margin:0;">na nota toda: <strong style="color:${cor};">${fmtMoney(c.lucro * enUnidadesTotais(it))}</strong></span>
       </div>
     </div>`;
@@ -48777,7 +49293,7 @@ function enMudouPreco(entradaId, itemId, valor){
   enAtualizarNumeros(e, it);
   const campo = document.getElementById('en-margem-' + it.id);
   if(campo && document.activeElement !== campo){
-    const m = enConta(it, it.precoVenda).margemPct;
+    const m = enConta(it, it.precoVenda).markupPct;
     campo.value = it.precoVenda ? m.toFixed(1) : '';
   }
 }
@@ -49074,12 +49590,18 @@ function enConcluir(entradaId){
         if(it.origem !== '' && it.origem != null) prod.origemItem = String(it.origem);
         if(it.codigoBarras) prod.codigoBarras = it.codigoBarras;
         if(it.codigoFornecedor) prod.codigoNF = it.codigoFornecedor;
+        /* produto que nasce aqui também precisa do código interno — o da nota
+           é o do FORNECEDOR, serve pra casar a próxima nota dele, não pra ela
+           achar o produto na busca do balcão */
+        if(!prod.sku) prod.sku = proximoSku(prod.id);
         if((it.unidadeVenda||'').trim()) prod.unidade = it.unidadeVenda.trim();
         if(it.marca) prod.marca = it.marca;
         if(it.categoria) prod.categoria = it.categoria;
         if(it.linha) prod.linha = it.linha;
         if(it.setor) prod.setor = it.setor;
-        if(e.fornecedorNome) prod.fornecedor = e.fornecedorNome;
+        const fornNota = enFornecedorDaNota(e);
+        if(fornNota){ prod.fornecedor = fornNota.nome; if(!prod.fornecedorId) prod.fornecedorId = fornNota.id; }
+        else if(e.fornecedorNome) prod.fornecedor = e.fornecedorNome;
         prod.unidadesPorCaixa = Number(it.unidadesPorCaixa) || 1;
         // "temST" e o que os FORNECEDORES praticam - informacao, muda a cada
         // nota. "stConfirmado" e o que o CONTADOR disse, e esse manda: entrada
@@ -49144,8 +49666,7 @@ function enConcluir(entradaId){
       if(!e.despesaId && enParcelasParaDespesa(e).length > 0){
         enAbrirLancarDespesa(e.id);
       }else{
-        entradaAtualId = null;
-        renderEntradaNota();
+        enAvisoConcluida(e);
       }
     }, 'Concluir');
 }
@@ -49171,12 +49692,64 @@ function enDescricaoDespesa(e){
 /* As parcelas que vao virar a despesa. Sem duplicata na nota, vira uma
    parcela unica no valor da nota — a vista ou com o vencimento que ela
    puser na tela. */
+/* Pagou PIX, dinheiro ou cartão de débito? O dinheiro JÁ SAIU. Lançar isso
+   em Contas a Pagar cria uma dívida que não existe, e ela teria que entrar lá
+   depois só pra dar baixa numa conta já paga. Nestas formas a despesa nasce
+   QUITADA, na data da entrada.
+
+   Códigos do XML da NF-e (tPag): 01 dinheiro, 03 crédito, 04 débito,
+   15 boleto, 17 PIX. O cartão de CRÉDITO fica de fora de propósito: vira
+   fatura, que é dívida de verdade. */
+const EN_FORMAS_AVISTA = ['01','04','17'];
+function enJaPaga(e){ return EN_FORMAS_AVISTA.includes(String((e && e.formaPagamento) || '')); }
+
 function enParcelasParaDespesa(e){
   const p = enParcelas(e).filter(x=>(Number(x.valor)||0) > 0);
   if(p.length) return p.map(x=>({ vencimento: x.vencimento || e.data || todayISO(), valor: Number(x.valor)||0 }));
   const total = Number(e.valorNota) || 0;
   if(total <= 0) return [];
   return [{ vencimento: e.data || todayISO(), valor: total }];
+}
+
+/* A entrada acabava e a tela simplesmente voltava — ela ficava sem saber se
+   deu certo. Agora fecha com um resumo do que mudou de verdade: quantos
+   produtos entraram, quantas unidades, o custo, e pra onde foi o dinheiro.
+   Um botão só, de fechar. */
+function enAvisoConcluida(e){
+  if(!e) return;
+  const itens = enItensAtivos(e);
+  const unidades = itens.reduce((s,it)=>s + enUnidadesTotais(it), 0);
+  const novos = itens.filter(it=>it.acao === 'novo').length;
+  const paga = enJaPaga(e);
+  const desp = e.despesaId ? (STATE.despesas||[]).find(d=>d.id===e.despesaId) : null;
+
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.innerHTML = `
+    <div class="modal-box" style="max-width:min(520px,94vw);text-align:center;">
+      <div style="font-size:42px;line-height:1;margin:6px 0 10px;">✅</div>
+      <h3 style="margin:0 0 4px;">Entrada concluída</h3>
+      <p class="help-text" style="margin:0 0 16px;">
+        Nota ${escapeHtml(String(e.numero||''))} · ${escapeHtml(e.fornecedorNome||'')}
+      </p>
+      <div style="text-align:left;border:1px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;font-size:13px;">
+        ${[
+          ['Produtos', `${itens.length}${novos?` <span class="help-text">(${novos} ${novos===1?'cadastrado agora':'cadastrados agora'})</span>`:''}`],
+          ['Entrou no estoque', `${fmtNum(unidades)} unidades`],
+          ['Valor da nota', fmtMoney(e.valorNota||0)],
+          ['Data da entrada', (e.data||todayISO()).split('-').reverse().join('/')],
+          ['Pagamento', desp
+            ? (paga ? `<span style="color:var(--positive);font-weight:600;">já quitado</span> em Despesas`
+                    : `${desp.parcelasDetalhe.length} parcela(s) em Contas a Pagar`)
+            : '<span class="help-text">não lançado</span>']
+        ].map(l=>`<div style="display:flex;justify-content:space-between;gap:12px;padding:8px 12px;border-bottom:1px solid #EEF1F4;">
+            <span class="help-text" style="margin:0;">${l[0]}</span><span>${l[1]}</span></div>`).join('')}
+      </div>
+      <div class="modal-actions" style="justify-content:center;margin-top:16px;">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove(); entradaAtualId=null; renderEntradaNota();">Fechar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(m);
 }
 
 function enAbrirLancarDespesa(entradaId){
@@ -49211,7 +49784,7 @@ function enAbrirLancarDespesa(entradaId){
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">💳</div>
         <div>
-          <h3>Lançar em Contas a Pagar</h3>
+          <h3>${enJaPaga(e) ? 'Lançar a despesa (já paga)' : 'Lançar em Contas a Pagar'}</h3>
           <div class="sub">${escapeHtml(enDescricaoDespesa(e))}</div>
         </div>
       </div>
@@ -49249,26 +49822,37 @@ function enAbrirLancarDespesa(entradaId){
           Para mudar vencimento ou valor, feche aqui e ajuste as parcelas no painel
           "Valor da nota, frete e pagamento" da entrada.
         </div>
+        ${enJaPaga(e) ? `<div style="padding:9px 11px;border-radius:var(--radius-sm);background:#E7F4EE;border:1px solid #BEE0D0;font-size:12.5px;margin-top:10px;line-height:1.5;">
+          ✓ Pagamento <strong>${escapeHtml(forma)}</strong>: o dinheiro já saiu. Entra em Despesas
+          <strong>marcada como paga</strong> em ${escapeHtml((e.data||todayISO()).split('-').reverse().join('/'))} —
+          não vira conta a pagar.
+        </div>` : ''}
       </div>
       <div class="form-actions">
         <button type="button" class="btn" id="end-cancelar">Não lançar</button>
-        <button type="button" class="btn btn-primary" id="end-confirmar">✓ Lançar ${parcelas.length} parcela(s)</button>
+        <button type="button" class="btn btn-primary" id="end-confirmar">${enJaPaga(e)
+          ? '✓ Lançar como paga' : `✓ Lançar ${parcelas.length} parcela(s)`}</button>
       </div>
     </div>`;
   document.body.appendChild(modal);
-  document.getElementById('end-cancelar').addEventListener('click', ()=>modal.remove());
+  document.getElementById('end-cancelar').addEventListener('click', ()=>{ modal.remove(); enAvisoConcluida(e); });
   document.getElementById('end-confirmar').addEventListener('click', ()=>{
+    const paga = enJaPaga(e);
     const despesa = {
       id: uid('desp'),
       descricao: document.getElementById('end-descricao').value.trim() || enDescricaoDespesa(e),
       categoria: document.getElementById('end-categoria').value.trim() || 'Fornecedor',
-      tipo: 'boleto',
+      tipo: paga ? 'avista' : 'boleto',
       formaPagamento: document.getElementById('end-forma').value.trim(),
       // de onde veio, para dar para voltar da despesa para a nota
       entradaId: e.id,
       notaChave: e.chave || '',
       parcelasDetalhe: parcelas.map(p=>({
-        vencimento: p.vencimento, valor: p.valor, pago:false, dataPagamento:'', precisaRevisao:false
+        vencimento: paga ? (e.data || todayISO()) : p.vencimento,
+        valor: p.valor,
+        pago: paga,
+        dataPagamento: paga ? (e.data || todayISO()) : '',
+        precisaRevisao:false
       })),
       repeticaoIlimitada: false,
       criadoEm: todayISO()
@@ -49278,7 +49862,9 @@ function enAbrirLancarDespesa(entradaId){
     saveState();
     modal.remove();
     renderEntradaNota();
-    showToast(`Lançado em Contas a Pagar: ${despesa.parcelasDetalhe.length} parcela(s).`, 'success');
+    showToast(paga ? 'Despesa lançada já quitada — não entrou em Contas a Pagar.'
+                   : `Lançado em Contas a Pagar: ${despesa.parcelasDetalhe.length} parcela(s).`, 'success');
+    enAvisoConcluida(e);
   });
 }
 
@@ -49497,7 +50083,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '05/11/2026 18:30';
+const SISTEMA_VERSAO = '06/11/2026 09:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
