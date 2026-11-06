@@ -45725,6 +45725,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-06-c',
+    data: '2026-11-06',
+    titulo: 'DESFAZER A ENTRADA — dá pra voltar atrás numa nota já concluída',
+    itens: [
+      'Entrada concluída agora tem o botão ↩️ DESFAZER A ENTRADA. Até hoje concluir era uma porta de mão única: a tela avisava "não pode ser desfeito" e a saída era remendar estoque, custo e preço à mão, um por um.',
+      'O ESTOQUE VOLTA POR SUBTRAÇÃO, não pelo número antigo. Se você vendeu 5 unidades depois de dar entrada, essas 5 continuam vendidas — sai só o que a nota somou. Restaurar o número de antes apagaria a venda do estoque.',
+      'O CUSTO E O PREÇO voltam ao que eram. Na hora de concluir o sistema passou a guardar um retrato de cada produto; é esse retrato que volta, não um cálculo aproximado.',
+      'A CONTA A PAGAR gerada pela nota é apagada junto — a não ser que alguma parcela já esteja paga. Nesse caso ela FICA, e a tela avisa: apagar levaria embora um pagamento que aconteceu de verdade.',
+      'O PRODUTO QUE NASCEU NA NOTA continua cadastrado, de propósito: ele já pode ter venda, foto, preço ajustado à mão. A tela lista quais foram, e você apaga em Produtos se quiser.',
+      'A nota volta para "a dar entrada" COM A CONFERÊNCIA QUE VOCÊ JÁ FEZ. Dá pra ajustar e concluir de novo, ou apagar e começar do XML.',
+      'TUDO É DITO ANTES. A confirmação lista o que volta e o que não volta, inclusive o aviso de que entrada concluída numa versão anterior do sistema não tem o retrato — nessa, estoque e conta voltam, custo e preço não.',
+      'E EM NOTAS NA RECEITA: nota com entrada começada e não concluída conta como PENDENTE, com o botão "Continuar a entrada". Mostrá-la como resolvida esconderia o trabalho que ainda falta.'
+    ]
+  },
+  {
     id: '2026-11-06-b',
     data: '2026-11-06',
     titulo: 'NOTAS NA RECEITA — as compras aparecem sozinhas, sem você procurar XML',
@@ -47440,6 +47455,153 @@ async function enImportarArquivos(files){
 function enAbrir(id){ entradaAtualId = id; renderEntradaNota(); }
 function enVoltar(){ entradaAtualId = null; renderEntradaNota(); }
 
+
+/* ===========================================================
+   DESFAZER UMA ENTRADA JÁ CONCLUÍDA
+
+   "eu preciso simular novamente essa entrada de novo da Fujioka.
+    Dá pra deixar como se eu não tivesse dado a entrada nele?"
+
+   Concluir mexe em cinco coisas de uma vez: cadastra produto novo,
+   soma estoque, grava custo, grava preço de venda e lança a conta a
+   pagar. Até aqui nada disso voltava — a tela avisava "não pode ser
+   desfeito", e a saída era remendar cada número à mão.
+
+   Duas decisões que fazem a reversão ser correta e não aproximada:
+
+   1. ESTOQUE VOLTA POR SUBTRAÇÃO, não pelo valor antigo. Entre a
+      entrada e o desfazer ela pode ter VENDIDO. Restaurar o número
+      que estava lá antes apagaria essas vendas do estoque. Então
+      tiramos exatamente as unidades que esta nota somou.
+
+   2. CUSTO E PREÇO VOLTAM PELO RETRATO guardado na hora de concluir.
+      Custo antigo não se calcula de volta — ou estava guardado, ou
+      é chute. Entrada concluída numa versão anterior do sistema não
+      tem esse retrato: aí o estoque e a conta a pagar voltam, o
+      custo não, e a tela diz isso antes.
+
+   O que o desfazer NÃO faz: apagar produto que nasceu nesta nota.
+   Ele pode já ter venda, foto, preço ajustado à mão. A tela lista
+   quais foram e ela apaga os que quiser em Produtos.
+   =========================================================== */
+
+/* O pagamento mora nas PARCELAS, nao numa flag da despesa: uma conta de tres
+   parcelas pode ter a primeira ja paga. Qualquer parcela paga ja basta pra
+   nao apagar a despesa — apagar levaria junto um pagamento real. */
+function enDespesaTemParcelaPaga(d){
+  if(!d) return false;
+  if(d.pago === true) return true;
+  return (d.parcelasDetalhe||[]).some(p=>p && (p.pago === true || !!p.dataPagamento));
+}
+
+function enPodeDesfazer(e){
+  return !!e && e.status === 'concluida';
+}
+
+/* Resumo honesto do que vai e do que não vai voltar. É o que a tela mostra
+   ANTES de ela confirmar — reversão parcial sem aviso é pior que nenhuma. */
+function enResumoDesfazer(e){
+  const op = enOperacao(e) || { estoque:true, custo:true };
+  const ativos = enItensAtivos(e);
+  const retrato = e.desfazer && Array.isArray(e.desfazer.itens) ? e.desfazer.itens : null;
+
+  const unidades = ativos.reduce((t,it)=>t + enUnidadesTotais(it), 0);
+  const nascidos = retrato
+    ? retrato.filter(r=>r.nasceuAqui).map(r=>{
+        const p = (STATE.produtos||[]).find(x=>x.id===r.produtoId);
+        return p ? p.nome : null;
+      }).filter(Boolean)
+    : [];
+
+  const despesaId = (e.desfazer && e.desfazer.despesaIdAntes) || e.despesaId || null;
+  const despesa = despesaId ? (STATE.despesas||[]).find(d=>d.id===despesaId) : null;
+  const despesaPaga = enDespesaTemParcelaPaga(despesa);
+
+  return {
+    temRetrato: !!retrato,
+    mexeEstoque: !!op.estoque,
+    mexeCusto: !!op.custo,
+    itens: ativos.length,
+    unidades,
+    nascidos,
+    despesa,
+    despesaPaga
+  };
+}
+
+function enDesfazer(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e) return;
+  if(!enPodeDesfazer(e)){ showToast('Esta entrada ainda não foi concluída.', 'error'); return; }
+
+  const r = enResumoDesfazer(e);
+  const linhas = [];
+  if(r.mexeEstoque) linhas.push(`Saem ${fmtNum(r.unidades)} unidade(s) do estoque — exatamente o que esta nota somou, então venda feita depois não é afetada.`);
+  linhas.push(r.temRetrato
+    ? (r.mexeCusto ? 'O custo e o preço de venda de cada produto voltam ao que eram antes desta nota.'
+                   : 'O preço de venda de cada produto volta ao que era antes desta nota.')
+    : 'ATENÇÃO: esta entrada foi concluída numa versão anterior do sistema, que não guardava o custo de antes. O estoque e a conta a pagar voltam, mas O CUSTO E O PREÇO FICAM COMO ESTÃO — confira depois em Produtos.');
+  if(r.despesa) linhas.push(r.despesaPaga
+    ? `A conta a pagar "${r.despesa.descricao||''}" JÁ ESTÁ PAGA e não será apagada — se o pagamento não aconteceu, apague à mão em Despesas.`
+    : `A conta a pagar "${r.despesa.descricao||''}" será apagada.`);
+  if(r.nascidos.length) linhas.push(`${r.nascidos.length} produto(s) nasceram nesta nota e CONTINUAM cadastrados (podem já ter venda): ${r.nascidos.slice(0,4).join(', ')}${r.nascidos.length>4?'...':''}. Apague em Produtos se quiser.`);
+  linhas.push('A nota volta para "a dar entrada", com a conferência que você já fez. Dá pra concluir de novo ou apagar.');
+
+  confirmAction('Desfazer esta entrada', linhas.join('\n\n'),
+    ()=>enAplicarDesfazer(entradaId), 'Desfazer');
+}
+
+function enAplicarDesfazer(entradaId){
+  const e = entradas().find(x=>x.id===entradaId);
+  if(!e || e.status !== 'concluida') return;
+
+  const op = enOperacao(e) || { estoque:true, custo:true };
+  const retrato = (e.desfazer && Array.isArray(e.desfazer.itens)) ? e.desfazer.itens : [];
+  const porProduto = {};
+  retrato.forEach(r=>{ porProduto[r.produtoId] = r; });
+
+  /* ESTOQUE: subtração, pelos itens da nota — vale com ou sem retrato. */
+  if(op.estoque){
+    enItensAtivos(e).forEach(it=>{
+      if(!it.produtoId) return;
+      const prod = (STATE.produtos||[]).find(p=>p.id===it.produtoId);
+      if(!prod) return;   // ela já apagou o produto: não há estoque pra tirar
+      prod.estoqueAtual = (Number(prod.estoqueAtual)||0) - enUnidadesTotais(it);
+    });
+  }
+
+  /* CUSTO E PREÇO: só pelo retrato. Sem ele, não inventa. */
+  retrato.forEach(r=>{
+    const prod = (STATE.produtos||[]).find(p=>p.id===r.produtoId);
+    if(!prod) return;
+    if(op.custo) prod.custo = r.custoAntes;
+    prod.precoVenda = r.precoAntes;
+    if(r.stConfirmadoAntes === null || r.stConfirmadoAntes === undefined){
+      prod.stConfirmado = null;
+      delete prod.stHerdadoDe;
+    }
+  });
+
+  /* CONTA A PAGAR: some, se ainda não foi paga. Apagar despesa quitada
+     apagaria um pagamento que aconteceu de verdade. */
+  const despesaId = (e.desfazer && e.desfazer.despesaIdAntes) || e.despesaId || null;
+  if(despesaId){
+    const d = (STATE.despesas||[]).find(x=>x.id===despesaId);
+    if(d && !enDespesaTemParcelaPaga(d)){
+      STATE.despesas = (STATE.despesas||[]).filter(x=>x.id!==despesaId);
+      e.despesaId = null;
+    }
+  }
+
+  e.status = 'rascunho';
+  delete e.concluidaEm;
+  delete e.desfazer;
+  saveState();
+  renderEntradaNota();
+  atualizarBadgesMenu && atualizarBadgesMenu();
+  showToast('Entrada desfeita. A nota voltou para "a dar entrada".', 'success');
+}
+
 function enApagar(id){
   const e = entradas().find(x=>x.id===id);
   if(!e) return;
@@ -47644,6 +47806,9 @@ function en3Cabecalho(titulo, texto, e, voltarPara){
         <div><strong>${escapeHtml(e.fornecedorNome || 'Entrada manual')}</strong></div>
         <div>${e.numero?`Nota ${escapeHtml(e.numero)}${e.serie?'/'+escapeHtml(e.serie):''} · `:''}${escapeHtml(enData(e.data)||'')}${e.valorNota?` · ${fmtMoney(e.valorNota)}`:''}</div>
         ${enCfopEntrada(e)?`<div>CFOP de entrada <strong>${enCfopEntrada(e)}</strong></div>`:''}
+        ${e.status==='concluida' ? `<div style="margin-top:6px;">
+          <button class="btn btn-sm" onclick="enDesfazer('${e.id}')" title="Devolve estoque, custo e preço ao que eram antes desta nota">↩️ Desfazer a entrada</button>
+        </div>` : ''}
       </div>
     </div>`;
 }
@@ -49621,9 +49786,17 @@ function enConcluir(entradaId){
     + (novos ? ` ${novos} produto(s) novo(s) serão cadastrados.` : '')
     + ' O custo de cada produto passa a ser o custo real desta nota. Isso não pode ser desfeito automaticamente.',
     ()=>{
+      /* O RETRATO DE ANTES.
+         Concluir mexe em custo, preco, estoque, cadastro de produto e contas
+         a pagar de uma vez so. Reconstruir isso depois, de memoria, e chute -
+         custo antigo ninguem guarda. Entao guardamos o estado de cada produto
+         no instante anterior, e o "desfazer" devolve o que estava la, nao o
+         que a gente acha que estava. */
+      e.desfazer = { versao:1, feitoEm:new Date().toISOString(), itens:[], despesaId:null };
       ativos.forEach(it=>{
         const custo = enCustoUnitario(it);
         let prod = it.produtoId ? STATE.produtos.find(p=>p.id===it.produtoId) : null;
+        const nasceuAqui = !prod;
 
         if(!prod){
           prod = {
@@ -49637,6 +49810,15 @@ function enConcluir(entradaId){
           STATE.produtos.push(prod);
           it.produtoId = prod.id;
         }
+
+        e.desfazer.itens.push({
+          produtoId: prod.id,
+          nasceuAqui,
+          custoAntes: Number(prod.custo) || 0,
+          precoAntes: Number(prod.precoVenda) || 0,
+          unidades: enUnidadesTotais(it),
+          stConfirmadoAntes: (prod.stConfirmado === undefined ? null : prod.stConfirmado)
+        });
 
         // o que a nota ensinou sobre o produto
         if(it.ncm) prod.ncm = it.ncm;
@@ -49709,6 +49891,7 @@ function enConcluir(entradaId){
 
       e.status = 'concluida';
       e.concluidaEm = new Date().toISOString();
+      e.desfazer.despesaIdAntes = e.despesaId || null;
       saveState();
       renderEntradaNota();
       showToast('Entrada concluída. Estoque e custos atualizados.', 'success');
@@ -49997,11 +50180,18 @@ function distEntradaDaChave(chave){
   return (STATE.entradas||[]).find(e=>e.chave && e.chave === chave) || null;
 }
 
-/* Calculado, nunca guardado — ver a decisão 2 lá em cima. */
+/* Calculado, nunca guardado — ver a decisão 2 lá em cima.
+
+   Nota com entrada em RASCUNHO (importada, ainda não concluída, ou desfeita)
+   continua PENDENTE de propósito: a mercadoria não entrou no estoque e a
+   conta não foi lançada. Mostrá-la como resolvida esconderia justamente o
+   trabalho que falta. O que muda é o botão — "Continuar", não "Dar entrada". */
 function distStatus(n){
   const d = distEstado();
   if(d.ignoradas[n.chave]) return 'ignorada';
-  return distEntradaDaChave(n.chave) ? 'lancada' : 'pendente';
+  const e = distEntradaDaChave(n.chave);
+  if(e && e.status === 'concluida') return 'lancada';
+  return 'pendente';
 }
 
 function distNotasPorStatus(status){
@@ -50142,7 +50332,12 @@ async function distDarEntrada(chave){
 
   const jaTem = distEntradaDaChave(chave);
   if(jaTem){
-    showToast('Esta nota já foi lançada.', 'info');
+    /* Já existe entrada pra esta nota: concluída ou ainda em rascunho, o
+       caminho é o mesmo — abrir a que existe. Criar outra duplicaria a
+       compra, que é exatamente o que esta tela existe pra impedir. */
+    showToast(jaTem.status === 'concluida'
+      ? 'Esta nota já foi lançada.'
+      : 'Esta nota já está começada — abrindo onde você parou.', 'info');
     navigateTo('entrada-nota');
     enAbrir(jaTem.id);
     return;
@@ -50384,14 +50579,16 @@ function distLinha(n){
       ? `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 lançada${entrada && entrada.data ? ' em ' + fmtDate(entrada.data) : ''}</span>`
     : st==='ignorada'
       ? `<span class="badge badge-neutral">⚪ ignorada</span>`
-      : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 pendente</span>`;
+      : entrada
+        ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 começada, não concluída</span>`
+        : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 pendente</span>`;
 
   const acoes = st==='lancada'
       ? `<button class="btn btn-sm" onclick="distVerEntrada('${n.chave}')">Ver a entrada</button>`
     : st==='ignorada'
       ? `<button class="btn btn-sm" onclick="distVoltarPendente('${n.chave}')">Voltar pra pendente</button>`
-      : `<button class="btn btn-sm btn-primary" onclick="distDarEntrada('${n.chave}')">Dar entrada</button>
-         <button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`;
+      : `<button class="btn btn-sm btn-primary" onclick="distDarEntrada('${n.chave}')">${entrada?'Continuar a entrada':'Dar entrada'}</button>
+         ${entrada?'':`<button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`}`;
 
   return `<tr>
     <td>
@@ -50629,7 +50826,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '06/11/2026 11:40';
+const SISTEMA_VERSAO = '06/11/2026 13:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
