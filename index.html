@@ -6093,6 +6093,7 @@ function abrirCorrigirProdutoFiscal(produtoId, aoCorrigir){
 
   ['cf-unidade','cf-st'].forEach(id=>campo(id).addEventListener('change', mostrarFalta));
   campo('cf-ncm').addEventListener('input', ()=>{ sugerirCest(); mostrarFalta(); });
+  ligarBuscaNcm('cf-ncm', ()=>{ sugerirCest(); mostrarFalta(); });
   campo('cf-cest').addEventListener('input', mostrarFalta);
   if(!(produto.ncm||'').trim()) sugerirNcm();
   sugerirCest();
@@ -6129,6 +6130,411 @@ function ncmNorm(s){
     .replace(/[^a-z0-9 ]/g,' ').replace(/\s+/g,' ').trim();
 }
 function ncmSo8(s){ return (s||'').toString().replace(/\D/g,'').slice(0,8); }
+
+/* =========================================================
+   BUSCA DE NCM POR NOME
+
+   "o sistema deveria ter uma base de dados de ncm, pra quando
+    tiver que colocar um ncm eu poder colocar números, ou nomes
+    de referência igual faço pesquisa de produto, exemplo vassoura
+    — e ai ele vai me dar sugestão, podendo também ter palavras
+    invertidas fora de ordem"
+
+   De onde vêm as sugestões, em ordem de confiança:
+
+   1. DAS SUAS PRÓPRIAS NOTAS. Todo XML de entrada traz o NCM que o
+      fornecedor usou, colado na descrição dele do produto. Essa é a
+      melhor base que existe aqui: é real, é do ramo dela, e veio de
+      quem já classificou aquele produto pra valer. Não inventei nada.
+
+   2. DOS PRODUTOS JÁ CADASTRADOS, pelo mesmo motivo.
+
+   3. DE UMA LISTA BÁSICA DO RAMO, embutida. Essa é SUGESTÃO e a tela
+      diz isso: NCM errado na nota é problema fiscal dela, não meu, e
+      uma lista escrita de cabeça não tem a autoridade da tabela
+      oficial. Serve pra dar o caminho quando as duas primeiras não
+      têm nada.
+
+   4. DA TABELA OFICIAL, se ela importar o arquivo do gov.br. Aí essa
+      vira a fonte boa e carrega as ~10 mil posições.
+
+   A busca aceita palavra fora de ordem de propósito: "vassoura nylon"
+   e "nylon vassoura" acham a mesma coisa, porque ninguém lembra a
+   ordem em que o fornecedor escreveu.
+   ========================================================= */
+
+/* Lista básica do ramo. NÃO É A TABELA OFICIAL — é ponto de partida,
+   e cada linha aparece na tela marcada como sugestão a confirmar. */
+const NCM_BASE_RAMO = [
+  ['34022000','Preparações tensoativas para lavagem e limpeza, para venda a varejo — detergente, amaciante, sabão líquido'],
+  ['34029090','Preparações tensoativas para lavagem e limpeza — outras'],
+  ['34011190','Sabões de toucador, em barras ou pedaços'],
+  ['34011900','Sabões em barras, pedaços ou figuras — outros'],
+  ['34012090','Sabão em outras formas — em pó, em pasta, líquido'],
+  ['34052000','Ceras, polidores e preparações para conservação de móveis e madeira'],
+  ['34054000','Pastas, pós e outras preparações para arear — saponáceo'],
+  ['34059000','Outras preparações para limpeza e polimento'],
+  ['28289011','Hipoclorito de sódio — água sanitária, cloro'],
+  ['38089419','Desinfetantes — outros, apresentados de outro modo'],
+  ['38089429','Desinfetantes para uso domissanitário'],
+  ['33074900','Preparações para perfumar ou desodorizar ambientes — odorizador, aromatizante'],
+  ['38140090','Solventes e diluentes orgânicos compostos'],
+  ['48181000','Papel higiênico'],
+  ['48182000','Lenços, toalhas de mão de papel'],
+  ['48183000','Toalhas de mesa e guardanapos de papel'],
+  ['48030090','Papel toalha, papel para uso doméstico ou higiênico — em bobina'],
+  ['96031000','Vassouras e escovas de ramos ou de matérias vegetais em feixes'],
+  ['96039000','Rodos, vassouras mecânicas, esfregões, espanadores e artigos de escovaria — outros'],
+  ['96032900','Escovas para cabelo, unhas e outras escovas de toucador'],
+  ['96034000','Pincéis e escovas para pintar, caiar ou envernizar'],
+  ['96035000','Escovas que constituam partes de máquinas ou aparelhos'],
+  ['63071000','Rodilhas, esfregões, panos de prato e de limpeza, flanelas'],
+  ['63079090','Outros artigos têxteis confeccionados — pano, capa, saco de tecido'],
+  ['39241000','Serviços de mesa e artigos de cozinha, de plástico'],
+  ['39249000','Artigos de higiene e de uso doméstico, de plástico — balde, bacia, cesto, lixeira'],
+  ['39232110','Sacos de polietileno — saco de lixo, saco plástico'],
+  ['39232990','Sacos de outros plásticos'],
+  ['39235000','Rolhas, tampas, cápsulas e outros dispositivos de uso semelhante, de plástico'],
+  ['39173290','Tubos e mangueiras de plástico, sem reforço'],
+  ['39262000','Vestuário e seus acessórios, de plástico — luva plástica, avental, capa de chuva'],
+  ['40151900','Luvas de borracha vulcanizada — luva de limpeza, luva multiuso'],
+  ['40169990','Outras obras de borracha vulcanizada'],
+  ['73239300','Artigos de uso doméstico de aço inoxidável — panela, bacia, lixeira inox'],
+  ['73239900','Artigos de uso doméstico de ferro ou aço — outros'],
+  ['76151000','Artigos de uso doméstico de alumínio — rodo de alumínio, panela, bandeja'],
+  ['68053000','Abrasivos aplicados sobre outras matérias — lixa, esponja abrasiva'],
+  ['68051000','Abrasivos aplicados sobre matéria têxtil'],
+  ['84248990','Aparelhos mecânicos para projetar, dispersar ou pulverizar líquidos — pulverizador, borrifador'],
+  ['84243000','Máquinas e aparelhos de jato de água — lavadora de alta pressão'],
+  ['85081100','Aspiradores de pó com motor elétrico de potência não superior a 1.500 W'],
+  ['85086000','Outros aspiradores'],
+  ['84145910','Ventiladores — de mesa, de pé, de parede'],
+  ['84145190','Ventiladores de uso doméstico — outros'],
+  ['84151011','Aparelhos de ar condicionado de janela ou de parede, monobloco'],
+  ['84151019','Aparelhos de ar condicionado tipo split system'],
+  ['85094000','Trituradores, liquidificadores e espremedores de frutas'],
+  ['84501100','Máquinas de lavar roupa inteiramente automáticas'],
+  ['85167100','Aparelhos para preparação de café ou chá'],
+  ['39269090','Outras obras de plástico — artigo de uso geral'],
+  ['82055900','Ferramentas manuais — outras'],
+  ['96035000','Escovas industriais que sejam partes de máquinas'],
+  ['70139900','Objetos de vidro para serviço de mesa ou de cozinha'],
+  ['69120000','Louça e artigos de cerâmica para uso doméstico'],
+  ['33061000','Dentifrícios — creme dental'],
+  ['33051000','Xampus'],
+  ['33072090','Desodorantes corporais e antiperspirantes'],
+  ['96190000','Absorventes e tampões higiênicos, fraldas e artigos semelhantes'],
+  ['30059090','Pastas, gazes, ataduras e artigos análogos'],
+  ['22089000','Álcool etílico não desnaturado com teor alcoólico inferior a 80% — álcool 70'],
+  ['22071090','Álcool etílico não desnaturado com teor alcoólico igual ou superior a 80%'],
+  ['38249999','Produtos químicos e preparações das indústrias químicas — outros'],
+  ['35069190','Adesivos à base de polímeros — cola'],
+  ['85065000','Pilhas e baterias de lítio'],
+  ['85061090','Pilhas e baterias de dióxido de manganês'],
+  ['94036000','Móveis de madeira — outros'],
+  ['39221000','Banheiras, boxes para chuveiros, pias e lavatórios, de plástico'],
+  ['73269090','Outras obras de ferro ou aço'],
+  ['56031190','Falsos tecidos — pano multiuso, perfex'],
+  ['48189000','Outros artigos de pasta de papel, papel ou cartão, de uso doméstico']
+];
+
+/* Tabela oficial importada por ela, quando houver. Fica no IndexedDB:
+   são ~10 mil linhas e o localStorage tem 5 MB pro sistema inteiro —
+   o mesmo motivo das certidões e dos XMLs. */
+let NCM_OFICIAL = null;       /* [[codigo, descricao], ...] ou null */
+let ncmOficialCarregando = null;
+
+function ncmIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-ncm', 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains('tabela')) req.result.createObjectStore('tabela');
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('tabela', modo==='get'?'readonly':'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore('tabela');
+      const op = modo==='get' ? store.get(chave)
+               : modo==='del' ? store.delete(chave)
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+async function ncmCarregarOficial(){
+  if(NCM_OFICIAL) return NCM_OFICIAL;
+  if(ncmOficialCarregando) return ncmOficialCarregando;
+  ncmOficialCarregando = (async ()=>{
+    try{
+      const t = await ncmIdb('get', 'oficial');
+      if(Array.isArray(t) && t.length) NCM_OFICIAL = t;
+    }catch(e){ console.warn('NCM oficial não carregou', e); }
+    ncmOficialCarregando = null;
+    return NCM_OFICIAL;
+  })();
+  return ncmOficialCarregando;
+}
+
+/* ---------------------------------------------------------------
+   O ÍNDICE
+
+   Montado na hora da primeira busca e guardado em memória. Juntar
+   NCM igual que apareceu com nomes diferentes é o ponto: a mesma
+   posição pode ter chegado como "DETERGENTE YPE 500ML" numa nota e
+   "DET LIQ NEUTRO" em outra, e as duas têm que achar.
+   --------------------------------------------------------------- */
+let ncmIndiceCache = null;
+
+function ncmInvalidarIndice(){ ncmIndiceCache = null; }
+
+function ncmSoDigitos(v){ return String(v||'').replace(/\D/g,''); }
+
+/* Sem acento, sem pontuação, maiúsculo: "LIMÃO" e "limao" batem. */
+function ncmNormalizar(t){
+  return String(t||'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
+    .toUpperCase()
+    .replace(/[^A-Z0-9 ]+/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+function ncmIndice(){
+  if(ncmIndiceCache) return ncmIndiceCache;
+  const mapa = new Map();
+
+  const juntar = (codigo, texto, fonte, peso)=>{
+    const c = ncmSoDigitos(codigo);
+    if(c.length !== 8) return;             /* NCM é 8 dígitos; o resto é lixo */
+    const t = String(texto||'').trim();
+    let e = mapa.get(c);
+    if(!e){
+      e = { codigo:c, nomes:[], fontes:new Set(), usos:0 };
+      mapa.set(c, e);
+    }
+    e.fontes.add(fonte);
+    e.usos += (peso||1);
+    if(t && !e.nomes.some(n=>n.toLowerCase()===t.toLowerCase()) && e.nomes.length < 6){
+      e.nomes.push(t);
+    }
+  };
+
+  /* 1) os produtos dela */
+  (STATE.produtos||[]).forEach(p=>{
+    if(!p || !p.ncm) return;
+    juntar(p.ncm, p.nome, 'seu cadastro', 3);
+    if(p.marca) juntar(p.ncm, p.marca + ' ' + (p.nome||''), 'seu cadastro', 0);
+  });
+
+  /* 2) os itens das notas de entrada — a descrição do fornecedor */
+  (STATE.entradas||[]).forEach(e=>{
+    (e.itens||[]).forEach(it=>{
+      if(!it || !it.ncm) return;
+      juntar(it.ncm, it.nomeNaNota || it.nomeProduto, 'suas notas', 2);
+    });
+  });
+
+  /* 3) a leitura das notas da Receita (análise de ST), que tem NCM e nomes */
+  const st = (STATE.analiseST && STATE.analiseST.porNcm) || {};
+  Object.keys(st).forEach(k=>{
+    const g = st[k];
+    if(!g || !g.ncm) return;
+    (g.nomes||[]).forEach(n=>juntar(g.ncm, n, 'suas notas', 1));
+  });
+
+  /* 4) a tabela oficial, se ela importou */
+  if(NCM_OFICIAL){
+    NCM_OFICIAL.forEach(par=>juntar(par[0], par[1], 'tabela oficial', 0));
+  }
+
+  /* 5) a lista básica do ramo — por último, e marcada */
+  NCM_BASE_RAMO.forEach(par=>juntar(par[0], par[1], 'sugestão do sistema', 0));
+
+  ncmIndiceCache = [...mapa.values()].map(e=>({
+    codigo: e.codigo,
+    nomes: e.nomes,
+    fontes: [...e.fontes],
+    usos: e.usos,
+    /* o texto onde a busca procura: código com e sem pontuação, mais os nomes */
+    busca: ncmNormalizar(e.codigo + ' ' + ncmFormatado(e.codigo) + ' ' + e.nomes.join(' '))
+  }));
+  return ncmIndiceCache;
+}
+
+/* ---------------------------------------------------------------
+   A BUSCA
+
+   Todas as palavras têm que aparecer, em qualquer ordem e em
+   qualquer lugar do texto. É o que faz "vassoura nylon" e "nylon
+   vassoura" darem o mesmo resultado — e o que faz "deterg" achar
+   "DETERGENTE", porque a comparação é por pedaço, não por palavra
+   inteira.
+   --------------------------------------------------------------- */
+function ncmBuscar(termo, limite){
+  const t = ncmNormalizar(termo);
+  if(t.length < 2) return [];
+  const palavras = t.split(' ').filter(Boolean);
+  const digitos = ncmSoDigitos(termo);
+
+  const achados = ncmIndice().filter(e=>{
+    if(digitos.length >= 2 && e.codigo.startsWith(digitos)) return true;
+    return palavras.every(p=>e.busca.includes(p));
+  });
+
+  /* Ordem: o que ela já usou primeiro. Um NCM que já passou numa nota
+     dela vale mais que uma sugestão genérica, sempre. */
+  const pontos = (e)=>{
+    let p = e.usos * 10;
+    if(digitos.length >= 2 && e.codigo.startsWith(digitos)) p += 1000;
+    if(e.fontes.includes('seu cadastro')) p += 300;
+    if(e.fontes.includes('suas notas')) p += 200;
+    if(e.fontes.includes('tabela oficial')) p += 50;
+    /* nome que COMEÇA com o que ela digitou vem antes do que só contém */
+    if(e.nomes.some(n=>ncmNormalizar(n).startsWith(palavras[0]))) p += 80;
+    return p;
+  };
+  return achados.sort((a,b)=>pontos(b)-pontos(a)).slice(0, limite || 12);
+}
+
+function ncmEhSugestaoGenerica(e){
+  return e.fontes.length === 1 && e.fontes[0] === 'sugestão do sistema';
+}
+
+/* ---------------------------------------------------------------
+   A CAIXA DE SUGESTÃO
+
+   Liga num <input> qualquer: digita, aparece a lista, clica ou dá
+   Enter e o código entra no campo. Teclado funciona (seta e Enter)
+   porque ela cadastra produto em série, e tirar a mão do teclado a
+   cada item custa mais que o campo inteiro.
+   --------------------------------------------------------------- */
+function ligarBuscaNcm(idCampo, aoEscolher){
+  const campo = document.getElementById(idCampo);
+  if(!campo || campo.dataset.ncmLigado === '1') return;
+  campo.dataset.ncmLigado = '1';
+  campo.setAttribute('autocomplete','off');
+  if(!campo.placeholder) campo.placeholder = 'Código ou nome — ex.: vassoura, detergente, 3402';
+
+  let caixa = null, itens = [], marcado = -1;
+
+  const fechar = ()=>{ if(caixa){ caixa.remove(); caixa = null; } itens = []; marcado = -1; };
+
+  let escolhendo = false;
+  const escolher = (e)=>{
+    /* Pontuado, igual ao que o campo ja mostrava: trocar o formato na
+       escolha faria parecer que o sistema mexeu no codigo. */
+    campo.value = (typeof ncmFormatado === 'function') ? ncmFormatado(e.codigo) : e.codigo;
+    fechar();
+    /* O 'input' aqui existe pra quem escuta o campo de fora (o CEST se
+       sugere sozinho a partir do NCM). Mas ele reentra na nossa propria
+       busca e reabre a caixa que acabamos de fechar — por isso a trava. */
+    escolhendo = true;
+    campo.dispatchEvent(new Event('input', {bubbles:true}));
+    campo.dispatchEvent(new Event('change', {bubbles:true}));
+    escolhendo = false;
+    if(typeof aoEscolher === 'function') aoEscolher(e);
+  };
+
+  const pintar = ()=>{
+    if(!caixa) return;
+    [...caixa.children].forEach((el,i)=>{
+      el.style.background = (i===marcado) ? 'var(--primary-soft)' : '';
+    });
+  };
+
+  const abrir = (lista)=>{
+    fechar();
+    if(lista.length === 0) return;
+    itens = lista;
+    caixa = document.createElement('div');
+    caixa.className = 'ncm-sugestao-lista';
+    const r = campo.getBoundingClientRect();
+    caixa.style.cssText = `position:absolute;z-index:10000;background:#fff;border:1px solid var(--border);
+      border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.14);max-height:320px;overflow-y:auto;
+      left:${r.left + window.scrollX}px;top:${r.bottom + window.scrollY + 3}px;width:${Math.max(r.width, 420)}px;`;
+    lista.forEach((e,i)=>{
+      const op = document.createElement('div');
+      op.style.cssText = 'padding:8px 11px;cursor:pointer;border-bottom:1px solid var(--border-soft,#EEE);font-size:13px;';
+      const generico = ncmEhSugestaoGenerica(e);
+      op.innerHTML = `<div style="display:flex;gap:8px;align-items:baseline;">
+          <strong style="font-family:var(--font-num);">${escapeHtml(ncmFormatado(e.codigo))}</strong>
+          <span style="color:var(--ink-soft);flex:1;min-width:0;">${escapeHtml(e.nomes[0] || '')}</span>
+        </div>
+        <div class="help-text" style="margin:0;">${escapeHtml(e.fontes.join(' · '))}${
+          generico ? ' — confira com a contadora' : ''}${
+          e.nomes.length>1 ? ' · também: ' + escapeHtml(e.nomes.slice(1,3).join(' / ')) : ''}</div>`;
+      op.addEventListener('mousedown', (ev)=>{ ev.preventDefault(); escolher(e); });
+      op.addEventListener('mouseenter', ()=>{ marcado = i; pintar(); });
+      caixa.appendChild(op);
+    });
+    document.body.appendChild(caixa);
+  };
+
+  campo.addEventListener('input', ()=>{
+    if(escolhendo) return;
+    const v = campo.value.trim();
+    if(v.length < 2){ fechar(); return; }
+    abrir(ncmBuscar(v, 12));
+  });
+  campo.addEventListener('focus', ()=>{ ncmCarregarOficial().then(()=>ncmInvalidarIndice()); });
+  campo.addEventListener('blur', ()=>setTimeout(fechar, 150));
+  campo.addEventListener('keydown', (ev)=>{
+    if(!caixa) return;
+    if(ev.key === 'ArrowDown'){ ev.preventDefault(); marcado = Math.min(marcado+1, itens.length-1); pintar(); }
+    else if(ev.key === 'ArrowUp'){ ev.preventDefault(); marcado = Math.max(marcado-1, 0); pintar(); }
+    else if(ev.key === 'Enter' && marcado >= 0){ ev.preventDefault(); escolher(itens[marcado]); }
+    else if(ev.key === 'Escape'){ fechar(); }
+  });
+}
+
+/* ---------------------------------------------------------------
+   IMPORTAR A TABELA OFICIAL
+
+   A lista embutida é do ramo dela e nada mais. Quem quiser as ~10 mil
+   posições baixa o JSON do portal da Receita/Siscomex e solta aqui.
+   Vai pro IndexedDB, não pro STATE, pelo tamanho.
+   --------------------------------------------------------------- */
+async function ncmImportarTabela(arquivo){
+  if(!arquivo) return;
+  try{
+    const texto = await arquivo.text();
+    const dados = JSON.parse(texto);
+    /* O arquivo oficial vem como {Data:[{Codigo,Descricao},...]} ou como
+       uma lista direta. Aceita os dois, e também um CSV convertido. */
+    const bruto = Array.isArray(dados) ? dados
+                : Array.isArray(dados.Data) ? dados.Data
+                : Array.isArray(dados.Nomenclaturas) ? dados.Nomenclaturas
+                : null;
+    if(!bruto) throw new Error('Não reconheci o formato deste arquivo.');
+
+    const linhas = [];
+    bruto.forEach(o=>{
+      const cod = ncmSoDigitos(o.Codigo || o.codigo || o.ncm || o.NCM || '');
+      const desc = String(o.Descricao || o.descricao || o.desc || '').trim();
+      if(cod.length === 8 && desc) linhas.push([cod, desc]);
+    });
+    if(linhas.length === 0) throw new Error('Não achei nenhum NCM de 8 dígitos neste arquivo.');
+
+    await ncmIdb('put', 'oficial', linhas);
+    NCM_OFICIAL = linhas;
+    ncmInvalidarIndice();
+    STATE.config = STATE.config || {};
+    STATE.config.ncmTabelaEm = todayISO();
+    STATE.config.ncmTabelaQtd = linhas.length;
+    saveState();
+    showToast(`Tabela oficial carregada: ${linhas.length} posições de NCM.`, 'success');
+  }catch(e){
+    showToast('Não consegui ler a tabela: ' + e.message, 'error');
+  }
+}
+
 function ncmFormatado(s){
   const n = ncmSo8(s);
   if(n.length!==8) return n;
@@ -7168,6 +7574,7 @@ function ativarFormProduto(produto, acoes){
     campo.addEventListener('blur', ()=>setTimeout(fechar, 120));
     campo.addEventListener('keydown', ev=>{ if(ev.key==='Escape') fechar(); });
   }
+  ligarBuscaNcm('fp-ncm');
   ligarSugestaoTexto('fp-categoria', getCategoriasUnicas, 'uma categoria');
   ligarSugestaoTexto('fp-marca', getMarcasUnicas, 'uma marca');
 
@@ -7561,7 +7968,7 @@ function abrirMesclagemProduto(produtoBaseId){
             </div>
             <div class="field">
               <label>NCM</label>
-              <input type="text" id="mp-ncm" maxlength="8" value="${escapeAttr(produtoBase.ncm||'')}">
+              <input type="text" id="mp-ncm" maxlength="10" value="${escapeAttr(ncmFormatado(produtoBase.ncm||''))}">
             </div>
             <div class="field">
               <label>Custo Unitário (R$) <span class="req">*</span></label>
@@ -7592,6 +7999,7 @@ function abrirMesclagemProduto(produtoBaseId){
     </div>
   `;
   document.body.appendChild(modal);
+  ligarBuscaNcm('mp-ncm');
 
   function renderCandidatos(){
     const texto = document.getElementById('mp-busca').value;
@@ -7671,7 +8079,7 @@ function abrirMesclagemProduto(produtoBaseId){
       fornecedorId: fornecedorIdSelecionado,
       fornecedor: fornecedorSelecionado ? fornecedorSelecionado.nome : '',
       codigoBarras: document.getElementById('mp-codigo-barras').value.trim(),
-      ncm: document.getElementById('mp-ncm').value.trim(),
+      ncm: ncmSo8(document.getElementById('mp-ncm').value),
       custo, precoVenda,
       localCompraId,
       ondeComprado: localSelecionado ? localSelecionado.nome : ''
@@ -41909,6 +42317,21 @@ function abrirConfigNfe(){
         </div>
 
         <details style="margin-bottom:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
+          <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;">🔎 Tabela oficial de NCM (opcional)</summary>
+          <div style="padding:4px 0 12px;">
+            <p class="help-text" style="margin-top:0;">A busca de NCM já funciona sem isto: ela aprende com as suas
+              próprias notas de entrada, que é a melhor fonte — foi o fornecedor que classificou, e é do seu ramo.
+              A lista básica embutida é só um ponto de partida e aparece marcada como <strong>sugestão a confirmar</strong>.</p>
+            <p class="help-text">Se quiser as ~10 mil posições oficiais, baixe o arquivo JSON da nomenclatura no
+              Portal Único Siscomex e solte aqui. Ele fica guardado neste navegador.</p>
+            <input type="file" id="cfg-ncm-arquivo" accept=".json,application/json" style="font-size:12.5px;">
+            <div class="help-text" style="margin-top:6px;">${STATE.config.ncmTabelaQtd
+              ? `✅ Tabela carregada: ${STATE.config.ncmTabelaQtd} posições (em ${enData(STATE.config.ncmTabelaEm)||'—'}).`
+              : 'Nenhuma tabela oficial carregada.'}</div>
+          </div>
+        </details>
+
+        <details style="margin-bottom:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
           <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;">🚦 Virar para produção (nota de verdade)</summary>
           <div style="padding:4px 0 12px;">
             <p class="help-text" style="margin-top:0;">Enquanto o servidor estiver em teste, toda nota sai com a tarja "SEM VALOR FISCAL" — não é defeito do sistema, é a Receita marcando que aquilo é um ensaio. Para valer de verdade, estes cinco passos:</p>
@@ -41975,6 +42398,11 @@ function abrirConfigNfe(){
       </div>
     </div>`;
   document.body.appendChild(modal);
+  const inpNcm = document.getElementById('cfg-ncm-arquivo');
+  if(inpNcm) inpNcm.addEventListener('change', (ev)=>{
+    const f = ev.target.files && ev.target.files[0];
+    if(f) ncmImportarTabela(f).then(()=>{ document.getElementById('modal-config-nfe')?.remove(); abrirConfigNfe(); });
+  });
   // já pergunta ao servidor em que ambiente ele está — ninguém devia precisar
   // clicar num botão pra descobrir se a nota que vai sair vale ou não
   nfeVerificarAmbienteNaConfig();
@@ -42346,6 +42774,52 @@ function nfeCpfValido(cpf){
   return true;
 }
 
+/* =========================================================
+   OS LIMITES DE TAMANHO DA RECEITA
+
+   "Não consegui emitir a nota: Element xNome: the value has a length
+    of '65'; this exceeds the allowed maximum length of '60'."
+
+   O cliente era CONSELHO ESCOLAR COLEGIO ESTADUAL PROFESSORA LIODOSIA
+   SERRA RAMOS — 65 letras. O schema da NF-e corta em 60, e não há o que
+   negociar: nome maior que isso a Receita recusa a nota inteira. Pior,
+   recusava também o ESPELHO, então ela descobria só na hora de emitir.
+
+   Então o corte passa a ser feito aqui, uma vez, pra todo campo que tem
+   limite — e o sistema DIZ o que encurtou, em vez de encurtar calado.
+   Encurtar sem avisar seria trocar um erro visível por um documento
+   fiscal diferente do que ela acha que mandou.
+   ========================================================= */
+const NFE_LIMITES = {
+  nome: 60, logradouro: 60, numero: 60, complemento: 60,
+  bairro: 60, municipio: 60, produto: 120, unidade: 6
+};
+
+/* O que foi encurtado na última montagem, pra tela avisar. */
+let nfeEncurtados = [];
+
+function nfeCampo(valor, max, rotulo){
+  /* Espaço no começo/fim e espaço duplicado também derrubam a nota: o
+     schema usa xs:token, que não aceita nenhum dos dois. */
+  let t = String(valor == null ? '' : valor)
+            .replace(/[\u0000-\u001F\u007F]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+  if(max && t.length > max){
+    t = t.slice(0, max).trim();
+    if(rotulo) nfeEncurtados.push(`${rotulo} (de ${String(valor).trim().length} para ${max} caracteres)`);
+  }
+  return t;
+}
+
+/* A frase que a tela mostra depois de montar — vazia quando nada foi
+   cortado, que é o caso normal. */
+function nfeAvisoEncurtado(){
+  if(nfeEncurtados.length === 0) return '';
+  return 'A Receita limita o tamanho de alguns campos, então encurtei: '
+       + nfeEncurtados.join('; ') + '.';
+}
+
 function nfeItensParaNota(venda){
   const itens = (venda.itens||[]);
   const originais = itens.map(it=>nfeArredondar(it.qtd*it.precoUnit));
@@ -42371,9 +42845,9 @@ function nfeItensParaNota(venda){
     const final = nfeArredondar(aposItem[i]*fator);
     return {
       codigo: produto ? (produto.sku || produto.id) : String(i+1),
-      nome: (it.nome||'').substring(0,120),
+      nome: nfeCampo(it.nome, NFE_LIMITES.produto, `descrição do item "${String(it.nome||'').slice(0,25)}..."`),
       ncm: produto ? (produto.ncm||'').replace(/\D/g,'') : '',
-      unidade: (it.unidade || 'UN').substring(0,6),
+      unidade: nfeCampo(it.unidade || 'UN', NFE_LIMITES.unidade),
       quantidade: it.qtd,
       valorUnitario: it.precoUnit,
       desconto: nfeArredondar(originais[i]-final),
@@ -42383,6 +42857,7 @@ function nfeItensParaNota(venda){
 }
 
 async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
+  nfeEncurtados = [];   /* uma lista por montagem, nunca acumulada */
   const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
   // CPF digitado na hora (o cliente pediu "põe meu CPF na nota") tem
   // prioridade sobre o documento do cadastro.
@@ -42394,17 +42869,17 @@ async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
     modelo: modelo || NFE_MODELO.NFE,
     numeroNota,
     cliente: {
-      nome: cliente.nome,
+      nome: nfeCampo(cliente.nome, NFE_LIMITES.nome, `nome de ${String(cliente.nome||'').slice(0,20)}...`),
       cpf: doc.length===11 ? doc : '',
       cnpj: doc.length===14 ? doc : '',
       ie: (cliente.inscricaoEstadual||'').replace(/\D/g,''),
       endereco: {
-        logradouro: (cliente.endereco||'').substring(0,60) || 'NAO INFORMADO',
-        numero: cliente.numero || 'S/N',
-        bairro: cliente.bairro || '',
+        logradouro: nfeCampo(cliente.endereco, NFE_LIMITES.logradouro, 'endereço') || 'NAO INFORMADO',
+        numero: nfeCampo(cliente.numero, NFE_LIMITES.numero) || 'S/N',
+        bairro: nfeCampo(cliente.bairro, NFE_LIMITES.bairro, 'bairro'),
         cep: (cliente.cep||'').replace(/\D/g,''),
-        municipio: cliente.cidadeEstruturada || cliente.cidade || '',
-        uf: cliente.uf || '',
+        municipio: nfeCampo(cliente.cidadeEstruturada || cliente.cidade, NFE_LIMITES.municipio, 'município'),
+        uf: nfeCampo(cliente.uf, 2),
         codigoMunicipio: codigoIbge
       }
     },
@@ -42629,6 +43104,10 @@ async function nfeVerEspelho(origem, modelo){
   showToast('Gerando o espelho... pode demorar até 1 minuto na primeira vez.', 'info');
   try{
     const payload = await nfeMontarPayload(orcamento, num.proximo, modelo);
+    /* Se algum campo foi encurtado, ela fica sabendo AQUI, no espelho —
+       que é justamente onde se confere a nota antes de valer. */
+    const avisoCorte = nfeAvisoEncurtado();
+    if(avisoCorte) showToast(avisoCorte, 'info');
     const r = await nfeChamar('/espelho', payload);
     if(r.pdf){
       /* nome do arquivo com cliente e nº do orçamento: ela guarda o
@@ -42725,6 +43204,8 @@ async function nfeEmitir(origem, modelo, opcoes){
   showToast(`Enviando a ${nomeModelo} para a Receita... pode demorar até 1 minuto.`, 'info');
   try{
     const payload = await nfeMontarPayload(orcamento, num.proximo, modelo, opcoes.cpfNaNota);
+    const avisoCorte = nfeAvisoEncurtado();
+    if(avisoCorte) showToast(avisoCorte, 'info');
     const r = await nfeChamar('/emitir', payload);
 
     if(!r.ok){
@@ -44393,16 +44874,75 @@ const CP_PASSOS = [
   { n:4, titulo:'Relatório',     resumo:'quem ficou mais barato, e quanto fica a compra' }
 ];
 
+/* =========================================================
+   NÃO VOLTAR PRO INÍCIO A CADA ALTERAÇÃO
+
+   "quando eu clico pra alterar, ele simplesmente volta lá pro início
+    de novo. Eu tenho que rolar pra ver o último item que eu estava
+    mexendo, e aí eu clico, altera, ele volta pro início de novo."
+
+   A tela inteira é redesenhada a cada mudança — é o que mantém os
+   contadores e os totais certos. Só que redesenhar joga fora a caixa
+   rolante e cria outra, e a nova nasce no topo. Numa lista de 229
+   itens isso quer dizer rolar de novo a cada linha mexida.
+
+   Guardar a posição e devolver depois resolve sem mexer em como a
+   tela é montada. Vale pra rolagem da janela, pra caixa de dentro, e
+   pro campo onde o cursor estava — porque perder o foco no meio de
+   digitar uma quantidade custa o mesmo tanto.
+   ========================================================= */
+function preservandoRolagem(fn){
+  const janela = window.scrollY;
+  /* Caixas que rolam por dentro: guardadas por classe e por ordem, já
+     que o elemento em si é destruído no redesenho. */
+  const internas = [...document.querySelectorAll('.cp-wrap, .table-wrap, [data-rolagem]')]
+    .map(el=>({ classe: el.className, topo: el.scrollTop, esq: el.scrollLeft }));
+
+  const foco = document.activeElement;
+  const idFoco = foco && foco.id ? foco.id : null;
+  let selIni = null, selFim = null;
+  try{
+    if(idFoco && foco.selectionStart != null){ selIni = foco.selectionStart; selFim = foco.selectionEnd; }
+  }catch(e){}
+
+  fn();
+
+  const novas = [...document.querySelectorAll('.cp-wrap, .table-wrap, [data-rolagem]')];
+  internas.forEach((g,i)=>{
+    const el = novas[i];
+    if(el && el.className === g.classe){ el.scrollTop = g.topo; el.scrollLeft = g.esq; }
+  });
+  if(janela) window.scrollTo(0, janela);
+
+  if(idFoco){
+    const de_volta = document.getElementById(idFoco);
+    if(de_volta){
+      try{
+        de_volta.focus({ preventScroll:true });
+        if(selIni != null && de_volta.setSelectionRange) de_volta.setSelectionRange(selIni, selFim);
+      }catch(e){}
+    }
+  }
+}
+
+/* Trocar de etapa é a exceção: ali voltar ao topo é o certo. */
+let cpVoltarAoTopo = false;
+
 function renderSugestaoCompra(){
   const box = document.getElementById('sugestao-compra-content');
   if(!box) return;
-  if(cpPagina === 4) cpRenderPagina4(box);
-  else if(cpPagina === 3) cpRenderPagina3(box);
-  else if(cpPagina === 2) cpRenderPagina2(box);
-  else cpRenderPagina1(box);
+  const desenhar = ()=>{
+    if(cpPagina === 4) cpRenderPagina4(box);
+    else if(cpPagina === 3) cpRenderPagina3(box);
+    else if(cpPagina === 2) cpRenderPagina2(box);
+    else cpRenderPagina1(box);
+  };
+  if(cpVoltarAoTopo){ cpVoltarAoTopo = false; desenhar(); return; }
+  preservandoRolagem(desenhar);
 }
 
 function cpIrPara(pagina){
+  cpVoltarAoTopo = true;   /* outra etapa, outra lista: aí o topo é o certo */
   cpPagina = pagina;
   cpBusca = '';   /* trocar de etapa limpa a busca: filtro de uma etapa escondendo item na outra confunde */
   renderSugestaoCompra();
@@ -45724,6 +46264,30 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-08-a',
+    data: '2026-11-08',
+    titulo: 'CONSERTADO: o trabalho que sumia quando a outra máquina sincronizava',
+    itens: [
+      'O DEFEITO: toda a Sugestão de Compra — as quantidades que você decidiu e os custos que pesquisou por fornecedor — mora dentro de um bloco só do sistema. Quando a outra máquina sincronizava, esse bloco inteiro era TROCADO pelo dela. E bastava a outra máquina ABRIR a tela de Sugestão de Compra pra criar um bloco padrão, subir, e apagar horas de trabalho daqui. Sem aviso, sem erro na tela: voltava do zero.',
+      'O CONSERTO: a junção agora desce até o fundo. Quantidade, custo, grupo e item escondido que existem só aqui SOBREVIVEM; o que a outra máquina mudou de verdade entra junto; e lista que chega vazia não apaga lista que tem coisa.',
+      'Vale pra todos os blocos, não só o da compra: vínculos de fornecedor, análise de ST, notas da Receita. Era a mesma falha em todos, e já tinha aparecido antes nas certidões e na pasta de documentos.',
+      'A troca consciente: apagar uma coisa numa máquina pode demorar a chegar na outra. Perder uma exclusão é aborrecimento; perder a sua tarde de trabalho, não.',
+      'A TELA NÃO VOLTA MAIS PRO INÍCIO. Mexeu num grupo ou numa quantidade, a lista continua exatamente onde você estava — e o cursor fica no campo, com o texto selecionado do mesmo jeito. Numa lista de 229 itens, rolar de novo a cada linha era meia tarde. Trocar de etapa continua voltando ao topo, que ali é o certo.'
+    ]
+  },
+  {
+    id: '2026-11-08-b',
+    data: '2026-11-08',
+    titulo: 'Nome grande não derruba mais a nota, e o NCM agora se procura por nome',
+    itens: [
+      'NOTA RECUSADA POR NOME GRANDE, resolvido. "CONSELHO ESCOLAR COLEGIO ESTADUAL PROFESSORA LIODOSIA SERRA RAMOS" tem 65 letras e a Receita corta em 60 — a nota inteira era recusada, e o espelho também. Agora o sistema encurta o que passa do limite (nome, endereço, bairro, município, descrição do item) e DIZ o que encurtou, em vez de encurtar calado.',
+      'Também tira espaço sobrando e quebra de linha, que derrubam a nota do mesmo jeito e são invisíveis na tela.',
+      'BUSCA DE NCM POR NOME. No campo de NCM, digite "vassoura", "papel higienico", "deterg" — e ele sugere. Palavra fora de ordem funciona: "vassoura nylon" e "nylon vassoura" acham a mesma coisa. Acento não importa. Número também busca: digite 3402 e ele lista os que começam assim.',
+      'DE ONDE VÊM AS SUGESTÕES: primeiro das SUAS notas de entrada — foi o fornecedor que classificou aquele produto, é real e é do seu ramo. Depois dos seus produtos cadastrados. Por último, uma lista básica do ramo, que aparece marcada como "confira com a contadora", porque lista escrita de cabeça não tem a autoridade da tabela oficial.',
+      'Se quiser as ~10 mil posições oficiais, dá pra carregar o arquivo do Portal Único Siscomex em Configurar Nota Fiscal. É opcional: a busca já funciona sem isso.'
+    ]
+  },
   {
     id: '2026-11-06-c',
     data: '2026-11-06',
@@ -50840,7 +51404,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '06/11/2026 14:30';
+const SISTEMA_VERSAO = '08/11/2026 10:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -51668,6 +52232,72 @@ function licPassoDaEtapa(e){
   return i < 0 ? 0 : i;
 }
 let nuvemSeguradas = [];
+/* =========================================================
+   JUNTAR EM PROFUNDIDADE, NUNCA SUBSTITUIR
+
+   "Eu tinha feito várias alterações, já tinha vinculado várias coisas,
+    já tinha precificado várias coisas, e foi apagado. Começou
+    basicamente do zero de novo."
+
+   O que acontecia: a Sugestão de Compra guarda TUDO dentro de
+   STATE.config.compra — as quantidades que ela decidiu (decisao), os
+   custos que ela pesquisou por fornecedor (custos), o período, o que
+   ela escondeu. O config já era juntado com o que vinha da nuvem, mas
+   só na primeira camada: config.compra inteiro era trocado pelo da
+   outra máquina.
+
+   E bastava a outra máquina ABRIR a tela de Sugestão de Compra pra
+   criar um config.compra padrão (com período e percentual, portanto
+   "não vazio"), subir, e apagar horas de trabalho daqui. Sem aviso,
+   sem nada quebrar na tela — simplesmente voltava do zero.
+
+   Agora a junção desce até o fundo: chave que só existe de um lado
+   SOBREVIVE, dos dois lados vale a que veio, e lista que chega vazia
+   não apaga a lista que tem coisa. A troca é consciente: apagar uma
+   coisa numa máquina pode demorar a chegar na outra. Perder uma
+   exclusão é um aborrecimento; perder a tarde de trabalho dela, não.
+   ========================================================= */
+function nuvemEhMapa(v){
+  return v && typeof v === 'object' && !Array.isArray(v);
+}
+
+function nuvemTemConteudo(v){
+  if(v == null) return false;
+  if(Array.isArray(v)) return v.length > 0;
+  if(typeof v === 'object') return Object.keys(v).length > 0;
+  if(typeof v === 'string') return v.trim() !== '';
+  return true;
+}
+
+function nuvemJuntarFundo(meu, deFora){
+  if(deFora === undefined) return meu;
+  if(meu === undefined) return deFora;
+
+  if(nuvemEhMapa(meu) && nuvemEhMapa(deFora)){
+    const junto = {};
+    const chaves = new Set([...Object.keys(meu), ...Object.keys(deFora)]);
+    chaves.forEach(k=>{
+      if(!(k in deFora)){ junto[k] = meu[k]; return; }     /* só daqui: fica */
+      if(!(k in meu)){ junto[k] = deFora[k]; return; }     /* só de lá: entra */
+      junto[k] = nuvemJuntarFundo(meu[k], deFora[k]);
+    });
+    return junto;
+  }
+
+  /* Lista que chega vazia não apaga a que tem coisa. Listas de registros
+     com id não passam por aqui: aquelas sincronizam uma linha por
+     registro e têm exclusão explícita. */
+  if(Array.isArray(meu) && Array.isArray(deFora)){
+    if(deFora.length === 0 && meu.length > 0) return meu;
+    return deFora;
+  }
+
+  /* Valor simples: vale o que chegou, menos quando chega vazio por cima
+     de algo preenchido (o caso do campo que a outra máquina nunca teve). */
+  if(!nuvemTemConteudo(deFora) && nuvemTemConteudo(meu)) return meu;
+  return deFora;
+}
+
 function nuvemVersaoQueFica(colecao, meu, deFora){
   if(colecao !== 'licitacoes') return deFora;
   if(!meu || !deFora || typeof meu !== 'object' || typeof deFora !== 'object') return deFora;
@@ -51730,14 +52360,10 @@ function nuvemAplicar(linhas){
       if(linha.id === 'config' && linha.dados.valor && typeof linha.dados.valor === 'object'
          && STATE.config && typeof STATE.config === 'object'){
         const deFora = linha.dados.valor;
-        const juntos = Object.assign({}, STATE.config, deFora);
-        /* listas e objetos que só existem aqui ficam */
-        Object.keys(STATE.config).forEach(k=>{
-          const meu = STATE.config[k], dele = deFora[k];
-          const meuTem = Array.isArray(meu) ? meu.length>0 : (meu && typeof meu==='object' ? Object.keys(meu).length>0 : false);
-          const deleTem = Array.isArray(dele) ? dele.length>0 : (dele && typeof dele==='object' ? Object.keys(dele).length>0 : false);
-          if(meuTem && !deleTem) juntos[k] = meu;
-        });
+        /* ATÉ O FUNDO, não só na primeira camada: era aqui que o
+           config.compra inteiro — decisões e custos da Sugestão de
+           Compra — era trocado pelo da outra máquina. */
+        const juntos = nuvemJuntarFundo(STATE.config, deFora);
         STATE.config = juntos;
 
         /* E aqui estava o resto do problema das certidões e do
@@ -51756,8 +52382,20 @@ function nuvemAplicar(linhas){
         return;
       }
 
-      STATE[linha.id] = linha.dados.valor;
-      espelho[chave] = nuvemDigital(JSON.stringify({ valor: STATE[linha.id] }));
+      /* Todo bloco que não é lista-de-registros cai aqui: mapas como
+         carrinhoCompra, vinculosFornecedor, analiseST, distribuicao.
+         Substituir inteiro apagava o trabalho daqui do mesmo jeito que
+         apagava o da Sugestão de Compra — então junta, não troca. */
+      const meuDoc = STATE[linha.id];
+      const juntoDoc = nuvemJuntarFundo(meuDoc, linha.dados.valor);
+      STATE[linha.id] = juntoDoc;
+      /* Se a junção ficou diferente do que veio, o que temos aqui é mais
+         completo: guarda a digital do que VEIO, pra isto contar como
+         alteração e subir na próxima rodada, corrigindo a outra máquina
+         em vez de ser corrigido por ela. */
+      const digDeFora = nuvemDigital(JSON.stringify({ valor: linha.dados.valor }));
+      const digJunto  = nuvemDigital(JSON.stringify({ valor: juntoDoc }));
+      espelho[chave] = (digJunto === digDeFora) ? digJunto : digDeFora;
       mudou++;
       return;
     }
