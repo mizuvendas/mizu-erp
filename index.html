@@ -939,6 +939,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
   border:1px solid transparent;
 }
 .cell-editavel:hover{ background:var(--primary-soft); border-color:var(--border); }
+.conf-edit{ cursor:pointer; display:inline-block; min-width:30px; padding:1px 4px; border-radius:4px;
+            border:1px dashed transparent; }
+.conf-edit:hover{ background:var(--primary-soft); border-color:var(--border); }
 .cell-travada{ cursor:default; }
 .cell-travada:hover{ background:transparent; border-color:transparent; }
 
@@ -45048,6 +45051,17 @@ function preservandoRolagem(fn){
 
   fn();
 
+  /* DEVOLVER A POSIÇÃO DUAS VEZES, e a segunda no quadro seguinte.
+
+     "desço a rolagem para baixo, com o tempo ele volta lá para o início."
+
+     O "com o tempo" é o sincronismo, que redesenha a tela a cada 20s.
+     Devolver a posição na mesma hora não bastava numa lista de 524
+     linhas: o navegador ainda não terminou de montar a tabela, então
+     a altura dela é menor do que vai ser, e o scrollTop que a gente
+     pede é CORTADO pra caber — vira zero. Pedir de novo no quadro
+     seguinte, com a tabela já montada, é o que faz valer. */
+  const devolver = ()=>{
   const novas = [...document.querySelectorAll('.cp-wrap, .table-wrap, [data-rolagem]')];
   internas.forEach((g,i)=>{
     /* Pelo id quando a caixa tem um: é o jeito seguro, porque a tela
@@ -45058,6 +45072,9 @@ function preservandoRolagem(fn){
     if(el && (porId || el.className === g.classe)){ el.scrollTop = g.topo; el.scrollLeft = g.esq; }
   });
   if(janela) window.scrollTo(0, janela);
+  };
+  devolver();
+  if(typeof requestAnimationFrame === 'function') requestAnimationFrame(devolver);
 
   if(idFoco){
     const de_volta = document.getElementById(idFoco);
@@ -46409,6 +46426,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-10-b',
+    data: '2026-11-10',
+    titulo: 'Conferência: tela enxuta e tudo editável clicando em cima',
+    itens: [
+      'A COLUNA "No seu cadastro" SAIU. Ficou Produto, Unidade, NCM, Custo, Venda, Saldo e o que falta — oito colunas no lugar de dez. Não precisa mais tirar o zoom pra ver a tela inteira.',
+      'DESCRIÇÃO, UNIDADE E NCM se editam CLICANDO EM CIMA, na própria lista. Enter grava, Esc desiste. Abrir uma janela pra trocar uma palavra, 524 vezes, é o que tornava o trabalho impossível.',
+      'No NCM, clicar abre a busca por nome: digite "fibra", "rodo", "vassoura" e escolha.',
+      'Quando o produto já existe e o nome de lá está certo, aparece embaixo o nome do seu cadastro com um botão "usar este" — era o caso da FIBRA PARA LIMPEZA que na planilha veio como pacote e aqui já está como unidade.',
+      'O que você decide na conferência é SEU e vale: ao completar, a descrição que você escolheu, a unidade e o NCM vão pro cadastro. O que continua não entrando sozinho é o nome da PLANILHA, que vem errado.',
+      'Tudo isso fica guardado: fecha a tela, volta depois, e as suas decisões estão lá.',
+      'A ROLAGEM, de novo: ela voltava pro topo "com o tempo" — era o sincronismo redesenhando a cada 20 segundos. A posição era devolvida antes da tabela de 524 linhas terminar de montar, e o navegador cortava pra zero. Agora ela é devolvida também no quadro seguinte, com a tabela pronta.'
+    ]
+  },
   {
     id: '2026-11-10-a',
     data: '2026-11-10',
@@ -51656,7 +51687,15 @@ function confIndiceProdutos(){
 function confPendencias(prod, linha){
   const falta = [];
   if(!prod) return falta;
-  (pendenciasDeNota(prod)||[]).forEach(x=>falta.push(x));
+  /* O que ela já digitou na conferência conta como resolvido: ainda não
+     foi pro cadastro, mas a decisão está tomada, e marcar "falta NCM"
+     depois dela ter preenchido o NCM ali seria mentira. */
+  const temNaLinha = (campo)=> !!(linha && String(linha[campo]||'').trim());
+  (pendenciasDeNota(prod)||[]).forEach(x=>{
+    if(x === 'NCM' && temNaLinha('ncm')) return;
+    if(x === 'unidade' && temNaLinha('unidade')) return;
+    falta.push(x);
+  });
   if(!String(prod.sku||'').trim()) falta.push('código interno');
   if(!String(prod.fornecedor||'').trim() && !prod.fornecedorId) falta.push('fornecedor');
   if(!String(prod.codigoNF||'').trim()) falta.push('código do fornecedor');
@@ -51831,6 +51870,8 @@ async function confCarregarGuardada(){
       const ix = confIndiceProdutos();
       CONF_LINHAS = g.linhas.map(l=>{
         const achados = l.barras ? (ix.get(l.barras) || []) : [];
+        /* nomeEscolhido, unidade e ncm vêm no próprio l: são a decisão
+           dela, e precisam voltar igual quando ela reabre a tela */
         return Object.assign({}, l, { produto: achados[0] || null,
                                       produtoId: achados[0] ? achados[0].id : null,
                                       ambiguo: achados.length > 1 });
@@ -51866,6 +51907,19 @@ function confRecasar(){
 function confCompletarProduto(prod, linha){
   if(!prod) return [];
   const feito = [];
+  /* A DESCRIÇÃO que ela escolheu na conferência VALE e vai pro cadastro.
+     Isso não contradiz a regra de não sobrescrever: o que não pode entrar
+     sozinho é o nome da PLANILHA, que vem errado. O que ela digitou ou
+     escolheu com o dedo é decisão dela, e decisão dela manda. */
+  if(linha && linha.nomeEscolhido && linha.nomeEscolhido !== prod.nome){
+    prod.nome = linha.nomeEscolhido; feito.push('descrição');
+  }
+  if(linha && String(linha.unidade||'').trim() && linha.unidade !== prod.unidade){
+    prod.unidade = linha.unidade; feito.push('unidade ' + linha.unidade);
+  }
+  if(linha && String(linha.ncm||'').trim() && linha.ncm !== prod.ncm){
+    prod.ncm = linha.ncm; feito.push('NCM ' + ncmFormatado(linha.ncm));
+  }
   if(!String(prod.sku||'').trim()){ prod.sku = proximoSku(prod.id); feito.push('código interno ' + prod.sku); }
   if(!String(prod.fornecedor||'').trim()){ prod.fornecedor = CONF_FORNECEDOR_PADRAO; feito.push('fornecedor'); }
   if(!String(prod.codigoNF||'').trim() && linha.barras){ prod.codigoNF = linha.barras; feito.push('código do fornecedor'); }
@@ -52023,12 +52077,15 @@ function renderConferenciaAgora(){
       ${confTabela(lista)}
     </div>`;
 
+  confAtivarEdicao();
+
   const busca = document.getElementById('conf-busca');
   if(busca) busca.addEventListener('input', (e)=>{
     confBusca = e.target.value;
     const alvo = document.getElementById('conf-tabela-wrap');
     if(alvo){
       alvo.outerHTML = confTabela(confLinhasFiltradas());
+      confAtivarEdicao();
       const b2 = document.getElementById('conf-busca');
       if(b2){ b2.focus(); b2.setSelectionRange(b2.value.length, b2.value.length); }
     }
@@ -52042,9 +52099,9 @@ function confTabela(lista){
   return `<div id="conf-tabela-wrap" class="table-wrap" style="max-height:calc(100vh - 330px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
-        <th>Produto na planilha</th><th>No seu cadastro</th>
-        <th class="num">Custo</th><th class="num">Venda</th>
-        <th class="num">Saldo</th><th>O que falta</th><th>Ações</th>
+        <th>Produto</th><th style="width:90px;">Unidade</th><th style="width:130px;">NCM</th>
+        <th class="num" style="width:110px;">Custo</th><th class="num" style="width:110px;">Venda</th>
+        <th class="num" style="width:80px;">Saldo</th><th>O que falta</th><th style="width:150px;">Ações</th>
       </tr></thead>
       <tbody>${lista.slice(0, 400).map(l=>confLinha(l)).join('')}</tbody>
     </table>
@@ -52052,10 +52109,30 @@ function confTabela(lista){
   </div>`;
 }
 
+/* ---------------------------------------------------------------
+   A LINHA
+
+   "achei que a tela ficou muito extensa, tenho que tirar o zoom."
+   "no meu cadastro você pode tirar, não precisa aparecer essa coluna."
+   "eu vou simplesmente clicar em cima do nome, vou alterar a descrição."
+
+   Então a coluna do cadastro saiu e o que sobrou é o que ela decide:
+   descrição, unidade, NCM, custo, venda, saldo. Os três primeiros se
+   editam clicando em cima, ali mesmo — abrir uma janela pra trocar uma
+   palavra, 524 vezes, é o que torna o trabalho impossível.
+
+   A descrição editada vale pra ESTA conferência. Quando o produto já
+   existe e o nome de lá está certo, um clique traz o nome do cadastro
+   pra cá, que foi o caso que ela deu: na planilha veio "FIBRA PARA
+   LIMPEZA 87X125MM C/5 UNIDADES" quando é unidade, e aqui já está certo.
+   --------------------------------------------------------------- */
 function confLinha(l){
   const st = confSituacao(l);
   const p = l.produto;
   const falta = p ? confPendencias(p, l) : [];
+  const nome = l.nomeEscolhido || l.nome;
+  const un   = l.unidade || (p && p.unidade) || '';
+  const ncm  = l.ncm || (p && p.ncm) || '';
 
   const selo = st === 'ok'
       ? `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 completo</span>`
@@ -52065,63 +52142,113 @@ function confLinha(l){
 
   const difCusto = p && l.custo > 0 && Math.abs(Number(p.custo||0) - l.custo) > 0.005;
   const difVenda = p && l.venda > 0 && Math.abs(Number(p.precoVenda||0) - l.venda) > 0.005;
-  const marca = (dif)=> dif ? 'color:var(--negative);font-weight:600;' : '';
 
   return `<tr>
     <td>
-      <strong>${escapeHtml(l.nome)}</strong>
-      <div class="help-text" style="margin:0;">cód. ${escapeHtml(l.codigo)}${l.barras?' · barras '+escapeHtml(l.barras):''}</div>
-      ${l.barrasRepetida ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ o fornecedor repetiu este código de barras em dois produtos</div>` : ''}
-      ${l.ambiguo ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ dois produtos seus têm este código de barras</div>` : ''}
+      <span class="conf-edit" data-barras="${l.barras}" data-campo="nome"
+            title="Clique para alterar a descrição">${escapeHtml(nome)}</span>
+      ${l.nomeEscolhido ? '<span class="help-text" style="margin:0;">descrição alterada por você</span>' : ''}
+      ${p && !l.nomeEscolhido && p.nome !== l.nome
+        ? `<div class="help-text" style="margin:0;">no seu cadastro: ${escapeHtml(p.nome)}
+             <button class="btn btn-sm" style="padding:0 6px;" onclick="confUsarNomeDoCadastro('${l.barras}')">usar este</button></div>`
+        : ''}
+      <div class="help-text" style="margin:0;">${escapeHtml(l.codigo)} · ${escapeHtml(l.barras)}</div>
+      ${l.barrasRepetida ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ o fornecedor repetiu este código de barras</div>` : ''}
     </td>
-    <td>
-      ${p ? `<strong>${escapeHtml(p.nome)}</strong>
-             <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${p.comodato?' · comodato':''}</div>`
-          : `<span class="help-text">—</span>`}
-    </td>
-    <td class="num">
-      <div style="${marca(difCusto)}">${fmtMoney(l.custo)} <span class="help-text">planilha</span></div>
-      ${p ? `<div class="help-text" style="margin:0;">${fmtMoney(p.custo||0)} aqui
-             ${difCusto?`<button class="btn btn-sm" style="padding:1px 6px;" onclick="confTrazerValor('${l.barras}','custo')">trazer</button>`:''}</div>` : ''}
-    </td>
-    <td class="num">
-      <div style="${marca(difVenda)}">${l.venda>0?fmtMoney(l.venda):'—'} <span class="help-text">planilha</span></div>
-      ${p ? `<div class="help-text" style="margin:0;">${fmtMoney(p.precoVenda||0)} aqui
-             ${difVenda?`<button class="btn btn-sm" style="padding:1px 6px;" onclick="confTrazerValor('${l.barras}','venda')">trazer</button>`:''}</div>` : ''}
-    </td>
-    <td class="num">
-      <strong>${fmtNum(l.saldo)}</strong>
-      ${p ? `<div class="help-text" style="margin:0;">comodato aqui: ${fmtNum(p.estoqueComodato||0)}</div>` : ''}
-    </td>
+    <td><span class="conf-edit" data-barras="${l.barras}" data-campo="unidade"
+              title="Clique para alterar">${escapeHtml(un || '—')}</span></td>
+    <td><span class="conf-edit" data-barras="${l.barras}" data-campo="ncm"
+              title="Clique e procure por nome: rodo, vassoura, detergente">${ncm ? escapeHtml(ncmFormatado(ncm)) : '—'}</span></td>
+    <td class="num">${fmtMoney(l.custo)}${difCusto?`<div class="help-text" style="margin:0;">aqui: ${fmtMoney(p.custo||0)}</div>`:''}</td>
+    <td class="num">${l.venda>0?fmtMoney(l.venda):'—'}${difVenda?`<div class="help-text" style="margin:0;">aqui: ${fmtMoney(p.precoVenda||0)}</div>`:''}</td>
+    <td class="num"><strong>${fmtNum(l.saldo)}</strong></td>
     <td>${selo}${falta.length?`<div class="help-text" style="margin:2px 0 0;">${escapeHtml(falta.join(', '))}</div>`:''}</td>
     <td><div class="cell-actions">
-      ${p ? `<button class="btn btn-sm" onclick="confCompletarLinha('${l.barras}')">Completar</button>
-             <button class="btn btn-sm" onclick="abrirCorrigirProdutoFiscal('${p.id}', ()=>{confRecasar();renderConferencia();})">Fiscal</button>`
+      ${p ? `<button class="btn btn-sm" onclick="confCompletarLinha('${l.barras}')">Completar</button>`
           : `<button class="btn btn-sm btn-primary" onclick="confCadastrar('${l.barras}')">Cadastrar</button>`}
     </div></td>
   </tr>`;
 }
 
-/* Produto que não existe aqui nasce com o que a planilha tem de
-   confiável — nome, barras e saldo — e com o que ela definiu pro lote.
-   Custo e preço entram como vieram porque não há o que preservar: o
-   produto é novo. NCM fica em branco de propósito: inventar NCM é
-   criar problema fiscal silencioso. */
+/* Traz pra conferência o nome que já está certo no cadastro. */
+function confUsarNomeDoCadastro(barras){
+  const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
+  if(!l || !l.produto) return;
+  l.nomeEscolhido = l.produto.nome;
+  confGuardarLinhas();
+  renderConferencia();
+}
+
+/* Edição no lugar: clica no valor, vira campo, Enter grava, Esc desiste.
+   No NCM entra a busca por nome que já existe no sistema. */
+function confAtivarEdicao(){
+  document.querySelectorAll('#conf-tabela-wrap .conf-edit').forEach(span=>{
+    span.addEventListener('click', function abrir(){
+      if(span.querySelector('input')) return;
+      const barras = span.dataset.barras, campo = span.dataset.campo;
+      const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
+      if(!l) return;
+      const atual = campo === 'nome'    ? (l.nomeEscolhido || l.nome)
+                  : campo === 'unidade' ? (l.unidade || (l.produto && l.produto.unidade) || '')
+                                        : (l.ncm || (l.produto && l.produto.ncm) || '');
+      const largura = campo === 'nome' ? '100%' : '110px';
+      const id = 'conf-edit-' + campo + '-' + barras;
+      span.innerHTML = `<input id="${id}" type="text" value="${escapeAttr(campo==='ncm' && atual ? ncmFormatado(atual) : atual)}"
+        style="width:${largura};padding:3px 5px;border:1px solid var(--primary);border-radius:4px;font-size:13px;">`;
+      const input = span.querySelector('input');
+      input.focus(); input.select();
+      if(campo === 'ncm' && typeof ligarBuscaNcm === 'function') ligarBuscaNcm(id);
+
+      const gravar = ()=>{
+        const v = input.value.trim();
+        if(campo === 'nome')         l.nomeEscolhido = v || null;
+        else if(campo === 'unidade') l.unidade = v.toUpperCase().slice(0,6);
+        else                         l.ncm = ncmSo8(v);
+        confGuardarLinhas();
+        renderConferencia();
+      };
+      input.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){ e.preventDefault(); gravar(); }
+        else if(e.key === 'Escape'){ renderConferencia(); }
+      });
+      /* No NCM o blur não grava: escolher na lista de sugestão tira o foco
+         do campo, e gravar aí apagaria a escolha que ela acabou de fazer. */
+      input.addEventListener('blur', ()=>setTimeout(()=>{
+        if(document.body.contains(input)) gravar();
+      }, campo === 'ncm' ? 250 : 0));
+    });
+  });
+}
+
+/* O que ela decidiu na conferência fica guardado junto da planilha. */
+function confGuardarLinhas(){
+  if(!CONF_LINHAS) return;
+  const res = STATE.conferenciaResumo || {};
+  confIdb('put', 'atual', { arquivo: res.arquivo || '', em: res.em || new Date().toISOString(),
+    linhas: CONF_LINHAS.map(l=>({ codigo:l.codigo, nome:l.nome, custo:l.custo, venda:l.venda,
+                                  saldo:l.saldo, barras:l.barras,
+                                  nomeEscolhido:l.nomeEscolhido||null,
+                                  unidade:l.unidade||null, ncm:l.ncm||null }))
+  }).catch(e=>console.warn(e));
+}
+
 function confCadastrar(barras){
   const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
   if(!l) return;
   confirmAction('Cadastrar este produto',
-    `${l.nome}\n\nEntra como COMODATO da ${CONF_FORNECEDOR_PADRAO}, com saldo ${fmtNum(l.saldo)} e sem ST.\n\n`
-    + 'O NCM fica em branco — esse eu não tenho de onde tirar, e inventar criaria problema na nota. '
-    + 'Use o botão Fiscal depois pra preencher.',
+    `${l.nomeEscolhido || l.nome}\n\nEntra como COMODATO da ${CONF_FORNECEDOR_PADRAO}, com saldo ${fmtNum(l.saldo)} e sem ST.\n\n`
+    + (String(l.ncm||'').trim()
+        ? `NCM ${ncmFormatado(l.ncm)}, como você preencheu na lista.`
+        : 'O NCM fica em branco — esse eu não tenho de onde tirar, e inventar criaria problema na nota. '
+          + 'Clique no NCM na lista pra preencher.'),
     ()=>{
       const novo = {
         id: uid('prod'),
-        nome: l.nome,
+        nome: l.nomeEscolhido || l.nome,
         codigoBarras: l.barras,
         codigoNF: l.barras,
         sku: proximoSku(null),
-        unidade: 'UN',
+        unidade: l.unidade || 'UN',
         custo: Number(l.custo) || 0,
         precoVenda: Number(l.venda) || 0,
         estoqueAtual: 0,
@@ -52130,7 +52257,7 @@ function confCadastrar(barras){
         comodatoDe: CONF_FORNECEDOR_PADRAO,
         fornecedor: CONF_FORNECEDOR_PADRAO,
         stConfirmado: false,
-        ncm: '',
+        ncm: l.ncm || '',
         criadoEm: todayISO(),
         criadoPor: 'conferência de planilha'
       };
@@ -52375,7 +52502,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 08:40';
+const SISTEMA_VERSAO = '10/11/2026 10:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
