@@ -823,7 +823,16 @@ table.data-table{ width:100%; font-size:13px; }
   .app{ grid-template-columns:1fr; }
   .sidebar{ position:relative; height:auto; }
   .kanban{ grid-template-columns:1fr; }
+  /* NO CELULAR, O BALANÇO ESCONDE O MENU.
+     Em tela estreita o menu inteiro empilha ACIMA do conteúdo — são
+     mais de trinta itens pra rolar antes de chegar no campo de bipar,
+     a cada vez que ela abre a tela. No balanço isso é o uso normal,
+     não a exceção: ela está de pé na frente da prateleira. O botão
+     "☰ Menu" traz o menu de volta quando ela quiser sair. */
+  body.bal-foco .sidebar{ display:none; }
 }
+.bal-voltar-menu{ display:none; }
+@media (max-width:900px){ body.bal-foco .bal-voltar-menu{ display:inline-block; } }
 
 .tag-pill{
   display:inline-flex; align-items:center; gap:5px;
@@ -1095,6 +1104,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="conferencia" href="#">
       <span class="ic ic-operacao">📋</span> Confer&ecirc;ncia
     </a>
+    <a class="nav-item" data-page="balanco" href="#">
+      <span class="ic ic-operacao">📦</span> Balan&ccedil;o de Estoque
+    </a>
     <a class="nav-item" data-page="estoque" href="#">
       <span class="ic ic-operacao">📊</span> Estoque
     </a>
@@ -1319,6 +1331,17 @@ body.orc-gaveta-travada{ overflow:hidden; }
         </div>
       </div>
       <div id="conferencia-content"></div>
+    </section>
+
+    <!-- ============ BALANCO DE ESTOQUE ============ -->
+    <section class="page" id="page-balanco">
+      <div class="page-header">
+        <div>
+          <h2>Balan&ccedil;o de Estoque</h2>
+          <p class="subtitle">Bipa, diz quanto tem, e segue &mdash; no computador ou no celular, na mesma contagem</p>
+        </div>
+      </div>
+      <div id="balanco-content"></div>
     </section>
 
     <section class="page" id="page-estoque">
@@ -1956,6 +1979,14 @@ function defaultState(){
     // estoque, na comissão nem nos relatórios de produto.
     // { id, pagadorId, data, vencimento, descricao, valor, repasse:{abatimentos:[]}, criadoEm }
     cobrancasRepasse: [],
+    /* BALANÇO DE ESTOQUE
+       balancos: a contagem em si { id, criadoEm, aberto, fechadoEm, fornecedorFinal, excedenteAceito }
+       balancoBipes: UM REGISTRO POR BIPE { id, balancoId, chave, qtd, de, em } — de propósito:
+         assim o celular e o computador contam ao mesmo tempo sem um apagar o outro na nuvem.
+       codigosApelido: { codigo bipado -> chave do item } — o código de caixa que ela já confirmou. */
+    balancos: [],
+    balancoBipes: [],
+    codigosApelido: {},
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
@@ -2678,6 +2709,9 @@ function navigateTo(page){
   document.querySelectorAll('.nav-item').forEach(i=>i.classList.toggle('active', i.dataset.page===page));
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.getElementById('page-'+page).classList.add('active');
+  /* ver o comentário em .bal-foco no CSS: no celular, o balanço abre
+     sem o menu por cima */
+  try{ document.body.classList.toggle('bal-foco', page === 'balanco' && window.innerWidth < 900); }catch(e){}
   RENDERERS[page] && RENDERERS[page]();
   if(typeof revisarTabelasDaTela === 'function') setTimeout(revisarTabelasDaTela, 60);
 }
@@ -46420,6 +46454,24 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-10-d',
+    data: '2026-11-10',
+    titulo: 'Balanço de Estoque — bipa, diz quanto tem, e segue (no computador e no celular)',
+    itens: [
+      'MENU NOVO "📦 Balanço de Estoque". Conta os produtos que estão na Conferência: as linhas do comodato da planilha mais os produtos do seu cadastro. Mostra o custo e o preço de venda de cada um enquanto você conta.',
+      'PELO CELULAR: aparece um QR Code na tela do computador. Leia com a câmera do celular e o balanço abre lá, NA MESMA CONTAGEM — o que você bipa no celular aparece no computador e o contrário também. No celular o menu some, pra você não rolar trinta itens antes de chegar no campo de bipar.',
+      'CADA BIPE É UM REGISTRO SEPARADO. Por isso dá pra contar nos dois ao mesmo tempo sem um apagar o outro: as contagens somam em vez de se substituírem.',
+      'CÓDIGO DE CAIXA RESOLVIDO SOZINHO: sete produtos da planilha da ECOVILLE vieram com o código de 14 dígitos (da caixa) no lugar do da unidade. Bipando a unidade na prateleira, o sistema deriva as duas leituras e acha — e guarda o código pra não perguntar de novo.',
+      'CÓDIGO REPETIDO EM DOIS PRODUTOS: a ECOVILLE cadastrou o mesmo código de barras em dois LIMPADOR COM ALCOOL. Bipando ele, a tela mostra os dois e você toca em qual tem na mão.',
+      'PASSOU DO COMODATO: "a ECOVILLE tem 59 e você já contou 67 — as 8 que sobraram devem ser da Mizu", com os botões É da Mizu / Contei errado. Você decide, o sistema não.',
+      'NÃO ACHEI O CÓDIGO: procura pela descrição e, quando você aponta o produto, o código entra no cadastro dele — da próxima vez cai direto. Se o produto já tem o código do fabricante, o novo entra como código a mais: a caixa e a unidade convivem.',
+      'CADASTRO RÁPIDO no meio da contagem: só o nome. Sai com código de barras interno gerado, código interno e etiqueta pra imprimir. O resto (unidade, NCM, custo) fica pra depois, na Conferência.',
+      'FECHANDO: o comodato fica com o saldo que a ECOVILLE tem, o que passou disso entra como estoque da Mizu, e o fornecedor que você escolher vale pra todos — quem é comodato continua marcado como comodato. Dá pra zerar os que você não contou, ou deixar como estão.',
+      'Desfazer o último bipe, contar um produto de novo do zero, e pausar sem perder nada.',
+      'O QR Code é desenhado pelo próprio sistema, sem internet — no dia em que a loja ficar sem rede, ele continua aparecendo.'
+    ]
+  },
+  {
     id: '2026-11-10-c',
     data: '2026-11-10',
     titulo: 'Conferência agora tem duas abas: o comodato e os produtos da loja',
@@ -52594,6 +52646,1543 @@ RENDERERS['conferencia'] = function(){
 
 
 /* =========================================================
+   QR CODE, FEITO AQUI DENTRO
+
+   "para me acessar o balanço pelo celular, aparece um código de
+    barra, um QR Code"
+
+   Por que escrito à mão em vez de pegar uma biblioteca: o sistema
+   roda offline, num arquivo só, e a loja já ficou sem internet no
+   meio do trabalho. Biblioteca de CDN não aparece justamente no dia
+   em que ela precisa contar o estoque. Isto aqui é a norma do QR
+   (ISO/IEC 18004) na parte que importa: modo byte, correção M,
+   versões 1 a 10 — dá pra 213 caracteres, e o endereço do balanço
+   tem menos de 70.
+   ========================================================= */
+
+/* --- Galois Field 256, que é onde a correção de erro vive --- */
+const QR_EXP = new Array(512), QR_LOG = new Array(256);
+(function(){
+  let x = 1;
+  for(let i = 0; i < 255; i++){
+    QR_EXP[i] = x; QR_LOG[x] = i;
+    x <<= 1;
+    if(x & 0x100) x ^= 0x11D;          /* polinômio do QR */
+  }
+  for(let i = 255; i < 512; i++) QR_EXP[i] = QR_EXP[i - 255];
+})();
+function qrMul(a, b){ return (a === 0 || b === 0) ? 0 : QR_EXP[QR_LOG[a] + QR_LOG[b]]; }
+
+/* Polinômio gerador de n codewords de correção */
+function qrGerador(n){
+  let g = [1];
+  for(let i = 0; i < n; i++){
+    const novo = new Array(g.length + 1).fill(0);
+    for(let j = 0; j < g.length; j++){
+      novo[j]     ^= qrMul(g[j], 1);
+      novo[j + 1] ^= qrMul(g[j], QR_EXP[i]);
+    }
+    g = novo;
+  }
+  return g;
+}
+
+/* Resto da divisão — são os codewords de correção do bloco */
+function qrCorrecao(dados, n){
+  const g = qrGerador(n);
+  const r = dados.concat(new Array(n).fill(0));
+  for(let i = 0; i < dados.length; i++){
+    const c = r[i];
+    if(c === 0) continue;
+    for(let j = 0; j < g.length; j++) r[i + j] ^= qrMul(g[j], c);
+  }
+  return r.slice(dados.length);
+}
+
+/* --- Tabela das versões, correção M ---
+   [ codewords de dados, codewords de correção por bloco,
+     blocos do grupo 1, dados por bloco do grupo 1,
+     blocos do grupo 2, dados por bloco do grupo 2 ] */
+const QR_VERSOES = {
+  1:  [16,  10, 1, 16, 0, 0],
+  2:  [28,  16, 1, 28, 0, 0],
+  3:  [44,  26, 1, 44, 0, 0],
+  4:  [64,  18, 2, 32, 0, 0],
+  5:  [86,  24, 2, 43, 0, 0],
+  6:  [108, 16, 4, 27, 0, 0],
+  7:  [124, 18, 4, 31, 0, 0],
+  8:  [154, 22, 2, 38, 2, 39],
+  9:  [182, 22, 3, 36, 2, 37],
+  10: [216, 26, 4, 43, 1, 44]
+};
+
+/* Centros dos padrões de alinhamento por versão */
+const QR_ALINHAMENTO = {
+  1: [], 2: [6,18], 3: [6,22], 4: [6,26], 5: [6,30],
+  6: [6,34], 7: [6,22,38], 8: [6,24,42], 9: [6,26,46], 10: [6,28,50]
+};
+
+/* --- Informação de formato e de versão: BCH, como manda a norma --- */
+function qrBits(valor, g, tam){
+  let v = valor;
+  while(qrGrau(v) >= qrGrau(g)) v ^= g << (qrGrau(v) - qrGrau(g));
+  return v;
+}
+function qrGrau(v){ let n = 0; while(v >>> n) n++; return n - 1; }
+
+function qrFormato(mascara){
+  /* correção M = 00 nos dois bits de nível */
+  const dados = (0 << 3) | mascara;
+  const bch = qrBits(dados << 10, 0x537);
+  return ((dados << 10) | bch) ^ 0x5412;
+}
+function qrVersaoInfo(versao){
+  if(versao < 7) return null;
+  const bch = qrBits(versao << 12, 0x1F25);
+  return (versao << 12) | bch;
+}
+
+/* --- O texto virando bits --- */
+function qrBytesDoTexto(texto){
+  /* QR em modo byte é ISO-8859-1 na norma, mas todo leitor de celular
+     entende UTF-8 — e o endereço só tem ASCII mesmo. */
+  const out = [];
+  for(const ch of String(texto)){
+    const c = ch.codePointAt(0);
+    if(c < 0x80) out.push(c);
+    else if(c < 0x800){ out.push(0xC0 | (c >> 6), 0x80 | (c & 63)); }
+    else if(c < 0x10000){ out.push(0xE0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }
+    else { out.push(0xF0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63)); }
+  }
+  return out;
+}
+
+function qrEscolherVersao(nBytes){
+  for(let v = 1; v <= 10; v++){
+    const [dados] = QR_VERSOES[v];
+    const bitsCabecalho = 4 + (v <= 9 ? 8 : 16);
+    if(dados * 8 >= bitsCabecalho + nBytes * 8) return v;
+  }
+  return null;
+}
+
+function qrCodewords(texto){
+  const bytes = qrBytesDoTexto(texto);
+  const versao = qrEscolherVersao(bytes.length);
+  if(!versao) throw new Error('Texto longo demais pra caber no QR.');
+  const [totalDados, ecPorBloco, b1, d1, b2, d2] = QR_VERSOES[versao];
+
+  /* fluxo de bits: modo + contagem + dados + terminador */
+  const bits = [];
+  const põe = (valor, n)=>{ for(let i = n - 1; i >= 0; i--) bits.push((valor >> i) & 1); };
+  põe(0b0100, 4);
+  põe(bytes.length, versao <= 9 ? 8 : 16);
+  bytes.forEach(b=>põe(b, 8));
+  for(let i = 0; i < 4 && bits.length < totalDados * 8; i++) bits.push(0);
+  while(bits.length % 8) bits.push(0);
+
+  const cw = [];
+  for(let i = 0; i < bits.length; i += 8){
+    let b = 0;
+    for(let j = 0; j < 8; j++) b = (b << 1) | bits[i + j];
+    cw.push(b);
+  }
+  /* enchimento alternado, como a norma pede */
+  const enche = [0xEC, 0x11];
+  let k = 0;
+  while(cw.length < totalDados) cw.push(enche[k++ % 2]);
+
+  /* blocos e correção */
+  const blocos = [];
+  let pos = 0;
+  for(let i = 0; i < b1; i++){ blocos.push(cw.slice(pos, pos + d1)); pos += d1; }
+  for(let i = 0; i < b2; i++){ blocos.push(cw.slice(pos, pos + d2)); pos += d2; }
+  const ecs = blocos.map(b=>qrCorrecao(b, ecPorBloco));
+
+  /* intercalado: primeiro byte de cada bloco, segundo byte de cada bloco... */
+  const saida = [];
+  const maiorD = Math.max(...blocos.map(b=>b.length));
+  for(let i = 0; i < maiorD; i++) blocos.forEach(b=>{ if(i < b.length) saida.push(b[i]); });
+  for(let i = 0; i < ecPorBloco; i++) ecs.forEach(e=>saida.push(e[i]));
+
+  return { versao, codewords: saida };
+}
+
+/* --- A matriz --- */
+function qrMatrizVazia(tam){
+  const m = [];
+  for(let i = 0; i < tam; i++) m.push(new Array(tam).fill(null));
+  return m;
+}
+
+function qrDesenharFixos(m, versao){
+  const tam = m.length;
+  const finder = (lin, col)=>{
+    for(let i = -1; i <= 7; i++) for(let j = -1; j <= 7; j++){
+      const y = lin + i, x = col + j;
+      if(y < 0 || x < 0 || y >= tam || x >= tam) continue;
+      const borda = (i === -1 || i === 7 || j === -1 || j === 7);
+      const anel  = (i === 0 || i === 6 || j === 0 || j === 6);
+      const miolo = (i >= 2 && i <= 4 && j >= 2 && j <= 4);
+      m[y][x] = borda ? 0 : (anel || miolo) ? 1 : 0;
+    }
+  };
+  finder(0, 0); finder(0, tam - 7); finder(tam - 7, 0);
+
+  /* linhas de tempo */
+  for(let i = 8; i < tam - 8; i++){
+    const v = (i % 2 === 0) ? 1 : 0;
+    m[6][i] = v; m[i][6] = v;
+  }
+
+  /* alinhamento */
+  const centros = QR_ALINHAMENTO[versao] || [];
+  centros.forEach(cy=>centros.forEach(cx=>{
+    if((cy <= 8 && cx <= 8) || (cy <= 8 && cx >= tam - 9) || (cy >= tam - 9 && cx <= 8)) return;
+    for(let i = -2; i <= 2; i++) for(let j = -2; j <= 2; j++){
+      const fora = Math.max(Math.abs(i), Math.abs(j));
+      m[cy + i][cx + j] = (fora === 1) ? 0 : 1;
+    }
+  }));
+
+  /* módulo escuro e reserva do formato */
+  m[tam - 8][8] = 1;
+  for(let i = 0; i < 9; i++){
+    if(m[8][i] === null) m[8][i] = 0;
+    if(m[i][8] === null) m[i][8] = 0;
+  }
+  for(let i = 0; i < 8; i++){
+    if(m[8][tam - 1 - i] === null) m[8][tam - 1 - i] = 0;
+    if(m[tam - 1 - i][8] === null) m[tam - 1 - i][8] = 0;
+  }
+
+  /* informação de versão, da 7 em diante */
+  const vi = qrVersaoInfo(versao);
+  if(vi !== null){
+    for(let i = 0; i < 18; i++){
+      const bit = (vi >> i) & 1;
+      m[Math.floor(i / 3)][tam - 11 + (i % 3)] = bit;
+      m[tam - 11 + (i % 3)][Math.floor(i / 3)] = bit;
+    }
+  }
+}
+
+/* Onde o dado NÃO pode entrar: tudo que já foi desenhado acima */
+function qrReservado(versao, tam){
+  const r = qrMatrizVazia(tam);
+  qrDesenharFixos(r, versao);
+  return r.map(linha=>linha.map(c=>c !== null));
+}
+
+function qrColocarDados(m, reservado, codewords){
+  const tam = m.length;
+  let bit = 0;
+  const total = codewords.length * 8;
+  const proximo = ()=>{
+    if(bit >= total) return 0;
+    const b = (codewords[bit >> 3] >> (7 - (bit & 7))) & 1;
+    bit++;
+    return b;
+  };
+  let subindo = true;
+  for(let col = tam - 1; col > 0; col -= 2){
+    if(col === 6) col--;                       /* a coluna de tempo não conta */
+    for(let n = 0; n < tam; n++){
+      const lin = subindo ? (tam - 1 - n) : n;
+      for(let d = 0; d < 2; d++){
+        const x = col - d;
+        if(reservado[lin][x]) continue;
+        m[lin][x] = proximo();
+      }
+    }
+    subindo = !subindo;
+  }
+}
+
+function qrAplicarMascara(m, reservado, mascara){
+  const tam = m.length;
+  const fn = [
+    (i,j)=>(i + j) % 2 === 0,
+    (i,j)=>i % 2 === 0,
+    (i,j)=>j % 3 === 0,
+    (i,j)=>(i + j) % 3 === 0,
+    (i,j)=>(Math.floor(i / 2) + Math.floor(j / 3)) % 2 === 0,
+    (i,j)=>((i * j) % 2) + ((i * j) % 3) === 0,
+    (i,j)=>(((i * j) % 2) + ((i * j) % 3)) % 2 === 0,
+    (i,j)=>(((i + j) % 2) + ((i * j) % 3)) % 2 === 0
+  ][mascara];
+  for(let i = 0; i < tam; i++) for(let j = 0; j < tam; j++){
+    if(reservado[i][j]) continue;
+    if(fn(i, j)) m[i][j] ^= 1;
+  }
+}
+
+function qrGravarFormato(m, mascara){
+  const tam = m.length;
+  const f = qrFormato(mascara);
+  /* cópia 1: desce a coluna 8 e vira na linha 8, em volta do finder
+     de cima à esquerda. A ordem é a da norma — linha e coluna aqui
+     não são simétricas, e trocá-las faz o leitor achar que o nível de
+     correção é outro e desistir. */
+  for(let i = 0; i <= 5; i++) m[i][8] = (f >> i) & 1;
+  m[7][8] = (f >> 6) & 1;
+  m[8][8] = (f >> 7) & 1;
+  m[8][7] = (f >> 8) & 1;
+  for(let i = 9; i < 15; i++) m[8][14 - i] = (f >> i) & 1;
+  /* cópia 2: linha 8 pela direita, depois coluna 8 por baixo */
+  for(let i = 0; i < 8; i++)  m[8][tam - 1 - i] = (f >> i) & 1;
+  for(let i = 8; i < 15; i++) m[tam - 15 + i][8] = (f >> i) & 1;
+}
+
+/* As quatro penalidades da norma — a máscara escolhida é a de menor nota */
+function qrPenalidade(m){
+  const tam = m.length;
+  let p = 0;
+
+  /* 1: cinco ou mais iguais em sequência */
+  const corrida = (pega)=>{
+    for(let i = 0; i < tam; i++){
+      let cor = -1, n = 0;
+      for(let j = 0; j < tam; j++){
+        const v = pega(i, j);
+        if(v === cor) n++;
+        else { if(n >= 5) p += 3 + (n - 5); cor = v; n = 1; }
+      }
+      if(n >= 5) p += 3 + (n - 5);
+    }
+  };
+  corrida((i,j)=>m[i][j]);
+  corrida((i,j)=>m[j][i]);
+
+  /* 2: blocos 2x2 da mesma cor */
+  for(let i = 0; i < tam - 1; i++) for(let j = 0; j < tam - 1; j++){
+    const v = m[i][j];
+    if(v === m[i][j+1] && v === m[i+1][j] && v === m[i+1][j+1]) p += 3;
+  }
+
+  /* 3: o desenho 1:1:3:1:1 que imita o finder */
+  const alvo = [1,0,1,1,1,0,1];
+  const temPadrao = (pega, i, j)=>{
+    for(let k = 0; k < 7; k++) if(pega(i, j + k) !== alvo[k]) return false;
+    const antes = [j-4, j-3, j-2, j-1].every(x=>x < 0 || pega(i, x) === 0);
+    const depois = [j+7, j+8, j+9, j+10].every(x=>x >= tam || pega(i, x) === 0);
+    return antes || depois;
+  };
+  for(let i = 0; i < tam; i++) for(let j = 0; j <= tam - 7; j++){
+    if(temPadrao((a,b)=>m[a][b], i, j)) p += 40;
+    if(temPadrao((a,b)=>m[b][a], i, j)) p += 40;
+  }
+
+  /* 4: desequilíbrio entre claro e escuro */
+  let escuros = 0;
+  for(let i = 0; i < tam; i++) for(let j = 0; j < tam; j++) escuros += m[i][j];
+  const pct = (escuros * 100) / (tam * tam);
+  p += Math.floor(Math.abs(pct - 50) / 5) * 10;
+
+  return p;
+}
+
+/* O portão: texto entra, matriz de 0 e 1 sai. */
+function qrMatriz(texto){
+  const { versao, codewords } = qrCodewords(texto);
+  const tam = versao * 4 + 17;
+  const reservado = qrReservado(versao, tam);
+
+  let melhor = null, melhorNota = Infinity;
+  for(let mascara = 0; mascara < 8; mascara++){
+    const m = qrMatrizVazia(tam);
+    qrDesenharFixos(m, versao);
+    qrColocarDados(m, reservado, codewords);
+    qrAplicarMascara(m, reservado, mascara);
+    qrGravarFormato(m, mascara);
+    const nota = qrPenalidade(m);
+    if(nota < melhorNota){ melhorNota = nota; melhor = m; }
+  }
+  return melhor;
+}
+
+/* Vira SVG, que imprime e amplia sem borrar. A borda de 4 módulos
+   não é enfeite: sem ela o leitor não acha o código. */
+function qrSvg(texto, lado){
+  const m = qrMatriz(texto);
+  const n = m.length, borda = 4, total = n + borda * 2;
+  let d = '';
+  for(let i = 0; i < n; i++) for(let j = 0; j < n; j++){
+    if(m[i][j]) d += `M${j + borda} ${i + borda}h1v1h-1z`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${total} ${total}"
+    width="${lado||160}" height="${lado||160}" shape-rendering="crispEdges" role="img" aria-label="QR Code">
+    <rect width="${total}" height="${total}" fill="#fff"/><path d="${d}" fill="#000"/></svg>`;
+}
+
+if(typeof module !== 'undefined') module.exports = { qrMatriz, qrSvg };
+
+
+/* =========================================================
+   BALANÇO DE ESTOQUE
+
+   "o balanço vai puxar produtos da conferência, não dos produtos
+    cadastrados no menu de produtos"
+
+   "eu vou bipar o produto, dizer quanto tem, e seguir. Se passar do
+    saldo do comodato, o que sobrou é da Mizu."
+
+   "tudo que eu faço pra fazer o balanço no computador eu consiga
+    fazer pelo celular também"
+
+   TRÊS COISAS QUE MANDAM NO DESENHO DISTO:
+
+   1. CADA BIPE É UM REGISTRO SEPARADO. Não um campo "contado" que o
+      último a gravar vence. Ela conta no celular enquanto a máquina da
+      loja está aberta na mesma contagem — se os dois gravassem o total
+      no mesmo lugar, um apagaria o outro na sincronização. Somando
+      bipes, as duas contagens entram inteiras, e ela ainda vê que
+      contou 5 + 3 em vez de só "8".
+
+   2. O CÓDIGO DE 14 DÍGITOS É CÓDIGO DE CAIXA. Sete produtos da
+      planilha da ECOVILLE vieram com DUN-14 (ou com um dígito a mais,
+      digitado errado) no lugar do EAN-13 da unidade. Bipando a unidade
+      na prateleira, nada seria encontrado. Então o sistema deriva as
+      duas leituras e aceita as duas — sem perguntar nada a ela.
+
+   3. O EXCEDENTE DO COMODATO É DA MIZU, mas ela confirma. A ECOVILLE
+      diz 59, ela conta 67: as 8 que sobraram são da loja. Isso pode
+      também ser erro de contagem, então a tela pergunta em vez de
+      decidir.
+   ========================================================= */
+
+/* ---------------------------------------------------------------
+   DÍGITO VERIFICADOR E AS LEITURAS EQUIVALENTES DE UM CÓDIGO
+   --------------------------------------------------------------- */
+/* Serve pra EAN-13 e pra DUN-14: o peso alterna 3,1 a partir da
+   direita, e é só isso que muda entre os dois. */
+function balDigitoGtin(corpo){
+  const d = String(corpo||'').replace(/\D/g,'');
+  let soma = 0;
+  for(let i = 0; i < d.length; i++){
+    soma += Number(d[i]) * (((d.length - i) % 2 === 1) ? 3 : 1);
+  }
+  return String((10 - (soma % 10)) % 10);
+}
+
+function balGtinValido(cod){
+  const d = String(cod||'').replace(/\D/g,'');
+  if(d.length < 8) return false;
+  return balDigitoGtin(d.slice(0, -1)) === d.slice(-1);
+}
+
+/* As outras formas de ler o MESMO produto. Um código de caixa e o
+   código da unidade são números diferentes pro leitor e o mesmo
+   produto pra ela. */
+function balEquivalentes(cod){
+  const d = String(cod||'').replace(/\D/g,'');
+  const out = [];
+  const põe = (x)=>{ if(x && x !== d && !out.includes(x)) out.push(x); };
+
+  if(d.length === 14){
+    /* leitura DUN-14: o 1º dígito diz quantas unidades vêm na caixa */
+    const doze = d.slice(1, 13);
+    põe(doze + balDigitoGtin(doze));
+    /* leitura "sobrou um dígito": alguém digitou o EAN-13 e mais um
+       número atrás. Só vale se os 13 primeiros fecharem o verificador —
+       senão eu estaria inventando um código que não existe. */
+    const treze = d.slice(0, 13);
+    if(balGtinValido(treze)) põe(treze);
+  }
+  if(d.length === 13){
+    const doze = d.slice(0, 12);
+    ['1','2','3','4','5'].forEach(ind=>{
+      const corpo = ind + doze;
+      põe(corpo + balDigitoGtin(corpo));
+    });
+  }
+  if(d.length === 12) põe(d + balDigitoGtin(d));
+  return out;
+}
+
+/* ---------------------------------------------------------------
+   O CATÁLOGO QUE VAI SER CONTADO
+
+   Vem da Conferência, como ela pediu: as linhas do comodato (a
+   planilha da ECOVILLE) mais os produtos da loja. Quando os dois
+   são o mesmo produto, viram UM item — com saldo de comodato e
+   saldo da Mizu lado a lado, porque o mesmo rodo pode ser das duas.
+   --------------------------------------------------------------- */
+function balCatalogo(){
+  const itens = new Map();
+  const porProduto = new Map();
+
+  (STATE.produtos||[]).forEach(p=>{
+    const it = {
+      chave: 'p:' + p.id,
+      produtoId: p.id,
+      nome: String(p.nome||''),
+      sku: String(p.sku||''),
+      custo: Number(p.custo||0),
+      venda: Number(p.precoVenda||0),
+      comodato: !!p.comodato,
+      comodatoDe: String(p.comodatoDe||''),
+      saldoComodato: Number(p.estoqueComodato||0),
+      saldoMizu: Number(p.estoqueAtual||0),
+      codigos: []
+    };
+    const b = confBarras(p.codigoBarras);
+    if(b) it.codigos.push(b);
+    (p.codigosExtras||[]).forEach(c=>{ const x = confBarras(c); if(x && !it.codigos.includes(x)) it.codigos.push(x); });
+    itens.set(it.chave, it);
+    porProduto.set(p.id, it);
+  });
+
+  (CONF_LINHAS||[]).forEach(l=>{
+    const it = l.produtoId ? porProduto.get(l.produtoId) : null;
+    if(it){
+      /* já existe no cadastro: a planilha só acrescenta o lado do
+         comodato e o código de caixa que o cadastro não tem */
+      it.comodato = true;
+      it.comodatoDe = it.comodatoDe || CONF_FORNECEDOR_PADRAO;
+      it.saldoComodato = Number(l.saldo||0);
+      if(l.nomeEscolhido) it.nome = l.nomeEscolhido;
+      if(!it.custo) it.custo = Number(l.custo||0);
+      if(!it.venda) it.venda = Number(l.venda||0);
+      if(l.barras && !it.codigos.includes(l.barras)) it.codigos.push(l.barras);
+      return;
+    }
+    /* linha da planilha que ainda não é produto aqui. A chave é o
+       código DELA, não o código de barras: a ECOVILLE repetiu o mesmo
+       código de barras em dois produtos diferentes, e pela barra os
+       dois virariam um só. */
+    const chave = 'c:' + String(l.codigo || l.barras || '');
+    if(itens.has(chave)) return;
+    itens.set(chave, {
+      chave,
+      produtoId: null,
+      linhaCodigo: String(l.codigo||''),
+      nome: String(l.nomeEscolhido || l.nome || ''),
+      sku: String(l.codigo||''),
+      unidade: String(l.unidade||''),
+      ncm: String(l.ncm||''),
+      custo: Number(l.custo||0),
+      venda: Number(l.venda||0),
+      comodato: true,
+      comodatoDe: CONF_FORNECEDOR_PADRAO,
+      saldoComodato: Number(l.saldo||0),
+      saldoMizu: 0,
+      codigos: l.barras ? [l.barras] : []
+    });
+  });
+
+  return itens;
+}
+
+/* código bipado -> chave(s) do catálogo. Inclui as leituras derivadas
+   e os apelidos que ela já confirmou com o dedo. */
+function balIndice(cat){
+  const ix = new Map();
+  const põe = (cod, chave)=>{
+    const d = String(cod||'').replace(/\D/g,'');
+    if(!d) return;
+    if(!ix.has(d)) ix.set(d, []);
+    const a = ix.get(d);
+    if(!a.includes(chave)) a.push(chave);
+  };
+  cat.forEach(it=>it.codigos.forEach(c=>{
+    põe(c, it.chave);
+    balEquivalentes(c).forEach(e=>põe(e, it.chave));
+  }));
+  Object.keys(STATE.codigosApelido||{}).forEach(cod=>{
+    const chave = STATE.codigosApelido[cod];
+    if(cat.has(chave)) põe(cod, chave);
+  });
+  return ix;
+}
+
+/* ---------------------------------------------------------------
+   O BALANÇO ABERTO E OS BIPES
+
+   O balanço é um registro com id, e cada bipe é outro registro com
+   id. Por isso os dois sincronizam um por um entre o celular e o
+   computador, sem um sobrescrever o outro.
+   --------------------------------------------------------------- */
+function balAberto(){
+  return (STATE.balancos||[]).find(b=>b.aberto) || null;
+}
+
+function balAbrir(){
+  const b = { id: uid('bal'), criadoEm: new Date().toISOString(), aberto: true,
+              fechadoEm: null, fornecedorFinal: '', excedenteAceito: {} };
+  if(!STATE.balancos) STATE.balancos = [];
+  STATE.balancos.push(b);
+  saveState();
+  return b;
+}
+
+function balBipes(balancoId){
+  return (STATE.balancoBipes||[]).filter(x=>x.balancoId === balancoId);
+}
+
+function balContados(balancoId){
+  const m = new Map();
+  balBipes(balancoId).forEach(x=>m.set(x.chave, (m.get(x.chave)||0) + Number(x.qtd||0)));
+  return m;
+}
+
+function balContadoDe(balancoId, chave){
+  return balContados(balancoId).get(chave) || 0;
+}
+
+/* ---------------------------------------------------------------
+   ESTADO DA TELA (não vai pro disco: é o que está na mão dela agora)
+   --------------------------------------------------------------- */
+let BAL_CAT = null;          /* Map chave -> item */
+let BAL_IX = null;           /* Map codigo -> [chave] */
+let balAtualChave = null;    /* o item na tela */
+let balQtd = 1;
+let balEscolhas = null;      /* bipou um código repetido: as opções */
+let balNaoAchei = null;      /* {codigo, sugestoes:[], termo} */
+let balAviso = null;         /* {chave, total, saldo} */
+let balBusca = '';
+let balCelular = false;      /* a mesma tela, no formato do celular */
+let balMsg = '';
+
+function balRecarregarCatalogo(){
+  BAL_CAT = balCatalogo();
+  BAL_IX = balIndice(BAL_CAT);
+}
+
+function balItem(chave){
+  if(!BAL_CAT) balRecarregarCatalogo();
+  return BAL_CAT.get(chave) || null;
+}
+
+/* ---------------------------------------------------------------
+   BIPAR
+
+   Um caminho só: achou um, achou vários, ou não achou nenhum.
+   --------------------------------------------------------------- */
+function balBipar(codigo){
+  const d = String(codigo||'').replace(/\D/g,'');
+  if(!d){ showToast('Código vazio.', 'error'); return; }
+  if(!balAberto()) balAbrir();
+  if(!BAL_IX) balRecarregarCatalogo();
+
+  balEscolhas = null; balNaoAchei = null; balAviso = null;
+
+  const chaves = BAL_IX.get(d) || [];
+  if(chaves.length === 1){
+    balAbrirItem(chaves[0], d);
+  }else if(chaves.length > 1){
+    /* a ECOVILLE repetiu o código em dois produtos: mostra os dois */
+    balEscolhas = { codigo: d, chaves };
+    balAtualChave = null;
+    renderBalanco();
+  }else{
+    balNaoAchei = { codigo: d, termo: '', sugestoes: [] };
+    balAtualChave = null;
+    renderBalanco();
+  }
+}
+
+function balAbrirItem(chave, codigoBipado){
+  balAtualChave = chave;
+  balQtd = 1;
+  balEscolhas = null; balNaoAchei = null;
+  /* bipou um código que ainda não estava no item: guarda o apelido pra
+     da próxima vez achar direto, sem derivar nada */
+  if(codigoBipado){
+    const it = balItem(chave);
+    const d = String(codigoBipado).replace(/\D/g,'');
+    if(it && !it.codigos.includes(d) && !(STATE.codigosApelido||{})[d]){
+      if(!STATE.codigosApelido) STATE.codigosApelido = {};
+      STATE.codigosApelido[d] = chave;
+      saveState();
+      balRecarregarCatalogo();
+    }
+  }
+  renderBalanco();
+  setTimeout(()=>{ const i = document.getElementById('bal-qtd'); if(i){ i.focus(); i.select(); } }, 30);
+}
+
+/* Confirma a quantidade: grava o bipe e já deixa a tela pronta pro
+   próximo. É o botão que ela vai apertar mil vezes. */
+function balConfirmar(){
+  const b = balAberto() || balAbrir();
+  const it = balItem(balAtualChave);
+  if(!it){ showToast('Bipe um produto primeiro.', 'error'); return; }
+  const campo = document.getElementById('bal-qtd');
+  const qtd = Math.round(Number(campo ? campo.value : balQtd) || 0);
+  if(!(qtd > 0)){ showToast('A quantidade tem que ser maior que zero.', 'error'); return; }
+
+  if(!STATE.balancoBipes) STATE.balancoBipes = [];
+  STATE.balancoBipes.push({
+    id: uid('bip'), balancoId: b.id, chave: it.chave, qtd,
+    de: balCelular ? 'celular' : 'computador',
+    em: new Date().toISOString()
+  });
+  saveState();
+
+  const total = balContadoDe(b.id, it.chave);
+  balMsg = `${it.nome} — contei ${fmtNum(qtd)}${total !== qtd ? `, total ${fmtNum(total)}` : ''}.`;
+  balAtualChave = null;
+  balQtd = 1;
+
+  /* passou do que a ECOVILLE diz que tem aqui? */
+  if(it.comodato && total > it.saldoComodato && !(b.excedenteAceito||{})[it.chave]){
+    balAviso = { chave: it.chave, total, saldo: it.saldoComodato };
+  }
+
+  renderBalanco();
+  setTimeout(()=>{ const i = document.getElementById('bal-codigo'); if(i) i.focus(); }, 30);
+}
+
+function balMudarQtd(delta){
+  const campo = document.getElementById('bal-qtd');
+  const atual = Math.round(Number(campo ? campo.value : balQtd) || 0);
+  const novo = Math.max(1, atual + delta);
+  balQtd = novo;
+  if(campo) campo.value = novo;
+}
+
+/* "É da Mizu" — ela confirma que o excedente é estoque da loja. */
+function balAceitarExcedente(chave){
+  const b = balAberto(); if(!b) return;
+  if(!b.excedenteAceito) b.excedenteAceito = {};
+  b.excedenteAceito[chave] = true;
+  saveState();
+  balAviso = null;
+  const it = balItem(chave);
+  showToast(it ? `Combinado: o que passou de ${fmtNum(it.saldoComodato)} entra como estoque da Mizu.` : 'Combinado.', 'success');
+  renderBalanco();
+}
+
+/* "Contei errado" — apaga os bipes desse produto pra ela contar de novo. */
+function balRefazer(chave){
+  const b = balAberto(); if(!b) return;
+  const it = balItem(chave);
+  confirmAction('Contar esse de novo',
+    `${it ? it.nome : ''}\n\nVou apagar a contagem desse produto neste balanço (${fmtNum(balContadoDe(b.id, chave))} un.) `
+    + 'pra você contar do zero. O resto do balanço não muda.',
+    ()=>{
+      STATE.balancoBipes = (STATE.balancoBipes||[]).filter(x=>!(x.balancoId === b.id && x.chave === chave));
+      if(b.excedenteAceito) delete b.excedenteAceito[chave];
+      saveState();
+      balAviso = null;
+      balMsg = '';
+      balAbrirItem(chave);
+    }, 'Apagar e contar de novo');
+}
+
+/* Desfaz só o último bipe — o erro de dedo que ela percebe na hora. */
+function balDesfazerUltimo(){
+  const b = balAberto(); if(!b) return;
+  const meus = balBipes(b.id);
+  if(meus.length === 0){ showToast('Nada contado ainda.', 'info'); return; }
+  const ultimo = meus[meus.length - 1];
+  const it = balItem(ultimo.chave);
+  STATE.balancoBipes = (STATE.balancoBipes||[]).filter(x=>x.id !== ultimo.id);
+  saveState();
+  balMsg = '';
+  balAviso = null;
+  showToast(`Desfeito: ${fmtNum(ultimo.qtd)} de ${it ? it.nome : 'produto'}.`, 'success');
+  renderBalanco();
+}
+
+/* ---------------------------------------------------------------
+   NÃO ACHEI ESSE CÓDIGO
+
+   "eu vou poder pesquisar a descrição e, se ele encontrar, ele vai
+    entender que aquele código de barras é daquele produto"
+   --------------------------------------------------------------- */
+function balProcurar(termo){
+  if(!balNaoAchei) return;
+  balNaoAchei.termo = termo;
+  const t = ncmNormalizar(termo);
+  if(t.length < 2){ balNaoAchei.sugestoes = []; renderBalanco(); return; }
+  const palavras = t.split(' ').filter(Boolean);
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const achados = [];
+  BAL_CAT.forEach(it=>{
+    const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
+    if(palavras.every(p=>txt.includes(p))) achados.push(it);
+  });
+  balNaoAchei.sugestoes = achados.slice(0, 12);
+  renderBalanco();
+}
+
+/* Ela aponta o produto: o código bipado passa a ser dele pra sempre. */
+function balEsseMesmo(chave){
+  const codigo = balNaoAchei ? balNaoAchei.codigo : null;
+  const it = balItem(chave);
+  if(!it) return;
+  if(codigo){
+    if(it.produtoId){
+      /* produto do cadastro: o código entra no cadastro de verdade.
+         Se ele ainda não tem código de barras, esse passa a ser o dele;
+         se já tem, entra como código a mais — a caixa e a unidade. */
+      const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+      if(p){
+        if(!String(p.codigoBarras||'').trim()) p.codigoBarras = codigo;
+        else {
+          if(!p.codigosExtras) p.codigosExtras = [];
+          if(!p.codigosExtras.includes(codigo)) p.codigosExtras.push(codigo);
+        }
+      }
+    }
+    if(!STATE.codigosApelido) STATE.codigosApelido = {};
+    STATE.codigosApelido[codigo] = chave;
+    saveState();
+    balRecarregarCatalogo();
+  }
+  balNaoAchei = null;
+  balAbrirItem(chave);
+  showToast('Pronto — da próxima vez esse código já cai direto nesse produto.', 'success');
+}
+
+/* "se não tem código de barras, eu cadastro ele rápido, só o nome, e
+    mando gerar o código" */
+function balCadastrarRapido(){
+  const campo = document.getElementById('bal-novo-nome');
+  const nome = campo ? campo.value.trim() : '';
+  if(!nome){ showToast('Escreva o nome do produto.', 'error'); return; }
+  const codigo = balNaoAchei ? balNaoAchei.codigo : '';
+  const p = {
+    id: uid('prod'),
+    nome,
+    marca: '', fornecedor: '', fornecedorId: null,
+    sku: '',
+    codigoBarras: codigo || gerarCodigoBarrasInterno(),
+    tipoBarras: codigo ? '' : 'gerencial',
+    ncm: '', unidade: '',
+    custo: 0, precoVenda: 0,
+    estoqueAtual: 0, estoqueMinimo: 0,
+    comodato: false,
+    nascidoNoBalanco: true,
+    criadoEm: new Date().toISOString()
+  };
+  p.sku = proximoSku(p.id);
+  if(!STATE.produtos) STATE.produtos = [];
+  STATE.produtos.push(p);
+  saveState();
+  balRecarregarCatalogo();
+  balNaoAchei = null;
+  balAbrirItem('p:' + p.id);
+  showToast(`"${nome}" cadastrado com o código ${p.codigoBarras}. `
+    + (codigo ? 'Falta unidade, NCM e custo — depois, na Conferência.' : 'O código é interno: imprima a etiqueta antes de guardar.'), 'success');
+}
+
+/* ---------------------------------------------------------------
+   TOTAIS
+   --------------------------------------------------------------- */
+function balTotais(){
+  const b = balAberto();
+  if(!b) return { produtos:0, unidades:0, comodato:0, mizu:0, custo:0, venda:0, novos:0 };
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const contados = balContados(b.id);
+  let produtos = 0, unidades = 0, comodato = 0, mizu = 0, custo = 0, venda = 0;
+  contados.forEach((qtd, chave)=>{
+    const it = BAL_CAT.get(chave);
+    if(!it || !(qtd > 0)) return;
+    produtos++;
+    unidades += qtd;
+    const parteComodato = it.comodato ? Math.min(qtd, it.saldoComodato) : 0;
+    comodato += parteComodato;
+    mizu += qtd - parteComodato;
+    custo += qtd * Number(it.custo||0);
+    venda += qtd * Number(it.venda||0);
+  });
+  const novos = (STATE.produtos||[]).filter(p=>p.nascidoNoBalanco).length;
+  return { produtos, unidades, comodato, mizu, custo, venda, novos };
+}
+
+/* ---------------------------------------------------------------
+   FECHAR O BALANÇO
+
+   "quando finalizar eu vou ter que alterar o fornecedor, independente
+    se é comodato ou se é produto da loja. O que é comodato é comodato,
+    vai ficar cadastrado como comodato, com saldo, e o que é nosso vai
+    ficar com saldo também, só que o fornecedor vai ser um só."
+   --------------------------------------------------------------- */
+function balFechar(){
+  const b = balAberto();
+  if(!b){ showToast('Não tem balanço aberto.', 'error'); return; }
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const contados = balContados(b.id);
+  if(contados.size === 0){ showToast('Nada contado ainda.', 'error'); return; }
+
+  const fornecedor = (document.getElementById('bal-fornecedor')||{}).value || '';
+  const zerar = !!(document.getElementById('bal-zerar')||{}).checked;
+  const naoContados = BAL_CAT.size - contados.size;
+
+  confirmAction('Fechar o balanço',
+    `${fmtNum(contados.size)} produto(s) contados.\n\n`
+    + `• O saldo do comodato fica com o que a ECOVILLE tem, até o que você contou.\n`
+    + `• O que passou disso entra como estoque da Mizu.\n`
+    + (fornecedor ? `• O fornecedor de todos eles passa a ser ${fornecedor} — quem é comodato continua marcado como comodato.\n` : `• Fornecedor: você não escolheu nenhum, então o cadastro de fornecedor não é alterado.\n`)
+    + (zerar ? `• Os ${fmtNum(naoContados)} que você NÃO contou vão pra zero.\n` : `• Os ${fmtNum(naoContados)} que você não contou ficam como estão.\n`)
+    + `\nIsso grava no estoque de verdade e fecha a contagem.`,
+    ()=>balFecharMesmo(b, fornecedor, zerar), 'Fechar o balanço');
+}
+
+function balFecharMesmo(b, fornecedor, zerar){
+  const contados = balContados(b.id);
+  let mexidos = 0, criados = 0, zerados = 0;
+
+  contados.forEach((qtd, chave)=>{
+    const it = BAL_CAT.get(chave);
+    if(!it) return;
+    let p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id === it.produtoId) : null;
+
+    /* linha de comodato que ainda não era produto aqui: nasce agora, com
+       o que a planilha tem. Sem isso o saldo contado não teria onde morar. */
+    if(!p){
+      p = {
+        id: uid('prod'), nome: it.nome, marca: '', sku: '',
+        codigoBarras: (it.codigos[0] || gerarCodigoBarrasInterno()),
+        tipoBarras: it.codigos[0] ? '' : 'gerencial',
+        ncm: it.ncm || '', unidade: it.unidade || '',
+        custo: Number(it.custo||0), precoVenda: Number(it.venda||0),
+        estoqueAtual: 0, estoqueMinimo: 0,
+        codigoNF: it.codigos[0] || '',
+        criadoEm: new Date().toISOString()
+      };
+      p.sku = proximoSku(p.id);
+      if(!STATE.produtos) STATE.produtos = [];
+      STATE.produtos.push(p);
+      criados++;
+    }
+
+    const parteComodato = it.comodato ? Math.min(qtd, Number(it.saldoComodato||0)) : 0;
+    const parteMizu = qtd - parteComodato;
+
+    const antes = Number(p.estoqueAtual||0);
+    if(it.comodato){
+      p.comodato = true;
+      p.comodatoDe = p.comodatoDe || it.comodatoDe || CONF_FORNECEDOR_PADRAO;
+      p.estoqueComodato = parteComodato;
+    }
+    p.estoqueAtual = parteMizu;
+    if(fornecedor){
+      p.fornecedor = fornecedor;
+      const f = (STATE.fornecedores||[]).find(x=>String(x.nome||'').trim().toUpperCase() === fornecedor.trim().toUpperCase());
+      p.fornecedorId = f ? f.id : null;
+    }
+    delete p.nascidoNoBalanco;
+    if(antes !== p.estoqueAtual){
+      registrarMovimentoEstoque(p.id, 'ajuste', p.estoqueAtual - antes,
+        `Balanço de ${fmtDate(String(b.criadoEm).slice(0,10))}`, b.id, null, fornecedor||'');
+    }
+    mexidos++;
+  });
+
+  if(zerar){
+    BAL_CAT.forEach((it, chave)=>{
+      if(contados.has(chave)) return;
+      if(!it.produtoId) return;
+      const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+      if(!p) return;
+      const antes = Number(p.estoqueAtual||0);
+      if(antes !== 0){
+        p.estoqueAtual = 0;
+        registrarMovimentoEstoque(p.id, 'ajuste', -antes,
+          `Balanço de ${fmtDate(String(b.criadoEm).slice(0,10))} — não encontrado na contagem`, b.id, null, '');
+        zerados++;
+      }
+      if(it.comodato && Number(p.estoqueComodato||0) !== 0){ p.estoqueComodato = 0; }
+    });
+  }
+
+  b.aberto = false;
+  b.fechadoEm = new Date().toISOString();
+  b.fornecedorFinal = fornecedor || '';
+  b.resumo = { produtos: mexidos, criados, zerados };
+  saveState();
+  balRecarregarCatalogo();
+  balAtualChave = null; balAviso = null; balMsg = '';
+  renderBalanco();
+  showToast(`Balanço fechado: ${fmtNum(mexidos)} produto(s) com saldo gravado`
+    + (criados ? `, ${fmtNum(criados)} cadastrado(s) agora` : '')
+    + (zerados ? `, ${fmtNum(zerados)} zerado(s)` : '') + '.', 'success');
+}
+
+/* ---------------------------------------------------------------
+   ETIQUETAS DOS CÓDIGOS GERADOS AQUI
+
+   Código interno não vem impresso na embalagem — se não sair etiqueta,
+   o produto não pode ser bipado na venda nem no próximo balanço.
+   --------------------------------------------------------------- */
+function balProdutosComCodigoInterno(){
+  return (STATE.produtos||[]).filter(p=>{
+    const b = String(p.codigoBarras||'').trim();
+    return b && (String(p.tipoBarras||'') === 'gerencial' || (b.length === 13 && b.startsWith('2')));
+  });
+}
+
+/* EAN-13 desenhado em SVG — o mesmo padrão de barras que o leitor
+   espera, sem depender de biblioteca nenhuma. */
+const BAL_EAN_A = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+const BAL_EAN_B = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+const BAL_EAN_C = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+const BAL_EAN_PAR = ['AAAAAA','AABABB','AABBAB','AABBBA','ABAABB','ABBAAB','ABBBAA','ABABAB','ABABBA','ABBABA'];
+
+function balEanSvg(codigo, largura, altura){
+  const d = String(codigo||'').replace(/\D/g,'');
+  if(d.length !== 13) return '';
+  const n = d.split('').map(Number);
+  let bits = '101';
+  BAL_EAN_PAR[n[0]].split('').forEach((p, i)=>{ bits += (p === 'A' ? BAL_EAN_A : BAL_EAN_B)[n[1+i]]; });
+  bits += '01010';
+  for(let i = 0; i < 6; i++) bits += BAL_EAN_C[n[7+i]];
+  bits += '101';
+  const alto = altura || 46;
+  let path = '';
+  for(let i = 0; i < bits.length; i++){
+    if(bits[i] === '1') path += `M${i} 0h1v${alto}h-1z`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${bits.length} ${alto}"
+    width="${largura||150}" height="${alto}" shape-rendering="crispEdges" preserveAspectRatio="none"
+    ><rect width="${bits.length}" height="${alto}" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
+}
+
+function balImprimirEtiquetas(){
+  const lista = balProdutosComCodigoInterno();
+  if(lista.length === 0){ showToast('Nenhum produto com código gerado aqui.', 'info'); return; }
+  const janela = window.open('', '_blank');
+  if(!janela){ showToast('O navegador bloqueou a janela. Libere os pop-ups para este site.', 'error'); return; }
+  janela.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+    <title>Etiquetas dos códigos gerados</title>
+    <style>
+      *{box-sizing:border-box}
+      body{font-family:Arial,Helvetica,sans-serif;margin:8mm;}
+      .et{display:inline-block;width:52mm;height:28mm;border:1px dashed #bbb;padding:2mm;
+          margin:0 1mm 1mm 0;vertical-align:top;overflow:hidden;page-break-inside:avoid;}
+      .nm{font-size:8pt;line-height:1.15;height:9mm;overflow:hidden;font-weight:bold;}
+      .cd{font-size:8pt;font-family:monospace;letter-spacing:.06em;text-align:center;margin-top:1mm;}
+      svg{display:block;margin:0 auto;}
+      @media print{ .et{border-color:#eee} }
+    </style></head><body>
+    ${lista.map(p=>`<div class="et">
+        <div class="nm">${escapeHtml(String(p.nome||'').slice(0,58))}</div>
+        ${balEanSvg(p.codigoBarras, 180, 42)}
+        <div class="cd">${escapeHtml(String(p.codigoBarras||''))}</div>
+      </div>`).join('')}
+    <script>window.onload=function(){window.print()}</${'script'}>
+    </body></html>`);
+  janela.document.close();
+}
+
+/* ---------------------------------------------------------------
+   O ENDEREÇO PRO CELULAR
+
+   O QR abre ESTE sistema no celular, já na tela do balanço. A
+   contagem é a mesma porque as duas máquinas conversam pela nuvem —
+   não é um aplicativo separado, é a mesma tela.
+   --------------------------------------------------------------- */
+function balEnderecoCelular(){
+  const u = location.origin + location.pathname;
+  return (u.startsWith('file:') ? u : u) + '#balanco';
+}
+
+function balQrHtml(lado){
+  try{
+    return qrSvg(balEnderecoCelular(), lado || 118);
+  }catch(e){
+    console.warn(e);
+    return '<div class="help-text">Não consegui desenhar o QR.</div>';
+  }
+}
+
+
+/* =========================================================
+   BALANÇO — A TELA
+
+   Uma tela só, dois formatos. No computador ela conta com o leitor
+   na mão e vê a lista inteira; no celular ela conta andando pela
+   prateleira, com a câmera e com o dedo. O que muda é o tamanho dos
+   alvos e o que cabe na vista — a contagem, as regras e os números
+   são os mesmos, porque é o mesmo balanço.
+   ========================================================= */
+
+function balEhCelular(){
+  return balCelular || (typeof window !== 'undefined' && window.innerWidth < 760);
+}
+
+function renderBalanco(){
+  preservandoRolagem(()=>renderBalancoAgora());
+}
+
+function renderBalancoAgora(){
+  const box = document.getElementById('balanco-content');
+  if(!box) return;
+  if(!BAL_CAT) balRecarregarCatalogo();
+
+  const b = balAberto();
+  if(!b){ box.innerHTML = balTelaInicio(); balLigarEventos(); return; }
+
+  box.innerHTML = balEhCelular() ? balTelaCelular(b) : balTelaComputador(b);
+  balLigarEventos();
+}
+
+/* ---------------------------------------------------------------
+   SEM BALANÇO ABERTO
+   --------------------------------------------------------------- */
+function balTelaInicio(){
+  const quantos = BAL_CAT ? BAL_CAT.size : 0;
+  const comodato = BAL_CAT ? [...BAL_CAT.values()].filter(i=>i.comodato).length : 0;
+  const ultimo = (STATE.balancos||[]).filter(x=>!x.aberto)
+                  .sort((a,c)=>String(c.fechadoEm||'').localeCompare(String(a.fechadoEm||'')))[0];
+  return `
+    <div class="card">
+      <h3>📦 Balanço de Estoque</h3>
+      <p class="help-text">Bipa o produto, diz quanto tem, e segue. O sistema soma, separa o que é do
+        comodato do que é da Mizu, e avisa quando a conta não fecha.</p>
+      <p class="help-text">Vai contar <strong>${fmtNum(quantos)} produto(s)</strong> — os
+        ${fmtNum(comodato)} do comodato da planilha mais os do seu cadastro, do jeito que estão na Conferência.</p>
+      ${quantos === 0
+        ? `<p class="help-text" style="color:var(--negative);"><strong>Não tem nada pra contar ainda.</strong>
+             Carregue a planilha na <a href="#" onclick="navigateTo('conferencia');return false;">Conferência</a> primeiro.</p>`
+        : `<button class="btn btn-primary" style="font-size:16px;padding:12px 22px;" onclick="balComecar()">
+             Começar o balanço</button>`}
+      ${ultimo ? `<p class="help-text" style="margin-top:14px;">Último balanço fechado em
+          ${fmtDate(String(ultimo.fechadoEm||'').slice(0,10))}${ultimo.resumo ? ` — ${fmtNum(ultimo.resumo.produtos)} produto(s)` : ''}.</p>` : ''}
+    </div>`;
+}
+
+function balComecar(){
+  balAbrir();
+  balRecarregarCatalogo();
+  balMsg = '';
+  renderBalanco();
+  setTimeout(()=>{ const i = document.getElementById('bal-codigo'); if(i) i.focus(); }, 60);
+}
+
+/* ---------------------------------------------------------------
+   PEDAÇOS QUE AS DUAS TELAS USAM
+   --------------------------------------------------------------- */
+function balKpisHtml(){
+  const t = balTotais();
+  const kpi = (rotulo, valor, cor)=>`<div class="kpi" style="flex:1;min-width:112px;border:1px solid var(--border);
+      border-radius:9px;padding:8px 11px;background:#fff;">
+      <div style="font-size:11px;color:var(--ink-faint);">${rotulo}</div>
+      <div style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;${cor?`color:${cor};`:''}">${valor}</div>
+    </div>`;
+  return `<div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:13px;">
+    ${kpi('Produtos contados', fmtNum(t.produtos))}
+    ${kpi('Unidades', fmtNum(t.unidades))}
+    ${kpi('Do comodato', fmtNum(t.comodato), 'var(--primary)')}
+    ${kpi('Da Mizu', fmtNum(t.mizu), '#4B3B80')}
+    ${kpi('Custo contado', fmtMoney(t.custo))}
+    ${kpi('Venda contada', fmtMoney(t.venda))}
+  </div>`;
+}
+
+function balAvisoHtml(){
+  if(!balAviso) return '';
+  const it = balItem(balAviso.chave);
+  if(!it) return '';
+  const sobra = balAviso.total - balAviso.saldo;
+  return `<div style="background:#FBF1E2;border:1px solid #E8D3A8;border-left:4px solid var(--warning);
+      border-radius:9px;padding:11px 13px;font-size:13px;margin-bottom:12px;line-height:1.45;">
+    <strong style="color:#7A4F0B;">⚠ Passou do comodato.</strong><br>
+    ${escapeHtml(it.nome)}: a ${escapeHtml(it.comodatoDe || CONF_FORNECEDOR_PADRAO)} tem
+    <strong>${fmtNum(balAviso.saldo)}</strong> e você já contou <strong>${fmtNum(balAviso.total)}</strong>.
+    ${sobra > 0 ? `As <strong>${fmtNum(sobra)}</strong> que sobraram devem ser da Mizu.` : ''}
+    <div style="display:flex;gap:8px;margin-top:9px;flex-wrap:wrap;">
+      <button class="btn btn-sm" onclick="balAceitarExcedente('${escapeAttr(balAviso.chave)}')">É da Mizu</button>
+      <button class="btn btn-sm" onclick="balRefazer('${escapeAttr(balAviso.chave)}')">Contei errado</button>
+    </div>
+  </div>`;
+}
+
+function balEscolhasHtml(){
+  if(!balEscolhas) return '';
+  return `<div class="card" style="border-left:4px solid var(--warning);">
+    <h3>Esse código está em ${balEscolhas.chaves.length} produtos</h3>
+    <p class="help-text">O código <strong>${escapeHtml(balEscolhas.codigo)}</strong> foi cadastrado pelo
+      fornecedor em mais de um produto. Toque em qual você tem na mão — o conserto do código é com ele, não aqui.</p>
+    <div style="display:flex;flex-direction:column;gap:7px;">
+      ${balEscolhas.chaves.map(ch=>{
+        const it = balItem(ch);
+        if(!it) return '';
+        return `<button class="btn" style="text-align:left;padding:10px 12px;"
+          onclick="balAbrirItem('${escapeAttr(ch)}')">
+          <strong>${escapeHtml(it.nome)}</strong>
+          <div class="help-text" style="margin:2px 0 0;">${escapeHtml(it.sku||'')}${
+            it.comodato ? ` · comodato ${escapeHtml(it.comodatoDe||'')} (saldo ${fmtNum(it.saldoComodato)})` : ''}
+            · custo ${fmtMoney(it.custo)} · venda ${fmtMoney(it.venda)}</div></button>`;
+      }).join('')}
+    </div>
+  </div>`;
+}
+
+function balNaoAcheiHtml(){
+  if(!balNaoAchei) return '';
+  const s = balNaoAchei.sugestoes || [];
+  return `<div class="card" style="border-left:4px solid var(--warning);">
+    <h3>Não achei esse código</h3>
+    <p class="help-text"><strong>${escapeHtml(balNaoAchei.codigo)}</strong> não está em nenhum produto da contagem.
+      Procure pela descrição: se achar, eu guardo esse código nesse produto e da próxima vez já cai direto.</p>
+    <div class="field" style="max-width:420px;">
+      <input type="text" id="bal-procura" value="${escapeAttr(balNaoAchei.termo||'')}"
+        placeholder="🔍 Nome do produto que você tem na mão...">
+    </div>
+    ${s.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
+      ${s.map(it=>`<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;
+            border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
+          <div style="min-width:0;">
+            <strong style="font-size:13.5px;">${escapeHtml(it.nome)}</strong>
+            <div class="help-text" style="margin:1px 0 0;">${escapeHtml(it.codigos[0] || 'sem código de barras')}${
+              it.comodato ? ` · comodato (saldo ${fmtNum(it.saldoComodato)})` : ''}</div>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="balEsseMesmo('${escapeAttr(it.chave)}')">é este</button>
+        </div>`).join('')}
+    </div>` : (String(balNaoAchei.termo||'').length >= 2
+        ? `<p class="help-text">Nenhum produto com esse nome na contagem.</p>` : '')}
+    <p class="help-text" style="margin-top:12px;">Ou cadastre agora — só o nome, o resto depois:</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <input type="text" id="bal-novo-nome" value="${escapeAttr(balNaoAchei.termo||'')}"
+        placeholder="Nome do produto" style="flex:1;min-width:220px;padding:9px 11px;border:1px solid var(--border);border-radius:8px;">
+      <button class="btn btn-primary" onclick="balCadastrarRapido()">Cadastrar e continuar</button>
+      <button class="btn" onclick="balLimparNaoAchei()">Deixa pra depois</button>
+    </div>
+  </div>`;
+}
+
+function balLimparNaoAchei(){
+  balNaoAchei = null;
+  renderBalanco();
+  setTimeout(()=>{ const i = document.getElementById('bal-codigo'); if(i) i.focus(); }, 30);
+}
+
+function balItemHtml(grande){
+  const it = balItem(balAtualChave);
+  if(!it) return '';
+  const b = balAberto();
+  const jaTem = b ? balContadoDe(b.id, it.chave) : 0;
+  return `<div style="background:#fff;border:1px solid var(--border);border-left:4px solid var(--positive);
+      border-radius:10px;padding:12px 13px;margin-bottom:12px;">
+    <strong style="font-size:${grande?'15.5':'14.5'}px;line-height:1.25;display:block;">${escapeHtml(it.nome)}</strong>
+    <div class="help-text" style="margin:3px 0 0;">
+      ${escapeHtml(it.codigos[0]||'sem código')}${it.sku?' · '+escapeHtml(it.sku):''}
+      ${it.comodato ? ` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}: ${fmtNum(it.saldoComodato)}</span>` : ''}
+    </div>
+    <div class="help-text" style="margin:3px 0 0;">
+      custo <strong>${fmtMoney(it.custo)}</strong> · venda <strong>${fmtMoney(it.venda)}</strong>
+      ${jaTem ? ` · <span style="color:var(--positive);font-weight:600;">já contei ${fmtNum(jaTem)}</span>` : ''}
+    </div>
+
+    <div style="display:flex;gap:9px;align-items:center;margin:12px 0 0;">
+      <button class="btn" style="width:${grande?'54px':'42px'};height:${grande?'54px':'42px'};font-size:${grande?'26':'20'}px;font-weight:700;"
+        onclick="balMudarQtd(-1)">−</button>
+      <input type="number" id="bal-qtd" value="${balQtd}" min="1" step="1" inputmode="numeric"
+        style="flex:1;font-size:${grande?'30':'22'}px;text-align:center;padding:${grande?'9':'6'}px;
+               border:2px solid var(--primary);border-radius:9px;font-weight:700;font-variant-numeric:tabular-nums;">
+      <button class="btn" style="width:${grande?'54px':'42px'};height:${grande?'54px':'42px'};font-size:${grande?'26':'20'}px;font-weight:700;"
+        onclick="balMudarQtd(1)">+</button>
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:${grande?'14':'11'}px;font-size:${grande?'16':'14.5'}px;font-weight:700;margin-top:10px;"
+      onclick="balConfirmar()">Contar e ler o próximo</button>
+  </div>`;
+}
+
+function balListaHtml(limite){
+  const b = balAberto();
+  if(!b) return '';
+  const contados = balContados(b.id);
+  if(contados.size === 0){
+    return `<p class="help-text">Nada contado ainda. Bipe o primeiro produto.</p>`;
+  }
+  /* o último contado aparece em cima: é o que ela quer conferir */
+  const ordem = [];
+  balBipes(b.id).slice().reverse().forEach(x=>{ if(!ordem.includes(x.chave)) ordem.push(x.chave); });
+
+  const t = ncmNormalizar(balBusca);
+  let lista = ordem;
+  if(t.length >= 2){
+    const palavras = t.split(' ').filter(Boolean);
+    lista = ordem.filter(ch=>{
+      const it = BAL_CAT.get(ch);
+      if(!it) return false;
+      const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
+      return palavras.every(p=>txt.includes(p));
+    });
+  }
+  const mostra = lista.slice(0, limite || 300);
+
+  return `<div id="bal-lista-wrap" class="table-wrap" data-rolagem="1" style="max-height:calc(100vh - 430px);overflow:auto;">
+    <table class="data-table">
+      <thead><tr>
+        <th>Produto</th><th class="num" style="width:78px;">Contei</th>
+        <th class="num" style="width:92px;">Comodato</th><th class="num" style="width:78px;">Mizu</th>
+        <th class="num" style="width:104px;">Custo</th><th class="num" style="width:104px;">Venda</th>
+        <th style="width:150px;">Situação</th><th style="width:72px;"></th>
+      </tr></thead>
+      <tbody>
+        ${mostra.map(ch=>{
+          const it = BAL_CAT.get(ch);
+          if(!it) return '';
+          const qtd = contados.get(ch) || 0;
+          const pc = it.comodato ? Math.min(qtd, it.saldoComodato) : 0;
+          const pm = qtd - pc;
+          const passou = it.comodato && qtd > it.saldoComodato;
+          return `<tr${it.produtoId ? '' : ' style="background:#FFFBF2;"'}>
+            <td><strong>${escapeHtml(it.nome)}</strong>
+              <div class="help-text" style="margin:0;">${escapeHtml(it.codigos[0]||'sem código')}${
+                it.sku?' · '+escapeHtml(it.sku):''}${it.produtoId?'':' · <i>ainda não é produto aqui</i>'}</div></td>
+            <td class="num"><strong>${fmtNum(qtd)}</strong></td>
+            <td class="num">${it.comodato ? fmtNum(pc) : '—'}</td>
+            <td class="num">${pm ? fmtNum(pm) : '—'}</td>
+            <td class="num">${fmtMoney(qtd * Number(it.custo||0))}</td>
+            <td class="num">${fmtMoney(qtd * Number(it.venda||0))}</td>
+            <td>${passou
+                  ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">passou do comodato</span>`
+                  : it.comodato
+                    ? `<span class="badge" style="background:var(--primary-soft,#E8F3F6);color:var(--primary-escuro,#1B4B5A);">comodato</span>`
+                    : `<span class="badge" style="background:#EDE9F6;color:#4B3B80;">Mizu</span>`}</td>
+            <td><button class="btn btn-sm" onclick="balRefazer('${escapeAttr(ch)}')" title="Apagar e contar de novo">↺</button></td>
+          </tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    ${lista.length > mostra.length ? `<p class="help-text" style="padding:8px;">Mostrando ${mostra.length} de ${lista.length}. Use a busca.</p>` : ''}
+  </div>`;
+}
+
+function balAcoesHtml(){
+  const b = balAberto();
+  const etiquetas = balProdutosComCodigoInterno().length;
+  const t = balTotais();
+  const naoContados = (BAL_CAT ? BAL_CAT.size : 0) - (b ? balContados(b.id).size : 0);
+  const fornecedores = (STATE.fornecedores||[]).map(f=>String(f.nome||'').trim()).filter(Boolean).sort();
+  return `<div class="card">
+    <h3>✓ Fechar o balanço</h3>
+    <p class="help-text">Fechar grava o saldo contado no estoque: o comodato fica com o que a
+      ${escapeHtml(CONF_FORNECEDOR_PADRAO)} tem, e o que passou disso entra como estoque da Mizu.</p>
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+      <div class="field" style="max-width:280px;margin:0;">
+        <label>Fornecedor de todos os contados</label>
+        <input type="text" id="bal-fornecedor" list="bal-fornecedores" placeholder="Deixe vazio pra não alterar"
+          value="${escapeAttr((b&&b.fornecedorFinal)||'')}">
+        <datalist id="bal-fornecedores">${fornecedores.map(n=>`<option value="${escapeAttr(n)}">`).join('')}</datalist>
+      </div>
+      <label style="display:flex;gap:7px;align-items:center;font-size:13px;color:var(--ink-soft);margin-bottom:6px;">
+        <input type="checkbox" id="bal-zerar"> Zerar os ${fmtNum(naoContados)} que eu não contei
+      </label>
+    </div>
+    <div style="display:flex;gap:9px;flex-wrap:wrap;">
+      <button class="btn btn-primary" onclick="balFechar()">✓ Fechar o balanço (${fmtNum(t.produtos)} produtos)</button>
+      ${etiquetas ? `<button class="btn" onclick="balImprimirEtiquetas()">🏷️ Imprimir etiquetas dos códigos gerados (${etiquetas})</button>` : ''}
+      <button class="btn" onclick="balDesfazerUltimo()">↶ Desfazer o último bipe</button>
+      <button class="btn" onclick="navigateTo('dashboard')">Pausar e continuar depois</button>
+    </div>
+    <p class="help-text" style="margin-top:9px;">Pausar não perde nada: a contagem fica guardada e sincroniza
+      entre o computador e o celular.</p>
+  </div>`;
+}
+
+/* No celular o botão grande da câmera já está logo acima, então o
+   📷 pequeno sai daqui — com ele, os três controles não cabem numa
+   tela de 400px sem espremer o campo do código, que é o que importa. */
+function balBiparHtml(grande, comCamera){
+  return `<div style="display:flex;gap:9px;align-items:stretch;margin-bottom:12px;">
+    <input type="text" id="bal-codigo" inputmode="numeric" autocomplete="off" placeholder="Bipe ou digite o código"
+      style="flex:1;min-width:0;font-size:${grande?'18':'17'}px;padding:${grande?'13':'11'}px 13px;border:2px solid var(--primary);
+             border-radius:9px;font-family:ui-monospace,monospace;">
+    ${comCamera === false ? '' : `<button class="btn" style="background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);
+      color:#fff;font-weight:600;font-size:15px;padding:0 ${grande?'18':'15'}px;" onclick="balCamera()">📷</button>`}
+    <button class="btn btn-primary" style="font-size:15px;padding:0 ${grande?'20':'17'}px;font-weight:600;white-space:nowrap;"
+      onclick="balBiparDoCampo()">Contar</button>
+  </div>`;
+}
+
+function balBiparDoCampo(){
+  const i = document.getElementById('bal-codigo');
+  if(!i) return;
+  const v = i.value.trim();
+  if(!v) return;
+  i.value = '';
+  balBipar(v);
+}
+
+function balCamera(){
+  if(typeof abrirLeitorCodigoBarras !== 'function'){
+    showToast('O leitor por câmera não está disponível.', 'error');
+    return;
+  }
+  abrirLeitorCodigoBarras((codigo)=>balBipar(codigo));
+}
+
+/* ---------------------------------------------------------------
+   A TELA DO COMPUTADOR
+   --------------------------------------------------------------- */
+function balTelaComputador(b){
+  return `
+    <div style="display:flex;gap:14px;align-items:center;background:var(--primary-soft,#E8F3F6);
+        border:1px solid #C5DEE6;border-radius:10px;padding:11px 13px;margin-bottom:13px;flex-wrap:wrap;">
+      <div style="background:#fff;border:1px solid var(--border);border-radius:7px;padding:5px;line-height:0;">
+        ${balQrHtml(104)}
+      </div>
+      <div style="min-width:220px;flex:1;">
+        <div style="font-weight:700;font-size:13.5px;">📱 Contar pelo celular</div>
+        <div class="help-text" style="margin:2px 0 0;">Leia esse código com a câmera do celular e o balanço abre lá,
+          <strong>na mesma contagem</strong>. O que você bipar no celular aparece aqui, e o que bipar aqui aparece lá.</div>
+      </div>
+      <button class="btn btn-sm" onclick="balVerComoCelular()">ver como fica no celular</button>
+    </div>
+
+    ${balKpisHtml()}
+
+    <div class="card">
+      ${balBiparHtml(true)}
+      ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
+      ${balAvisoHtml()}
+      ${balAtualChave ? balItemHtml(false) : ''}
+      <div style="display:flex;gap:9px;align-items:center;margin-bottom:10px;">
+        <div class="field" style="max-width:280px;margin:0;">
+          <input type="text" id="bal-busca" value="${escapeAttr(balBusca)}" placeholder="🔍 Procurar no que já contei">
+        </div>
+        <span class="help-text" style="margin:0;">${fmtNum(BAL_CAT.size)} produto(s) no balanço</span>
+      </div>
+      ${balListaHtml()}
+    </div>
+
+    ${balEscolhasHtml()}
+    ${balNaoAcheiHtml()}
+    ${balAcoesHtml()}`;
+}
+
+function balVerComoCelular(){
+  balCelular = !balCelular;
+  renderBalanco();
+}
+
+/* Traz o menu de volta no celular — sair do balanço tem que ser fácil
+   mesmo com o menu escondido. */
+function balMostrarMenu(){
+  document.body.classList.remove('bal-foco');
+  window.scrollTo(0, 0);
+}
+
+/* ---------------------------------------------------------------
+   A TELA DO CELULAR
+
+   Mesma contagem, formato de quem está de pé na frente da
+   prateleira: a câmera primeiro, o número grande, e só o que ela
+   precisa ver sem rolar.
+   --------------------------------------------------------------- */
+function balTelaCelular(b){
+  const t = balTotais();
+  return `
+    <div style="max-width:460px;margin:0 auto;">
+      ${balCelular ? `<p class="help-text" style="text-align:center;margin:0 0 9px;">
+          formato do celular — <a href="#" onclick="balVerComoCelular();return false;">voltar pro computador</a></p>` : ''}
+      <button class="btn btn-sm bal-voltar-menu" style="margin-bottom:9px;" onclick="balMostrarMenu()">☰ Menu</button>
+
+      <button class="btn" style="width:100%;padding:15px;font-size:16px;font-weight:700;
+          background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);color:#fff;margin-bottom:11px;"
+        onclick="balCamera()">📷 Bipar com a câmera</button>
+
+      ${balBiparHtml(true, false)}
+      ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
+      ${balAvisoHtml()}
+      ${balAtualChave ? balItemHtml(true) : ''}
+      ${balEscolhasHtml()}
+      ${balNaoAcheiHtml()}
+
+      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:11px;">
+        ${balUltimosHtml(12)}
+      </div>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:11px;">
+        <button class="btn" style="flex:1;" onclick="balDesfazerUltimo()">↶ Desfazer</button>
+        <button class="btn" style="flex:1;" onclick="navigateTo('dashboard')">Pausar</button>
+      </div>
+
+      <div style="background:#fff;border-top:1px solid var(--border);border:1px solid var(--border);
+          border-radius:10px;padding:10px 13px;display:flex;justify-content:space-between;align-items:center;
+          font-size:12.5px;color:var(--ink-soft);">
+        <span>Contados</span>
+        <strong style="color:var(--ink);font-size:15px;">${fmtNum(t.produtos)} produtos · ${fmtNum(t.unidades)} un.</strong>
+      </div>
+      <p class="help-text" style="text-align:center;margin-top:10px;">
+        do comodato ${fmtNum(t.comodato)} · da Mizu ${fmtNum(t.mizu)} · custo ${fmtMoney(t.custo)}
+      </p>
+      <p class="help-text" style="text-align:center;">Fechar o balanço é no computador — lá dá pra conferir a lista inteira.</p>
+    </div>`;
+}
+
+function balUltimosHtml(quantos){
+  const b = balAberto();
+  if(!b) return '';
+  const contados = balContados(b.id);
+  const ordem = [];
+  balBipes(b.id).slice().reverse().forEach(x=>{ if(!ordem.includes(x.chave)) ordem.push(x.chave); });
+  if(ordem.length === 0) return `<div style="padding:14px;"><p class="help-text" style="margin:0;">Nada contado ainda.</p></div>`;
+  return ordem.slice(0, quantos || 12).map(ch=>{
+    const it = BAL_CAT.get(ch);
+    if(!it) return '';
+    const qtd = contados.get(ch) || 0;
+    const passou = it.comodato && qtd > it.saldoComodato;
+    return `<div style="padding:9px 11px;border-bottom:1px solid var(--border);display:flex;
+        justify-content:space-between;gap:9px;align-items:center;">
+      <div style="min-width:0;">
+        <strong style="font-size:13px;line-height:1.25;display:block;">${escapeHtml(it.nome)}</strong>
+        <div class="help-text" style="margin:1px 0 0;">${
+          it.comodato ? `comodato ${fmtNum(it.saldoComodato)}` : 'Mizu'}${passou ? ' · <span style="color:#8A5D14;">passou</span>' : ''}</div>
+      </div>
+      <div style="font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap;">${fmtNum(qtd)}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------------------------------------------------------------
+   EVENTOS
+
+   Ligados depois de cada desenho porque o HTML é refeito inteiro.
+   O campo do código é o que fica com o foco: o leitor de código de
+   barras digita e dá Enter, igual a um teclado.
+   --------------------------------------------------------------- */
+function balLigarEventos(){
+  const cod = document.getElementById('bal-codigo');
+  if(cod) cod.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); balBiparDoCampo(); }
+  });
+
+  const qtd = document.getElementById('bal-qtd');
+  if(qtd) qtd.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){ e.preventDefault(); balConfirmar(); }
+    else if(e.key === 'Escape'){ balAtualChave = null; renderBalanco(); }
+  });
+
+  const procura = document.getElementById('bal-procura');
+  if(procura){
+    procura.addEventListener('input', (e)=>balProcurar(e.target.value));
+    if(balNaoAchei && !balNaoAchei.focou){ balNaoAchei.focou = true; procura.focus(); }
+  }
+
+  const busca = document.getElementById('bal-busca');
+  if(busca) busca.addEventListener('input', (e)=>{
+    balBusca = e.target.value;
+    const alvo = document.getElementById('bal-lista-wrap');
+    if(alvo){
+      alvo.outerHTML = balListaHtml();
+      const b2 = document.getElementById('bal-busca');
+      if(b2){ b2.focus(); b2.setSelectionRange(b2.value.length, b2.value.length); }
+    }
+  });
+}
+
+RENDERERS['balanco'] = function(){
+  /* a planilha do comodato vive no IndexedDB: sem ela o catálogo sai
+     só com os produtos da loja, e a conta do comodato não existiria */
+  if(!CONF_LINHAS){
+    confCarregarGuardada().then(()=>{ balRecarregarCatalogo(); renderBalanco(); });
+  }else{
+    balRecarregarCatalogo();
+  }
+  renderBalanco();
+};
+
+
+/* =========================================================
    NUVEM — login, usuários e sincronização entre máquinas
 
    O sistema continua sendo offline-first: QUEM MANDA é o
@@ -52800,7 +54389,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 13:10';
+const SISTEMA_VERSAO = '10/11/2026 18:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -54547,6 +56136,12 @@ async function iniciarSistema(){
   nuvemIniciar();
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
+  /* O QR do balanço abre o sistema com #balanco no endereço: cai direto
+     na tela da contagem, que é o que ela quer ao chegar na prateleira. */
+  try{
+    const alvo = String(location.hash||'').replace('#','').split('=')[0];
+    if(alvo && document.getElementById('page-' + alvo)) navigateTo(alvo);
+  }catch(e){ console.warn(e); }
 }
 
 document.addEventListener('DOMContentLoaded', iniciarSistema);
