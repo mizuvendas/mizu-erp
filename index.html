@@ -1089,6 +1089,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="distribuicao" href="#">
       <span class="ic ic-operacao">📨</span> Notas na Receita <span class="nav-badge" id="nav-badge-distribuicao" style="display:none;"></span>
     </a>
+    <a class="nav-item" data-page="conferencia" href="#">
+      <span class="ic ic-operacao">📋</span> Confer&ecirc;ncia
+    </a>
     <a class="nav-item" data-page="estoque" href="#">
       <span class="ic ic-operacao">📊</span> Estoque
     </a>
@@ -1302,6 +1305,17 @@ body.orc-gaveta-travada{ overflow:hidden; }
         </div>
       </div>
       <div id="distribuicao-content"></div>
+    </section>
+
+    <!-- ============ CONFERENCIA DE PLANILHA ============ -->
+    <section class="page" id="page-conferencia">
+      <div class="page-header">
+        <div>
+          <h2>Confer&ecirc;ncia</h2>
+          <p class="subtitle">A planilha do fornecedor contra o seu cadastro &mdash; casada pelo c&oacute;digo de barras, item por item</p>
+        </div>
+      </div>
+      <div id="conferencia-content"></div>
     </section>
 
     <section class="page" id="page-estoque">
@@ -46316,6 +46330,23 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-09-c',
+    data: '2026-11-09',
+    titulo: 'CONFERÊNCIA — a planilha do fornecedor contra o seu cadastro',
+    itens: [
+      'MENU NOVO: Conferência. Solta a planilha do fornecedor e ele responde, linha por linha: 🟢 já cadastrado e completo · 🟡 cadastrado, falta X · 🔴 não existe aqui.',
+      'O CASAMENTO É PELO CÓDIGO DE BARRAS, nunca pelo nome. O nome da planilha vem errado em vários itens — coisa lançada como caixa que aqui você já corrigiu pra unidade. Casar por nome traria o erro de volta.',
+      'O EXCEL COME ZERO À ESQUERDA. Código de barras guardado como número perde o zero da frente: um EAN-13 volta com 12 dígitos. Na sua planilha são 33 casos, e sem tratar isso eles apareceriam como "não cadastrado" com você tendo o produto. A comparação completa os zeros.',
+      'NADA É SOBRESCRITO SOZINHO. Custo e preço aparecem dos DOIS LADOS — o que a planilha diz e o que está gravado aqui — com a diferença marcada em vermelho. Trazer o valor da planilha é um botão por linha, com aviso pra conferir a unidade (lá tem item por caixa).',
+      'COMODATO: produto da ECOVILLE que fica aqui ganha saldo PRÓPRIO, separado do seu estoque. O mesmo produto pode existir nos dois, e o seu estoque não é tocado.',
+      'O botão "Completar os que dá" preenche de uma vez: fornecedor ECOVILLE, código interno, código do fornecedor (o código de barras), ST como "não tem" e o saldo de comodato. Nome, custo e preço ficam como estão.',
+      'Produto que não existe aqui entra pelo botão Cadastrar, já como comodato — e o NCM fica EM BRANCO de propósito: inventar NCM é criar problema fiscal calado.',
+      'SÓ ENTRAM OS QUE TÊM SALDO. Conferido na sua planilha: dos 524 com saldo, todos têm código de barras. Os 108 sem saldo ficam de fora, e o rodapé da exportação ("Total Geral") não é contado como produto.',
+      'Marca também o que o fornecedor errou: código de barras repetido em dois produtos diferentes aparece sinalizado nos dois, em vez de casar um deles errado.',
+      'A planilha lida fica guardada no navegador — fechou e voltou, ela está lá. E não ocupa o espaço do sistema: vai pro mesmo lugar das certidões, não pro armazenamento que o resto usa.'
+    ]
+  },
+  {
     id: '2026-11-09-b',
     data: '2026-11-09',
     titulo: 'O espelho agora deixa você arrumar o que falta, ali mesmo',
@@ -51411,7 +51442,567 @@ function distVerEntrada(chave){
 }
 
 RENDERERS['entrada-nota'] = renderEntradaNota;
+
+/* =========================================================
+   CONFERÊNCIA DE PLANILHA  (provisório — comodato ECOVILLE)
+
+   "vou te enviar uma planilha e você vai me mostrar no sistema,
+    em relação a cada item, se ele já está cadastrado, e as
+    exigências necessárias para o preenchimento"
+
+   O caso: a ECOVILLE mandou o inventário dos produtos que estão
+   aqui em COMODATO — mercadoria dela, guardada e vendida aqui.
+   Precisa entrar no sistema com saldo próprio, separado do estoque
+   da Mizu, porque o MESMO produto pode existir nos dois.
+
+   TRÊS REGRAS QUE VÊM DA CONVERSA, E NÃO SÃO DETALHE:
+
+   1. CASA PELO CÓDIGO DE BARRAS, nunca pelo nome. O nome da
+      planilha está errado em vários casos — item que lá é caixa e
+      aqui já foi corrigido pra unidade. Casar por nome reencontraria
+      o erro que ela já consertou.
+
+   2. NÃO SOBRESCREVE NADA SOZINHO. Pelo mesmo motivo: se lá o custo
+      é da caixa e aqui é da unidade, trazer o número da planilha por
+      cima estragaria o trabalho dela. A tela mostra OS DOIS LADOS e
+      ela decide linha por linha. O único campo que entra sozinho é o
+      saldo de comodato, porque esse não existia aqui.
+
+   3. SÓ ENTRAM OS QUE TÊM SALDO. Conferido na planilha dela: dos 524
+      com saldo, todos têm código de barras — nenhuma exceção. Os sem
+      saldo não têm código e ficam de fora, como ela pediu.
+   ========================================================= */
+
+const CONF_FORNECEDOR_PADRAO = 'ECOVILLE';
+
+/* A planilha fica no IndexedDB, não no STATE: são centenas de linhas
+   de trabalho, e o localStorage é o mesmo espaço do sistema inteiro —
+   encher ele faz o saveState() falhar calado. No STATE fica só o
+   resumo, que são quatro campos. */
+function confIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-conferencia', 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains('planilhas')) req.result.createObjectStore('planilhas');
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('planilhas', modo==='get'?'readonly':'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore('planilhas');
+      const op = modo==='get' ? store.get(chave)
+               : modo==='del' ? store.delete(chave)
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+let CONF_LINHAS = null;      /* o que foi lido da planilha, em memória */
+let confFiltro = 'todos';
+let confBusca = '';
+
+/* ---------------------------------------------------------------
+   CÓDIGO DE BARRAS
+
+   O Excel guarda código de barras como NÚMERO, e número não tem zero
+   à esquerda: um EAN-13 que começa com zero volta com 12 dígitos. Na
+   planilha dela são 33 casos. Comparar cru marcaria esses como "não
+   cadastrado" mesmo o produto existindo — então a comparação é feita
+   sempre na forma completada com zeros.
+   --------------------------------------------------------------- */
+function confBarras(v){
+  const d = String(v == null ? '' : v).replace(/\D/g,'');
+  if(!d || /^0+$/.test(d)) return '';
+  return d.length < 13 ? d.padStart(13, '0') : d;
+}
+
+function confIndiceProdutos(){
+  const ix = new Map();
+  (STATE.produtos||[]).forEach(p=>{
+    const b = confBarras(p.codigoBarras);
+    if(!b) return;
+    if(!ix.has(b)) ix.set(b, []);
+    ix.get(b).push(p);
+  });
+  return ix;
+}
+
+/* ---------------------------------------------------------------
+   O QUE FALTA NUM PRODUTO DE COMODATO
+
+   Parte disso é a regra que o sistema já usa pra barrar nota fiscal
+   (produtoPendencias) — não repito a regra aqui, chamo a de lá. O
+   resto é o que ela pediu a mais pra este lote.
+   --------------------------------------------------------------- */
+function confPendencias(prod, linha){
+  const falta = [];
+  if(!prod) return falta;
+  (pendenciasDeNota(prod)||[]).forEach(x=>falta.push(x));
+  if(!String(prod.sku||'').trim()) falta.push('código interno');
+  if(!String(prod.fornecedor||'').trim() && !prod.fornecedorId) falta.push('fornecedor');
+  if(!String(prod.codigoNF||'').trim()) falta.push('código do fornecedor');
+  if(!prod.comodato) falta.push('marcar como comodato');
+  if(linha && Number(prod.estoqueComodato||0) !== Number(linha.saldo||0)) falta.push('saldo do comodato');
+  return falta;
+}
+
+function confSituacao(l){
+  if(!l.produto) return 'novo';
+  return confPendencias(l.produto, l).length ? 'incompleto' : 'ok';
+}
+
+/* ---------------------------------------------------------------
+   LER A PLANILHA
+
+   O arquivo é um "Registro de inventário" exportado do TOTVS: tem
+   título, linha de filtros, cabeçalho só na 4ª linha, cabeçalhos de
+   grupo por fornecedor e linhas de "Total" no meio. Por isso a
+   leitura é por POSIÇÃO de coluna achada pelo nome do cabeçalho, e
+   não pelo nome de cada campo — e tudo que não é linha de produto é
+   descartado.
+   --------------------------------------------------------------- */
+function confLerPlanilha(arrayBuffer, nomeArquivo){
+  const wb = XLSX.read(new Uint8Array(arrayBuffer), {type:'array'});
+  const sheet = wb.Sheets[wb.SheetNames[0]];
+  return confLerGrade(XLSX.utils.sheet_to_json(sheet, {header:1, defval:null, raw:true}), nomeArquivo);
+}
+
+/* A leitura de verdade mora aqui, recebendo a planilha já virada em
+   linhas e colunas. Separado de propósito: assim a regra — achar o
+   cabeçalho, descartar grupo e Total, ignorar quem não tem saldo,
+   casar pelo código de barras — pode ser conferida sem depender da
+   biblioteca de planilha, que vem da internet e nem sempre está lá. */
+function confLerGrade(grade, nomeArquivo){
+  /* acha a linha de cabeçalho: a que tem "código" e "saldo" */
+  const quer = (t)=>String(t==null?'':t).toLowerCase().trim();
+  let cab = -1;
+  for(let i=0; i<Math.min(grade.length, 30); i++){
+    const linha = (grade[i]||[]).map(quer);
+    if(linha.some(c=>c.startsWith('c')&&c.includes('digo')&&!c.includes('barra')) && linha.some(c=>c.includes('saldo'))){
+      cab = i; break;
+    }
+  }
+  if(cab < 0) throw new Error('Não achei o cabeçalho da planilha (preciso das colunas Código, Descrição, saldo).');
+
+  const titulos = (grade[cab]||[]).map(quer);
+  const achar = (...nomes)=>{
+    for(const n of nomes){
+      const i = titulos.findIndex(t=>t.includes(n));
+      if(i >= 0) return i;
+    }
+    return -1;
+  };
+  const cCod    = achar('código','codigo');
+  const cDesc   = achar('descri');
+  const cCusto  = achar('custo');
+  const cBarras = achar('barra');
+  const cSaldo  = achar('saldo');
+  const cVenda  = achar('valor venda','venda');
+  if(cBarras < 0 || cSaldo < 0) throw new Error('A planilha precisa ter as colunas de código de barras e de saldo.');
+
+  const ix = confIndiceProdutos();
+  const linhas = [];
+  let ignoradasSemSaldo = 0;
+
+  for(let i = cab+1; i < grade.length; i++){
+    const r = grade[i] || [];
+    const codigo = cCod >= 0 ? r[cCod] : null;
+    const desc = cDesc >= 0 ? r[cDesc] : null;
+    if(codigo == null || codigo === '') continue;                 /* cabeçalho de grupo */
+    if(String(desc||'').trim().toLowerCase() === 'total') continue;
+    /* Rodapé da planilha: "Total Geral", linha em branco, um ponto solto.
+       Têm código mas não são produto — e contá-los como "sem saldo"
+       inflava o número que ela vê na tela (111 no lugar de 108).
+       O teste é a DESCRIÇÃO vazia, não o código: 24 produtos de verdade
+       vêm com o código "#" nessa exportação, e exigir número no código
+       jogaria fora esses 24. */
+    if(String(desc||'').trim() === '') continue;
+
+    const saldo = Number(r[cSaldo]);
+    if(!(saldo > 0)){ ignoradasSemSaldo++; continue; }             /* sem saldo fica de fora */
+
+    const barras = confBarras(r[cBarras]);
+    const achados = barras ? (ix.get(barras) || []) : [];
+    linhas.push({
+      codigo: String(codigo).trim(),
+      nome: String(desc||'').trim(),
+      custo: Number(r[cCusto]) || 0,
+      venda: cVenda >= 0 ? (Number(r[cVenda]) || 0) : 0,
+      saldo,
+      barras,
+      produto: achados[0] || null,
+      produtoId: achados[0] ? achados[0].id : null,
+      ambiguo: achados.length > 1
+    });
+  }
+
+  /* O fornecedor errou e repetiu o mesmo código de barras em dois
+     produtos. Marcar os dois é melhor que casar um deles errado: o
+     conserto é com a ECOVILLE, não aqui. */
+  const vistos = {};
+  linhas.forEach(l=>{ if(l.barras) vistos[l.barras] = (vistos[l.barras]||0) + 1; });
+  linhas.forEach(l=>{ if(l.barras && vistos[l.barras] > 1) l.barrasRepetida = true; });
+
+  return { arquivo: nomeArquivo || '', linhas, ignoradasSemSaldo };
+}
+
+async function confImportar(arquivo){
+  if(!arquivo) return;
+  if(!XLSX_DISPONIVEL){
+    showToast('A biblioteca de planilha não carregou — precisa de internet na primeira vez.', 'error');
+    return;
+  }
+  try{
+    const buf = await arquivo.arrayBuffer();
+    await confAplicarLeitura(confLerPlanilha(buf, arquivo.name));
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui ler a planilha: ' + e.message, 'error');
+  }
+}
+
+/* Guarda a leitura e redesenha. Um caminho só: o arquivo de verdade e
+   qualquer conferência passam por aqui. */
+async function confAplicarLeitura(r){
+  CONF_LINHAS = r.linhas;
+  await confIdb('put', 'atual', { arquivo: r.arquivo, em: new Date().toISOString(),
+                                  linhas: r.linhas.map(l=>({ codigo:l.codigo, nome:l.nome, custo:l.custo,
+                                                             venda:l.venda, saldo:l.saldo, barras:l.barras })) });
+  STATE.conferenciaResumo = { arquivo: r.arquivo, em: new Date().toISOString(),
+                              total: r.linhas.length, semSaldo: r.ignoradasSemSaldo };
+  saveState();
+  renderConferencia();
+  showToast(`${r.linhas.length} produto(s) com saldo lidos. ${r.ignoradasSemSaldo} sem saldo ficaram de fora.`, 'success');
+}
+
+async function confCarregarGuardada(){
+  if(CONF_LINHAS) return CONF_LINHAS;
+  try{
+    const g = await confIdb('get', 'atual');
+    if(g && Array.isArray(g.linhas)){
+      const ix = confIndiceProdutos();
+      CONF_LINHAS = g.linhas.map(l=>{
+        const achados = l.barras ? (ix.get(l.barras) || []) : [];
+        return Object.assign({}, l, { produto: achados[0] || null,
+                                      produtoId: achados[0] ? achados[0].id : null,
+                                      ambiguo: achados.length > 1 });
+      });
+      const vistos = {};
+      CONF_LINHAS.forEach(l=>{ if(l.barras) vistos[l.barras] = (vistos[l.barras]||0)+1; });
+      CONF_LINHAS.forEach(l=>{ if(l.barras && vistos[l.barras] > 1) l.barrasRepetida = true; });
+    }
+  }catch(e){ console.warn(e); }
+  return CONF_LINHAS;
+}
+
+/* Recasa com o cadastro depois de uma correção, sem reler o arquivo. */
+function confRecasar(){
+  if(!CONF_LINHAS) return;
+  const ix = confIndiceProdutos();
+  CONF_LINHAS.forEach(l=>{
+    const achados = l.barras ? (ix.get(l.barras) || []) : [];
+    l.produto = achados[0] || null;
+    l.produtoId = achados[0] ? achados[0].id : null;
+    l.ambiguo = achados.length > 1;
+  });
+}
+
+/* ---------------------------------------------------------------
+   COMPLETAR O CADASTRO
+
+   Só mexe no que ela listou: fornecedor, código interno, código do
+   fornecedor, ST e o saldo de comodato. NOME, CUSTO E PREÇO DE VENDA
+   NÃO SÃO TOCADOS — a planilha está errada neles em vários itens, e
+   ela já corrigiu aqui. Trazer de lá desfaria o conserto.
+   --------------------------------------------------------------- */
+function confCompletarProduto(prod, linha){
+  if(!prod) return [];
+  const feito = [];
+  if(!String(prod.sku||'').trim()){ prod.sku = proximoSku(prod.id); feito.push('código interno ' + prod.sku); }
+  if(!String(prod.fornecedor||'').trim()){ prod.fornecedor = CONF_FORNECEDOR_PADRAO; feito.push('fornecedor'); }
+  if(!String(prod.codigoNF||'').trim() && linha.barras){ prod.codigoNF = linha.barras; feito.push('código do fornecedor'); }
+  /* Ela confirmou: este lote inteiro é sem ST. */
+  if(prod.stConfirmado !== false){ prod.stConfirmado = false; feito.push('ST (não tem)'); }
+  if(!prod.comodato){
+    prod.comodato = true;
+    prod.comodatoDe = CONF_FORNECEDOR_PADRAO;
+    feito.push('comodato');
+  }
+  if(Number(prod.estoqueComodato||0) !== Number(linha.saldo||0)){
+    prod.estoqueComodato = Number(linha.saldo) || 0;
+    feito.push('saldo de comodato ' + fmtNum(prod.estoqueComodato));
+  }
+  return feito;
+}
+
+function confCompletarLinha(barras){
+  const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
+  if(!l || !l.produto) return;
+  const feito = confCompletarProduto(l.produto, l);
+  saveState();
+  confRecasar();
+  renderConferencia();
+  showToast(feito.length ? ('Completado: ' + feito.join(', ') + '.') : 'Nada a completar nesse produto.', 'success');
+}
+
+function confCompletarTodos(){
+  const alvos = confLinhasFiltradas().filter(l=>l.produto && confPendencias(l.produto, l).length);
+  if(alvos.length === 0){ showToast('Nada a completar na lista atual.', 'info'); return; }
+  const semNcm = alvos.filter(l=>pendenciasDeNota(l.produto).includes('NCM')).length;
+  confirmAction('Completar todos os que dá',
+    `Vou completar ${alvos.length} produto(s): fornecedor ${CONF_FORNECEDOR_PADRAO}, código interno, código do fornecedor, `
+    + `ST como "não tem" e o saldo de comodato da planilha.\n\n`
+    + `NOME, CUSTO E PREÇO DE VENDA NÃO SÃO ALTERADOS — a planilha está errada neles em vários itens e você já corrigiu aqui.\n\n`
+    + (semNcm ? `${semNcm} produto(s) continuam sem NCM depois disso: NCM eu não tenho de onde tirar, fica pra você.` : ''),
+    ()=>{
+      let n = 0;
+      alvos.forEach(l=>{ if(confCompletarProduto(l.produto, l).length) n++; });
+      saveState();
+      confRecasar();
+      renderConferencia();
+      showToast(`${n} produto(s) completados.`, 'success');
+    }, 'Completar');
+}
+
+/* Trazer custo ou preço da planilha é SEMPRE decisão dela, um de cada
+   vez — é justamente o campo onde a planilha mente. */
+function confTrazerValor(barras, qual){
+  const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
+  if(!l || !l.produto) return;
+  const campo = qual === 'custo' ? 'custo' : 'precoVenda';
+  const valor = qual === 'custo' ? l.custo : l.venda;
+  const antes = Number(l.produto[campo]||0);
+  confirmAction(qual === 'custo' ? 'Trazer o custo da planilha' : 'Trazer o preço da planilha',
+    `${l.produto.nome}\n\nAqui: ${fmtMoney(antes)}\nNa planilha: ${fmtMoney(valor)}\n\n`
+    + 'Confira se os dois estão na mesma unidade — na planilha tem item lançado por caixa.',
+    ()=>{
+      l.produto[campo] = Number(valor) || 0;
+      saveState(); renderConferencia();
+      showToast('Valor trazido da planilha.', 'success');
+    }, 'Trazer');
+}
+
+/* ---------------------------------------------------------------
+   A TELA
+   --------------------------------------------------------------- */
+function confLinhasFiltradas(){
+  let lista = CONF_LINHAS || [];
+  if(confFiltro !== 'todos') lista = lista.filter(l=>confSituacao(l) === confFiltro);
+  const t = ncmNormalizar(confBusca);
+  if(t.length >= 2){
+    const palavras = t.split(' ').filter(Boolean);
+    lista = lista.filter(l=>{
+      const txt = ncmNormalizar([l.nome, l.codigo, l.barras, l.produto ? l.produto.nome : ''].join(' '));
+      return palavras.every(p=>txt.includes(p));
+    });
+  }
+  return lista;
+}
+
+function confContar(situacao){
+  return (CONF_LINHAS||[]).filter(l=>confSituacao(l) === situacao).length;
+}
+
+function confBotaoFiltro(rotulo, qual, cor){
+  const ativo = confFiltro === qual;
+  const n = qual === 'todos' ? (CONF_LINHAS||[]).length : confContar(qual);
+  return `<button class="btn btn-sm" onclick="confTrocarFiltro('${qual}')"
+    style="${ativo?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">${rotulo} <strong>${n}</strong></button>`;
+}
+
+function confTrocarFiltro(qual){ confFiltro = qual; renderConferencia(); }
+
+function renderConferencia(){
+  const box = document.getElementById('conferencia-content');
+  if(!box) return;
+
+  if(!CONF_LINHAS){
+    box.innerHTML = `
+      <div class="card">
+        <h3>📋 Conferência de planilha</h3>
+        <p class="help-text">Solte aqui a planilha do fornecedor. O sistema casa cada linha com o seu cadastro
+          <strong>pelo código de barras</strong> — nunca pelo nome, porque o nome da planilha costuma estar
+          errado justamente onde você já corrigiu aqui.</p>
+        <p class="help-text">Só entram os produtos <strong>com saldo</strong>. E nada do seu cadastro é alterado
+          sozinho: a tela mostra os dois lados e você decide.</p>
+        <div class="field" style="max-width:420px;">
+          <label>Planilha (.xlsx)</label>
+          <input type="file" id="conf-arquivo" accept=".xlsx,.xls">
+        </div>
+      </div>`;
+    const inp = document.getElementById('conf-arquivo');
+    if(inp) inp.addEventListener('change', (e)=>{ const f = e.target.files && e.target.files[0]; if(f) confImportar(f); });
+    return;
+  }
+
+  const lista = confLinhasFiltradas();
+  const res = STATE.conferenciaResumo || {};
+
+  box.innerHTML = `
+    <div class="card">
+      <h3>📋 Conferência de planilha <span class="hint">${escapeHtml(res.arquivo||'')}</span></h3>
+      <p class="help-text">Casamento pelo código de barras. ${res.semSaldo ? `${res.semSaldo} linha(s) sem saldo ficaram de fora.` : ''}
+        <strong>Nome, custo e preço não são alterados sozinhos</strong> — só o que você mandar, linha por linha.</p>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0;">
+        ${confBotaoFiltro('Todos', 'todos', 'var(--primary)')}
+        ${confBotaoFiltro('🟢 Completos', 'ok', 'var(--positive)')}
+        ${confBotaoFiltro('🟡 Falta preencher', 'incompleto', 'var(--warning)')}
+        ${confBotaoFiltro('🔴 Não existe aqui', 'novo', 'var(--negative)')}
+        <button class="btn btn-sm btn-primary" onclick="confCompletarTodos()">✓ Completar os que dá</button>
+        <button class="btn btn-sm" onclick="confTrocarPlanilha()">Trocar a planilha</button>
+        <div class="field" style="max-width:260px;margin:0 0 0 auto;">
+          <input type="text" id="conf-busca" value="${escapeAttr(confBusca)}" placeholder="🔍 Nome, código ou barras...">
+        </div>
+      </div>
+
+      ${confTabela(lista)}
+    </div>`;
+
+  const busca = document.getElementById('conf-busca');
+  if(busca) busca.addEventListener('input', (e)=>{
+    confBusca = e.target.value;
+    const alvo = document.getElementById('conf-tabela-wrap');
+    if(alvo){
+      alvo.outerHTML = confTabela(confLinhasFiltradas());
+      const b2 = document.getElementById('conf-busca');
+      if(b2){ b2.focus(); b2.setSelectionRange(b2.value.length, b2.value.length); }
+    }
+  });
+}
+
+function confTabela(lista){
+  if(lista.length === 0){
+    return `<div id="conf-tabela-wrap" class="empty-state" style="padding:24px;"><p>Nenhuma linha com esse filtro.</p></div>`;
+  }
+  return `<div id="conf-tabela-wrap" class="table-wrap" style="max-height:calc(100vh - 330px);overflow:auto;">
+    <table class="data-table">
+      <thead><tr>
+        <th>Produto na planilha</th><th>No seu cadastro</th>
+        <th class="num">Custo</th><th class="num">Venda</th>
+        <th class="num">Saldo</th><th>O que falta</th><th>Ações</th>
+      </tr></thead>
+      <tbody>${lista.slice(0, 400).map(l=>confLinha(l)).join('')}</tbody>
+    </table>
+    ${lista.length > 400 ? `<p class="help-text" style="padding:8px;">Mostrando 400 de ${lista.length}. Use a busca ou os filtros.</p>` : ''}
+  </div>`;
+}
+
+function confLinha(l){
+  const st = confSituacao(l);
+  const p = l.produto;
+  const falta = p ? confPendencias(p, l) : [];
+
+  const selo = st === 'ok'
+      ? `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 completo</span>`
+    : st === 'incompleto'
+      ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 falta</span>`
+      : `<span class="badge" style="background:#FBE9E7;color:#B02A37;">🔴 não existe</span>`;
+
+  const difCusto = p && l.custo > 0 && Math.abs(Number(p.custo||0) - l.custo) > 0.005;
+  const difVenda = p && l.venda > 0 && Math.abs(Number(p.precoVenda||0) - l.venda) > 0.005;
+  const marca = (dif)=> dif ? 'color:var(--negative);font-weight:600;' : '';
+
+  return `<tr>
+    <td>
+      <strong>${escapeHtml(l.nome)}</strong>
+      <div class="help-text" style="margin:0;">cód. ${escapeHtml(l.codigo)}${l.barras?' · barras '+escapeHtml(l.barras):''}</div>
+      ${l.barrasRepetida ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ o fornecedor repetiu este código de barras em dois produtos</div>` : ''}
+      ${l.ambiguo ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ dois produtos seus têm este código de barras</div>` : ''}
+    </td>
+    <td>
+      ${p ? `<strong>${escapeHtml(p.nome)}</strong>
+             <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${p.comodato?' · comodato':''}</div>`
+          : `<span class="help-text">—</span>`}
+    </td>
+    <td class="num">
+      <div style="${marca(difCusto)}">${fmtMoney(l.custo)} <span class="help-text">planilha</span></div>
+      ${p ? `<div class="help-text" style="margin:0;">${fmtMoney(p.custo||0)} aqui
+             ${difCusto?`<button class="btn btn-sm" style="padding:1px 6px;" onclick="confTrazerValor('${l.barras}','custo')">trazer</button>`:''}</div>` : ''}
+    </td>
+    <td class="num">
+      <div style="${marca(difVenda)}">${l.venda>0?fmtMoney(l.venda):'—'} <span class="help-text">planilha</span></div>
+      ${p ? `<div class="help-text" style="margin:0;">${fmtMoney(p.precoVenda||0)} aqui
+             ${difVenda?`<button class="btn btn-sm" style="padding:1px 6px;" onclick="confTrazerValor('${l.barras}','venda')">trazer</button>`:''}</div>` : ''}
+    </td>
+    <td class="num">
+      <strong>${fmtNum(l.saldo)}</strong>
+      ${p ? `<div class="help-text" style="margin:0;">comodato aqui: ${fmtNum(p.estoqueComodato||0)}</div>` : ''}
+    </td>
+    <td>${selo}${falta.length?`<div class="help-text" style="margin:2px 0 0;">${escapeHtml(falta.join(', '))}</div>`:''}</td>
+    <td><div class="cell-actions">
+      ${p ? `<button class="btn btn-sm" onclick="confCompletarLinha('${l.barras}')">Completar</button>
+             <button class="btn btn-sm" onclick="abrirCorrigirProdutoFiscal('${p.id}', ()=>{confRecasar();renderConferencia();})">Fiscal</button>`
+          : `<button class="btn btn-sm btn-primary" onclick="confCadastrar('${l.barras}')">Cadastrar</button>`}
+    </div></td>
+  </tr>`;
+}
+
+/* Produto que não existe aqui nasce com o que a planilha tem de
+   confiável — nome, barras e saldo — e com o que ela definiu pro lote.
+   Custo e preço entram como vieram porque não há o que preservar: o
+   produto é novo. NCM fica em branco de propósito: inventar NCM é
+   criar problema fiscal silencioso. */
+function confCadastrar(barras){
+  const l = (CONF_LINHAS||[]).find(x=>x.barras === barras);
+  if(!l) return;
+  confirmAction('Cadastrar este produto',
+    `${l.nome}\n\nEntra como COMODATO da ${CONF_FORNECEDOR_PADRAO}, com saldo ${fmtNum(l.saldo)} e sem ST.\n\n`
+    + 'O NCM fica em branco — esse eu não tenho de onde tirar, e inventar criaria problema na nota. '
+    + 'Use o botão Fiscal depois pra preencher.',
+    ()=>{
+      const novo = {
+        id: uid('prod'),
+        nome: l.nome,
+        codigoBarras: l.barras,
+        codigoNF: l.barras,
+        sku: proximoSku(null),
+        unidade: 'UN',
+        custo: Number(l.custo) || 0,
+        precoVenda: Number(l.venda) || 0,
+        estoqueAtual: 0,
+        estoqueComodato: Number(l.saldo) || 0,
+        comodato: true,
+        comodatoDe: CONF_FORNECEDOR_PADRAO,
+        fornecedor: CONF_FORNECEDOR_PADRAO,
+        stConfirmado: false,
+        ncm: '',
+        criadoEm: todayISO(),
+        criadoPor: 'conferência de planilha'
+      };
+      STATE.produtos.push(novo);
+      saveState();
+      confRecasar();
+      renderConferencia();
+      showToast('Produto cadastrado como comodato. Falta o NCM.', 'success');
+    }, 'Cadastrar');
+}
+
+function confTrocarPlanilha(){
+  confirmAction('Trocar a planilha',
+    'A leitura atual sai e você escolhe outro arquivo. Nada do que já foi completado no cadastro é desfeito.',
+    async ()=>{
+      try{ await confIdb('del', 'atual'); }catch(e){ console.warn(e); }
+      CONF_LINHAS = null;
+      delete STATE.conferenciaResumo;
+      saveState();
+      renderConferencia();
+    }, 'Trocar');
+}
+
 RENDERERS['distribuicao'] = renderDistribuicao;
+RENDERERS['conferencia'] = function(){
+  /* a planilha vive no IndexedDB: carrega antes de desenhar, senao a
+     tela abriria pedindo o arquivo que ja esta guardado */
+  if(!CONF_LINHAS){ confCarregarGuardada().then(()=>renderConferencia()); }
+  renderConferencia();
+};
 
 /* ---------- os arquivos ---------- */
 
@@ -51626,7 +52217,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '09/11/2026 19:40';
+const SISTEMA_VERSAO = '09/11/2026 22:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
