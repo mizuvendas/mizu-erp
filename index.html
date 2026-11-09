@@ -46265,6 +46265,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-09-a',
+    data: '2026-11-09',
+    titulo: 'Ciência em todas as notas de uma vez — e o XML chega de verdade',
+    itens: [
+      'O QUE ESTAVA ERRADO: depois de dar ciência numa nota, eu procurava o XML completo NA MESMA POSIÇÃO onde estava o resumo. A Receita não faz assim — ela publica o XML numa POSIÇÃO NOVA da fila, e a posição velha devolve o resumo pra sempre. Daí o "mesmo depois da ciência a Receita devolveu só o resumo".',
+      'BOTÃO NOVO: "✋ Dar ciência em N nota(s)". Com 40 notas só com resumo, dar ciência uma a uma seria dar ciência e esperar 40 vezes. Em lote, você resolve hoje e amanhã o XML de todas está lá.',
+      'As chamadas vão espaçadas de propósito: a Receita bloqueia o CNPJ por uma hora quando acha que está sendo consultada demais. Perder o serviço no meio do trabalho é pior que demorar um minuto.',
+      'A confirmação diz exatamente o que vai acontecer: ciência é só "sei que esta nota existe contra o meu CNPJ". Não confirma compra nem recusa mercadoria — e o sistema não faz nenhum desses eventos.',
+      'ESTADO NOVO NA LISTA: "⏳ ciência dada — aguardando a Receita", com a data. Enquanto está assim, o botão vira "🔄 Ver se já liberou" em vez de "Dar entrada", que só ia dar erro.',
+      'E logo depois da ciência o sistema dá UMA olhada: às vezes a Receita já liberou e a nota abre na hora. Uma olhada só — insistir é o que faz ela bloquear.',
+      'A espera é da Receita, não do sistema: de alguns minutos a algumas horas, às vezes só no dia seguinte. Quando liberar, "Buscar notas novas" traz tudo.'
+    ]
+  },
+  {
     id: '2026-11-08-a',
     data: '2026-11-08',
     titulo: 'CONSERTADO: o trabalho que sumia quando a outra máquina sincronizava',
@@ -50821,6 +50835,32 @@ async function distAbsorverDocumentos(documentos){
    requisição longa morre no tempo limite do Render. E PARAR quando ela diz
    que acabou é obrigatório — insistir é "consumo indevido" e ela bloqueia o
    CNPJ por uma hora. */
+/* Uma varredura, usada pelo botão de buscar e pela ciência. Devolve o que
+   trouxe em vez de pintar a tela, pra servir aos dois. */
+async function distVarrer(aoAndar, limitePaginas){
+  const d = distEstado();
+  let paginas = 0, recebidos = 0, novas = 0, xmls = 0, erro = null, acabou = false;
+  const LIMITE = limitePaginas || 40;
+  while(paginas < LIMITE){
+    if(aoAndar) aoAndar({ fase:'consultando', pagina: paginas+1 });
+    const r = await nfeChamar('/recebidas', { ultNSU: d.ultNSU || 0 });
+    if(!r.ok){ erro = `${r.codigoStatus||'?'}: ${r.mensagem||''}`; break; }
+
+    const res = await distAbsorverDocumentos(r.documentos);
+    novas += res.novas; xmls += res.xmls;
+    recebidos += (r.docZipRecebidos || 0);
+    d.ultNSU = r.ultNSU || d.ultNSU;
+    d.maxNSU = r.maxNSU || d.maxNSU;
+    saveState();
+    paginas++;
+    if(aoAndar) aoAndar({ fase:'andou', paginas, recebidos, novas, xmls });
+    /* PARAR quando ela diz que acabou é obrigatório: insistir depois disso é
+       "consumo indevido" e ela bloqueia o CNPJ por uma hora. */
+    if(r.acabou){ acabou = true; break; }
+  }
+  return { paginas, recebidos, novas, xmls, erro, acabou };
+}
+
 async function distBuscar(){
   const d = distEstado();
   const btn = document.getElementById('dist-btn-buscar');
@@ -50874,14 +50914,24 @@ async function distBuscar(){
 /* ---------------------------------------------------------------
    PEGAR O XML DE UMA NOTA
 
-   Três tentativas, nesta ordem:
    1. já está no IndexedDB (o caso comum depois de uma busca);
    2. baixa só aquele NSU da Receita;
-   3. se ainda vier só o resumo, registra a CIÊNCIA DA EMISSÃO e
-      tenta de novo — antes da manifestação a Receita não entrega o
-      XML completo, e sem ele não há itens pra lançar.
+   3. se ainda vier só o resumo, a nota precisa de CIÊNCIA DA EMISSÃO:
+      antes da manifestação a Receita não entrega o XML completo, e
+      sem ele não há itens pra lançar.
 
-   O passo 3 é um evento fiscal em nome dela, então não acontece
+   O QUE EU TINHA ERRADO: eu reconsultava o MESMO NSU depois da
+   ciência, esperando que o resumo virasse nota ali. Não vira. A
+   Receita publica o XML completo numa POSIÇÃO NOVA da fila, e a
+   posição velha devolve o resumo pra sempre — era por isso que dava
+   "mesmo depois da ciência a Receita devolveu só o resumo".
+
+   E não é imediato: pode levar de minutos a horas, às vezes só no
+   dia seguinte. Não há como forçar. Então o certo é dar ciência,
+   marcar a nota como "aguardando", e pegar o XML na próxima
+   varredura — que é onde a posição nova aparece.
+
+   A ciência é um evento fiscal em nome dela, então nunca acontece
    escondido: a tela pergunta antes.
    --------------------------------------------------------------- */
 async function distXmlDaNota(n, jaManifestou){
@@ -50897,9 +50947,6 @@ async function distXmlDaNota(n, jaManifestou){
   if(doc && doc.xml){
     try{ await distXmlIdb('put', n.chave, doc.xml); n.temXml = true; saveState(); }catch(e){ console.warn(e); }
     return { xml: doc.xml, origem: jaManifestou ? 'apos-ciencia' : 'receita' };
-  }
-  if(jaManifestou){
-    return { erro: 'Mesmo depois da ciência a Receita devolveu só o resumo. Pode levar alguns minutos — tente de novo daqui a pouco.' };
   }
   return { precisaCiencia: true };
 }
@@ -50939,24 +50986,125 @@ async function distDarEntrada(chave){
   distLancarXml(n, r.xml);
 }
 
+/* Registra a ciência de UMA nota. Devolve o que aconteceu em vez de
+   desenhar: quem chama decide o que mostrar (uma nota só, ou 40). */
+async function distDarCiencia(n){
+  const m = await nfeChamar('/manifestar', { chave: n.chave, evento: DIST_EVENTO_CIENCIA });
+  if(!m.ok){
+    return { ok:false, erro: `${m.codigoStatus||'?'}: ${m.mensagem||m.erro||''}` };
+  }
+  n.cienciaEm = todayISO();
+  saveState();
+  return { ok:true, jaRegistrado: !!m.jaRegistrado };
+}
+
 async function distCienciaEEntrada(chave){
   const n = distEstado().notas.find(x=>x.chave === chave);
   if(!n) return;
   showToast('Registrando a ciência na Receita...', 'info');
   try{
-    const m = await nfeChamar('/manifestar', { chave, evento: DIST_EVENTO_CIENCIA });
-    if(!m.ok){
-      showToast(`A Receita recusou a ciência (${m.codigoStatus||'?'}): ${m.mensagem||m.erro||''}`, 'error');
-      return;
-    }
-    n.cienciaEm = todayISO();
+    const r = await distDarCiencia(n);
+    if(!r.ok){ showToast('A Receita recusou a ciência (' + r.erro + ')', 'error'); return; }
+
+    /* UMA varredura, aqui e agora: às vezes a posição nova já existe e a
+       nota abre na hora. Uma só — depois do "acabou" a Receita bloqueia
+       quem insiste, e esperar é o comportamento certo, não um defeito. */
+    showToast(r.jaRegistrado ? 'A ciência já estava registrada. Procurando o XML...'
+                             : 'Ciência registrada. Procurando o XML...', 'info');
+    await distVarrer(null, 3);
     saveState();
-    showToast(m.jaRegistrado ? 'A ciência já estava registrada. Buscando o XML...' : 'Ciência registrada. Buscando o XML...', 'success');
-    const r = await distXmlDaNota(n, true);
-    if(r.erro){ showToast(r.erro, 'error'); renderDistribuicao(); return; }
-    distLancarXml(n, r.xml);
+
+    const guardado = await distXmlIdb('get', n.chave).catch(()=>null);
+    if(guardado){ distLancarXml(n, guardado); return; }
+
+    renderDistribuicao();
+    showToast('Ciência registrada. A Receita ainda não liberou o XML — isso leva de alguns minutos a algumas horas. '
+            + 'Quando liberar, clique em "Buscar notas novas" e a nota já abre.', 'info');
   }catch(e){
     showToast('Não consegui registrar a ciência: ' + e.message, 'error');
+  }
+}
+
+/* ---------------------------------------------------------------
+   CIÊNCIA EM TODAS AS PENDENTES
+
+   Com 40 notas só com resumo, dar ciência uma a uma é dar ciência e
+   esperar 40 vezes — e a espera é da Receita, não do sistema. Em
+   lote, ela resolve hoje e amanhã o XML de todas está lá.
+
+   As chamadas vão espaçadas de propósito: a Receita bloqueia o CNPJ
+   por uma hora quando acha que está sendo consultada demais, e
+   perder o serviço no meio do trabalho é pior que demorar um minuto.
+   --------------------------------------------------------------- */
+const DIST_PAUSA_ENTRE_CIENCIAS = 1200;   /* ms */
+
+function distPendentesSemXml(){
+  return distNotasPorStatus('pendente').filter(n=>!n.temXml && !n.cienciaEm);
+}
+
+function distCienciaEmTodas(){
+  const alvos = distPendentesSemXml();
+  if(alvos.length === 0){
+    showToast('Nenhuma nota pendente esperando ciência.', 'info');
+    return;
+  }
+  const total = alvos.reduce((t,n)=>t + (Number(n.valor)||0), 0);
+  confirmAction('Dar ciência em todas as pendentes',
+    `Vou registrar a Ciência da Emissão em ${alvos.length} nota(s), somando ${fmtMoney(total)}.\n\n`
+    + 'Ciência diz apenas que você SABE QUE ESSAS NOTAS EXISTEM contra o seu CNPJ. '
+    + 'Não confirma nenhuma compra nem recusa nenhuma mercadoria — esses são outros eventos, '
+    + 'e o sistema não faz nenhum deles.\n\n'
+    + 'Depois disso a Receita libera o XML completo de cada uma, mas não na hora: leva de alguns '
+    + 'minutos a algumas horas, às vezes só no dia seguinte. Quando liberar, é só clicar em '
+    + '"Buscar notas novas" e todas ficam prontas pra lançar.',
+    ()=>distAplicarCienciaEmTodas(alvos.map(n=>n.chave)), 'Dar ciência');
+}
+
+async function distAplicarCienciaEmTodas(chaves){
+  const btn = document.getElementById('dist-btn-ciencia');
+  const prog = document.getElementById('dist-progresso');
+  if(btn) btn.disabled = true;
+  let feitas = 0, jaEram = 0;
+  const falhas = [];
+  try{
+    for(let i = 0; i < chaves.length; i++){
+      const n = distEstado().notas.find(x=>x.chave === chaves[i]);
+      if(!n) continue;
+      if(prog) prog.innerHTML = `Dando ciência... ${i+1} de ${chaves.length} — ${escapeHtml(n.emitenteNome||'')}`;
+      try{
+        const r = await distDarCiencia(n);
+        if(r.ok){ feitas++; if(r.jaRegistrado) jaEram++; }
+        else falhas.push(`${n.emitenteNome||n.chave.slice(0,8)}: ${r.erro}`);
+      }catch(e){
+        falhas.push(`${n.emitenteNome||n.chave.slice(0,8)}: ${e.message}`);
+      }
+      if(i < chaves.length - 1) await new Promise(r=>setTimeout(r, DIST_PAUSA_ENTRE_CIENCIAS));
+    }
+
+    /* Uma varredura no fim: o que a Receita já tiver liberado entra agora. */
+    if(prog) prog.innerHTML = 'Ciências registradas. Vendo se a Receita já liberou algum XML...';
+    const v = await distVarrer(null, 5);
+    saveState();
+
+    const prontas = distEstado().notas.filter(n=>n.temXml && distStatus(n)==='pendente').length;
+    if(prog){
+      prog.innerHTML = `✅ Ciência em ${feitas} nota(s)${jaEram?` (${jaEram} já estavam)`:''}. `
+        + (prontas > 0
+            ? `<strong>${prontas} já está(ão) pronta(s) pra lançar.</strong> `
+            : 'Nenhum XML liberado ainda — normal. ')
+        + 'O resto chega em algumas horas: clique em "Buscar notas novas" mais tarde.'
+        + (v.erro ? ` <span style="color:var(--negative,#B02A37);">(a busca respondeu ${escapeHtml(v.erro)})</span>` : '');
+    }
+    if(falhas.length){
+      showToast(`${falhas.length} nota(s) não aceitaram a ciência. A primeira: ${falhas[0]}`, 'error');
+      console.warn('Ciências recusadas:', falhas);
+    }
+  }catch(e){
+    if(prog) prog.innerHTML = `<span style="color:var(--negative,#B02A37);">Parei no meio: ${escapeHtml(e.message)}</span>`;
+  }finally{
+    if(btn) btn.disabled = false;
+    saveState();
+    renderDistribuicao();
   }
 }
 
@@ -51094,6 +51242,10 @@ function renderDistribuicao(){
         <button class="btn btn-primary" id="dist-btn-buscar" onclick="distBuscar()">
           ${jaBuscou ? '🔄 Buscar notas novas' : '📥 Buscar notas na Receita'}
         </button>
+        ${jaBuscou && distPendentesSemXml().length > 0
+          ? `<button class="btn btn-sm" id="dist-btn-ciencia" onclick="distCienciaEmTodas()"
+               title="A Receita só entrega o XML completo depois da ciência">
+               ✋ Dar ciência em ${distPendentesSemXml().length} nota(s)</button>` : ''}
         ${jaBuscou ? `<button class="btn btn-sm" onclick="distLimparAntigas(false)">🗂️ Arquivar as antigas</button>` : ''}
         <div id="dist-progresso" class="help-text" style="margin:0;flex:1;min-width:200px;">
           ${d.atualizadoEm ? `Última busca: ${new Date(d.atualizadoEm).toLocaleString('pt-BR')}` : ''}
@@ -51159,20 +51311,27 @@ function distLinha(n){
       ? `<span class="badge badge-neutral">⚪ ignorada</span>`
       : entrada
         ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 começada, não concluída</span>`
-        : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 pendente</span>`;
+        : (n.cienciaEm && !n.temXml)
+          ? `<span class="badge" style="background:#E8EEF2;color:#1B4B5A;">⏳ ciência dada — aguardando a Receita</span>`
+          : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 pendente</span>`;
 
   const acoes = st==='lancada'
       ? `<button class="btn btn-sm" onclick="distVerEntrada('${n.chave}')">Ver a entrada</button>`
     : st==='ignorada'
       ? `<button class="btn btn-sm" onclick="distVoltarPendente('${n.chave}')">Voltar pra pendente</button>`
-      : `<button class="btn btn-sm btn-primary" onclick="distDarEntrada('${n.chave}')">${entrada?'Continuar a entrada':'Dar entrada'}</button>
-         ${entrada?'':`<button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`}`;
+      : (n.cienciaEm && !n.temXml && !entrada)
+        ? `<button class="btn btn-sm" onclick="distBuscar()" title="A ciência já foi dada: falta a Receita liberar o XML">🔄 Ver se já liberou</button>
+           <button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`
+        : `<button class="btn btn-sm btn-primary" onclick="distDarEntrada('${n.chave}')">${entrada?'Continuar a entrada':'Dar entrada'}</button>
+           ${entrada?'':`<button class="btn btn-sm" onclick="distIgnorar('${n.chave}')">Não vou lançar</button>`}`;
 
   return `<tr>
     <td>
       <strong>${escapeHtml(n.emitenteNome || '(sem nome)')}</strong>
       ${n.emitenteCnpj ? `<div class="help-text" style="margin:0;">CNPJ ${escapeHtml(fmtDocumento(n.emitenteCnpj))}</div>` : ''}
-      ${!n.temXml && st==='pendente' ? `<div class="help-text" style="margin:0;">só o resumo — o XML vem na hora de lançar</div>` : ''}
+      ${!n.temXml && st==='pendente' ? `<div class="help-text" style="margin:0;">${n.cienciaEm
+        ? 'ciência dada em ' + escapeHtml(fmtDate(n.cienciaEm)) + ' — a Receita libera o XML em algumas horas'
+        : 'só o resumo — precisa de ciência pra Receita soltar o XML'}</div>` : ''}
     </td>
     <td>${n.dataEmissao ? fmtDate(n.dataEmissao) : '—'}</td>
     <td class="num">${fmtMoney(n.valor||0)}</td>
@@ -51404,7 +51563,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '08/11/2026 10:20';
+const SISTEMA_VERSAO = '09/11/2026 09:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
