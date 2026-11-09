@@ -42664,8 +42664,8 @@ function nfeConferirTudo(orcamento, modelo){
 
 let NFE_CONFERENCIA = null;   // { orcamento, modelo, aoAprovar }
 
-function nfeAbrirConferencia(orcamento, modelo, aoAprovar){
-  NFE_CONFERENCIA = { orcamento, modelo, aoAprovar };
+function nfeAbrirConferencia(orcamento, modelo, aoAprovar, proQue){
+  NFE_CONFERENCIA = { orcamento, modelo, aoAprovar, proQue: proQue || 'emitir' };
   document.getElementById('modal-nfe-problemas')?.remove();
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -42678,6 +42678,10 @@ function nfeDesenharConferencia(){
   const modal = document.getElementById('modal-nfe-problemas');
   if(!modal || !NFE_CONFERENCIA) return;
   const { orcamento, modelo } = NFE_CONFERENCIA;
+  /* O mesmo quadro serve pros dois caminhos; só o que ele promete no fim
+     muda. Prometer "emitir" quando ela pediu um espelho seria mentir sobre
+     o que o botão faz — e aqui o botão manda documento pra Receita. */
+  const ehEspelho = NFE_CONFERENCIA.proQue === 'espelho';
   const linhas = nfeConferirTudo(orcamento, modelo);
   const faltam = linhas.filter(l=>!l.ok);
   const tudoCerto = faltam.length===0;
@@ -42688,7 +42692,9 @@ function nfeDesenharConferencia(){
       <div class="modal-rapido-cabecalho" style="background:${tudoCerto?'var(--positive)':'#B02A37'};">
         <div class="ic-rapido">${tudoCerto?'✅':'⚠️'}</div>
         <div>
-          <h3>${tudoCerto ? 'Tudo conferido — pode emitir' : 'Falta preencher pra emitir a nota'}</h3>
+          <h3>${tudoCerto
+            ? (ehEspelho ? 'Tudo conferido — pode gerar o espelho' : 'Tudo conferido — pode emitir')
+            : (ehEspelho ? 'Falta preencher pra montar o espelho' : 'Falta preencher pra emitir a nota')}</h3>
           <div class="sub">${tudoCerto
             ? 'O cadastro do cliente e dos produtos está completo'
             : `${faltam.length} ${faltam.length===1?'pendência':'pendências'} — arrume aqui mesmo, a lista se atualiza sozinha`}</div>
@@ -42708,7 +42714,9 @@ function nfeDesenharConferencia(){
         <div class="modal-actions" style="margin-top:18px;">
           <button class="btn" onclick="document.getElementById('modal-nfe-problemas').remove()">Agora não</button>
           <button class="btn btn-primary" id="nfe-conf-emitir" ${tudoCerto?'':'disabled style="opacity:0.45;cursor:not-allowed;"'}>
-            ${tudoCerto ? '🧾 Emitir a nota agora' : 'Emitir (falta preencher)'}
+            ${tudoCerto
+              ? (ehEspelho ? '👁 Gerar o espelho' : '🧾 Emitir a nota agora')
+              : (ehEspelho ? 'Gerar o espelho (falta preencher)' : 'Emitir (falta preencher)')}
           </button>
         </div>
       </div>
@@ -42724,9 +42732,39 @@ function nfeDesenharConferencia(){
   }
 }
 
-/* nome antigo, ainda usado por outras telas */
+/* Nome antigo, ainda usado por outras telas. Mostrava UM aviso solto e
+   parava ali — quem chamasse por aqui ficava sem o botão de arrumar, que
+   é a única coisa que resolve. Agora, quando o problema tem conserto, a
+   lista aparece com o botão; o aviso solto fica só pro que não tem. */
 function nfeMostrarProblemas(problemas){
   if(NFE_CONFERENCIA){ nfeDesenharConferencia(); return; }
+  const comConserto = (problemas||[]).filter(p=>typeof p.acao === 'function');
+  if(comConserto.length){
+    window.__nfeProblemasSoltos = comConserto.map(p=>p.acao);
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay open';
+    modal.id = 'modal-nfe-problemas-soltos';
+    modal.innerHTML = `
+      <div class="modal-box modal-box-rapido" style="max-width:min(620px, 94vw);max-height:90vh;overflow-y:auto;">
+        <div class="modal-rapido-cabecalho" style="background:#B02A37;">
+          <div class="ic-rapido">⚠️</div>
+          <div>
+            <h3>Falta preencher</h3>
+            <div class="sub">${comConserto.length} ${comConserto.length===1?'pendência':'pendências'} — arrume aqui mesmo</div>
+          </div>
+          <button class="modal-rapido-fechar-x" onclick="document.getElementById('modal-nfe-problemas-soltos').remove()">✕</button>
+        </div>
+        <div class="modal-rapido-corpo">
+          ${comConserto.map((p,i)=>`
+            <div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border);">
+              <div style="flex:1;min-width:0;font-size:12.5px;color:var(--negative);">${escapeHtml(p.texto)}</div>
+              <button class="btn btn-sm" onclick="window.__nfeProblemasSoltos[${i}]();">Arrumar</button>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    return;
+  }
   showToast(problemas.length ? problemas[0].texto : 'Falta informação para emitir a nota.', 'error');
 }
 
@@ -43097,8 +43135,21 @@ async function nfeVerEspelho(origem, modelo){
   const orcamento = origem.doc;
   modelo = modelo || NFE_MODELO.NFE;
 
+  /* O ESPELHO USA A MESMA CONFERÊNCIA DA EMISSÃO.
+
+     "ele me fala que falta algumas coisas, só que não abre opção pra
+      ajustar". Era verdade: só a emissão abria a lista com o botão
+      Arrumar. O espelho caía num aviso solto no canto da tela — dizia o
+      que faltava, de um item só, e não oferecia saída nenhuma. Ela tinha
+      que sair do orçamento, achar o produto, arrumar e voltar.
+
+     E o espelho é justamente onde se descobre o que falta, ANTES de valer.
+     É a tela que mais precisa do botão de arrumar, não a que menos. */
   const problemas = nfeConferir(orcamento, modelo);
-  if(problemas.length){ nfeMostrarProblemas(problemas); return; }
+  if(problemas.length){
+    nfeAbrirConferencia(orcamento, modelo, ()=>nfeVerEspelho(origem, modelo), 'espelho');
+    return;
+  }
 
   const num = nfeNumeracao(modelo);
   showToast('Gerando o espelho... pode demorar até 1 minuto na primeira vez.', 'info');
@@ -46264,6 +46315,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-09-b',
+    data: '2026-11-09',
+    titulo: 'O espelho agora deixa você arrumar o que falta, ali mesmo',
+    itens: [
+      'O DEFEITO: você pedia o espelho, o sistema avisava "falta NCM e confirmar com a contadora se tem ST" — e parava por aí. Um aviso solto no canto da tela, de um produto só, sem botão nenhum. Pra resolver, tinha que sair do orçamento, achar o produto em Produtos, arrumar e voltar.',
+      'AGORA o espelho abre o MESMO quadro de conferência que a emissão já usava: a lista de tudo que falta, com um botão ARRUMAR em cada linha. Clicou, abre só os campos fiscais daquele produto — NCM, CEST, ST — sem sair do orçamento.',
+      'A lista se atualiza sozinha enquanto você arruma. Acabou de preencher o último, o botão libera e o espelho sai na hora.',
+      'E o quadro fala a língua certa: pediu espelho, ele diz "Gerar o espelho". Prometer "emitir a nota" em cima de um pedido de espelho seria mentir sobre o que o botão faz — e esse botão manda documento pra Receita.',
+      'O campo de NCM ali dentro já vem com a busca por nome ligada: digite "limpa tudo" ou "detergente" em vez de procurar o código.'
+    ]
+  },
   {
     id: '2026-11-09-a',
     data: '2026-11-09',
@@ -51563,7 +51626,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '09/11/2026 09:15';
+const SISTEMA_VERSAO = '09/11/2026 19:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
