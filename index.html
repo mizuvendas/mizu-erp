@@ -7600,15 +7600,8 @@ function ativarFormProduto(produto, acoes){
     const campo = el('fp-codigo-barras');
     if(!campo) return;
     const atual = (campo.value||'').trim();
-    const gerar = ()=>{
-      const corpo = '2' + String(Math.floor(Math.random()*1e11)).padStart(11,'0');
-      let soma = 0;
-      for(let i=0;i<12;i++) soma += Number(corpo[i]) * (i % 2 === 0 ? 1 : 3);
-      return corpo + String((10 - (soma % 10)) % 10);
-    };
-    let novo = gerar();
-    let tentativas = 0;
-    while((STATE.produtos||[]).some(x=>String(x.codigoBarras||'')===novo) && tentativas++ < 50) novo = gerar();
+    /* um gerador só, usado aqui e na Conferência */
+    const novo = gerarCodigoBarrasInterno();
     const aplicar = ()=>{
       campo.value = novo;
       const tipo = el('fp-tipo-barras');
@@ -46427,6 +46420,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-10-c',
+    data: '2026-11-10',
+    titulo: 'Conferência agora tem duas abas: o comodato e os produtos da loja',
+    itens: [
+      'ABA NOVA "🏪 Produtos da loja": todos os produtos cadastrados da Mizu, pra você acertar antes do balanço. Clique em cima pra alterar descrição, código de barras, unidade, NCM, fornecedor, custo e preço — grava direto no produto.',
+      'FILTROS: falta preencher · completos · sem código de barras · comodato. O "sem código de barras" é o que importa pro balanço — produto sem código não dá pra bipar.',
+      'GERAR CÓDIGO DE BARRAS pra quem não tem, ali na linha. Sai um EAN-13 na faixa 2 (reservada pra uso interno da loja), com dígito verificador de verdade — leitor nenhum recusa. Na nota o item continua saindo sem GTIN, como manda a regra.',
+      'Gerar por cima de um código que já existe pergunta antes: se o atual for o do fabricante, você perderia a leitura do código impresso na embalagem.',
+      'BOTÃO "# Gerar os códigos internos que faltam": o código interno é um número que o sistema cria. Digitar 900 deles seria trabalho sem decisão nenhuma dentro — um clique resolve a lista.',
+      'O que sobra como pendência depois disso é só o que depende da contadora: a ST.'
+    ]
+  },
+  {
     id: '2026-11-10-b',
     data: '2026-11-10',
     titulo: 'Conferência: tela enxuta e tudo editável clicando em cima',
@@ -52021,6 +52027,295 @@ function confTrocarFiltro(qual){ confFiltro = qual; renderConferencia(); }
    uma caixa rolante nova, que nasce no topo. Numa lista de 524 itens
    isso é rolar tudo de novo a cada vez. Mesmo conserto da Sugestão de
    Compra: guarda onde ela estava e devolve depois. */
+
+/* =========================================================
+   CONFERÊNCIA DOS PRODUTOS DA LOJA
+
+   "agora você vai criar essa mesma conferência no mesmo menu, em um
+    local diferente, com todos os produtos nossos que estão cadastrados"
+
+   A outra aba confere o que é da ECOVILLE, linha por linha da planilha
+   dela. Esta confere o que é da Mizu, linha por linha do cadastro — e
+   as duas juntas montam o catálogo que vai valer.
+
+   O que muda entre as duas: lá a origem da verdade é a planilha e o
+   cadastro é o destino; aqui o cadastro é as duas coisas. Por isso
+   aqui a edição grava direto no produto, sem passo de "completar".
+   ========================================================= */
+
+let confAba = 'comodato';
+let lojaFiltro = 'todos';
+let lojaBusca = '';
+
+function confTrocarAba(qual){
+  confAba = qual;
+  renderConferencia();
+}
+
+/* Um código de barras interno, prefixo 2 (faixa reservada pra uso da
+   própria loja) e dígito verificador de verdade — leitor nenhum recusa.
+   Estava escondido dentro do formulário de produto; agora é de todos. */
+function gerarCodigoBarrasInterno(){
+  const fazer = ()=>{
+    const corpo = '2' + String(Math.floor(Math.random()*1e11)).padStart(11,'0');
+    let soma = 0;
+    for(let i=0;i<12;i++) soma += Number(corpo[i]) * (i % 2 === 0 ? 1 : 3);
+    return corpo + String((10 - (soma % 10)) % 10);
+  };
+  let novo = fazer(), voltas = 0;
+  while((STATE.produtos||[]).some(x=>String(x.codigoBarras||'') === novo) && voltas++ < 50) novo = fazer();
+  return novo;
+}
+
+/* O que falta num produto da loja pra ele poder sair em nota e ser
+   contado no balanço. Reaproveita a regra fiscal que já existe. */
+function lojaPendencias(p){
+  const falta = (pendenciasDeNota(p) || []).slice();
+  if(!String(p.codigoBarras||'').trim()) falta.push('código de barras');
+  if(!String(p.sku||'').trim()) falta.push('código interno');
+  if(!String(p.fornecedor||'').trim() && !p.fornecedorId) falta.push('fornecedor');
+  return falta;
+}
+
+function lojaSituacao(p){
+  return lojaPendencias(p).length ? 'incompleto' : 'ok';
+}
+
+function lojaProdutos(){
+  let lista = (STATE.produtos||[]).slice();
+  if(lojaFiltro === 'incompleto') lista = lista.filter(p=>lojaSituacao(p) === 'incompleto');
+  else if(lojaFiltro === 'ok')    lista = lista.filter(p=>lojaSituacao(p) === 'ok');
+  else if(lojaFiltro === 'sembarras') lista = lista.filter(p=>!String(p.codigoBarras||'').trim());
+  else if(lojaFiltro === 'comodato')  lista = lista.filter(p=>!!p.comodato);
+
+  const t = ncmNormalizar(lojaBusca);
+  if(t.length >= 2){
+    const palavras = t.split(' ').filter(Boolean);
+    lista = lista.filter(p=>{
+      const txt = ncmNormalizar([p.nome, p.marca, p.fornecedor, p.sku, p.codigoBarras, p.ncm].join(' '));
+      return palavras.every(w=>txt.includes(w));
+    });
+  }
+  return lista.sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'));
+}
+
+function lojaContar(qual){
+  const todos = STATE.produtos||[];
+  if(qual === 'todos') return todos.length;
+  if(qual === 'sembarras') return todos.filter(p=>!String(p.codigoBarras||'').trim()).length;
+  if(qual === 'comodato')  return todos.filter(p=>!!p.comodato).length;
+  return todos.filter(p=>lojaSituacao(p) === qual).length;
+}
+
+function lojaBotaoFiltro(rotulo, qual, cor){
+  const ativo = lojaFiltro === qual;
+  return `<button class="btn btn-sm" onclick="lojaTrocarFiltro('${qual}')"
+    style="${ativo?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">${rotulo} <strong>${lojaContar(qual)}</strong></button>`;
+}
+
+function lojaTrocarFiltro(qual){ lojaFiltro = qual; renderConferencia(); }
+
+function renderConferenciaLoja(box){
+  const lista = lojaProdutos();
+  box.innerHTML = `
+    ${confAbasHtml()}
+    <div class="card">
+      <h3>🏪 Produtos da loja <span class="hint">${(STATE.produtos||[]).length} cadastrado(s)</span></h3>
+      <p class="help-text">Aqui você acerta o cadastro da Mizu antes do balanço: descrição, código de barras,
+        unidade, NCM e fornecedor. <strong>Clique em cima do valor pra alterar</strong> — grava direto no produto.</p>
+
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0;">
+        ${lojaBotaoFiltro('Todos', 'todos', 'var(--primary)')}
+        ${lojaBotaoFiltro('🟡 Falta preencher', 'incompleto', 'var(--warning)')}
+        ${lojaBotaoFiltro('🟢 Completos', 'ok', 'var(--positive)')}
+        ${lojaBotaoFiltro('📷 Sem código de barras', 'sembarras', 'var(--negative)')}
+        ${lojaBotaoFiltro('🤝 Comodato', 'comodato', 'var(--primary-escuro,#1B4B5A)')}
+        ${(STATE.produtos||[]).some(p=>!String(p.sku||'').trim())
+          ? `<button class="btn btn-sm" onclick="lojaGerarCodigosInternos()"
+               title="O código interno é um número que o sistema gera — não faz sentido você digitar 900 deles">
+               # Gerar os códigos internos que faltam</button>` : ''}
+        <div class="field" style="max-width:260px;margin:0 0 0 auto;">
+          <input type="text" id="loja-busca" value="${escapeAttr(lojaBusca)}" placeholder="🔍 Nome, marca, código...">
+        </div>
+      </div>
+
+      ${lojaTabela(lista)}
+    </div>`;
+
+  lojaAtivarEdicao();
+  const busca = document.getElementById('loja-busca');
+  if(busca) busca.addEventListener('input', (e)=>{
+    lojaBusca = e.target.value;
+    const alvo = document.getElementById('loja-tabela-wrap');
+    if(alvo){
+      alvo.outerHTML = lojaTabela(lojaProdutos());
+      lojaAtivarEdicao();
+      const b2 = document.getElementById('loja-busca');
+      if(b2){ b2.focus(); b2.setSelectionRange(b2.value.length, b2.value.length); }
+    }
+  });
+}
+
+function lojaTabela(lista){
+  if(lista.length === 0){
+    return `<div id="loja-tabela-wrap" class="empty-state" style="padding:24px;"><p>Nenhum produto com esse filtro.</p></div>`;
+  }
+  return `<div id="loja-tabela-wrap" class="table-wrap" style="max-height:calc(100vh - 330px);overflow:auto;">
+    <table class="data-table">
+      <thead><tr>
+        <th>Produto</th><th style="width:170px;">Código de barras</th>
+        <th style="width:90px;">Unidade</th><th style="width:130px;">NCM</th>
+        <th style="width:160px;">Fornecedor</th>
+        <th class="num" style="width:100px;">Custo</th><th class="num" style="width:100px;">Venda</th>
+        <th class="num" style="width:90px;">Estoque</th><th>O que falta</th>
+      </tr></thead>
+      <tbody>${lista.slice(0, 400).map(p=>lojaLinha(p)).join('')}</tbody>
+    </table>
+    ${lista.length > 400 ? `<p class="help-text" style="padding:8px;">Mostrando 400 de ${lista.length}. Use a busca ou os filtros.</p>` : ''}
+  </div>`;
+}
+
+function lojaCampo(p, campo, valor, titulo){
+  return `<span class="conf-edit" data-produto="${p.id}" data-campo="${campo}"
+    title="${titulo||'Clique para alterar'}">${valor === '' || valor == null ? '—' : escapeHtml(String(valor))}</span>`;
+}
+
+function lojaLinha(p){
+  const falta = lojaPendencias(p);
+  const barras = String(p.codigoBarras||'').trim();
+  const interno = String(p.tipoBarras||'') === 'gerencial' || (barras.startsWith('2') && barras.length === 13);
+
+  return `<tr>
+    <td>
+      ${lojaCampo(p, 'nome', p.nome, 'Clique para alterar a descrição')}
+      <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${p.marca?' · '+escapeHtml(p.marca):''}${
+        p.comodato?` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(p.comodatoDe||'')}</span>`:''}</div>
+    </td>
+    <td>
+      ${barras ? lojaCampo(p, 'codigoBarras', barras) : `<span class="help-text" style="color:var(--negative);">sem código</span>`}
+      <div class="help-text" style="margin:0;">
+        ${interno && barras ? 'gerado aqui · ' : ''}<button class="btn btn-sm" style="padding:0 6px;"
+          onclick="lojaGerarBarras('${p.id}')">${barras?'gerar outro':'gerar'}</button>
+      </div>
+    </td>
+    <td>${lojaCampo(p, 'unidade', p.unidade)}</td>
+    <td>${lojaCampo(p, 'ncm', p.ncm ? ncmFormatado(p.ncm) : '', 'Clique e procure por nome')}</td>
+    <td>${lojaCampo(p, 'fornecedor', p.fornecedor)}</td>
+    <td class="num">${lojaCampo(p, 'custo', fmtMoney(p.custo||0))}</td>
+    <td class="num">${lojaCampo(p, 'precoVenda', fmtMoney(p.precoVenda||0))}</td>
+    <td class="num">
+      <strong>${fmtNum(p.estoqueAtual||0)}</strong>
+      ${p.comodato ? `<div class="help-text" style="margin:0;">comodato: ${fmtNum(p.estoqueComodato||0)}</div>` : ''}
+    </td>
+    <td>${falta.length
+      ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 falta</span>
+         <div class="help-text" style="margin:2px 0 0;">${escapeHtml(falta.join(', '))}</div>`
+      : `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 completo</span>`}</td>
+  </tr>`;
+}
+
+/* O código interno é um número de controle que o sistema gera (P0001,
+   P0002...). Pedir pra ela digitar centenas deles seria trabalho sem
+   decisão nenhuma dentro. Um clique resolve a lista toda. */
+function lojaGerarCodigosInternos(){
+  const semSku = (STATE.produtos||[]).filter(p=>!String(p.sku||'').trim());
+  if(semSku.length === 0){ showToast('Todos os produtos já têm código interno.', 'info'); return; }
+  confirmAction('Gerar os códigos internos que faltam',
+    `${semSku.length} produto(s) estão sem código interno. Vou gerar um pra cada (P0001, P0002...).\n\n`
+    + 'Quem já tem o seu não é alterado.',
+    ()=>{
+      semSku.forEach(p=>{ p.sku = proximoSku(p.id); });
+      saveState();
+      renderConferencia();
+      showToast(`${semSku.length} código(s) interno(s) gerado(s).`, 'success');
+    }, 'Gerar');
+}
+
+function lojaGerarBarras(produtoId){
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(!p) return;
+  const aplicar = ()=>{
+    p.codigoBarras = gerarCodigoBarrasInterno();
+    p.tipoBarras = 'gerencial';
+    saveState();
+    renderConferencia();
+    showToast('Código gerado. É interno da loja — na nota o item continua saindo SEM GTIN.', 'success');
+  };
+  const atual = String(p.codigoBarras||'').trim();
+  if(atual){
+    confirmAction('Trocar o código que já está aí?',
+      `${p.nome}\n\nEstá com ${atual}. Gerar outro substitui esse — e se o atual for o código do fabricante, `
+      + 'você perde a leitura do código impresso na embalagem.', aplicar, 'Gerar mesmo assim');
+  }else{
+    aplicar();
+  }
+}
+
+/* Edição no lugar, igual à aba do comodato — só que aqui grava direto
+   no produto, porque aqui o cadastro É a verdade, não o destino dela. */
+function lojaAtivarEdicao(){
+  document.querySelectorAll('#loja-tabela-wrap .conf-edit').forEach(span=>{
+    span.addEventListener('click', function abrir(){
+      if(span.querySelector('input')) return;
+      const id = span.dataset.produto, campo = span.dataset.campo;
+      const p = (STATE.produtos||[]).find(x=>x.id === id);
+      if(!p) return;
+
+      const ehDinheiro = (campo === 'custo' || campo === 'precoVenda');
+      const atual = campo === 'ncm' ? (p.ncm ? ncmFormatado(p.ncm) : '')
+                  : ehDinheiro ? String(Number(p[campo]||0)).replace('.', ',')
+                  : (p[campo] == null ? '' : String(p[campo]));
+      const idCampo = 'loja-edit-' + campo + '-' + id;
+      const largura = campo === 'nome' ? '100%' : (campo === 'fornecedor' ? '150px' : '115px');
+      span.innerHTML = `<input id="${idCampo}" type="text" value="${escapeAttr(atual)}"
+        style="width:${largura};padding:3px 5px;border:1px solid var(--primary);border-radius:4px;font-size:13px;">`;
+      const input = span.querySelector('input');
+      input.focus(); input.select();
+      if(campo === 'ncm' && typeof ligarBuscaNcm === 'function') ligarBuscaNcm(idCampo);
+
+      const gravar = ()=>{
+        const v = input.value.trim();
+        if(campo === 'nome'){
+          if(!v){ showToast('A descrição não pode ficar vazia.', 'error'); renderConferencia(); return; }
+          p.nome = v;
+        }
+        else if(campo === 'ncm')          p.ncm = ncmSo8(v);
+        else if(campo === 'unidade')      p.unidade = v.toUpperCase().slice(0,6);
+        else if(campo === 'codigoBarras') p.codigoBarras = v.replace(/\D/g,'');
+        else if(campo === 'fornecedor')   p.fornecedor = v;
+        else if(ehDinheiro){
+          const n = parseFloat(v.replace(/[^\d,.-]/g,'').replace(/\./g,'').replace(',', '.'));
+          if(!isNaN(n) && n >= 0) p[campo] = n;
+        }
+        saveState();
+        renderConferencia();
+      };
+      input.addEventListener('keydown', (e)=>{
+        if(e.key === 'Enter'){ e.preventDefault(); gravar(); }
+        else if(e.key === 'Escape'){ renderConferencia(); }
+      });
+      input.addEventListener('blur', ()=>setTimeout(()=>{
+        if(document.body.contains(input)) gravar();
+      }, campo === 'ncm' ? 250 : 0));
+    });
+  });
+}
+
+/* As duas abas da Conferência. */
+function confAbasHtml(){
+  const aba = (qual, rotulo)=>{
+    const ativo = confAba === qual;
+    return `<button type="button" onclick="confTrocarAba('${qual}')"
+      style="font:inherit;font-size:13.5px;background:none;border:0;cursor:pointer;padding:9px 2px;margin-right:22px;
+             border-bottom:2px solid ${ativo?'var(--primary)':'transparent'};
+             color:${ativo?'var(--ink)':'var(--ink-soft)'};font-weight:${ativo?'700':'400'};">${rotulo}</button>`;
+  };
+  return `<div style="border-bottom:1px solid var(--border);margin-bottom:14px;">
+    ${aba('comodato','📋 Comodato (planilha)')}
+    ${aba('loja','🏪 Produtos da loja')}
+  </div>`;
+}
+
 function renderConferencia(){
   preservandoRolagem(()=>renderConferenciaAgora());
 }
@@ -52028,9 +52323,11 @@ function renderConferencia(){
 function renderConferenciaAgora(){
   const box = document.getElementById('conferencia-content');
   if(!box) return;
+  if(confAba === 'loja'){ renderConferenciaLoja(box); return; }
 
   if(!CONF_LINHAS){
     box.innerHTML = `
+      ${confAbasHtml()}
       <div class="card">
         <h3>📋 Conferência de planilha</h3>
         <p class="help-text">Solte aqui a planilha do fornecedor. O sistema casa cada linha com o seu cadastro
@@ -52052,6 +52349,7 @@ function renderConferenciaAgora(){
   const res = STATE.conferenciaResumo || {};
 
   box.innerHTML = `
+    ${confAbasHtml()}
     <div class="card">
       <h3>📋 Conferência de planilha <span class="hint">${escapeHtml(res.arquivo||'')}</span></h3>
       <p class="help-text">Casamento pelo código de barras. ${res.semSaldo ? `${res.semSaldo} linha(s) sem saldo ficaram de fora.` : ''}
@@ -52502,7 +52800,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 10:30';
+const SISTEMA_VERSAO = '10/11/2026 13:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
