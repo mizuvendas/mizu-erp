@@ -15763,9 +15763,16 @@ function renderListaOrcamentos(){
 
     /* A coluna Observação conta o que está acontecendo com a entrega —
        e, quando a nota sai, vira "Venda concluída". */
-    const observacao = jaConvertido
-      ? '<span style="color:var(--positive);font-weight:600;">✅ Venda concluída</span>'
-      : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o) : '<span style="color:var(--ink-faint);">—</span>');
+    /* Nota cancelada é o fato mais importante da linha: vem antes do
+       "venda concluída", senão ela só descobre abrindo "Ver mais". */
+    const notaCancelada = (typeof nfeNotaCanceladaDoOrcamento === 'function' && !nfeNotaDoOrcamento(o.id))
+                          ? nfeNotaCanceladaDoOrcamento(o.id) : null;
+    const observacao = notaCancelada
+      ? `<span style="color:var(--negative);font-weight:600;">🚫 Nota nº ${escapeHtml(String(notaCancelada.numero||''))} cancelada</span>`
+        + (jaConvertido ? '<div class="help-text" style="margin:0;">venda concluída</div>' : '')
+      : (jaConvertido
+          ? '<span style="color:var(--positive);font-weight:600;">✅ Venda concluída</span>'
+          : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o) : '<span style="color:var(--ink-faint);">—</span>'));
 
     return `
       <tr>
@@ -15811,7 +15818,9 @@ function orcAcoesDaLinha(o, sit){
       bts.push(`<button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>`);
       bts.push(`<button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`);
     }else{
-      bts.push(`<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 Gerar nota fiscal</button>`);
+      const nc = nfeNotaCanceladaDoOrcamento(o.id);
+      if(nc) bts.push(nfeBotoesNotaCancelada(nc));
+      bts.push(`<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 ${nc?'Emitir outra nota':'Gerar nota fiscal'}</button>`);
       bts.push(`<button class="btn btn-sm" onclick="verEspelhoNfe('${o.id}', 55)" title="Monta a nota sem enviar — dá pra abrir e baixar em PDF pra conferir antes">👁 Espelho</button>`);
     }
     bts.push(`<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`);
@@ -15841,7 +15850,7 @@ function orcAcoesDaLinha(o, sit){
           ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button>
                     <button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>
                     <button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`
-                 : nfeBotoesOrcamento(o)}
+                 : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${nfeBotoesOrcamento(o)}`}
           ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer entrega</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
         </div>
@@ -41397,6 +41406,39 @@ function nfeNotaDoOrcamento(orcamentoId){
   return (STATE.notasFiscais||[]).find(n=>n.orcamentoId===orcamentoId && n.status==='autorizada') || null;
 }
 
+/* =========================================================
+   NOTA CANCELADA NÃO PODE SUMIR DA TELA
+
+   "essa venda #134 cancelei a nota, mas ele não mostra que a nota
+    foi cancelada aqui"
+
+   Era isso mesmo: nfeNotaDoOrcamento() só devolve nota AUTORIZADA.
+   Depois do cancelamento o status vira 'cancelada', a função passava
+   a devolver nada, e a linha voltava a oferecer "Gerar nota fiscal"
+   como se nunca tivesse existido nota nenhuma.
+
+   Dois problemas nisso. O primeiro é que apaga um fato: a nota
+   existiu, tem número, data e protocolo de cancelamento, e o XML
+   dela precisa ser guardado cinco anos como qualquer outro. O
+   segundo é que convida ao erro — emitir de novo sem ver que já
+   houve uma nota cancelada ali.
+   ========================================================= */
+function nfeNotaCanceladaDoOrcamento(orcamentoId){
+  const canceladas = (STATE.notasFiscais||[])
+    .filter(n=>n.orcamentoId===orcamentoId && n.status==='cancelada');
+  if(canceladas.length === 0) return null;
+  /* a mais recente: é a que explica o estado de agora */
+  return canceladas.sort((a,b)=>String(b.canceladaEm||b.criadoEm||'').localeCompare(String(a.canceladaEm||a.criadoEm||'')))[0];
+}
+
+/* O bloco que a linha mostra no lugar dos botões de nota autorizada:
+   diz o que houve e mantém os dois downloads à mão. */
+function nfeBotoesNotaCancelada(nc){
+  return `<span class="badge" style="background:#FBE9E7;color:#B02A37;">🚫 Nota nº ${escapeHtml(String(nc.numero||''))} cancelada${nc.canceladaEm?' em '+fmtDate(nc.canceladaEm):''}</span>
+    <button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nc.chave}')">⬇️ PDF</button>
+    <button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nc.chave}')">⬇️ XML</button>`;
+}
+
 /* Uma venda nasce de um orçamento aprovado (orcamento.vendaGeradaId). É por
    esse caminho que a tela de Vendas por Cliente acha a nota daquela venda. */
 function nfeOrcamentoDaVenda(vendaId){
@@ -42872,6 +42914,34 @@ function nfeAvisoEncurtado(){
        + nfeEncurtados.join('; ') + '.';
 }
 
+/* =========================================================
+   O CÓDIGO DO PRODUTO NA NOTA
+
+   No espelho saiu "prod_mthtxbjdqwb5mr" na coluna CÓDIGO PRODUTO.
+   Isso é o identificador interno do sistema, que vazava pra nota
+   sempre que o produto não tinha código interno preenchido — e ia
+   assim pro XML, que fica guardado cinco anos.
+
+   Duas coisas importam aqui, e a segunda é a que obriga a gravar:
+
+   1. O código tem que ser legível. Quem confere a nota, o cliente e
+      o contador leem essa coluna.
+
+   2. O código tem que ser O MESMO em todas as notas daquele produto.
+      Por isso ele é GRAVADO no cadastro, não calculado na hora: um
+      código que muda de uma nota pra outra é pior que um código feio
+      — quebra a conferência de quem recebe.
+   ========================================================= */
+function nfeCodigoDoProduto(produto, indice){
+  if(!produto) return String((indice||0) + 1);
+  const sku = String(produto.sku||'').trim();
+  if(sku) return sku;
+  /* Sem código: cria um de verdade e guarda, pra valer nas próximas. */
+  produto.sku = proximoSku(produto.id);
+  try{ saveState(); }catch(e){ console.warn(e); }
+  return produto.sku;
+}
+
 function nfeItensParaNota(venda){
   const itens = (venda.itens||[]);
   const originais = itens.map(it=>nfeArredondar(it.qtd*it.precoUnit));
@@ -42896,7 +42966,7 @@ function nfeItensParaNota(venda){
     const produto = STATE.produtos.find(p=>p.id===it.produtoId);
     const final = nfeArredondar(aposItem[i]*fator);
     return {
-      codigo: produto ? (produto.sku || produto.id) : String(i+1),
+      codigo: nfeCodigoDoProduto(produto, i),
       nome: nfeCampo(it.nome, NFE_LIMITES.produto, `descrição do item "${String(it.nome||'').slice(0,25)}..."`),
       ncm: produto ? (produto.ncm||'').replace(/\D/g,'') : '',
       unidade: nfeCampo(it.unidade || 'UN', NFE_LIMITES.unidade),
@@ -43657,7 +43727,13 @@ function nfeBotoesOrcamento(orcamento){
   }
   const jaVirouVenda = orcamento.status==='convertido' || !!orcamento.vendaGeradaId;
   if(jaVirouVenda && nfeConfigurado()){
-    return `<button class="btn btn-sm" onclick="abrirOpcoesEmitirDepois('${orcamento.id}')" title="Esta venda foi fechada sem nota — dá pra emitir agora">🧾 Emitir Nota</button>`;
+    /* Já houve nota aqui, e foi cancelada? Então o botão não pode dizer
+       a mesma coisa que diz numa venda que nunca teve nota — ela precisa
+       ver que está emitindo OUTRA, não a primeira. */
+    const nc = nfeNotaCanceladaDoOrcamento(orcamento.id);
+    return nc
+      ? `<button class="btn btn-sm" onclick="abrirOpcoesEmitirDepois('${orcamento.id}')" title="A nota nº ${escapeAttr(String(nc.numero||''))} desta venda foi cancelada">🧾 Emitir outra nota</button>`
+      : `<button class="btn btn-sm" onclick="abrirOpcoesEmitirDepois('${orcamento.id}')" title="Esta venda foi fechada sem nota — dá pra emitir agora">🧾 Emitir Nota</button>`;
   }
   return '';
 }
@@ -46329,6 +46405,29 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-09-e',
+    data: '2026-11-09',
+    titulo: 'Nota cancelada aparece na lista — antes ela sumia',
+    itens: [
+      'O DEFEITO: cancelou a nota, e o orçamento voltava a oferecer "Emitir Nota" como se nunca tivesse existido nota nenhuma. Era a #134: você cancelou e a tela não mostrava.',
+      'Por que acontecia: o sistema só procurava nota AUTORIZADA. Depois do cancelamento o status muda, a busca não achava mais nada, e a linha ficava igual à de uma venda que nunca teve nota.',
+      'AGORA a coluna Observação mostra 🚫 Nota nº X cancelada, com a data. E o botão passa a dizer "Emitir outra nota" — você vê que está emitindo a segunda, não a primeira.',
+      'O PDF e o XML da nota cancelada continuam a um clique. Nota cancelada tem que ser guardada cinco anos igual a qualquer outra.',
+      'Emitiu uma nota nova, o aviso sai da frente sozinho — agora existe nota valendo. Cancelou essa também, volta a avisar, sempre da mais recente.'
+    ]
+  },
+  {
+    id: '2026-11-09-d',
+    data: '2026-11-09',
+    titulo: 'O código do produto na nota não sai mais como "prod_mthtxbjdqwb5mr"',
+    itens: [
+      'Na coluna CÓDIGO PRODUTO da nota saía o identificador interno do sistema quando o produto não tinha código interno preenchido — e ia assim pro XML, que fica guardado cinco anos.',
+      'Agora o produto sem código ganha um de verdade (P0001, P0002…) e ele é GRAVADO no cadastro. Isso importa: o código precisa ser o MESMO em todas as notas daquele produto. Um código que muda de uma nota pra outra quebra a conferência de quem recebe — seria pior que um código feio.',
+      'Quem já tinha código mantém o dele, intacto.',
+      'E na tela de Conferência o botão "Completar" já preenche o código interno — então o lote inteiro sai resolvido de uma vez.'
+    ]
+  },
   {
     id: '2026-11-09-c',
     data: '2026-11-09',
@@ -52217,7 +52316,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '09/11/2026 22:10';
+const SISTEMA_VERSAO = '09/11/2026 23:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
