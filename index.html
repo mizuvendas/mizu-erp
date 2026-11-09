@@ -46471,6 +46471,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-10-g',
+    data: '2026-11-10',
+    titulo: 'Balanço: a lista de nomes aparece colada no campo, enquanto você digita',
+    itens: [
+      'Digitou o nome, a lista cai LOGO ABAIXO do campo, na hora, sem apertar nada — e você toca em qual é. Antes ela aparecia numa seção separada mais pra baixo da tela.',
+      'Cada linha mostra o código de barras, o código interno, se é comodato, o preço de venda e quanto você já contou daquele produto neste balanço.',
+      'Enter escolhe direto quando só tem um resultado. Esc fecha a lista.',
+      'Número continua sendo código de barras: a lista só aparece quando você digita letra.',
+      'Nome que não existe avisa ali mesmo, e o Enter abre o cadastro rápido já com o nome preenchido.',
+      'O "não achei esse código" e a escolha entre produtos com o mesmo código também subiram pra logo abaixo do campo, onde você está olhando.'
+    ]
+  },
+  {
     id: '2026-11-10-f',
     data: '2026-11-10',
     titulo: 'Balanço: etiqueta por unidade, o que falta contar, e o relatório no fim',
@@ -54135,8 +54148,9 @@ function balAvisoHtml(){
 function balEscolhasHtml(){
   if(!balEscolhas) return '';
   const porNome = !balEscolhas.codigo;
-  return `<div class="card" style="border-left:4px solid ${porNome?'var(--primary)':'var(--warning)'};">
-    <h3>${porNome
+  return `<div style="background:#fff;border:1px solid var(--border);border-left:4px solid ${porNome?'var(--primary)':'var(--warning)'};
+      border-radius:10px;padding:12px 13px;margin-bottom:12px;">
+    <h3 style="margin:0 0 4px;font-size:15px;">${porNome
       ? `${balEscolhas.chaves.length} produto(s) com esse nome`
       : `Esse código está em ${balEscolhas.chaves.length} produtos`}</h3>
     <p class="help-text">${porNome
@@ -54162,8 +54176,9 @@ function balNaoAcheiHtml(){
   if(!balNaoAchei) return '';
   const s = balNaoAchei.sugestoes || [];
   const temCodigo = !!balNaoAchei.codigo;
-  return `<div class="card" style="border-left:4px solid var(--warning);">
-    <h3>${temCodigo ? 'Não achei esse código' : 'Não achei esse produto'}</h3>
+  return `<div style="background:#fff;border:1px solid var(--border);border-left:4px solid var(--warning);
+      border-radius:10px;padding:12px 13px;margin-bottom:12px;">
+    <h3 style="margin:0 0 4px;font-size:15px;">${temCodigo ? 'Não achei esse código' : 'Não achei esse produto'}</h3>
     <p class="help-text">${temCodigo
       ? `<strong>${escapeHtml(balNaoAchei.codigo)}</strong> não está em nenhum produto da contagem.
          Procure pela descrição: se achar, eu guardo esse código nesse produto e da próxima vez já cai direto.`
@@ -54447,16 +54462,81 @@ function balAcoesHtml(){
 /* No celular o botão grande da câmera já está logo acima, então o
    📷 pequeno sai daqui — com ele, os três controles não cabem numa
    tela de 400px sem espremer o campo do código, que é o que importa. */
+/* A lista de nomes nasce COLADA no campo, não numa seção lá embaixo.
+   "eu gostaria que aparecesse logo embaixo onde eu digitei, e lá eu
+   seleciono" — e aparece enquanto ela digita, sem precisar confirmar. */
 function balBiparHtml(grande, comCamera){
-  return `<div style="display:flex;gap:9px;align-items:stretch;margin-bottom:12px;">
-    <input type="text" id="bal-codigo" autocomplete="off" placeholder="Bipe o código, ou digite o nome do produto"
-      style="flex:1;min-width:0;font-size:${grande?'18':'17'}px;padding:${grande?'13':'11'}px 13px;border:2px solid var(--primary);
-             border-radius:9px;font-family:ui-monospace,monospace;">
-    ${comCamera === false ? '' : `<button class="btn" style="background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);
-      color:#fff;font-weight:600;font-size:15px;padding:0 ${grande?'18':'15'}px;" onclick="balCamera()">📷</button>`}
-    <button class="btn btn-primary" style="font-size:15px;padding:0 ${grande?'20':'17'}px;font-weight:600;white-space:nowrap;"
-      onclick="balBiparDoCampo()">Contar</button>
+  return `<div style="position:relative;margin-bottom:12px;">
+    <div style="display:flex;gap:9px;align-items:stretch;">
+      <input type="text" id="bal-codigo" autocomplete="off" placeholder="Bipe o código, ou digite o nome do produto"
+        style="flex:1;min-width:0;font-size:${grande?'18':'17'}px;padding:${grande?'13':'11'}px 13px;border:2px solid var(--primary);
+               border-radius:9px;font-family:ui-monospace,monospace;">
+      ${comCamera === false ? '' : `<button class="btn" style="background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);
+        color:#fff;font-weight:600;font-size:15px;padding:0 ${grande?'18':'15'}px;" onclick="balCamera()">📷</button>`}
+      <button class="btn btn-primary" style="font-size:15px;padding:0 ${grande?'20':'17'}px;font-weight:600;white-space:nowrap;"
+        onclick="balBiparDoCampo()">Contar</button>
+    </div>
+    <div id="bal-sugestoes" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:40;
+      background:#fff;border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;
+      box-shadow:0 8px 20px rgba(0,0,0,.13);max-height:min(58vh,380px);overflow:auto;"></div>
   </div>`;
+}
+
+/* Desenha a lista sem redesenhar a tela: redesenhar tiraria o foco do
+   campo no meio da digitação. */
+function balSugerirDoCampo(){
+  const caixa = document.getElementById('bal-sugestoes');
+  const campo = document.getElementById('bal-codigo');
+  if(!caixa || !campo) return;
+  const v = campo.value.trim();
+  /* só nome: número é código de barras e vai direto pro leitor */
+  if(v.length < 2 || !/[^\d\s.-]/.test(v)){ balFecharSugestoes(); return; }
+
+  const achados = balAcharPorNome(v).slice(0, 25);
+  if(achados.length === 0){
+    caixa.innerHTML = `<div style="padding:11px 13px;font-size:13px;color:var(--ink-soft);">
+      Nenhum produto com esse nome. <strong>Enter</strong> pra cadastrar "${escapeHtml(v)}" agora.</div>`;
+    caixa.style.display = '';
+    return;
+  }
+  const b = balAberto();
+  const contados = b ? balContados(b.id) : new Map();
+  caixa.innerHTML = achados.map(it=>{
+    const ja = contados.get(it.chave) || 0;
+    return `<div class="bal-sug" data-chave="${escapeAttr(it.chave)}"
+      style="padding:9px 13px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;
+             justify-content:space-between;gap:10px;align-items:center;">
+      <div style="min-width:0;">
+        <strong style="font-size:13.5px;">${escapeHtml(it.nome)}</strong>
+        <div class="help-text" style="margin:1px 0 0;">${it.codigos.length
+            ? escapeHtml(it.codigos[0])
+            : '<span style="color:var(--negative);">sem código de barras</span>'}${
+          it.sku ? ' · ' + escapeHtml(it.sku) : ''}${
+          it.comodato ? ` · comodato ${fmtNum(it.saldoComodato)}` : ''}</div>
+      </div>
+      <div style="text-align:right;white-space:nowrap;">
+        <div style="font-size:12.5px;">${fmtMoney(it.venda)}</div>
+        ${ja ? `<div class="help-text" style="margin:0;color:var(--positive);">já contei ${fmtNum(ja)}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  caixa.style.display = '';
+  caixa.querySelectorAll('.bal-sug').forEach(el=>{
+    el.addEventListener('mousedown', (e)=>{      /* mousedown: o blur do campo não rouba o clique */
+      e.preventDefault();
+      const campo2 = document.getElementById('bal-codigo');
+      if(campo2) campo2.value = '';
+      balFecharSugestoes();
+      balAbrirItem(el.dataset.chave);
+    });
+    el.addEventListener('mouseenter', ()=>{ el.style.background = 'var(--primary-soft,#E8F3F6)'; });
+    el.addEventListener('mouseleave', ()=>{ el.style.background = ''; });
+  });
+}
+
+function balFecharSugestoes(){
+  const caixa = document.getElementById('bal-sugestoes');
+  if(caixa){ caixa.style.display = 'none'; caixa.innerHTML = ''; }
 }
 
 /* O MESMO CAMPO ACEITA O CÓDIGO E O NOME.
@@ -54561,6 +54641,8 @@ function balTelaComputador(b){
     <div class="card">
       ${balBiparHtml(true)}
       ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
+      ${balEscolhasHtml()}
+      ${balNaoAcheiHtml()}
       ${balAvisoHtml()}
       ${balAtualChave ? balItemHtml(false) : ''}
       ${balProgressoHtml()}
@@ -54572,8 +54654,6 @@ function balTelaComputador(b){
       ${balListaHtml()}
     </div>
 
-    ${balEscolhasHtml()}
-    ${balNaoAcheiHtml()}
     ${balAcoesHtml()}`;
 }
 
@@ -54672,9 +54752,30 @@ function balUltimosHtml(quantos){
    --------------------------------------------------------------- */
 function balLigarEventos(){
   const cod = document.getElementById('bal-codigo');
-  if(cod) cod.addEventListener('keydown', (e)=>{
-    if(e.key === 'Enter'){ e.preventDefault(); balBiparDoCampo(); }
-  });
+  if(cod){
+    cod.addEventListener('keydown', (e)=>{
+      if(e.key === 'Enter'){
+        e.preventDefault();
+        /* com a lista aberta e um nome só, Enter escolhe ele */
+        const caixa = document.getElementById('bal-sugestoes');
+        const unico = caixa && caixa.style.display !== 'none'
+          ? caixa.querySelectorAll('.bal-sug') : [];
+        if(unico.length === 1){
+          const chave = unico[0].dataset.chave;
+          cod.value = '';
+          balFecharSugestoes();
+          balAbrirItem(chave);
+          return;
+        }
+        balFecharSugestoes();
+        balBiparDoCampo();
+      }else if(e.key === 'Escape'){
+        balFecharSugestoes();
+      }
+    });
+    cod.addEventListener('input', balSugerirDoCampo);
+    cod.addEventListener('blur', ()=>setTimeout(balFecharSugestoes, 150));
+  }
 
   const qtd = document.getElementById('bal-qtd');
   if(qtd) qtd.addEventListener('keydown', (e)=>{
@@ -54920,7 +55021,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 21:40';
+const SISTEMA_VERSAO = '10/11/2026 22:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
