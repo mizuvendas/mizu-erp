@@ -45037,7 +45037,7 @@ function preservandoRolagem(fn){
   /* Caixas que rolam por dentro: guardadas por classe e por ordem, já
      que o elemento em si é destruído no redesenho. */
   const internas = [...document.querySelectorAll('.cp-wrap, .table-wrap, [data-rolagem]')]
-    .map(el=>({ classe: el.className, topo: el.scrollTop, esq: el.scrollLeft }));
+    .map(el=>({ id: el.id || '', classe: el.className, topo: el.scrollTop, esq: el.scrollLeft }));
 
   const foco = document.activeElement;
   const idFoco = foco && foco.id ? foco.id : null;
@@ -45050,8 +45050,12 @@ function preservandoRolagem(fn){
 
   const novas = [...document.querySelectorAll('.cp-wrap, .table-wrap, [data-rolagem]')];
   internas.forEach((g,i)=>{
-    const el = novas[i];
-    if(el && el.className === g.classe){ el.scrollTop = g.topo; el.scrollLeft = g.esq; }
+    /* Pelo id quando a caixa tem um: é o jeito seguro, porque a tela
+       inteira foi recriada e a posição na lista pode ter mudado. Só cai
+       no índice quando não há id — caso das caixas sem identificação. */
+    const porId = g.id ? novas.find(x=>x.id === g.id) : null;
+    const el = porId || (g.id ? null : novas[i]);
+    if(el && (porId || el.className === g.classe)){ el.scrollTop = g.topo; el.scrollLeft = g.esq; }
   });
   if(janela) window.scrollTo(0, janela);
 
@@ -46405,6 +46409,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-10-a',
+    data: '2026-11-10',
+    titulo: 'Conferência: o custo estava vindo ZERADO, e a lista voltava pro topo',
+    itens: [
+      'O CUSTO VINHA R$ 0,00 nas 524 linhas. O cabeçalho dessa coluna na sua planilha não diz "Custo" — diz "0,1". Eu procurava pela palavra, não achava, e desistia da coluna em silêncio: a tela mostrava zero como se fosse a verdade da planilha.',
+      'Agora, quando o cabeçalho não tem nome, o sistema procura entre a Descrição e o código de barras uma coluna de números. E DIZ qual coluna usou, pra você conferir em vez de confiar. O Rodo 80cm volta com 46,167, como está no seu arquivo.',
+      'A LISTA NÃO VOLTA MAIS PRO TOPO. Rolava pra baixo e do nada subia — a tela se redesenha sozinha (ao completar uma linha, ou quando o sincronismo roda) e a caixa nova nascia no topo. Agora ela guarda onde você estava e devolve depois.'
+    ]
+  },
   {
     id: '2026-11-09-e',
     data: '2026-11-09',
@@ -51699,11 +51713,35 @@ function confLerGrade(grade, nomeArquivo){
   };
   const cCod    = achar('código','codigo');
   const cDesc   = achar('descri');
-  const cCusto  = achar('custo');
   const cBarras = achar('barra');
   const cSaldo  = achar('saldo');
   const cVenda  = achar('valor venda','venda');
   if(cBarras < 0 || cSaldo < 0) throw new Error('A planilha precisa ter as colunas de código de barras e de saldo.');
+
+  /* O CUSTO NEM SEMPRE TEM NOME.
+
+     Na exportação dela o cabeçalho dessa coluna veio como "0,1" — um
+     número, não a palavra "Custo". Procurar só pelo nome fazia o custo
+     voltar ZERADO nas 524 linhas, em silêncio, que é o pior jeito de
+     errar: a tela mostrava R$ 0,00 como se fosse a verdade da planilha.
+
+     Então: tenta pelo nome e, se não achar, procura entre a Descrição e
+     o código de barras uma coluna de números. E a tela DIZ qual coluna
+     foi usada, pra ela conferir em vez de confiar. */
+  let cCusto = achar('custo');
+  let custoAdivinhado = false;
+  if(cCusto < 0 && cDesc >= 0 && cBarras > cDesc + 1){
+    for(let col = cDesc + 1; col < cBarras; col++){
+      let numeros = 0, olhadas = 0;
+      for(let i = cab+1; i < Math.min(grade.length, cab + 120); i++){
+        const v = (grade[i]||[])[col];
+        if(v == null || v === '') continue;
+        olhadas++;
+        if(typeof v === 'number' && isFinite(v)) numeros++;
+      }
+      if(olhadas >= 5 && numeros / olhadas > 0.8){ cCusto = col; custoAdivinhado = true; break; }
+    }
+  }
 
   const ix = confIndiceProdutos();
   const linhas = [];
@@ -51748,7 +51786,10 @@ function confLerGrade(grade, nomeArquivo){
   linhas.forEach(l=>{ if(l.barras) vistos[l.barras] = (vistos[l.barras]||0) + 1; });
   linhas.forEach(l=>{ if(l.barras && vistos[l.barras] > 1) l.barrasRepetida = true; });
 
-  return { arquivo: nomeArquivo || '', linhas, ignoradasSemSaldo };
+  return { arquivo: nomeArquivo || '', linhas, ignoradasSemSaldo,
+           colunaCusto: cCusto >= 0 ? cCusto + 1 : null,
+           custoAdivinhado,
+           tituloCusto: cCusto >= 0 ? String((grade[cab]||[])[cCusto] == null ? '' : (grade[cab]||[])[cCusto]) : '' };
 }
 
 async function confImportar(arquivo){
@@ -51774,7 +51815,9 @@ async function confAplicarLeitura(r){
                                   linhas: r.linhas.map(l=>({ codigo:l.codigo, nome:l.nome, custo:l.custo,
                                                              venda:l.venda, saldo:l.saldo, barras:l.barras })) });
   STATE.conferenciaResumo = { arquivo: r.arquivo, em: new Date().toISOString(),
-                              total: r.linhas.length, semSaldo: r.ignoradasSemSaldo };
+                              total: r.linhas.length, semSaldo: r.ignoradasSemSaldo,
+                              colunaCusto: r.colunaCusto, custoAdivinhado: r.custoAdivinhado,
+                              tituloCusto: r.tituloCusto };
   saveState();
   renderConferencia();
   showToast(`${r.linhas.length} produto(s) com saldo lidos. ${r.ignoradasSemSaldo} sem saldo ficaram de fora.`, 'success');
@@ -51917,7 +51960,18 @@ function confBotaoFiltro(rotulo, qual, cor){
 
 function confTrocarFiltro(qual){ confFiltro = qual; renderConferencia(); }
 
+/* "eu vou rolando para baixo, ele do nada sobe lá para cima de novo."
+
+   A lista é redesenhada por vários motivos — completar uma linha, o
+   sincronismo da nuvem a cada 20 segundos — e cada redesenho criava
+   uma caixa rolante nova, que nasce no topo. Numa lista de 524 itens
+   isso é rolar tudo de novo a cada vez. Mesmo conserto da Sugestão de
+   Compra: guarda onde ela estava e devolve depois. */
 function renderConferencia(){
+  preservandoRolagem(()=>renderConferenciaAgora());
+}
+
+function renderConferenciaAgora(){
   const box = document.getElementById('conferencia-content');
   if(!box) return;
 
@@ -51948,6 +52002,11 @@ function renderConferencia(){
       <h3>📋 Conferência de planilha <span class="hint">${escapeHtml(res.arquivo||'')}</span></h3>
       <p class="help-text">Casamento pelo código de barras. ${res.semSaldo ? `${res.semSaldo} linha(s) sem saldo ficaram de fora.` : ''}
         <strong>Nome, custo e preço não são alterados sozinhos</strong> — só o que você mandar, linha por linha.</p>
+      ${res.colunaCusto
+        ? `<p class="help-text" style="margin-top:-6px;">Custo lido da <strong>coluna ${res.colunaCusto}</strong>${
+            res.tituloCusto ? ` (cabeçalho "${escapeHtml(res.tituloCusto)}")` : ''}${
+            res.custoAdivinhado ? ' — o cabeçalho não diz "custo", então eu deduzi pela posição. Confira uma linha.' : ''}</p>`
+        : `<p class="help-text" style="margin-top:-6px;color:var(--negative);">⚠ Não achei a coluna de custo nesta planilha — o custo vai aparecer zerado.</p>`}
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:12px 0;">
         ${confBotaoFiltro('Todos', 'todos', 'var(--primary)')}
@@ -52316,7 +52375,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '09/11/2026 23:30';
+const SISTEMA_VERSAO = '10/11/2026 08:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
