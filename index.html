@@ -46471,6 +46471,22 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-10-f',
+    data: '2026-11-10',
+    titulo: 'Balanço: etiqueta por unidade, o que falta contar, e o relatório no fim',
+    itens: [
+      'ETIQUETA POR UNIDADE: na ficha do item (e na coluna Etiqueta da lista) você marca quem precisa de etiqueta. Contou 3 rodos, saem 3 etiquetas iguais, lado a lado, com código de barras e descrição, pra recortar. Marcar um produto sem código gera o código na hora — etiqueta sem código não serve pra nada.',
+      'O QUE FALTA CONTAR: barra de progresso ("38 de 1.454 · faltam 1.416") e o filtro "○ Falta contar", que lista só o que ainda não passou pelo leitor, com um botão pra contar ali mesmo. Num balanço desse tamanho é isso que diz se acabou.',
+      'Filtros novos na lista: já contei · falta contar · sem código de barras · marcados pra etiqueta.',
+      'CUSTO E VENDA UNITÁRIOS na tabela, com o total da linha embaixo, pequeno. Antes mostrava só o total e parecia que o produto era mais caro do que é.',
+      'O CAMPO DA QUANTIDADE ficou do tamanho de um número, e o botão "Contar e ler o próximo" subiu pra mesma linha — menos caminho pro dedo e pro mouse.',
+      'GERAR OS CÓDIGOS QUE FALTAM de uma vez: um clique resolve todos os produtos do balanço que não têm código de barras nenhum.',
+      'AO FECHAR, VOCÊ CAI NO RELATÓRIO, dentro da Conferência, numa aba nova "📊 Relatório do balanço": tudo que foi contado numa lista só, com o que é do comodato e o que é da Mizu, e CLICANDO EM CIMA DO VALOR você altera descrição, unidade, NCM (procurando pelo nome), fornecedor, custo e preço — grava direto no produto, igual às outras abas.',
+      'No relatório: filtros por falta preencher · comodato · Mizu · sem código de barras · etiqueta, e os botões de imprimir as etiquetas marcadas e gerar os códigos que faltam.',
+      'Aviso antes de fechar quando ainda sobrou produto pra contar.'
+    ]
+  },
+  {
     id: '2026-11-10-e',
     data: '2026-11-10',
     titulo: 'Balanço: dá pra achar o produto pelo NOME, não só bipando',
@@ -52337,8 +52353,8 @@ function lojaGerarBarras(produtoId){
 
 /* Edição no lugar, igual à aba do comodato — só que aqui grava direto
    no produto, porque aqui o cadastro É a verdade, não o destino dela. */
-function lojaAtivarEdicao(){
-  document.querySelectorAll('#loja-tabela-wrap .conf-edit').forEach(span=>{
+function lojaAtivarEdicao(dentroDe){
+  document.querySelectorAll((dentroDe || '#loja-tabela-wrap') + ' .conf-edit').forEach(span=>{
     span.addEventListener('click', function abrir(){
       if(span.querySelector('input')) return;
       const id = span.dataset.produto, campo = span.dataset.campo;
@@ -52385,7 +52401,20 @@ function lojaAtivarEdicao(){
   });
 }
 
-/* As duas abas da Conferência. */
+/* As abas da Conferência. A terceira só existe quando já houve um
+   balanço — antes disso ela seria uma porta pra uma sala vazia. */
+let confBalancoRelatorioId = null;
+
+function confBalancoDoRelatorio(){
+  const todos = (STATE.balancos||[]);
+  if(confBalancoRelatorioId){
+    const achado = todos.find(x=>x.id === confBalancoRelatorioId);
+    if(achado) return achado;
+  }
+  return todos.slice().sort((a,c)=>String(c.fechadoEm||c.criadoEm||'')
+    .localeCompare(String(a.fechadoEm||a.criadoEm||'')))[0] || null;
+}
+
 function confAbasHtml(){
   const aba = (qual, rotulo)=>{
     const ativo = confAba === qual;
@@ -52397,6 +52426,166 @@ function confAbasHtml(){
   return `<div style="border-bottom:1px solid var(--border);margin-bottom:14px;">
     ${aba('comodato','📋 Comodato (planilha)')}
     ${aba('loja','🏪 Produtos da loja')}
+    ${confBalancoDoRelatorio() ? aba('relatorio','📊 Relatório do balanço') : ''}
+  </div>`;
+}
+
+/* =========================================================
+   RELATÓRIO DO BALANÇO
+
+   "quando eu fechar o balanço, eu quero que volte para a conferência
+    com um relatório... e aí no relatório total eu vou poder ajustar
+    igual eu ajustaria no comodato — unidade de medida, NCM."
+
+   O balanço resolve o SALDO. O que ele deixa em aberto é o CADASTRO:
+   produto que nasceu no meio da contagem, linha do comodato que virou
+   produto agora, item sem NCM. Esta tela é onde isso se fecha, e por
+   isso ela edita no mesmo lugar, com o mesmo clique das outras abas.
+   ========================================================= */
+let relFiltro = 'todos';
+
+function relTrocarFiltro(qual){ relFiltro = qual; renderConferencia(); }
+
+function relLinhas(b){
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const contados = balContados(b.id);
+  const linhas = [];
+  contados.forEach((qtd, chave)=>{
+    const it = BAL_CAT.get(chave);
+    if(!it) return;
+    const p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id === it.produtoId) : null;
+    linhas.push({ chave, it, p, qtd,
+      falta: p ? lojaPendencias(p) : ['cadastro'],
+      etiqueta: !!(b.etiquetas && b.etiquetas[chave]) });
+  });
+  return linhas.sort((a,c)=>String(a.it.nome||'').localeCompare(String(c.it.nome||''),'pt-BR'));
+}
+
+function renderConferenciaRelatorio(box){
+  const b = confBalancoDoRelatorio();
+  if(!b){ box.innerHTML = confAbasHtml() + `<div class="card"><p class="help-text">Nenhum balanço ainda.</p></div>`; return; }
+
+  const todas = relLinhas(b);
+  const incompletos = todas.filter(l=>l.falta.length);
+  const semCodigo = todas.filter(l=>!l.it.codigos.length);
+  const etiquetados = todas.filter(l=>l.etiqueta);
+  const comodato = todas.filter(l=>l.it.comodato);
+  const daMizu = todas.filter(l=>!l.it.comodato);
+
+  let lista = relFiltro === 'incompleto' ? incompletos
+            : relFiltro === 'semcodigo' ? semCodigo
+            : relFiltro === 'etiqueta' ? etiquetados
+            : relFiltro === 'comodato' ? comodato
+            : relFiltro === 'mizu' ? daMizu
+            : todas;
+
+  const somar = (arr, campo)=>arr.reduce((s,l)=>{
+    const pc = l.it.comodato ? Math.min(l.qtd, l.it.saldoComodato) : 0;
+    return s + (campo === 'un' ? l.qtd : campo === 'com' ? pc : campo === 'miz' ? (l.qtd - pc)
+              : campo === 'custo' ? l.qtd * Number(l.it.custo||0) : l.qtd * Number(l.it.venda||0));
+  }, 0);
+
+  const kpi = (rotulo, valor, cor)=>`<div style="flex:1;min-width:116px;border:1px solid var(--border);
+      border-radius:9px;padding:8px 11px;background:#fff;">
+      <div style="font-size:11px;color:var(--ink-faint);">${rotulo}</div>
+      <div style="font-size:20px;font-weight:700;font-variant-numeric:tabular-nums;${cor?`color:${cor};`:''}">${valor}</div></div>`;
+
+  const chip = (rotulo, qual, n, cor)=>`<button class="btn btn-sm" onclick="relTrocarFiltro('${qual}')"
+    style="${relFiltro===qual?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">${rotulo} <strong>${fmtNum(n)}</strong></button>`;
+
+  const totalEtiquetas = etiquetados.reduce((s,l)=>s + l.qtd, 0);
+
+  box.innerHTML = `
+    ${confAbasHtml()}
+    <div class="card">
+      <h3>📊 Relatório do balanço <span class="hint">${b.aberto ? 'ainda em andamento'
+        : 'fechado em ' + fmtDate(String(b.fechadoEm||'').slice(0,10))}</span></h3>
+      <p class="help-text">O saldo já está gravado. O que sobra aqui é o cadastro: <strong>clique em cima do
+        valor pra alterar</strong> — descrição, unidade, NCM, fornecedor, custo e preço vão direto pro produto.</p>
+
+      <div style="display:flex;gap:9px;flex-wrap:wrap;margin:12px 0;">
+        ${kpi('Produtos contados', fmtNum(todas.length))}
+        ${kpi('Unidades', fmtNum(somar(todas,'un')))}
+        ${kpi('Do comodato', fmtNum(somar(todas,'com')), 'var(--primary)')}
+        ${kpi('Da Mizu', fmtNum(somar(todas,'miz')), '#4B3B80')}
+        ${kpi('Custo contado', fmtMoney(somar(todas,'custo')))}
+        ${kpi('Venda contada', fmtMoney(somar(todas,'venda')))}
+        ${kpi('Falta preencher', fmtNum(incompletos.length), incompletos.length?'var(--warning)':'var(--positive)')}
+      </div>
+
+      <div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:11px;">
+        ${chip('Todos','todos', todas.length,'var(--primary)')}
+        ${chip('🟡 Falta preencher','incompleto', incompletos.length,'var(--warning)')}
+        ${chip('🤝 Comodato','comodato', comodato.length,'var(--primary-escuro,#1B4B5A)')}
+        ${chip('Da Mizu','mizu', daMizu.length,'#4B3B80')}
+        ${chip('📷 Sem código de barras','semcodigo', semCodigo.length,'var(--negative)')}
+        ${chip('🏷️ Etiqueta','etiqueta', etiquetados.length,'var(--warning)')}
+      </div>
+
+      <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:13px;">
+        ${totalEtiquetas ? `<button class="btn" onclick="balImprimirEtiquetas('${escapeAttr(b.id)}')">
+            🏷️ Imprimir ${fmtNum(totalEtiquetas)} etiqueta(s) — uma por unidade contada</button>` : ''}
+        ${semCodigo.length ? `<button class="btn" onclick="balGerarCodigosQueFaltam()">
+            📷 Gerar os ${fmtNum(semCodigo.length)} códigos de barras que faltam</button>` : ''}
+        <button class="btn" onclick="navigateTo('balanco')">↩ Voltar pro balanço</button>
+      </div>
+
+      ${relTabela(lista)}
+    </div>`;
+
+  lojaAtivarEdicao('#rel-tabela-wrap');
+}
+
+function relTabela(lista){
+  if(lista.length === 0){
+    return `<div id="rel-tabela-wrap" class="empty-state" style="padding:24px;"><p>Nenhum produto nesse filtro.</p></div>`;
+  }
+  return `<div id="rel-tabela-wrap" class="table-wrap" data-rolagem="1" style="max-height:calc(100vh - 420px);overflow:auto;">
+    <table class="data-table">
+      <thead><tr>
+        <th>Produto</th><th style="width:165px;">Código de barras</th>
+        <th style="width:84px;">Unidade</th><th style="width:124px;">NCM</th><th style="width:150px;">Fornecedor</th>
+        <th class="num" style="width:96px;">Custo un.</th><th class="num" style="width:96px;">Venda un.</th>
+        <th class="num" style="width:74px;">Contei</th><th class="num" style="width:88px;">Comodato</th>
+        <th class="num" style="width:74px;">Mizu</th><th>O que falta</th>
+      </tr></thead>
+      <tbody>${lista.slice(0, 400).map(l=>{
+        const p = l.p, it = l.it;
+        const pc = it.comodato ? Math.min(l.qtd, it.saldoComodato) : 0;
+        if(!p){
+          return `<tr style="background:#FFFBF2;">
+            <td><strong>${escapeHtml(it.nome)}</strong>
+              <div class="help-text" style="margin:0;"><i>não virou produto ainda — fecha o balanço pra ele nascer</i></div></td>
+            <td>${escapeHtml(it.codigos[0]||'—')}</td><td>—</td><td>—</td><td>—</td>
+            <td class="num">${fmtMoney(it.custo)}</td><td class="num">${fmtMoney(it.venda)}</td>
+            <td class="num"><strong>${fmtNum(l.qtd)}</strong></td>
+            <td class="num">${it.comodato?fmtNum(pc):'—'}</td><td class="num">${fmtNum(l.qtd-pc)}</td>
+            <td><span class="badge" style="background:#FBF1E2;color:#8A5D14;">falta cadastrar</span></td></tr>`;
+        }
+        return `<tr>
+          <td>${lojaCampo(p, 'nome', p.nome, 'Clique para alterar a descrição')}
+            <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${
+              it.comodato?` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}</span>`:''}${
+              l.etiqueta?' · 🏷️ etiqueta':''}</div></td>
+          <td>${String(p.codigoBarras||'').trim()
+              ? lojaCampo(p, 'codigoBarras', p.codigoBarras)
+              : `<button class="btn btn-sm" style="padding:1px 7px;" onclick="lojaGerarBarras('${escapeAttr(p.id)}')">gerar</button>`}</td>
+          <td>${lojaCampo(p, 'unidade', p.unidade)}</td>
+          <td>${lojaCampo(p, 'ncm', p.ncm ? ncmFormatado(p.ncm) : '', 'Clique e procure por nome')}</td>
+          <td>${lojaCampo(p, 'fornecedor', p.fornecedor)}</td>
+          <td class="num">${lojaCampo(p, 'custo', fmtMoney(p.custo||0))}</td>
+          <td class="num">${lojaCampo(p, 'precoVenda', fmtMoney(p.precoVenda||0))}</td>
+          <td class="num"><strong>${fmtNum(l.qtd)}</strong></td>
+          <td class="num">${it.comodato ? fmtNum(pc) : '—'}</td>
+          <td class="num">${(l.qtd - pc) ? fmtNum(l.qtd - pc) : '—'}</td>
+          <td>${l.falta.length
+            ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">🟡 falta</span>
+               <div class="help-text" style="margin:2px 0 0;">${escapeHtml(l.falta.join(', '))}</div>`
+            : `<span class="badge" style="background:#E7F4EE;color:#1F6047;">🟢 completo</span>`}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>
+    ${lista.length > 400 ? `<p class="help-text" style="padding:8px;">Mostrando 400 de ${lista.length}. Use os filtros.</p>` : ''}
   </div>`;
 }
 
@@ -52407,6 +52596,7 @@ function renderConferencia(){
 function renderConferenciaAgora(){
   const box = document.getElementById('conferencia-content');
   if(!box) return;
+  if(confAba === 'relatorio'){ renderConferenciaRelatorio(box); return; }
   if(confAba === 'loja'){ renderConferenciaLoja(box); return; }
 
   if(!CONF_LINHAS){
@@ -53273,6 +53463,7 @@ let balEscolhas = null;      /* bipou um código repetido: as opções */
 let balNaoAchei = null;      /* {codigo, sugestoes:[], termo} */
 let balAviso = null;         /* {chave, total, saldo} */
 let balBusca = '';
+let balFiltro = 'contei';    /* contei | falta | semcodigo | etiqueta */
 let balCelular = false;      /* a mesma tela, no formato do celular */
 let balMsg = '';
 
@@ -53630,6 +53821,12 @@ function balFecharMesmo(b, fornecedor, zerar){
   balRecarregarCatalogo();
   balAtualChave = null; balAviso = null; balMsg = '';
   renderBalanco();
+  /* "quando eu fechar o balanço, eu quero que volte para a conferência
+     com um relatório" — o trabalho não acaba no saldo: acaba quando o
+     cadastro está completo, e isso se resolve lá. */
+  confAba = 'relatorio';
+  confBalancoRelatorioId = b.id;
+  navigateTo('conferencia');
   showToast(`Balanço fechado: ${fmtNum(mexidos)} produto(s) com saldo gravado`
     + (criados ? `, ${fmtNum(criados)} cadastrado(s) agora` : '')
     + (zerados ? `, ${fmtNum(zerados)} zerado(s)` : '') + '.', 'success');
@@ -53674,13 +53871,40 @@ function balEanSvg(codigo, largura, altura){
     ><rect width="${bits.length}" height="${alto}" fill="#fff"/><path d="${path}" fill="#000"/></svg>`;
 }
 
-function balImprimirEtiquetas(){
-  const lista = balProdutosComCodigoInterno();
-  if(lista.length === 0){ showToast('Nenhum produto com código gerado aqui.', 'info'); return; }
+/* O que vai pra impressora: os itens que ela MARCOU naquele balanço,
+   cada um repetido pela quantidade contada. Três rodos, três etiquetas
+   iguais, lado a lado, pra recortar de uma vez. */
+function balEtiquetasDoBalanco(balancoId){
+  const b = (STATE.balancos||[]).find(x=>x.id === balancoId);
+  if(!b || !b.etiquetas) return [];
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const contados = balContados(b.id);
+  const saida = [];
+  Object.keys(b.etiquetas).forEach(chave=>{
+    const it = BAL_CAT.get(chave);
+    if(!it) return;
+    const codigo = it.codigos[0] || '';
+    if(!codigo) return;
+    saida.push({ nome: it.nome, codigo, qtd: Math.max(1, contados.get(chave) || 1) });
+  });
+  return saida.sort((a,c)=>String(a.nome).localeCompare(String(c.nome),'pt-BR'));
+}
+
+function balImprimirEtiquetas(balancoId){
+  const b = balancoId ? (STATE.balancos||[]).find(x=>x.id === balancoId) : balAberto();
+  const lista = b ? balEtiquetasDoBalanco(b.id) : [];
+  if(lista.length === 0){
+    showToast('Nenhum produto marcado pra etiqueta. Marque na ficha do item enquanto conta, ou na coluna Etiqueta da lista.', 'info');
+    return;
+  }
+  const total = lista.reduce((s,x)=>s + x.qtd, 0);
   const janela = window.open('', '_blank');
   if(!janela){ showToast('O navegador bloqueou a janela. Libere os pop-ups para este site.', 'error'); return; }
+  /* uma por unidade contada */
+  const etiquetas = [];
+  lista.forEach(x=>{ for(let i = 0; i < x.qtd; i++) etiquetas.push(x); });
   janela.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
-    <title>Etiquetas dos códigos gerados</title>
+    <title>Etiquetas do balanço — ${total} etiqueta(s)</title>
     <style>
       *{box-sizing:border-box}
       body{font-family:Arial,Helvetica,sans-serif;margin:8mm;}
@@ -53691,14 +53915,40 @@ function balImprimirEtiquetas(){
       svg{display:block;margin:0 auto;}
       @media print{ .et{border-color:#eee} }
     </style></head><body>
-    ${lista.map(p=>`<div class="et">
-        <div class="nm">${escapeHtml(String(p.nome||'').slice(0,58))}</div>
-        ${balEanSvg(p.codigoBarras, 180, 42)}
-        <div class="cd">${escapeHtml(String(p.codigoBarras||''))}</div>
+    ${etiquetas.map(x=>`<div class="et">
+        <div class="nm">${escapeHtml(String(x.nome||'').slice(0,58))}</div>
+        ${balEanSvg(x.codigo, 180, 42)}
+        <div class="cd">${escapeHtml(String(x.codigo||''))}</div>
       </div>`).join('')}
     <script>window.onload=function(){window.print()}</${'script'}>
     </body></html>`);
   janela.document.close();
+}
+
+/* Produto contado que não tem código de barras nenhum não pode ser
+   bipado na venda nem no próximo balanço. Um clique resolve a lista. */
+function balGerarCodigosQueFaltam(){
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const alvos = [];
+  BAL_CAT.forEach(it=>{ if(it.codigos.length === 0 && it.produtoId) alvos.push(it); });
+  if(alvos.length === 0){ showToast('Todo produto do balanço já tem código de barras.', 'info'); return; }
+  confirmAction('Gerar os códigos de barras que faltam',
+    `${alvos.length} produto(s) do balanço estão sem código de barras nenhum — nem na embalagem nem aqui.\n\n`
+    + 'Vou gerar um código interno pra cada (faixa 2, reservada pra uso da loja, com dígito verificador de verdade). '
+    + 'Na nota fiscal esses itens continuam saindo SEM GTIN, como manda a regra.\n\n'
+    + 'Depois é só imprimir as etiquetas e colar na embalagem.',
+    ()=>{
+      alvos.forEach(it=>{
+        const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+        if(!p) return;
+        p.codigoBarras = gerarCodigoBarrasInterno();
+        p.tipoBarras = 'gerencial';
+      });
+      saveState();
+      balRecarregarCatalogo();
+      renderBalanco();
+      showToast(`${alvos.length} código(s) gerado(s).`, 'success');
+    }, 'Gerar');
 }
 
 /* ---------------------------------------------------------------
@@ -53845,6 +54095,25 @@ function balKpisHtml(){
   </div>`;
 }
 
+/* Quanto já andou. Num balanço de mil e poucos itens, isso é a
+   diferença entre saber que está acabando e achar que nunca acaba. */
+function balProgressoHtml(){
+  const b = balAberto();
+  if(!b || !BAL_CAT || BAL_CAT.size === 0) return '';
+  const feitos = balContados(b.id).size;
+  const total = BAL_CAT.size;
+  const pct = Math.min(100, Math.round((feitos / total) * 100));
+  return `<div style="margin-bottom:11px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;color:var(--ink-soft);">
+      <span><strong style="color:var(--ink);font-size:14px;">${fmtNum(feitos)}</strong> de ${fmtNum(total)} produtos contados</span>
+      <span>${pct}%${feitos < total ? ` · faltam ${fmtNum(total - feitos)}` : ' · acabou'}</span>
+    </div>
+    <div style="height:7px;background:var(--border);border-radius:4px;overflow:hidden;margin-top:5px;">
+      <div style="height:100%;width:${pct}%;background:${pct>=100?'var(--positive)':'var(--primary)'};"></div>
+    </div>
+  </div>`;
+}
+
 function balAvisoHtml(){
   if(!balAviso) return '';
   const it = balItem(balAviso.chave);
@@ -53953,36 +54222,109 @@ function balItemHtml(grande){
       ${jaTem ? ` · <span style="color:var(--positive);font-weight:600;">já contei ${fmtNum(jaTem)}</span>` : ''}
     </div>
 
-    <div style="display:flex;gap:9px;align-items:center;margin:12px 0 0;">
+    <div style="display:flex;gap:9px;align-items:center;margin:12px 0 0;flex-wrap:wrap;">
       <button class="btn" style="width:${grande?'54px':'42px'};height:${grande?'54px':'42px'};font-size:${grande?'26':'20'}px;font-weight:700;"
         onclick="balMudarQtd(-1)">−</button>
+      <!-- o campo da quantidade não estica: é um número de duas ou três
+           casas, e esticado na largura do card ele só afastava os botões -->
       <input type="number" id="bal-qtd" value="${balQtd}" min="1" step="1" inputmode="numeric"
-        style="flex:1;font-size:${grande?'30':'22'}px;text-align:center;padding:${grande?'9':'6'}px;
+        style="width:${grande?'110px':'92px'};font-size:${grande?'30':'24'}px;text-align:center;padding:${grande?'9':'6'}px;
                border:2px solid var(--primary);border-radius:9px;font-weight:700;font-variant-numeric:tabular-nums;">
       <button class="btn" style="width:${grande?'54px':'42px'};height:${grande?'54px':'42px'};font-size:${grande?'26':'20'}px;font-weight:700;"
         onclick="balMudarQtd(1)">+</button>
+      <button class="btn btn-primary" style="flex:1;min-width:190px;padding:${grande?'14':'11'}px;
+        font-size:${grande?'16':'14.5'}px;font-weight:700;" onclick="balConfirmar()">Contar e ler o próximo</button>
     </div>
-    <button class="btn btn-primary" style="width:100%;padding:${grande?'14':'11'}px;font-size:${grande?'16':'14.5'}px;font-weight:700;margin-top:10px;"
-      onclick="balConfirmar()">Contar e ler o próximo</button>
+    <label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-size:13px;color:var(--ink-soft);cursor:pointer;">
+      <input type="checkbox" id="bal-etiqueta" ${balQuerEtiqueta(it.chave)?'checked':''}
+        onchange="balMarcarEtiqueta('${escapeAttr(it.chave)}', this.checked)">
+      🏷️ Precisa de etiqueta — imprimir <strong>uma por unidade contada</strong> no fim do balanço
+      ${it.codigos.length ? '' : '<span style="color:var(--warning);">(gero o código de barras ao marcar)</span>'}
+    </label>
   </div>`;
 }
+
+/* ---------------------------------------------------------------
+   ETIQUETAS
+
+   "ele não tem etiqueta no produto, eu vou adicionar 3 rodos e vou
+    marcar que precisa gerar etiqueta. E aí, no final do relatório, eu
+    vou poder imprimir esses produtos que não têm etiqueta."
+
+   A marca fica no balanço, não no produto: é uma decisão daquela
+   contagem ("estes aqui eu preciso etiquetar agora"), não uma
+   característica do produto pra sempre. E a quantidade impressa é a
+   contada — três rodos, três etiquetas.
+   --------------------------------------------------------------- */
+function balQuerEtiqueta(chave){
+  const b = balAberto();
+  return !!(b && b.etiquetas && b.etiquetas[chave]);
+}
+
+function balMarcarEtiqueta(chave, querSim){
+  const b = balAberto();
+  if(!b) return;
+  if(!b.etiquetas) b.etiquetas = {};
+  if(querSim){
+    const it = balItem(chave);
+    /* etiqueta sem código de barras não serve pra nada: gera agora */
+    if(it && it.codigos.length === 0 && it.produtoId){
+      const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+      if(p){
+        p.codigoBarras = gerarCodigoBarrasInterno();
+        p.tipoBarras = 'gerencial';
+        showToast(`Código ${p.codigoBarras} gerado pra etiqueta.`, 'success');
+      }
+    }
+    b.etiquetas[chave] = true;
+  }else{
+    delete b.etiquetas[chave];
+  }
+  saveState();
+  balRecarregarCatalogo();
+  renderBalanco();
+}
+
+/* ---------------------------------------------------------------
+   A LISTA
+
+   Num balanço de 1.454 itens, a pergunta que decide se ele termina
+   não é "o que eu já contei" — é "o que ainda FALTA". Por isso a lista
+   tem os dois lados, e o contador diz 38 de 1.454: sem isso ela não
+   tem como saber quando acabou, nem o que varrer no fim.
+   --------------------------------------------------------------- */
+function balBotaoFiltro(rotulo, qual, n, cor){
+  const ativo = balFiltro === qual;
+  return `<button class="btn btn-sm" onclick="balTrocarFiltro('${qual}')"
+    style="${ativo?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">${rotulo} <strong>${fmtNum(n)}</strong></button>`;
+}
+
+function balTrocarFiltro(qual){ balFiltro = qual; renderBalanco(); }
 
 function balListaHtml(limite){
   const b = balAberto();
   if(!b) return '';
   const contados = balContados(b.id);
-  if(contados.size === 0){
-    return `<p class="help-text">Nada contado ainda. Bipe o primeiro produto.</p>`;
-  }
+
   /* o último contado aparece em cima: é o que ela quer conferir */
   const ordem = [];
   balBipes(b.id).slice().reverse().forEach(x=>{ if(!ordem.includes(x.chave)) ordem.push(x.chave); });
+  const faltam = [];
+  BAL_CAT.forEach((it, ch)=>{ if(!contados.has(ch)) faltam.push(ch); });
+  faltam.sort((a,c)=>String((BAL_CAT.get(a)||{}).nome||'').localeCompare(String((BAL_CAT.get(c)||{}).nome||''),'pt-BR'));
+  const semCodigo = [];
+  BAL_CAT.forEach((it, ch)=>{ if(it.codigos.length === 0) semCodigo.push(ch); });
+  const etiquetas = Object.keys(b.etiquetas||{}).filter(ch=>BAL_CAT.has(ch));
+
+  let lista = balFiltro === 'falta' ? faltam
+            : balFiltro === 'semcodigo' ? semCodigo
+            : balFiltro === 'etiqueta' ? etiquetas
+            : ordem;
 
   const t = ncmNormalizar(balBusca);
-  let lista = ordem;
   if(t.length >= 2){
     const palavras = t.split(' ').filter(Boolean);
-    lista = ordem.filter(ch=>{
+    lista = lista.filter(ch=>{
       const it = BAL_CAT.get(ch);
       if(!it) return false;
       const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
@@ -53991,12 +54333,30 @@ function balListaHtml(limite){
   }
   const mostra = lista.slice(0, limite || 300);
 
-  return `<div id="bal-lista-wrap" class="table-wrap" data-rolagem="1" style="max-height:calc(100vh - 430px);overflow:auto;">
+  const filtros = `<div style="display:flex;gap:7px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+    ${balBotaoFiltro('✓ Já contei', 'contei', ordem.length, 'var(--positive)')}
+    ${balBotaoFiltro('○ Falta contar', 'falta', faltam.length, 'var(--primary)')}
+    ${balBotaoFiltro('📷 Sem código de barras', 'semcodigo', semCodigo.length, 'var(--negative)')}
+    ${balBotaoFiltro('🏷️ Marcados pra etiqueta', 'etiqueta', etiquetas.length, 'var(--warning)')}
+  </div>`;
+
+  if(mostra.length === 0){
+    return `<div id="bal-lista-wrap">${filtros}
+      <p class="help-text">${balFiltro === 'falta'
+        ? '🎉 Não falta nenhum: você contou o balanço inteiro.'
+        : balFiltro === 'contei' ? 'Nada contado ainda. Bipe o primeiro produto.'
+        : 'Nenhum produto nesse filtro.'}</p></div>`;
+  }
+
+  return `<div id="bal-lista-wrap" data-rolagem="1">
+    ${filtros}
+    <div class="table-wrap" style="max-height:calc(100vh - 470px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
         <th>Produto</th><th class="num" style="width:78px;">Contei</th>
         <th class="num" style="width:92px;">Comodato</th><th class="num" style="width:78px;">Mizu</th>
-        <th class="num" style="width:104px;">Custo</th><th class="num" style="width:104px;">Venda</th>
+        <th class="num" style="width:112px;">Custo un.</th><th class="num" style="width:112px;">Venda un.</th>
+        <th style="width:84px;">Etiqueta</th>
         <th style="width:150px;">Situação</th><th style="width:72px;"></th>
       </tr></thead>
       <tbody>
@@ -54007,39 +54367,60 @@ function balListaHtml(limite){
           const pc = it.comodato ? Math.min(qtd, it.saldoComodato) : 0;
           const pm = qtd - pc;
           const passou = it.comodato && qtd > it.saldoComodato;
-          return `<tr${it.produtoId ? '' : ' style="background:#FFFBF2;"'}>
+          const naoContado = !contados.has(ch);
+          return `<tr${naoContado ? ' style="opacity:.72;"' : (it.produtoId ? '' : ' style="background:#FFFBF2;"')}>
             <td><strong>${escapeHtml(it.nome)}</strong>
-              <div class="help-text" style="margin:0;">${escapeHtml(it.codigos[0]||'sem código')}${
+              <div class="help-text" style="margin:0;">${it.codigos.length
+                  ? escapeHtml(it.codigos[0])
+                  : '<span style="color:var(--negative);">sem código de barras</span>'}${
                 it.sku?' · '+escapeHtml(it.sku):''}${it.produtoId?'':' · <i>ainda não é produto aqui</i>'}</div></td>
-            <td class="num"><strong>${fmtNum(qtd)}</strong></td>
-            <td class="num">${it.comodato ? fmtNum(pc) : '—'}</td>
-            <td class="num">${pm ? fmtNum(pm) : '—'}</td>
-            <td class="num">${fmtMoney(qtd * Number(it.custo||0))}</td>
-            <td class="num">${fmtMoney(qtd * Number(it.venda||0))}</td>
-            <td>${passou
+            <td class="num">${naoContado
+                ? `<button class="btn btn-sm" onclick="balAbrirItem('${escapeAttr(ch)}')">contar</button>`
+                : `<strong>${fmtNum(qtd)}</strong>`}</td>
+            <td class="num">${it.comodato ? fmtNum(naoContado ? it.saldoComodato : pc) : '—'}</td>
+            <td class="num">${naoContado ? '—' : (pm ? fmtNum(pm) : '—')}</td>
+            <td class="num">${fmtMoney(it.custo)}
+              ${qtd ? `<div class="help-text" style="margin:0;">total ${fmtMoney(qtd * Number(it.custo||0))}</div>` : ''}</td>
+            <td class="num">${fmtMoney(it.venda)}
+              ${qtd ? `<div class="help-text" style="margin:0;">total ${fmtMoney(qtd * Number(it.venda||0))}</div>` : ''}</td>
+            <td style="text-align:center;">${naoContado ? '—'
+              : `<input type="checkbox" ${balQuerEtiqueta(ch)?'checked':''}
+                   title="Imprimir ${fmtNum(qtd)} etiqueta(s) deste produto"
+                   onchange="balMarcarEtiqueta('${escapeAttr(ch)}', this.checked)">`}</td>
+            <td>${naoContado
+                  ? `<span class="badge" style="background:#EEF0F3;color:var(--ink-soft);">não contado</span>`
+                  : passou
                   ? `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">passou do comodato</span>`
                   : it.comodato
                     ? `<span class="badge" style="background:var(--primary-soft,#E8F3F6);color:var(--primary-escuro,#1B4B5A);">comodato</span>`
                     : `<span class="badge" style="background:#EDE9F6;color:#4B3B80;">Mizu</span>`}</td>
-            <td><button class="btn btn-sm" onclick="balRefazer('${escapeAttr(ch)}')" title="Apagar e contar de novo">↺</button></td>
+            <td>${naoContado ? '' : `<button class="btn btn-sm" onclick="balRefazer('${escapeAttr(ch)}')" title="Apagar e contar de novo">↺</button>`}</td>
           </tr>`;
         }).join('')}
       </tbody>
     </table>
+    </div>
     ${lista.length > mostra.length ? `<p class="help-text" style="padding:8px;">Mostrando ${mostra.length} de ${lista.length}. Use a busca.</p>` : ''}
   </div>`;
 }
 
 function balAcoesHtml(){
   const b = balAberto();
-  const etiquetas = balProdutosComCodigoInterno().length;
+  const etq = b ? balEtiquetasDoBalanco(b.id) : [];
+  const etiquetas = etq.reduce((s,x)=>s + x.qtd, 0);
   const t = balTotais();
+  let semCodigo = 0;
+  if(BAL_CAT) BAL_CAT.forEach(it=>{ if(it.codigos.length === 0 && it.produtoId) semCodigo++; });
   const naoContados = (BAL_CAT ? BAL_CAT.size : 0) - (b ? balContados(b.id).size : 0);
   const fornecedores = (STATE.fornecedores||[]).map(f=>String(f.nome||'').trim()).filter(Boolean).sort();
   return `<div class="card">
     <h3>✓ Fechar o balanço</h3>
     <p class="help-text">Fechar grava o saldo contado no estoque: o comodato fica com o que a
-      ${escapeHtml(CONF_FORNECEDOR_PADRAO)} tem, e o que passou disso entra como estoque da Mizu.</p>
+      ${escapeHtml(CONF_FORNECEDOR_PADRAO)} tem, e o que passou disso entra como estoque da Mizu.
+      Depois você cai no relatório, na Conferência, pra acertar o que ficou faltando.</p>
+    ${naoContados > 0 ? `<p class="help-text" style="color:var(--warning);">
+      Ainda faltam <strong>${fmtNum(naoContados)}</strong> produtos pra contar — use o filtro
+      <strong>"○ Falta contar"</strong> na lista acima pra varrer o que sobrou antes de fechar.</p>` : ''}
     <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
       <div class="field" style="max-width:280px;margin:0;">
         <label>Fornecedor de todos os contados</label>
@@ -54053,7 +54434,8 @@ function balAcoesHtml(){
     </div>
     <div style="display:flex;gap:9px;flex-wrap:wrap;">
       <button class="btn btn-primary" onclick="balFechar()">✓ Fechar o balanço (${fmtNum(t.produtos)} produtos)</button>
-      ${etiquetas ? `<button class="btn" onclick="balImprimirEtiquetas()">🏷️ Imprimir etiquetas dos códigos gerados (${etiquetas})</button>` : ''}
+      ${etiquetas ? `<button class="btn" onclick="balImprimirEtiquetas()">🏷️ Imprimir ${fmtNum(etiquetas)} etiqueta(s) marcada(s)</button>` : ''}
+      ${semCodigo ? `<button class="btn" onclick="balGerarCodigosQueFaltam()">📷 Gerar os ${fmtNum(semCodigo)} códigos de barras que faltam</button>` : ''}
       <button class="btn" onclick="balDesfazerUltimo()">↶ Desfazer o último bipe</button>
       <button class="btn" onclick="navigateTo('dashboard')">Pausar e continuar depois</button>
     </div>
@@ -54181,11 +54563,11 @@ function balTelaComputador(b){
       ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
       ${balAvisoHtml()}
       ${balAtualChave ? balItemHtml(false) : ''}
+      ${balProgressoHtml()}
       <div style="display:flex;gap:9px;align-items:center;margin-bottom:10px;">
         <div class="field" style="max-width:280px;margin:0;">
-          <input type="text" id="bal-busca" value="${escapeAttr(balBusca)}" placeholder="🔍 Procurar no que já contei">
+          <input type="text" id="bal-busca" value="${escapeAttr(balBusca)}" placeholder="🔍 Procurar nesta lista">
         </div>
-        <span class="help-text" style="margin:0;">${fmtNum(BAL_CAT.size)} produto(s) no balanço</span>
       </div>
       ${balListaHtml()}
     </div>
@@ -54538,7 +54920,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 20:05';
+const SISTEMA_VERSAO = '10/11/2026 21:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
