@@ -859,6 +859,40 @@ body.bal-foco .btn-sm{ font-size:13.5px; min-height:34px; }
    aproximar. Clicar rápido no + virava zoom em vez de contar. Esta
    linha diz ao navegador que ali é botão, não é pra ampliar. */
 button, .btn, input[type="checkbox"], label{ touch-action: manipulation; }
+/* A PÁGINA NÃO PASSA DA LARGURA DA TELA.
+
+   "não dá para ele ficar literalmente padrão, que ele não consiga mover
+   para a direita, apenas rolar para baixo."
+
+   É uma trava, não um conserto de causa: se qualquer coisa escapar na
+   largura, ela é cortada em vez de esticar a página e fazer o celular
+   afastar o zoom. Vale enquanto o balanço está no celular e sempre que a
+   câmera está aberta — que é onde isso aparecia. */
+body.bal-foco, html:has(body.bal-foco),
+body.leitor-aberto, html:has(body.leitor-aberto){ max-width:100vw; overflow-x:hidden; }
+
+/* NO CELULAR, O SISTEMA INTEIRO SÓ ROLA PRA BAIXO.
+
+   "tudo tem que estar travado em sua rolagem."
+
+   Não é só o balanço: qualquer tela com uma tabela larga, um campo
+   grande ou uma imagem fora de medida empurrava a página pra além da
+   largura do aparelho. O Safari então afastava o zoom pra fazer caber,
+   e tudo encolhia — foi o que ela via como "ficou pequeno e dá pra
+   arrastar pro lado".
+
+   Travar aqui resolve a classe inteira, sem caçar um por um. Quem
+   precisa mesmo de largura — tabela de doze colunas — rola dentro da
+   própria caixa (.table-wrap), que é o certo: a tabela anda, a página
+   fica parada. */
+@media (max-width: 900px){
+  html, body{ max-width:100vw; overflow-x:hidden; }
+  .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  /* tabela solta, sem caixa: ganha a própria rolagem em vez de ser cortada */
+  .page table:not(.table-wrap table){ display:block; width:max-content; max-width:100%; overflow-x:auto; }
+  img, canvas, video, svg{ max-width:100%; }
+  pre{ overflow-x:auto; }
+}
 .bal-voltar-menu{ display:none; }
 body.bal-foco .bal-voltar-menu{ display:inline-block; }
 
@@ -2012,6 +2046,11 @@ function defaultState(){
        balancoBipes: UM REGISTRO POR BIPE { id, balancoId, chave, qtd, de, em } — de propósito:
          assim o celular e o computador contam ao mesmo tempo sem um apagar o outro na nuvem.
        codigosApelido: { codigo bipado -> chave do item } — o código de caixa que ela já confirmou. */
+    /* A PLANILHA DO COMODATO. Uma linha = um registro com id, pra
+       sincronizar entre o computador e o celular uma a uma. Antes vivia
+       só no navegador de quem carregou o arquivo, e por isso o balanço
+       no celular não enxergava comodato nenhum. */
+    conferenciaLinhas: [],
     balancos: [],
     balancoBipes: [],
     codigosApelido: {},
@@ -4935,15 +4974,30 @@ function abrirLeitorCodigoBarras(onCodigoLido){
              fazer caber. Era isso que deixava tudo desproporcional ao
              abrir a câmera. Em bloco, com max-width, o vídeo se encaixa
              na largura que tem. -->
-        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:230px;max-width:100%;">
+        <!-- O VÍDEO SAI DO FLUXO DA PÁGINA.
+
+             Primeira tentativa foi dar max-width no vídeo, e não bastou:
+             ele nasce com a largura do sensor (1920) e, enquanto estiver
+             no fluxo, esse número ainda entra na conta de quanto a
+             página precisa. O Safari somava isso, via que não cabia e
+             afastava o zoom — a tela inteira encolhia e dava pra
+             arrastar pro lado.
+
+             Aqui a caixa tem tamanho próprio (proporção 3:4) e o vídeo é
+             posicionado DENTRO dela, absoluto. Fora do fluxo, o tamanho
+             do sensor não influencia mais nada: a página não tem como
+             crescer por causa dele. -->
+        <div style="position:relative;width:100%;max-width:100%;aspect-ratio:3/4;max-height:46vh;
+            background:#000;border-radius:10px;overflow:hidden;">
           <video id="leitor-codigo-video" playsinline muted autoplay
-            style="display:none;width:100%;max-width:100%;min-width:0;max-height:46vh;object-fit:contain;vertical-align:middle;"></video>
+            style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;"></video>
           <canvas id="leitor-codigo-foto"
-            style="display:none;width:100%;max-width:100%;min-width:0;max-height:46vh;object-fit:contain;vertical-align:middle;"></canvas>
-          <div id="leitor-codigo-mira" style="display:none;position:absolute;left:8%;right:8%;top:32%;height:36%;
+            style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;"></canvas>
+          <div id="leitor-codigo-mira" style="display:none;position:absolute;left:8%;right:8%;top:34%;height:32%;
               border:2px solid #4BE38A;border-radius:8px;pointer-events:none;
               box-shadow:0 0 0 3000px rgba(0,0,0,.34);"></div>
-          <div id="leitor-codigo-status" style="color:#fff;font-size:13.5px;padding:16px;text-align:center;">Iniciando câmera…</div>
+          <div id="leitor-codigo-status" style="position:absolute;inset:0;display:flex;align-items:center;
+              justify-content:center;color:#fff;font-size:13.5px;padding:16px;text-align:center;">Iniciando câmera…</div>
         </div>
 
         <div id="leitor-codigo-acoes" style="display:none;gap:8px;margin-top:11px;flex-wrap:wrap;">
@@ -4966,6 +5020,7 @@ function abrirLeitorCodigoBarras(onCodigoLido){
     </div>
   `;
   document.body.appendChild(modal);
+  try{ document.body.classList.add('leitor-aberto'); }catch(e){}
 
   let stream = null, trilha = null, parar = false, lendoFoto = false;
   const statusEl = document.getElementById('leitor-codigo-status');
@@ -4982,6 +5037,7 @@ function abrirLeitorCodigoBarras(onCodigoLido){
        tamanho do sensor, o Safari pode continuar com a página larga */
     try{ videoEl.pause(); videoEl.srcObject = null; videoEl.removeAttribute('src'); }catch(e){}
     modal.remove();
+    try{ document.body.classList.remove('leitor-aberto'); }catch(e){}
     /* e devolve a página pro lugar: se ela chegou a alargar, o celular
        fica rolado pro lado e o título some na esquerda */
     try{ if(window.scrollX) window.scrollTo(0, window.scrollY); }catch(e){}
@@ -5062,10 +5118,8 @@ function abrirLeitorCodigoBarras(onCodigoLido){
       videoEl.style.display = 'none';
       const r = await lerDoCanvas(canvas);
       if(r){ confirmarCodigo(r); return; }
-      statusEl.style.display = '';
+      statusEl.style.display = 'flex';
       statusEl.textContent = 'Não consegui ler nessa foto. Chegue mais perto, deixe o código reto e tente de novo — ou ligue o flash.';
-      statusEl.style.position = 'absolute';
-      statusEl.style.bottom = '0';
       statusEl.style.background = 'rgba(0,0,0,.72)';
       setTimeout(()=>{
         if(parar) return;
@@ -5120,7 +5174,7 @@ function abrirLeitorCodigoBarras(onCodigoLido){
       tentarAoVivo();
     })
     .catch(()=>{
-      statusEl.style.display = '';
+      statusEl.style.display = 'flex';
       statusEl.textContent = 'Não consegui abrir a câmera (permissão negada ou indisponível). Digite o código abaixo.';
     });
 }
@@ -46987,6 +47041,22 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-d',
+    data: '2026-11-11',
+    titulo: 'A planilha do comodato agora vai pro celular — e foto do produto no balanço',
+    itens: [
+      'O MAIOR DELES: a planilha do comodato ficava guardada só no navegador do computador que carregou o arquivo, e não sincronizava. Por isso no celular o balanço mostrava 921 produtos e "comodato 0" — a planilha simplesmente não existia lá, e tudo virava Mizu. Agora cada linha é um registro próprio e sincroniza uma a uma, igual produtos e clientes. A sua planilha atual é movida sozinha na primeira abertura.',
+      'PRIORIDADE DO COMODATO na hora de escolher: comodato com saldo vem primeiro, depois comodato sem saldo, depois os da loja. É a sua regra — se está na planilha, tem saldo, e o que passar é seu.',
+      'JUNTAR O QUE ESTÁ EM DOIS LUGARES: quando a linha da planilha e um produto do seu cadastro forem o mesmo (como aconteceu no inseticida), o sistema mostra e pergunta. Confirmando, os dois viram UM produto com os dois saldos — contou 6 e a planilha diz 3: 3 comodato, 3 Mizu. O que já estava contado vem junto.',
+      'CÓDIGO QUE NÃO FECHA A CONTA: o 7992020000114 do cadastro não existe — é um 8 que virou 9 ao digitar, e o dígito verificador não bate. Agora o sistema confere e avisa antes de gravar, e tem o filtro "⚠ Código que não fecha" na Conferência pra você varrer todos de uma vez.',
+      'FOTO DO PRODUTO, tirada na hora da contagem: quadrada 600x600 como no seu PDV, com o produto centralizado. Fotografando em cima de uma folha branca, o sistema apaga o fundo sozinho. Também aceita foto anexada — é aí que entra o recorte que você fizer no próprio iPhone, que fica perfeito. Botão por produto pra decidir se a foto aparece no sistema e no PDV. As fotos ficam num espaço próprio, fora do armazenamento normal: 1.400 fotos dão uns 56 MB.',
+      'Filtro "📷 Sem foto" no relatório do balanço e na Conferência, pra você saber quanto falta.',
+      'O SISTEMA INTEIRO TRAVADO NO CELULAR: nenhuma tela passa da largura do aparelho. Só rola pra baixo, nunca pro lado. Varri os 31 menus pra conferir.',
+      'A CÂMERA não estica mais a tela: o vídeo saiu do fluxo da página, então o tamanho do sensor não empurra mais nada.',
+      'FECHAR O BALANÇO PELO CELULAR, com fornecedor, zerar os não contados, etiquetas e gerar os códigos que faltam — tudo que só existia no computador.'
+    ]
+  },
+  {
     id: '2026-11-11-c',
     data: '2026-11-11',
     titulo: 'Celular: tela no lugar, toque duplo sem zoom, e as mesmas informações do computador',
@@ -52536,10 +52606,13 @@ async function confImportar(arquivo){
 /* Guarda a leitura e redesenha. Um caminho só: o arquivo de verdade e
    qualquer conferência passam por aqui. */
 async function confAplicarLeitura(r){
+  /* cada linha nasce com id próprio: é o que faz ela sincronizar sozinha */
+  r.linhas.forEach(l=>{ if(!l.id) l.id = uid('cl'); });
   CONF_LINHAS = r.linhas;
-  await confIdb('put', 'atual', { arquivo: r.arquivo, em: new Date().toISOString(),
-                                  linhas: r.linhas.map(l=>({ codigo:l.codigo, nome:l.nome, custo:l.custo,
-                                                             venda:l.venda, saldo:l.saldo, barras:l.barras })) });
+  STATE.conferenciaLinhas = r.linhas.map(l=>({ id:l.id, codigo:l.codigo, nome:l.nome, custo:l.custo,
+                                               venda:l.venda, saldo:l.saldo, barras:l.barras,
+                                               nomeEscolhido:l.nomeEscolhido||null,
+                                               unidade:l.unidade||null, ncm:l.ncm||null }));
   STATE.conferenciaResumo = { arquivo: r.arquivo, em: new Date().toISOString(),
                               total: r.linhas.length, semSaldo: r.ignoradasSemSaldo,
                               colunaCusto: r.colunaCusto, custoAdivinhado: r.custoAdivinhado,
@@ -52551,9 +52624,23 @@ async function confAplicarLeitura(r){
 
 async function confCarregarGuardada(){
   if(CONF_LINHAS) return CONF_LINHAS;
+
+  /* mudança de casa: o que ficou no espaço antigo do navegador entra no
+     STATE uma vez e passa a sincronizar dali em diante */
+  if(confLinhasDoEstado().length === 0){
+    try{
+      const antiga = await confIdb('get', 'atual');
+      if(antiga && Array.isArray(antiga.linhas) && antiga.linhas.length){
+        STATE.conferenciaLinhas = antiga.linhas.map(l=>Object.assign({ id: uid('cl') }, l));
+        saveState();
+        console.log('Planilha do comodato movida pro sincronismo:', antiga.linhas.length, 'linhas.');
+      }
+    }catch(e){ console.warn(e); }
+  }
+
   try{
-    const g = await confIdb('get', 'atual');
-    if(g && Array.isArray(g.linhas)){
+    const g = { linhas: confLinhasDoEstado() };
+    if(g && Array.isArray(g.linhas) && g.linhas.length){
       const ix = confIndiceProdutos();
       CONF_LINHAS = g.linhas.map(l=>{
         const achados = l.barras ? (ix.get(l.barras) || []) : [];
@@ -52762,11 +52849,24 @@ function lojaSituacao(p){
   return lojaPendencias(p).length ? 'incompleto' : 'ok';
 }
 
+/* O código que não fecha a conta. Código interno gerado aqui é
+   proposital e não entra na lista — o que importa são os que ela
+   digitou achando que estavam certos. */
+function lojaCodigoNaoFecha(p){
+  const d = String(p.codigoBarras||'').replace(/\D/g,'');
+  if(!d) return false;
+  if(String(p.tipoBarras||'') === 'gerencial') return false;
+  if(![8,12,13,14].includes(d.length)) return true;
+  return !balGtinValido(d);
+}
+
 function lojaProdutos(){
   let lista = (STATE.produtos||[]).slice();
   if(lojaFiltro === 'incompleto') lista = lista.filter(p=>lojaSituacao(p) === 'incompleto');
   else if(lojaFiltro === 'ok')    lista = lista.filter(p=>lojaSituacao(p) === 'ok');
   else if(lojaFiltro === 'sembarras') lista = lista.filter(p=>!String(p.codigoBarras||'').trim());
+  else if(lojaFiltro === 'barrasruim') lista = lista.filter(p=>lojaCodigoNaoFecha(p));
+  else if(lojaFiltro === 'semfoto') lista = lista.filter(p=>!p.temFoto);
   else if(lojaFiltro === 'comodato')  lista = lista.filter(p=>!!p.comodato);
 
   const t = ncmNormalizar(lojaBusca);
@@ -52784,6 +52884,8 @@ function lojaContar(qual){
   const todos = STATE.produtos||[];
   if(qual === 'todos') return todos.length;
   if(qual === 'sembarras') return todos.filter(p=>!String(p.codigoBarras||'').trim()).length;
+  if(qual === 'barrasruim') return todos.filter(p=>lojaCodigoNaoFecha(p)).length;
+  if(qual === 'semfoto') return todos.filter(p=>!p.temFoto).length;
   if(qual === 'comodato')  return todos.filter(p=>!!p.comodato).length;
   return todos.filter(p=>lojaSituacao(p) === qual).length;
 }
@@ -52810,6 +52912,8 @@ function renderConferenciaLoja(box){
         ${lojaBotaoFiltro('🟡 Falta preencher', 'incompleto', 'var(--warning)')}
         ${lojaBotaoFiltro('🟢 Completos', 'ok', 'var(--positive)')}
         ${lojaBotaoFiltro('📷 Sem código de barras', 'sembarras', 'var(--negative)')}
+        ${lojaContar('barrasruim') ? lojaBotaoFiltro('⚠ Código que não fecha', 'barrasruim', 'var(--negative)') : ''}
+        ${lojaBotaoFiltro('📷 Sem foto', 'semfoto', 'var(--ink-soft)')}
         ${lojaBotaoFiltro('🤝 Comodato', 'comodato', 'var(--primary-escuro,#1B4B5A)')}
         ${(STATE.produtos||[]).some(p=>!String(p.sku||'').trim())
           ? `<button class="btn btn-sm" onclick="lojaGerarCodigosInternos()"
@@ -52844,7 +52948,7 @@ function lojaTabela(lista){
   return `<div id="loja-tabela-wrap" class="table-wrap" style="max-height:calc(100vh - 330px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
-        <th>Produto</th><th style="width:170px;">Código de barras</th>
+        <th style="width:58px;">Foto</th><th>Produto</th><th style="width:170px;">Código de barras</th>
         <th style="width:90px;">Unidade</th><th style="width:130px;">NCM</th>
         <th style="width:160px;">Fornecedor</th>
         <th class="num" style="width:100px;">Custo</th><th class="num" style="width:100px;">Venda</th>
@@ -52867,6 +52971,13 @@ function lojaLinha(p){
   const interno = String(p.tipoBarras||'') === 'gerencial' || (barras.startsWith('2') && barras.length === 13);
 
   return `<tr>
+    <td style="text-align:center;">
+      <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+        ${fotoMiniHtml(p.id, 38)}
+        <button class="btn btn-sm" style="padding:0 5px;font-size:10.5px;"
+          onclick="abrirFotoDoProduto('${escapeAttr(p.id)}', ()=>renderConferencia())">${p.temFoto ? 'trocar' : '+ foto'}</button>
+      </div>
+    </td>
     <td>
       ${lojaCampo(p, 'nome', p.nome, 'Clique para alterar a descrição')}
       <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${p.marca?' · '+escapeHtml(p.marca):''}${
@@ -52874,6 +52985,8 @@ function lojaLinha(p){
     </td>
     <td>
       ${barras ? lojaCampo(p, 'codigoBarras', barras) : `<span class="help-text" style="color:var(--negative);">sem código</span>`}
+      ${lojaCodigoNaoFecha(p) ? `<div class="help-text" style="margin:1px 0 0;color:var(--negative);font-weight:600;"
+          title="O dígito verificador não bate — esse número não existe como código de barras">⚠ não fecha a conta</div>` : ''}
       <div class="help-text" style="margin:0;">
         ${interno && barras ? 'gerado aqui · ' : ''}<button class="btn btn-sm" style="padding:0 6px;"
           onclick="lojaGerarBarras('${p.id}')">${barras?'gerar outro':'gerar'}</button>
@@ -52962,7 +53075,31 @@ function lojaAtivarEdicao(dentroDe){
         }
         else if(campo === 'ncm')          p.ncm = ncmSo8(v);
         else if(campo === 'unidade')      p.unidade = v.toUpperCase().slice(0,6);
-        else if(campo === 'codigoBarras') p.codigoBarras = v.replace(/\D/g,'');
+        else if(campo === 'codigoBarras'){
+          /* O NÚMERO TEM QUE FECHAR A CONTA.
+
+             O inseticida entrou no cadastro como 7992020000114 — um 8
+             que virou 9 ao digitar. Esse código não existe: o dígito
+             verificador não bate. Ninguém percebe isso olhando, e o
+             produto some pra sempre do leitor. Então aqui o sistema
+             confere e avisa; ela decide se grava assim mesmo (pode ser
+             código interno de outro sistema). O leitor não passa por
+             aqui — o que ele lê já vem conferido. */
+          const novo = v.replace(/\D/g,'');
+          const antigo = String(p.codigoBarras||'');
+          if(novo && [8,12,13,14].includes(novo.length) && !balGtinValido(novo)){
+            renderConferencia();
+            confirmAction('Esse código não fecha a conta',
+              `${novo}\n\nO último dígito de um código de barras é um verificador — ele confere os outros. `
+              + `Nesse aqui a conta não bate, então esse número não existe como código de barras. `
+              + `Quase sempre é um dígito digitado errado.\n\n`
+              + `Confira na embalagem. Se for código interno de outro sistema, pode gravar assim mesmo.`,
+              ()=>{ p.codigoBarras = novo; saveState(); renderConferencia(); }, 'Gravar assim mesmo');
+            return;
+          }
+          p.codigoBarras = novo;
+          if(antigo !== novo) p.tipoBarras = '';
+        }
         else if(campo === 'fornecedor')   p.fornecedor = v;
         else if(ehDinheiro){
           const n = parseFloat(v.replace(/[^\d,.-]/g,'').replace(/\./g,'').replace(',', '.'));
@@ -53057,6 +53194,7 @@ function renderConferenciaRelatorio(box){
   const etiquetados = todas.filter(l=>l.etiqueta);
   const comodato = todas.filter(l=>l.it.comodato);
   const daMizu = todas.filter(l=>!l.it.comodato);
+  const semFoto = todas.filter(l=>l.p && !l.p.temFoto);
   const naoBateu = todas.filter(l=>l.diferenca != null && l.diferenca !== 0);
   const sobrando = naoBateu.filter(l=>l.diferenca > 0);
   const faltando = naoBateu.filter(l=>l.diferenca < 0);
@@ -53069,6 +53207,7 @@ function renderConferenciaRelatorio(box){
             : relFiltro === 'naobateu' ? naoBateu
             : relFiltro === 'sobrando' ? sobrando
             : relFiltro === 'faltando' ? faltando
+            : relFiltro === 'semfoto' ? semFoto
             : todas;
 
   const somar = (arr, campo)=>arr.reduce((s,l)=>{
@@ -53122,6 +53261,7 @@ function renderConferenciaRelatorio(box){
         ${chip('Da Mizu','mizu', daMizu.length,'#4B3B80')}
         ${chip('📷 Sem código de barras','semcodigo', semCodigo.length,'var(--negative)')}
         ${chip('🏷️ Etiqueta','etiqueta', etiquetados.length,'var(--warning)')}
+        ${chip('📷 Sem foto','semfoto', semFoto.length,'var(--ink-soft)')}
       </div>
 
       <div style="display:flex;gap:9px;flex-wrap:wrap;margin-bottom:13px;">
@@ -53180,7 +53320,7 @@ function relTabela(lista){
   return `<div id="rel-tabela-wrap" class="table-wrap" data-rolagem="1" style="max-height:calc(100vh - 420px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
-        <th>Produto</th><th style="width:178px;">Código de barras</th>
+        <th style="width:60px;">Foto</th><th>Produto</th><th style="width:178px;">Código de barras</th>
         <th style="width:84px;">Unidade</th><th style="width:124px;">NCM</th><th style="width:150px;">Fornecedor</th>
         <th class="num" style="width:96px;">Custo un.</th><th class="num" style="width:96px;">Venda un.</th>
         <th class="num" style="width:74px;">Contei</th>
@@ -53193,6 +53333,7 @@ function relTabela(lista){
         const pc = it.comodato ? Math.min(l.qtd, it.saldoComodato) : 0;
         if(!p){
           return `<tr style="background:#FFFBF2;">
+            <td>—</td>
             <td><strong>${escapeHtml(it.nome)}</strong>
               <div class="help-text" style="margin:0;"><i>não virou produto ainda — fecha o balanço pra ele nascer</i></div></td>
             <td>${escapeHtml(it.codigos[0]||'—')}</td><td>—</td><td>—</td><td>—</td>
@@ -53204,6 +53345,13 @@ function relTabela(lista){
             <td><span class="badge" style="background:#FBF1E2;color:#8A5D14;">falta cadastrar</span></td></tr>`;
         }
         return `<tr>
+          <td style="text-align:center;">
+            <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+              ${fotoMiniHtml(p.id, 40)}
+              <button class="btn btn-sm" style="padding:0 6px;font-size:11px;"
+                onclick="abrirFotoDoProduto('${escapeAttr(p.id)}', ()=>renderConferencia())">${p.temFoto ? 'trocar' : '+ foto'}</button>
+            </div>
+          </td>
           <td>${lojaCampo(p, 'nome', p.nome, 'Clique para alterar a descrição')}
             <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${
               it.comodato?` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}</span>`:''}${
@@ -53441,15 +53589,40 @@ function confAtivarEdicao(){
 }
 
 /* O que ela decidiu na conferência fica guardado junto da planilha. */
+/* =========================================================
+   A PLANILHA DO COMODATO AGORA VIAJA ENTRE AS MÁQUINAS
+
+   Ela guardava a planilha num espaço privado do navegador (IndexedDB),
+   e por um bom motivo: são centenas de linhas, e o armazenamento normal
+   não aguentava. Só que esse espaço NÃO SINCRONIZA — e quando o balanço
+   nasceu, ele passou a depender dela.
+
+   O resultado, que ela viu na prática: no computador o balanço tinha
+   1.442 produtos; no celular, 921 e "comodato 0". A planilha
+   simplesmente não existia lá, e tudo virava Mizu.
+
+   Agora cada linha é um registro com id próprio dentro do STATE. Isso
+   faz ela sincronizar uma a uma, igual produtos e clientes — sem mandar
+   as quinhentas de novo a cada vez que ela corrige um NCM. O que estava
+   guardado no espaço antigo é trazido pra cá na primeira abertura, sem
+   ela precisar fazer nada.
+   ========================================================= */
+function confLinhasDoEstado(){
+  return Array.isArray(STATE.conferenciaLinhas) ? STATE.conferenciaLinhas : [];
+}
+
 function confGuardarLinhas(){
   if(!CONF_LINHAS) return;
-  const res = STATE.conferenciaResumo || {};
-  confIdb('put', 'atual', { arquivo: res.arquivo || '', em: res.em || new Date().toISOString(),
-    linhas: CONF_LINHAS.map(l=>({ codigo:l.codigo, nome:l.nome, custo:l.custo, venda:l.venda,
-                                  saldo:l.saldo, barras:l.barras,
-                                  nomeEscolhido:l.nomeEscolhido||null,
-                                  unidade:l.unidade||null, ncm:l.ncm||null }))
-  }).catch(e=>console.warn(e));
+  const porId = {};
+  confLinhasDoEstado().forEach(l=>{ porId[l.id] = l; });
+  CONF_LINHAS.forEach(l=>{
+    const guardada = l.id ? porId[l.id] : null;
+    if(!guardada) return;
+    guardada.nomeEscolhido = l.nomeEscolhido || null;
+    guardada.unidade = l.unidade || null;
+    guardada.ncm = l.ncm || null;
+  });
+  saveState();
 }
 
 function confCadastrar(barras){
@@ -53494,6 +53667,7 @@ function confTrocarPlanilha(){
     'A leitura atual sai e você escolhe outro arquivo. Nada do que já foi completado no cadastro é desfeito.',
     async ()=>{
       try{ await confIdb('del', 'atual'); }catch(e){ console.warn(e); }
+      STATE.conferenciaLinhas = [];
       CONF_LINHAS = null;
       delete STATE.conferenciaResumo;
       saveState();
@@ -54980,6 +55154,12 @@ function balItemHtml(grande){
       <button class="btn btn-primary" style="flex:1;min-width:190px;padding:${grande?'14':'11'}px;
         font-size:${grande?'16':'14.5'}px;font-weight:700;" onclick="balConfirmar()">Contar e ler o próximo</button>
     </div>
+    ${it.produtoId ? `<div style="display:flex;gap:9px;align-items:center;margin-top:10px;">
+        ${fotoMiniHtml(it.produtoId, 46)}
+        <button class="btn btn-sm" onclick="abrirFotoDoProduto('${escapeAttr(it.produtoId)}', ()=>renderBalanco())">
+          ${(STATE.produtos||[]).find(x=>x.id===it.produtoId && x.temFoto) ? '📷 trocar a foto' : '📷 foto do produto'}</button>
+      </div>` : `<div class="help-text" style="margin-top:9px;">A foto entra depois que o balanço fechar e esse produto nascer no cadastro.</div>`}
+    ${balJuntarHtml(it.chave)}
     <label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-size:13px;color:var(--ink-soft);cursor:pointer;">
       <input type="checkbox" id="bal-etiqueta" ${balQuerEtiqueta(it.chave)?'checked':''}
         onchange="balMarcarEtiqueta('${escapeAttr(it.chave)}', this.checked)">
@@ -55310,6 +55490,23 @@ function balBiparDoCampo(){
 /* Procura no catálogo inteiro do balanço, não só no que já foi contado.
    Quebra o que ela digitou em palavras e exige todas — então "60
    centímetros rodo" acha "RODO DE ALUMINIO 60CM" igual a "rodo 60". */
+/* A ORDEM DA LISTA SEGUE A REGRA DELA.
+
+   "eu sempre vou priorizar os produtos que tem o código de barra e que
+    tenha escrito comodato. Porque se tem comodato, ele tem cadastro no
+    Excel, então tem saldo, e o que for excedente já é nosso."
+
+   Então o comodato com saldo vem primeiro, depois o comodato sem saldo,
+   e só então os da loja. Misturado em ordem alfabética, ela teria que
+   caçar o certo no meio — e escolher errado aqui joga a contagem toda
+   pro lado errado. */
+function balPesoNaLista(it){
+  if(it.comodato && Number(it.saldoComodato||0) > 0) return 0;
+  if(it.comodato) return 1;
+  if(it.codigos.length) return 2;
+  return 3;
+}
+
 function balAcharPorNome(termo){
   if(!BAL_CAT) balRecarregarCatalogo();
   const t = ncmNormalizar(termo);
@@ -55320,7 +55517,11 @@ function balAcharPorNome(termo){
     const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
     if(palavras.every(p=>txt.includes(p))) achados.push(it);
   });
-  return achados.sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR'));
+  return achados.sort((a,b)=>{
+    const d = balPesoNaLista(a) - balPesoNaLista(b);
+    if(d) return d;
+    return String(a.nome||'').localeCompare(String(b.nome||''),'pt-BR');
+  });
 }
 
 function balProcurarNome(termo){
@@ -55393,6 +55594,499 @@ function balBiparCodigoDoItem(chave){
     renderBalanco();
     showToast(`${d} gravado em "${p ? p.nome : it.nome}". Vale no balanço e na Conferência.`, 'success');
   });
+}
+
+/* =========================================================
+   FOTO DO PRODUTO
+
+   "vou fazer a contagem, vou decidir se é o item do comodato, vou
+    adicionar já a foto daquele produto"
+
+   O balanço é a única hora em que os mil e quatrocentos produtos passam
+   pela mão dela, um por um. Depois disso, fotografar todos de novo
+   seria um mutirão inteiro — então é aqui ou nunca.
+
+   TRÊS DECISÕES QUE VALEM EXPLICAR:
+
+   1. QUADRADA E PEQUENA. 600x600, como no PDV que ela já usou. Uma foto
+      de celular tem 4 MB; mil e quatrocentas delas seriam 5 GB, que não
+      cabe em lugar nenhum. Reduzida fica em 40 KB — os mil e quatrocentos
+      dão uns 56 MB, que cabe folgado.
+
+   2. FORA DO ESTADO NORMAL, igual às certidões. Se as fotos entrassem
+      junto com produtos e vendas, cada gravação do sistema teria que
+      carregar 56 MB de imagem. Elas ficam num espaço próprio, e no
+      cadastro fica só o aviso de que existe foto.
+
+   3. O FUNDO. O recorte do iPhone é bom, mas é da Apple e só funciona
+      dentro de aplicativo — site nenhum consegue chamar. O que dá pra
+      fazer aqui sem custo e sem internet: se ela fotografar em cima de
+      uma folha branca, o sistema apaga o fundo liso e centraliza o
+      produto. E aceita PNG sem fundo anexado, que é onde entra o
+      recorte que ela mesma fizer no iPhone.
+   ========================================================= */
+const FOTO_LADO = 600;
+
+function fotoIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-fotos', 1); }
+    catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{
+      if(!req.result.objectStoreNames.contains('produtos')) req.result.createObjectStore('produtos');
+    };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('produtos', modo === 'get' ? 'readonly' : 'readwrite'); }
+      catch(e){ return reject(e); }
+      const store = tx.objectStore('produtos');
+      const op = modo === 'get' ? store.get(chave)
+               : modo === 'del' ? store.delete(chave)
+               : store.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+
+/* o que já foi carregado nesta sessão, pra não ir no disco a cada desenho */
+const FOTO_CACHE = {};
+
+async function fotoCarregar(produtoId){
+  if(FOTO_CACHE[produtoId] !== undefined) return FOTO_CACHE[produtoId];
+  try{
+    const g = await fotoIdb('get', produtoId);
+    FOTO_CACHE[produtoId] = (g && g.recortada) || (g && g.original) || null;
+  }catch(e){ FOTO_CACHE[produtoId] = null; }
+  return FOTO_CACHE[produtoId];
+}
+
+async function fotoGuardar(produtoId, dados){
+  await fotoIdb('put', produtoId, dados);
+  FOTO_CACHE[produtoId] = dados.recortada || dados.original || null;
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(p){
+    p.temFoto = true;
+    if(p.mostrarFoto === undefined) p.mostrarFoto = true;
+    saveState();
+  }
+}
+
+async function fotoApagar(produtoId){
+  try{ await fotoIdb('del', produtoId); }catch(e){ console.warn(e); }
+  delete FOTO_CACHE[produtoId];
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(p){ delete p.temFoto; delete p.mostrarFoto; saveState(); }
+}
+
+/* QUADRADA, COM O PRODUTO NO MEIO.
+   Recorta o maior quadrado do centro da foto e reduz. Nada de esticar:
+   produto esticado na tela do PDV fica errado e atrapalha reconhecer. */
+function fotoQuadrada(fonte, lado){
+  const L = lado || FOTO_LADO;
+  const c = document.createElement('canvas');
+  c.width = L; c.height = L;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, L, L);
+  const lar = fonte.naturalWidth || fonte.videoWidth || fonte.width;
+  const alt = fonte.naturalHeight || fonte.videoHeight || fonte.height;
+  const menor = Math.min(lar, alt);
+  ctx.drawImage(fonte, (lar - menor) / 2, (alt - menor) / 2, menor, menor, 0, 0, L, L);
+  return c;
+}
+
+/* APAGAR O FUNDO LISO.
+
+   Começa pelas bordas e vai andando pra dentro enquanto a cor continuar
+   parecida com a da borda — é assim que se separa a folha branca do
+   produto. Para onde a cor muda, que é onde o produto começa. Não é
+   recorte de inteligência artificial: em embalagem branca sobre fundo
+   branco ele erra, e por isso a foto original fica guardada pra ela
+   refazer. */
+function fotoTirarFundo(canvas, tolerancia){
+  const L = canvas.width, A = canvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const img = ctx.getImageData(0, 0, L, A);
+  const d = img.data;
+  const tol = tolerancia == null ? 42 : tolerancia;
+
+  /* cor do fundo: média das quatro bordas */
+  let r = 0, g = 0, b = 0, n = 0;
+  const somar = (x, y)=>{ const i = (y * L + x) * 4; r += d[i]; g += d[i+1]; b += d[i+2]; n++; };
+  for(let x = 0; x < L; x++){ somar(x, 0); somar(x, A - 1); }
+  for(let y = 0; y < A; y++){ somar(0, y); somar(L - 1, y); }
+  r /= n; g /= n; b /= n;
+
+  const parecido = (i)=>(Math.abs(d[i] - r) + Math.abs(d[i+1] - g) + Math.abs(d[i+2] - b)) / 3 <= tol;
+
+  /* inundação a partir das bordas */
+  const visto = new Uint8Array(L * A);
+  const fila = [];
+  for(let x = 0; x < L; x++){ fila.push(x, (A - 1) * L + x); }
+  for(let y = 0; y < A; y++){ fila.push(y * L, y * L + L - 1); }
+  let apagados = 0;
+  while(fila.length){
+    const pos = fila.pop();
+    if(pos < 0 || pos >= L * A || visto[pos]) continue;
+    const i = pos * 4;
+    if(!parecido(i)) continue;
+    visto[pos] = 1;
+    d[i+3] = 0;
+    apagados++;
+    const x = pos % L, y = (pos / L) | 0;
+    if(x > 0) fila.push(pos - 1);
+    if(x < L - 1) fila.push(pos + 1);
+    if(y > 0) fila.push(pos - L);
+    if(y < A - 1) fila.push(pos + L);
+  }
+  /* apagou quase tudo? então o fundo não era liso — devolve a original */
+  if(apagados > L * A * 0.92) return null;
+  /* apagou quase nada? também não valeu */
+  if(apagados < L * A * 0.04) return null;
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function fotoDoCanvas(canvas, comFundo){
+  /* PNG quando tem transparência, JPEG quando não tem: PNG de foto com
+     fundo fica três vezes maior sem ganhar nada. */
+  return comFundo ? canvas.toDataURL('image/jpeg', 0.82) : canvas.toDataURL('image/png');
+}
+
+/* A TELA DA FOTO: tirar na hora, ou anexar uma já pronta (é por aqui
+   que entra o recorte que ela fizer no próprio iPhone). */
+function abrirFotoDoProduto(produtoId, aoTerminar){
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(!p){ showToast('Produto não encontrado.', 'error'); return; }
+
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-foto-produto';
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="width:min(520px,96vw);max-width:96vw;max-height:92vh;overflow-y:auto;overflow-x:hidden;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📷</div>
+        <div><h3>Foto do produto</h3><div class="sub">${escapeHtml(p.nome)}</div></div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <div style="position:relative;width:100%;aspect-ratio:1/1;max-height:44vh;background:#f0f2f4;
+            border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+          <video id="foto-video" playsinline muted autoplay
+            style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:cover;"></video>
+          <canvas id="foto-canvas" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;"></canvas>
+          <img id="foto-atual" alt="" style="display:none;position:absolute;inset:0;width:100%;height:100%;object-fit:contain;">
+          <div id="foto-aviso" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+              text-align:center;padding:16px;font-size:13px;color:var(--ink-soft);">Carregando…</div>
+        </div>
+        <p class="help-text" style="margin:9px 0 0;">Fotografe <strong>em cima de uma folha branca</strong> —
+          o sistema apaga o fundo e centraliza o produto. Ou anexe uma foto que você já recortou no celular.</p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;">
+          <button type="button" class="btn btn-primary" id="foto-tirar" style="flex:1;min-width:140px;padding:12px;font-weight:700;">📸 Tirar foto</button>
+          <button type="button" class="btn" id="foto-anexar" style="flex:1;min-width:140px;padding:12px;">📎 Anexar</button>
+          <input type="file" id="foto-arquivo" accept="image/*" style="display:none;">
+        </div>
+        <div id="foto-depois" style="display:none;gap:8px;flex-wrap:wrap;margin-top:8px;">
+          <button type="button" class="btn" id="foto-refazer" style="flex:1;min-width:120px;">↺ Refazer</button>
+          <button type="button" class="btn" id="foto-fundo" style="flex:1;min-width:150px;">🪄 Tirar o fundo</button>
+          <button type="button" class="btn" id="foto-comfundo" style="flex:1;min-width:150px;display:none;">↩ Deixar o fundo</button>
+        </div>
+        <label id="foto-mostrar-linha" style="display:none;gap:8px;align-items:center;margin-top:11px;font-size:13.5px;cursor:pointer;">
+          <input type="checkbox" id="foto-mostrar" checked> Mostrar essa foto no sistema e no PDV
+        </label>
+        <div class="form-actions" style="gap:8px;">
+          <button type="button" class="btn btn-primary" id="foto-salvar" style="display:none;font-weight:700;">Salvar foto</button>
+          <button type="button" class="btn" id="foto-apagar" style="display:none;">Apagar foto</button>
+          <button type="button" class="btn" id="foto-fechar">Fechar</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  try{ document.body.classList.add('leitor-aberto'); }catch(e){}
+
+  const videoEl = document.getElementById('foto-video');
+  const canvasEl = document.getElementById('foto-canvas');
+  const imgEl = document.getElementById('foto-atual');
+  const avisoEl = document.getElementById('foto-aviso');
+  const depoisEl = document.getElementById('foto-depois');
+  const mostrarLinha = document.getElementById('foto-mostrar-linha');
+  const salvarBtn = document.getElementById('foto-salvar');
+  const apagarBtn = document.getElementById('foto-apagar');
+
+  let stream = null, original = null, atual = null, semFundo = false;
+
+  function fechar(){
+    if(stream) stream.getTracks().forEach(t=>t.stop());
+    try{ videoEl.pause(); videoEl.srcObject = null; }catch(e){}
+    modal.remove();
+    try{ document.body.classList.remove('leitor-aberto'); }catch(e){}
+    if(typeof aoTerminar === 'function') aoTerminar();
+  }
+  document.getElementById('foto-fechar').addEventListener('click', fechar);
+
+  function mostrarPronta(dataUrl){
+    atual = dataUrl;
+    imgEl.src = dataUrl;
+    imgEl.style.display = '';
+    videoEl.style.display = 'none';
+    canvasEl.style.display = 'none';
+    avisoEl.style.display = 'none';
+    depoisEl.style.display = 'flex';
+    mostrarLinha.style.display = 'flex';
+    salvarBtn.style.display = '';
+  }
+
+  /* já tem foto? mostra ela */
+  fotoCarregar(produtoId).then(d=>{
+    if(d){
+      mostrarPronta(d);
+      apagarBtn.style.display = '';
+      const pp = (STATE.produtos||[]).find(x=>x.id === produtoId);
+      document.getElementById('foto-mostrar').checked = !pp || pp.mostrarFoto !== false;
+    }else{
+      ligarCamera();
+    }
+  });
+
+  function ligarCamera(){
+    avisoEl.textContent = 'Abrindo a câmera…';
+    avisoEl.style.display = 'flex';
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' },
+        width: { ideal: 1920 }, height: { ideal: 1920 } } })
+      .then(async (ms)=>{
+        stream = ms;
+        videoEl.srcObject = ms;
+        videoEl.style.display = '';
+        imgEl.style.display = 'none';
+        avisoEl.style.display = 'none';
+        try{ await videoEl.play(); }catch(e){}
+      })
+      .catch(()=>{
+        avisoEl.style.display = 'flex';
+        avisoEl.textContent = 'Não consegui abrir a câmera. Use o "📎 Anexar" pra escolher uma foto do aparelho.';
+      });
+  }
+
+  function aplicar(canvas){
+    original = canvas.toDataURL('image/jpeg', 0.85);
+    /* tenta tirar o fundo sozinho; se não der, fica com a original */
+    const copia = document.createElement('canvas');
+    copia.width = canvas.width; copia.height = canvas.height;
+    copia.getContext('2d').drawImage(canvas, 0, 0);
+    const recortado = fotoTirarFundo(copia);
+    semFundo = !!recortado;
+    mostrarPronta(recortado ? fotoDoCanvas(recortado, false) : original);
+    document.getElementById('foto-fundo').style.display = semFundo ? 'none' : '';
+    document.getElementById('foto-comfundo').style.display = semFundo ? '' : 'none';
+    if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
+  }
+
+  document.getElementById('foto-tirar').addEventListener('click', ()=>{
+    if(!stream){ ligarCamera(); return; }
+    aplicar(fotoQuadrada(videoEl));
+  });
+
+  document.getElementById('foto-anexar').addEventListener('click', ()=>document.getElementById('foto-arquivo').click());
+  document.getElementById('foto-arquivo').addEventListener('change', (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    const leitor = new FileReader();
+    leitor.onload = ()=>{
+      const im = new Image();
+      im.onload = ()=>{
+        const quad = fotoQuadrada(im);
+        /* PNG anexado já costuma vir sem fundo (recorte do próprio
+           celular): nesse caso não mexe */
+        if(String(f.type||'').indexOf('png') >= 0){
+          original = quad.toDataURL('image/png');
+          semFundo = true;
+          mostrarPronta(original);
+          document.getElementById('foto-fundo').style.display = '';
+          document.getElementById('foto-comfundo').style.display = 'none';
+        }else{
+          aplicar(quad);
+        }
+      };
+      im.src = leitor.result;
+    };
+    leitor.readAsDataURL(f);
+  });
+
+  document.getElementById('foto-refazer').addEventListener('click', ()=>{
+    original = null; atual = null; semFundo = false;
+    imgEl.style.display = 'none';
+    depoisEl.style.display = 'none';
+    salvarBtn.style.display = 'none';
+    ligarCamera();
+  });
+
+  document.getElementById('foto-fundo').addEventListener('click', ()=>{
+    if(!original) return;
+    const im = new Image();
+    im.onload = ()=>{
+      const c = fotoQuadrada(im);
+      const r = fotoTirarFundo(c);
+      if(!r){ showToast('O fundo dessa foto não é liso o bastante. Fotografe em cima de uma folha branca.', 'info'); return; }
+      semFundo = true;
+      mostrarPronta(fotoDoCanvas(r, false));
+      document.getElementById('foto-fundo').style.display = 'none';
+      document.getElementById('foto-comfundo').style.display = '';
+    };
+    im.src = original;
+  });
+
+  document.getElementById('foto-comfundo').addEventListener('click', ()=>{
+    if(!original) return;
+    semFundo = false;
+    mostrarPronta(original);
+    document.getElementById('foto-fundo').style.display = '';
+    document.getElementById('foto-comfundo').style.display = 'none';
+  });
+
+  salvarBtn.addEventListener('click', async ()=>{
+    if(!atual){ showToast('Tire ou anexe uma foto primeiro.', 'error'); return; }
+    salvarBtn.disabled = true;
+    try{
+      await fotoGuardar(produtoId, { original: original || atual, recortada: semFundo ? atual : null,
+                                     em: new Date().toISOString() });
+      const pp = (STATE.produtos||[]).find(x=>x.id === produtoId);
+      if(pp){ pp.mostrarFoto = document.getElementById('foto-mostrar').checked; saveState(); }
+      showToast('Foto salva.', 'success');
+      fechar();
+    }catch(e){
+      console.error(e);
+      showToast('Não consegui salvar a foto: ' + (e && e.message ? e.message : e), 'error');
+      salvarBtn.disabled = false;
+    }
+  });
+
+  apagarBtn.addEventListener('click', ()=>{
+    confirmAction('Apagar a foto', `${p.nome}\n\nA foto sai do produto. Dá pra tirar outra depois.`,
+      async ()=>{ await fotoApagar(produtoId); showToast('Foto apagada.', 'success'); fechar(); }, 'Apagar');
+  });
+}
+
+/* a miniatura que aparece nas listas */
+function fotoMiniHtml(produtoId, lado){
+  if(!produtoId) return '';
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  const L = lado || 42;
+  const vazio = `<div style="width:${L}px;height:${L}px;border:1px dashed var(--border);border-radius:7px;
+      display:flex;align-items:center;justify-content:center;font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);
+      flex-shrink:0;">📷</div>`;
+  if(!p || !p.temFoto) return vazio;
+  const pronta = FOTO_CACHE[produtoId];
+  if(pronta){
+    return `<img src="${pronta}" alt="" style="width:${L}px;height:${L}px;object-fit:contain;border:1px solid var(--border);
+        border-radius:7px;background:#fff;flex-shrink:0;">`;
+  }
+  /* ainda não carregou do disco: pede e redesenha quando chegar */
+  fotoCarregar(produtoId).then(d=>{ if(d) rerenderTelaAtual(); });
+  return vazio;
+}
+
+/* =========================================================
+   JUNTAR O QUE ESTÁ EM DOIS LUGARES
+
+   O inseticida apareceu duas vezes: como linha da planilha da ECOVILLE
+   e como produto do cadastro. Os dois são o mesmo produto — só que a
+   planilha veio com o código de enchimento e o cadastro com um código
+   digitado errado, então nada casou.
+
+   Contados separados, o número sai errado dos dois lados: o comodato
+   não encontra o produto pra gravar o saldo, e o produto da loja recebe
+   como se fosse estoque dela uma coisa que é da ECOVILLE.
+
+   Juntar não cria nada: transforma dois em um, com os dois saldos —
+   até o saldo da planilha é comodato, o que passar é da Mizu. Quem
+   confirma é ela, porque nome parecido engana: "INSETICIDA 1 LITRO" e
+   "INSETICIDA 500ML" são parecidos e são produtos diferentes.
+   ========================================================= */
+function balPalavrasDoNome(nome){
+  return ncmNormalizar(String(nome||'')).split(' ').filter(w=>w.length >= 4);
+}
+
+function balParecidos(chave){
+  const it = balItem(chave);
+  if(!it || it.produtoId) return [];      /* já tem cadastro: nada a juntar */
+  const minhas = balPalavrasDoNome(it.nome);
+  if(minhas.length === 0) return [];
+  /* produtos do cadastro que ainda não estão amarrados a nenhuma linha */
+  const presos = new Set();
+  (CONF_LINHAS||[]).forEach(l=>{ if(l.produtoId) presos.add(l.produtoId); });
+  const saida = [];
+  (STATE.produtos||[]).forEach(p=>{
+    if(presos.has(p.id)) return;
+    const dele = balPalavrasDoNome(p.nome);
+    if(dele.length === 0) return;
+    const juntas = minhas.filter(w=>dele.includes(w)).length;
+    const precisa = Math.min(2, minhas.length);
+    if(juntas >= precisa) saida.push({ produto: p, juntas });
+  });
+  return saida.sort((a,b)=>b.juntas - a.juntas).slice(0, 4).map(x=>x.produto);
+}
+
+function balJuntarComProduto(chave, produtoId){
+  const it = balItem(chave);
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(!it || !p) return;
+  const linha = (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave);
+  if(!linha) return;
+
+  confirmAction('É o mesmo produto?',
+    `Planilha da ${CONF_FORNECEDOR_PADRAO}: ${it.nome} — saldo ${fmtNum(it.saldoComodato)}\n`
+    + `Seu cadastro: ${p.nome}${String(p.codigoBarras||'').trim() ? ' — ' + p.codigoBarras : ' — sem código de barras'}\n\n`
+    + `Juntando, vira UM produto só, com os dois saldos: até ${fmtNum(it.saldoComodato)} é comodato da `
+    + `${CONF_FORNECEDOR_PADRAO}, e o que passar disso é estoque da Mizu.\n\n`
+    + `O que você já contou continua valendo.`,
+    ()=>{
+      linha.produtoId = p.id;
+      linha.produto = p;
+      /* o que foi contado na linha passa pro produto, pra não perder */
+      const b = balAberto();
+      if(b){
+        const novaChave = 'p:' + p.id;
+        (STATE.balancoBipes||[]).forEach(x=>{ if(x.balancoId === b.id && x.chave === chave) x.chave = novaChave; });
+        if(b.etiquetas && b.etiquetas[chave]){ b.etiquetas[novaChave] = true; delete b.etiquetas[chave]; }
+        if(b.excedenteAceito && b.excedenteAceito[chave]){ b.excedenteAceito[novaChave] = true; delete b.excedenteAceito[chave]; }
+        /* e o código que ela escolheu pra linha vai pro cadastro */
+        const meu = (STATE.codigosPrincipais||{})[chave];
+        if(meu){
+          if(!String(p.codigoBarras||'').trim()) p.codigoBarras = meu;
+          else if(String(p.codigoBarras).replace(/\D/g,'') !== meu){
+            if(!p.codigosExtras) p.codigosExtras = [];
+            if(!p.codigosExtras.includes(meu)) p.codigosExtras.push(meu);
+          }
+          if(!STATE.codigosApelido) STATE.codigosApelido = {};
+          STATE.codigosApelido[meu] = novaChave;
+          delete STATE.codigosPrincipais[chave];
+        }
+        p.comodato = true;
+        p.comodatoDe = p.comodatoDe || CONF_FORNECEDOR_PADRAO;
+        balAtualChave = novaChave;
+      }
+      confGuardarLinhas();
+      saveState();
+      balRecarregarCatalogo();
+      renderBalanco();
+      showToast(`Juntados: agora é um produto só, com saldo de comodato e da Mizu.`, 'success');
+    }, 'É o mesmo — juntar');
+}
+
+function balJuntarHtml(chave){
+  const iguais = balParecidos(chave);
+  if(iguais.length === 0) return '';
+  return `<div style="background:#FBF1E2;border:1px solid #E8D3A8;border-radius:9px;padding:9px 11px;margin-top:9px;font-size:13px;">
+    <strong style="color:#7A4F0B;">Esse produto também está no seu cadastro?</strong>
+    <div class="help-text" style="margin:2px 0 7px;">Se for o mesmo, junte: vira um produto só, com saldo de comodato e da Mizu.</div>
+    ${iguais.map(p=>`<button class="btn btn-sm" style="display:block;width:100%;text-align:left;margin-bottom:5px;"
+        onclick="balJuntarComProduto('${escapeAttr(chave)}','${escapeAttr(p.id)}')">
+        é o mesmo: <strong>${escapeHtml(p.nome)}</strong>
+        <span class="help-text">${escapeHtml(String(p.codigoBarras||'').trim() || 'sem código')}</span>
+      </button>`).join('')}
+  </div>`;
 }
 
 /* Produto sem código nenhum: gera um interno ali mesmo, sem sair da
@@ -55515,7 +56209,8 @@ function balTelaCelular(b){
       <p class="help-text" style="text-align:center;margin:10px 0 0;">
         custo contado ${fmtMoney(t.custo)} · venda ${fmtMoney(t.venda)}
       </p>
-      <p class="help-text" style="text-align:center;">Fechar o balanço é no computador — lá dá pra conferir a lista inteira.</p>
+
+      ${balFecharCelularHtml()}
     </div>`;
 }
 
@@ -55587,6 +56282,7 @@ function balListaCelularHtml(){
     const passou = it.comodato && qtd > it.saldoComodato;
     return `<div style="padding:10px 11px;border-bottom:1px solid var(--border);display:flex;
         justify-content:space-between;gap:10px;align-items:center;">
+      ${it.produtoId ? fotoMiniHtml(it.produtoId, 40) : ''}
       ${balFichaItemHtml(it)}
       <div style="text-align:right;white-space:nowrap;">
         ${naoContado
@@ -55608,6 +56304,52 @@ function balListaCelularHtml(){
       ${linhas}
     </div>` + (lista.length > 60
       ? `<p class="help-text" style="text-align:center;margin:7px 0 0;">Mostrando 60 de ${fmtNum(lista.length)}. Use a busca.</p>` : '');
+}
+
+/* FECHAR PELO CELULAR TAMBÉM.
+
+   Ficou só no computador no começo, com a ideia de que lá dava pra
+   conferir a lista inteira antes. Mas ela termina a contagem de pé na
+   frente da prateleira, com o celular na mão — mandar ela atravessar a
+   loja pra apertar um botão é desenho de quem nunca contou estoque.
+
+   Os mesmos avisos valem aqui: quantos ficaram sem contar, o fornecedor
+   que vai pra todos, e a pergunta antes de gravar. */
+function balFecharCelularHtml(){
+  const b = balAberto();
+  if(!b) return '';
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const t = balTotais();
+  const contados = balContados(b.id);
+  const naoContados = BAL_CAT.size - contados.size;
+  const etq = balEtiquetasDoBalanco(b.id).reduce((s,x)=>s + x.qtd, 0);
+  let semCodigo = 0;
+  BAL_CAT.forEach(it=>{ if(it.codigos.length === 0 && it.produtoId) semCodigo++; });
+  const fornecedores = (STATE.fornecedores||[]).map(f=>String(f.nome||'').trim()).filter(Boolean).sort();
+
+  return `<div style="background:#fff;border:1px solid var(--border);border-radius:10px;padding:12px;margin-top:12px;">
+    <strong style="font-size:14.5px;">✓ Fechar o balanço</strong>
+    <p class="help-text" style="margin:4px 0 9px;">Grava o saldo contado: o comodato fica com o que a
+      ${escapeHtml(CONF_FORNECEDOR_PADRAO)} tem, e o que passou entra como estoque da Mizu.
+      Depois você cai no relatório, na Conferência.</p>
+    ${naoContados > 0 ? `<p class="help-text" style="color:var(--warning);margin:0 0 9px;">
+      Faltam <strong>${fmtNum(naoContados)}</strong> produtos — use o filtro <strong>"○ Falta"</strong>
+      acima pra varrer o que sobrou antes de fechar.</p>` : ''}
+    <label class="help-text" style="display:block;margin:0 0 3px;">Fornecedor de todos os contados</label>
+    <input type="text" id="bal-fornecedor" list="bal-fornecedores" placeholder="Deixe vazio pra não alterar"
+      value="${escapeAttr(b.fornecedorFinal||'')}"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:9px;font-size:16px;">
+    <datalist id="bal-fornecedores">${fornecedores.map(n=>`<option value="${escapeAttr(n)}">`).join('')}</datalist>
+    <label style="display:flex;gap:8px;align-items:center;margin:10px 0;font-size:13.5px;color:var(--ink-soft);">
+      <input type="checkbox" id="bal-zerar"> Zerar os ${fmtNum(naoContados)} que eu não contei
+    </label>
+    <button class="btn btn-primary" style="width:100%;padding:13px;font-weight:700;font-size:15px;"
+      onclick="balFechar()">✓ Fechar o balanço (${fmtNum(t.produtos)} produtos)</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">
+      ${etq ? `<button class="btn" style="flex:1;min-width:150px;" onclick="balImprimirEtiquetas()">🏷️ ${fmtNum(etq)} etiqueta(s)</button>` : ''}
+      ${semCodigo ? `<button class="btn" style="flex:1;min-width:150px;" onclick="balGerarCodigosQueFaltam()">📷 Gerar ${fmtNum(semCodigo)} código(s)</button>` : ''}
+    </div>
+  </div>`;
 }
 
 function balUltimosHtml(quantos){
@@ -55912,7 +56654,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 03:40';
+const SISTEMA_VERSAO = '11/11/2026 05:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
