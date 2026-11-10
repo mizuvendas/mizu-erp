@@ -854,6 +854,11 @@ body.bal-foco .help-text{ font-size:13px; }
 body.bal-foco .badge{ font-size:12px; }
 body.bal-foco #balanco-content{ font-size:15px; }
 body.bal-foco .btn-sm{ font-size:13.5px; min-height:34px; }
+/* "eu clico no mais uma vez, clico no mais duas vezes, ele dá um zoom."
+   Dois toques seguidos no mesmo lugar são, pro iPhone, o gesto de
+   aproximar. Clicar rápido no + virava zoom em vez de contar. Esta
+   linha diz ao navegador que ali é botão, não é pra ampliar. */
+button, .btn, input[type="checkbox"], label{ touch-action: manipulation; }
 .bal-voltar-menu{ display:none; }
 body.bal-foco .bal-voltar-menu{ display:inline-block; }
 
@@ -4913,7 +4918,7 @@ function abrirLeitorCodigoBarras(onCodigoLido){
   modal.className = 'modal-overlay open';
   modal.id = 'modal-leitor-codigo-barras';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 96vw);max-height:92vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="width:min(520px, 96vw);max-width:96vw;max-height:92vh;overflow-y:auto;overflow-x:hidden;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📷</div>
         <div>
@@ -4922,14 +4927,23 @@ function abrirLeitorCodigoBarras(onCodigoLido){
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:230px;
-            display:flex;align-items:center;justify-content:center;">
-          <video id="leitor-codigo-video" style="width:100%;max-height:46vh;display:none;" playsinline muted autoplay></video>
-          <canvas id="leitor-codigo-foto" style="width:100%;max-height:46vh;display:none;"></canvas>
+        <!-- POR QUE ISTO NÃO É UM FLEX.
+             O vídeo da câmera nasce com o tamanho do sensor — 1920 de
+             largura. Dentro de um flex, esse tamanho natural vira a
+             largura mínima do item: a caixa esticava pra 1920, a página
+             ficava mais larga que a tela e o Safari afastava o zoom pra
+             fazer caber. Era isso que deixava tudo desproporcional ao
+             abrir a câmera. Em bloco, com max-width, o vídeo se encaixa
+             na largura que tem. -->
+        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:230px;max-width:100%;">
+          <video id="leitor-codigo-video" playsinline muted autoplay
+            style="display:none;width:100%;max-width:100%;min-width:0;max-height:46vh;object-fit:contain;vertical-align:middle;"></video>
+          <canvas id="leitor-codigo-foto"
+            style="display:none;width:100%;max-width:100%;min-width:0;max-height:46vh;object-fit:contain;vertical-align:middle;"></canvas>
           <div id="leitor-codigo-mira" style="display:none;position:absolute;left:8%;right:8%;top:32%;height:36%;
               border:2px solid #4BE38A;border-radius:8px;pointer-events:none;
               box-shadow:0 0 0 3000px rgba(0,0,0,.34);"></div>
-          <div id="leitor-codigo-status" style="color:#fff;font-size:13px;padding:16px;text-align:center;">Iniciando câmera…</div>
+          <div id="leitor-codigo-status" style="color:#fff;font-size:13.5px;padding:16px;text-align:center;">Iniciando câmera…</div>
         </div>
 
         <div id="leitor-codigo-acoes" style="display:none;gap:8px;margin-top:11px;flex-wrap:wrap;">
@@ -4964,7 +4978,13 @@ function abrirLeitorCodigoBarras(onCodigoLido){
   function fechar(){
     parar = true;
     if(stream) stream.getTracks().forEach(t=>t.stop());
+    /* solta o vídeo antes de tirar da tela: enquanto ele existir com o
+       tamanho do sensor, o Safari pode continuar com a página larga */
+    try{ videoEl.pause(); videoEl.srcObject = null; videoEl.removeAttribute('src'); }catch(e){}
     modal.remove();
+    /* e devolve a página pro lugar: se ela chegou a alargar, o celular
+       fica rolado pro lado e o título some na esquerda */
+    try{ if(window.scrollX) window.scrollTo(0, window.scrollY); }catch(e){}
   }
   document.getElementById('leitor-codigo-fechar').addEventListener('click', fechar);
 
@@ -46967,6 +46987,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-c',
+    data: '2026-11-11',
+    titulo: 'Celular: tela no lugar, toque duplo sem zoom, e as mesmas informações do computador',
+    itens: [
+      'CORRIGIDO — a tela desproporcional ao abrir a câmera: o vídeo nasce com o tamanho do sensor (1920 de largura) e esticava a página inteira, fazendo o Safari afastar o zoom. Depois de fechar, a página ficava rolada pro lado e o título sumia na esquerda. Agora o vídeo se encaixa na largura da tela, e fechar devolve a página pro lugar.',
+      'CORRIGIDO — o zoom ao clicar duas vezes no + ou no −: dois toques seguidos são, pro iPhone, o gesto de aproximar. Agora botão é botão, e clicar rápido conta.',
+      'A LISTA DO CELULAR passou a mostrar o mesmo que a do computador: se é comodato (com o saldo da ECOVILLE) ou da Mizu, o código de barras, o código interno, o custo e a venda unitários, quanto já foi contado, a divisão comodato/Mizu e o aviso de "passou do comodato".',
+      'E ganhou o que só existia no computador: a barra de progresso ("38 de 1.442 · faltam 1.404"), os filtros ✓ Contei · ○ Falta · 📷 Sem código · 🏷️ Etiqueta, e a busca dentro da lista. No "falta contar" dá pra contar o item ali mesmo.',
+      'A mesma ficha do produto agora aparece nos três lugares onde você escolhe um: a lista que cai embaixo do campo, o "não achei esse código" e os dois produtos com o mesmo código.'
+    ]
+  },
+  {
     id: '2026-11-11-b',
     data: '2026-11-11',
     titulo: 'A câmera passa a ler no celular — e dá pra tirar foto do código',
@@ -54786,6 +54818,46 @@ function balProgressoHtml(){
   </div>`;
 }
 
+/* A MESMA FICHA EM TODO LUGAR QUE ELA ESCOLHE UM PRODUTO.
+
+   "ele não mostra igual ao nosso sistema, onde ele me mostra se é
+    comodato, se é Mizu, se tem cadastro."
+
+   Tinha razão: a lista do celular mostrava só o código. Na hora de
+   escolher entre dois parecidos é justamente isso que decide — de quem
+   é o produto, quanto a ECOVILLE diz que tem, por quanto ela vende, e
+   se já contou aquele. Agora é a mesma descrição nos três lugares onde
+   ela escolhe: a lista que cai embaixo do campo, o "não achei esse
+   código" e os dois produtos com o mesmo código. */
+function balEtiquetaDono(it){
+  if(it.comodato){
+    return `<span class="badge" style="background:var(--primary-soft,#E8F3F6);color:var(--primary-escuro,#1B4B5A);">
+      comodato ${escapeHtml(it.comodatoDe || CONF_FORNECEDOR_PADRAO)}: ${fmtNum(it.saldoComodato)}</span>`;
+  }
+  return `<span class="badge" style="background:#EDE9F6;color:#4B3B80;">Mizu</span>`;
+}
+
+function balFichaItemHtml(it){
+  const b = balAberto();
+  const ja = b ? balContadoDe(b.id, it.chave) : 0;
+  return `<div style="min-width:0;">
+    <strong style="font-size:13.5px;line-height:1.3;display:block;">${escapeHtml(it.nome)}</strong>
+    <div class="help-text" style="margin:2px 0 0;display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+      ${balEtiquetaDono(it)}
+      ${it.produtoId
+        ? (String(it.sku||'') ? `<span>${escapeHtml(it.sku)}</span>` : '')
+        : `<span class="badge" style="background:#FBF1E2;color:#8A5D14;">ainda não é produto aqui</span>`}
+      ${ja ? `<span style="color:var(--positive);font-weight:700;">já contei ${fmtNum(ja)}</span>` : ''}
+    </div>
+    <div class="help-text" style="margin:1px 0 0;">
+      ${it.codigos.length
+        ? escapeHtml(it.codigos[0])
+        : '<span style="color:var(--negative);">sem código de barras</span>'}
+      · custo ${fmtMoney(it.custo)} · venda <strong>${fmtMoney(it.venda)}</strong>
+    </div>
+  </div>`;
+}
+
 function balAvisoHtml(){
   if(!balAviso) return '';
   const it = balItem(balAviso.chave);
@@ -54820,12 +54892,8 @@ function balEscolhasHtml(){
       ${balEscolhas.chaves.map(ch=>{
         const it = balItem(ch);
         if(!it) return '';
-        return `<button class="btn" style="text-align:left;padding:10px 12px;"
-          onclick="balEscolherItem('${escapeAttr(ch)}')">
-          <strong>${escapeHtml(it.nome)}</strong>
-          <div class="help-text" style="margin:2px 0 0;">${escapeHtml(it.sku||'')}${
-            it.comodato ? ` · comodato ${escapeHtml(it.comodatoDe||'')} (saldo ${fmtNum(it.saldoComodato)})` : ''}
-            · custo ${fmtMoney(it.custo)} · venda ${fmtMoney(it.venda)}</div></button>`;
+        return `<button class="btn" style="text-align:left;padding:10px 12px;display:block;width:100%;"
+          onclick="balEscolherItem('${escapeAttr(ch)}')">${balFichaItemHtml(it)}</button>`;
       }).join('')}
     </div>
   </div>`;
@@ -54849,13 +54917,10 @@ function balNaoAcheiHtml(){
     </div>
     ${s.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
       ${s.map(it=>`<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;
-            border:1px solid var(--border);border-radius:8px;padding:8px 10px;">
-          <div style="min-width:0;">
-            <strong style="font-size:13.5px;">${escapeHtml(it.nome)}</strong>
-            <div class="help-text" style="margin:1px 0 0;">${escapeHtml(it.codigos[0] || 'sem código de barras')}${
-              it.comodato ? ` · comodato (saldo ${fmtNum(it.saldoComodato)})` : ''}</div>
-          </div>
-          <button class="btn btn-sm btn-primary" onclick="balEscolherItem('${escapeAttr(it.chave)}')">é este</button>
+            border:1px solid var(--border);border-radius:9px;padding:9px 11px;">
+          ${balFichaItemHtml(it)}
+          <button class="btn btn-sm btn-primary" style="white-space:nowrap;"
+            onclick="balEscolherItem('${escapeAttr(it.chave)}')">é este</button>
         </div>`).join('')}
     </div>` : (String(balNaoAchei.termo||'').length >= 2
         ? `<p class="help-text">Nenhum produto com esse nome na contagem.</p>` : '')}
@@ -55176,25 +55241,11 @@ function balSugerirDoCampo(){
   }
   const b = balAberto();
   const contados = b ? balContados(b.id) : new Map();
-  caixa.innerHTML = achados.map(it=>{
-    const ja = contados.get(it.chave) || 0;
-    return `<div class="bal-sug" data-chave="${escapeAttr(it.chave)}"
-      style="padding:9px 13px;border-bottom:1px solid var(--border);cursor:pointer;display:flex;
-             justify-content:space-between;gap:10px;align-items:center;">
-      <div style="min-width:0;">
-        <strong style="font-size:13.5px;">${escapeHtml(it.nome)}</strong>
-        <div class="help-text" style="margin:1px 0 0;">${it.codigos.length
-            ? escapeHtml(it.codigos[0])
-            : '<span style="color:var(--negative);">sem código de barras</span>'}${
-          it.sku ? ' · ' + escapeHtml(it.sku) : ''}${
-          it.comodato ? ` · comodato ${fmtNum(it.saldoComodato)}` : ''}</div>
-      </div>
-      <div style="text-align:right;white-space:nowrap;">
-        <div style="font-size:12.5px;">${fmtMoney(it.venda)}</div>
-        ${ja ? `<div class="help-text" style="margin:0;color:var(--positive);">já contei ${fmtNum(ja)}</div>` : ''}
-      </div>
-    </div>`;
-  }).join('');
+  caixa.innerHTML = achados.map(it=>`
+    <div class="bal-sug" data-chave="${escapeAttr(it.chave)}"
+      style="padding:10px 13px;border-bottom:1px solid var(--border);cursor:pointer;">
+      ${balFichaItemHtml(it)}
+    </div>`).join('');
   caixa.style.display = '';
   caixa.querySelectorAll('.bal-sug').forEach(el=>{
     el.addEventListener('mousedown', (e)=>{      /* mousedown: o blur do campo não rouba o clique */
@@ -55453,9 +55504,8 @@ function balTelaCelular(b){
       ${balEscolhasHtml()}
       ${balNaoAcheiHtml()}
 
-      <div style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:11px;">
-        ${balUltimosHtml(12)}
-      </div>
+      ${balProgressoHtml()}
+      <div style="margin-bottom:11px;">${balListaCelularHtml()}</div>
 
       <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:11px;">
         <button class="btn" style="flex:1;" onclick="balDesfazerUltimo()">↶ Desfazer</button>
@@ -55467,6 +55517,97 @@ function balTelaCelular(b){
       </p>
       <p class="help-text" style="text-align:center;">Fechar o balanço é no computador — lá dá pra conferir a lista inteira.</p>
     </div>`;
+}
+
+/* A LISTA NO CELULAR.
+
+   "não está funcionando como se fosse no computador."
+
+   É a mesma informação do computador, em cartão em vez de tabela —
+   porque tabela de nove colunas numa tela de 390 pixels não se lê. Os
+   filtros são os mesmos, e o "falta contar" é o que importa na
+   prateleira: é com ele que ela varre o que sobrou. */
+function balListaCelularHtml(){
+  const b = balAberto();
+  if(!b) return '';
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const contados = balContados(b.id);
+
+  const ordem = [];
+  balBipes(b.id).slice().reverse().forEach(x=>{ if(!ordem.includes(x.chave)) ordem.push(x.chave); });
+  const faltam = [], semCodigo = [];
+  BAL_CAT.forEach((it, ch)=>{
+    if(!contados.has(ch)) faltam.push(ch);
+    if(it.codigos.length === 0) semCodigo.push(ch);
+  });
+  faltam.sort((a,c)=>String((BAL_CAT.get(a)||{}).nome||'').localeCompare(String((BAL_CAT.get(c)||{}).nome||''),'pt-BR'));
+  const etiquetas = Object.keys(b.etiquetas||{}).filter(ch=>BAL_CAT.has(ch));
+
+  let lista = balFiltro === 'falta' ? faltam
+            : balFiltro === 'semcodigo' ? semCodigo
+            : balFiltro === 'etiqueta' ? etiquetas
+            : ordem;
+
+  const t = ncmNormalizar(balBusca);
+  if(t.length >= 2){
+    const palavras = t.split(' ').filter(Boolean);
+    lista = lista.filter(ch=>{
+      const it = BAL_CAT.get(ch);
+      if(!it) return false;
+      const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
+      return palavras.every(p=>txt.includes(p));
+    });
+  }
+
+  const chip = (rotulo, qual, n, cor)=>`<button class="btn btn-sm" onclick="balTrocarFiltro('${qual}')"
+    style="${balFiltro===qual?`background:${cor};border-color:${cor};color:#fff;font-weight:700;`:''}">${rotulo} ${fmtNum(n)}</button>`;
+
+  const cabecalho = `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:9px;">
+      ${chip('✓ Contei','contei', ordem.length,'var(--positive)')}
+      ${chip('○ Falta','falta', faltam.length,'var(--primary)')}
+      ${chip('📷 Sem código','semcodigo', semCodigo.length,'var(--negative)')}
+      ${chip('🏷️ Etiqueta','etiqueta', etiquetas.length,'var(--warning)')}
+    </div>
+    <input type="text" id="bal-busca" value="${escapeAttr(balBusca)}" placeholder="🔍 Procurar nesta lista"
+      style="width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:9px;font-size:16px;margin-bottom:9px;">`;
+
+  if(lista.length === 0){
+    return cabecalho + `<p class="help-text" style="text-align:center;padding:10px 0;">${
+      balFiltro === 'falta' ? '🎉 Não falta nenhum: você contou o balanço inteiro.'
+      : balFiltro === 'contei' ? 'Nada contado ainda. Bipe o primeiro produto.'
+      : 'Nenhum produto nesse filtro.'}</p>`;
+  }
+
+  const linhas = lista.slice(0, 60).map(ch=>{
+    const it = BAL_CAT.get(ch);
+    if(!it) return '';
+    const qtd = contados.get(ch) || 0;
+    const naoContado = !contados.has(ch);
+    const passou = it.comodato && qtd > it.saldoComodato;
+    return `<div style="padding:10px 11px;border-bottom:1px solid var(--border);display:flex;
+        justify-content:space-between;gap:10px;align-items:center;">
+      ${balFichaItemHtml(it)}
+      <div style="text-align:right;white-space:nowrap;">
+        ${naoContado
+          ? `<button class="btn btn-sm btn-primary" onclick="balAbrirItem('${escapeAttr(ch)}')">contar</button>`
+          : `<div style="font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;">${fmtNum(qtd)}</div>
+             <div class="help-text" style="margin:0;">${it.comodato
+                 ? `comodato ${fmtNum(Math.min(qtd, it.saldoComodato))}${(qtd - Math.min(qtd, it.saldoComodato))
+                     ? ` · Mizu ${fmtNum(qtd - Math.min(qtd, it.saldoComodato))}` : ''}`
+                 : `Mizu ${fmtNum(qtd)}`}</div>
+             ${passou ? '<div class="help-text" style="margin:0;color:#8A5D14;font-weight:700;">passou do comodato</div>' : ''}
+             <button class="btn btn-sm" style="padding:0 7px;margin-top:3px;"
+               onclick="balRefazer('${escapeAttr(ch)}')" title="Contar de novo">↺</button>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  return cabecalho + `<div id="bal-lista-wrap" data-rolagem="1"
+      style="background:#fff;border:1px solid var(--border);border-radius:10px;overflow:hidden;">
+      ${linhas}
+    </div>` + (lista.length > 60
+      ? `<p class="help-text" style="text-align:center;margin:7px 0 0;">Mostrando 60 de ${fmtNum(lista.length)}. Use a busca.</p>` : '');
 }
 
 function balUltimosHtml(quantos){
@@ -55771,7 +55912,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 02:15';
+const SISTEMA_VERSAO = '11/11/2026 03:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
