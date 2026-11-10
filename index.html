@@ -47041,6 +47041,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-f',
+    data: '2026-11-11',
+    titulo: 'O ícone da foto agora é botão — e o fundo não é mais apagado sozinho',
+    itens: [
+      'O RECORTE COMEU PEDAÇOS DO ULTRAMAX. O erro foi meu: eu apliquei o apagar-fundo automático numa foto que nunca deveria ter sido recortada. O fundo não era liso, então o sistema foi comendo partes do próprio produto. Agora NÃO apago mais nada sozinho: a foto aparece exatamente como você tirou.',
+      'O botão 🪄 de apagar o fundo só aparece quando o fundo é realmente liso (folha branca, bancada limpa). Quando não é, a tela explica por que não apareceu e lembra que o recorte do próprio iPhone — segurar no produto e copiar — fica melhor que qualquer coisa que eu faça aqui.',
+      'E quando o fundo é liso, apago com a mão mais leve do que antes, pra não encostar no produto.',
+      'ÍCONE DA FOTO CLICÁVEL (pedido seu): no balanço e nas tabelas, tocar no quadradinho da foto já abre a câmera — com foto ou sem foto. Antes só o botão de fora abria, e depois que o produto estava cadastrado não tinha por onde entrar.'
+    ]
+  },
+  {
     id: '2026-11-11-e',
     data: '2026-11-11',
     titulo: 'Foto antes do produto existir, comodato que o código não achava, e fornecedor sugerido',
@@ -52986,7 +52997,7 @@ function lojaLinha(p){
   return `<tr>
     <td style="text-align:center;">
       <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
-        ${fotoMiniHtml(p.id, 38)}
+        ${fotoMiniHtml(p.id, 38, 'renderConferencia()')}
         <button class="btn btn-sm" style="padding:0 5px;font-size:10.5px;"
           onclick="abrirFotoDoProduto('${escapeAttr(p.id)}', ()=>renderConferencia())">${p.temFoto ? 'trocar' : '+ foto'}</button>
       </div>
@@ -53360,7 +53371,7 @@ function relTabela(lista){
         return `<tr>
           <td style="text-align:center;">
             <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
-              ${fotoMiniHtml(p.id, 40)}
+              ${fotoMiniHtml(p.id, 40, 'renderConferencia()')}
               <button class="btn btn-sm" style="padding:0 6px;font-size:11px;"
                 onclick="abrirFotoDoProduto('${escapeAttr(p.id)}', ()=>renderConferencia())">${p.temFoto ? 'trocar' : '+ foto'}</button>
             </div>
@@ -55195,7 +55206,7 @@ function balItemHtml(grande){
     </div>
     ${(()=>{ const dono = it.produtoId || it.chave;
       return `<div style="display:flex;gap:9px;align-items:center;margin-top:10px;">
-        ${fotoMiniHtml(dono, 46)}
+        ${fotoMiniHtml(dono, 46, 'renderBalanco()')}
         <button class="btn btn-sm" onclick="abrirFotoDoProduto('${escapeAttr(dono)}', ()=>renderBalanco())">
           ${fotoTemDono(dono) ? '📷 trocar a foto' : '📷 foto do produto'}</button>
         ${it.produtoId ? '' : '<span class="help-text" style="margin:0;">vai junto quando o produto nascer</span>'}
@@ -55802,12 +55813,49 @@ function fotoQuadrada(fonte, lado){
    recorte de inteligência artificial: em embalagem branca sobre fundo
    branco ele erra, e por isso a foto original fica guardada pra ela
    refazer. */
+/* O FUNDO DÁ PRA TIRAR, OU NÃO DÁ?
+
+   A primeira versão tentava sempre, e numa foto de mão livre — mesa,
+   dedo, parede, tudo misturado — ela comeu pedaços do próprio produto:
+   a embalagem é branca, o fundo também era claro, e a inundação entrou
+   pela embalagem adentro. Ficou pior do que não ter mexido.
+
+   A pergunta certa não é "consigo apagar alguma coisa", é "esse fundo é
+   de UMA cor só". Se as bordas da foto variam muito de cor, não é folha
+   branca — é a vida real, e aí o recorte sem inteligência artificial não
+   tem como acertar. Melhor dizer isso do que estragar a foto. */
+function fotoFundoEhLiso(canvas){
+  const L = canvas.width, A = canvas.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const d = ctx.getImageData(0, 0, L, A).data;
+  const amostras = [];
+  const pegar = (x, y)=>{
+    const i = (y * L + x) * 4;
+    amostras.push((d[i] + d[i+1] + d[i+2]) / 3);
+  };
+  const passo = Math.max(1, Math.round(L / 60));
+  for(let x = 0; x < L; x += passo){ pegar(x, 0); pegar(x, A - 1); pegar(x, Math.min(A-1, 2)); }
+  for(let y = 0; y < A; y += passo){ pegar(0, y); pegar(L - 1, y); }
+  const n = amostras.length;
+  if(!n) return false;
+  const media = amostras.reduce((a,b)=>a+b, 0) / n;
+  let v = 0;
+  amostras.forEach(x=>{ v += (x - media) * (x - media); });
+  const desvio = Math.sqrt(v / n);
+  /* folha branca dá desvio perto de zero; mesa com mão e parede passa
+     fácil de 30 */
+  return desvio < 17;
+}
+
 function fotoTirarFundo(canvas, tolerancia){
   const L = canvas.width, A = canvas.height;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
   const img = ctx.getImageData(0, 0, L, A);
   const d = img.data;
-  const tol = tolerancia == null ? 42 : tolerancia;
+  /* tolerância apertada de propósito: cada ponto a mais aqui é um
+     pedaço a mais do produto que a inundação come quando a embalagem
+     tem branco */
+  const tol = tolerancia == null ? 26 : tolerancia;
 
   /* cor do fundo: média das quatro bordas */
   let r = 0, g = 0, b = 0, n = 0;
@@ -55878,8 +55926,11 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
           <div id="foto-aviso" style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
               text-align:center;padding:16px;font-size:13px;color:var(--ink-soft);">Carregando…</div>
         </div>
-        <p class="help-text" style="margin:9px 0 0;">Fotografe <strong>em cima de uma folha branca</strong> —
-          o sistema apaga o fundo e centraliza o produto. Ou anexe uma foto que você já recortou no celular.</p>
+        <p class="help-text" style="margin:9px 0 0;">Pra sair sem fundo, fotografe <strong>em cima de uma folha
+          branca</strong>. Ou anexe uma foto que você já recortou no celular — no app Fotos, segure o dedo em cima
+          do produto.</p>
+        <p class="help-text" id="foto-dica" style="display:none;margin:7px 0 0;color:var(--ink);
+          background:#FBF1E2;border:1px solid #E8D3A8;border-radius:8px;padding:8px 10px;"></p>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:11px;">
           <button type="button" class="btn btn-primary" id="foto-tirar" style="flex:1;min-width:140px;padding:12px;font-weight:700;">📸 Tirar foto</button>
           <button type="button" class="btn" id="foto-anexar" style="flex:1;min-width:140px;padding:12px;">📎 Anexar</button>
@@ -55966,17 +56017,28 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
       });
   }
 
+  /* A FOTO FICA COMO ELA TIROU.
+
+     Antes eu recortava sozinho assim que a foto era tirada. Numa foto
+     de fundo liso ficava ótimo; numa foto de mão livre ficava um
+     estrago — e ela via o estrago sem nunca ter pedido. Agora a foto
+     aparece inteira, e o recorte é um botão: só aparece quando o fundo
+     realmente é liso, e ela decide. */
   function aplicar(canvas){
     original = canvas.toDataURL('image/jpeg', 0.85);
-    /* tenta tirar o fundo sozinho; se não der, fica com a original */
-    const copia = document.createElement('canvas');
-    copia.width = canvas.width; copia.height = canvas.height;
-    copia.getContext('2d').drawImage(canvas, 0, 0);
-    const recortado = fotoTirarFundo(copia);
-    semFundo = !!recortado;
-    mostrarPronta(recortado ? fotoDoCanvas(recortado, false) : original);
-    document.getElementById('foto-fundo').style.display = semFundo ? 'none' : '';
-    document.getElementById('foto-comfundo').style.display = semFundo ? '' : 'none';
+    semFundo = false;
+    mostrarPronta(original);
+    const liso = fotoFundoEhLiso(canvas);
+    const btnFundo = document.getElementById('foto-fundo');
+    btnFundo.style.display = liso ? '' : 'none';
+    document.getElementById('foto-comfundo').style.display = 'none';
+    const dica = document.getElementById('foto-dica');
+    if(dica){
+      dica.textContent = liso
+        ? 'O fundo dessa foto é liso — dá pra tirar, se você quiser.'
+        : 'O fundo dessa foto não é liso, então não dá pra recortar aqui sem estragar o produto. Pra ficar sem fundo: segure o dedo em cima do produto no app Fotos do iPhone, copie, e use o "📎 Anexar".';
+      dica.style.display = '';
+    }
     if(stream){ stream.getTracks().forEach(t=>t.stop()); stream = null; }
   }
 
@@ -56024,8 +56086,12 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
     const im = new Image();
     im.onload = ()=>{
       const c = fotoQuadrada(im);
+      if(!fotoFundoEhLiso(c)){
+        showToast('O fundo dessa foto não é de uma cor só — recortar aqui ia comer pedaços do produto. Use o "📎 Anexar" com o recorte do celular.', 'info');
+        return;
+      }
       const r = fotoTirarFundo(c);
-      if(!r){ showToast('O fundo dessa foto não é liso o bastante. Fotografe em cima de uma folha branca.', 'info'); return; }
+      if(!r){ showToast('Não consegui separar o produto do fundo nessa foto.', 'info'); return; }
       semFundo = true;
       mostrarPronta(fotoDoCanvas(r, false));
       document.getElementById('foto-fundo').style.display = 'none';
@@ -56066,22 +56132,36 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
 }
 
 /* a miniatura que aparece nas listas */
-function fotoMiniHtml(produtoId, lado){
+/* O PRÓPRIO ÍCONE ABRE A FOTO.
+
+   "depois que eu adicionei o produto, permite eu clicar em cima do
+    ícone e adicionar foto"
+
+   Ela tem razão: o quadradinho da foto é o lugar óbvio pra tocar. Botão
+   separado ao lado é um alvo a mais pro dedo achar, numa tela onde ela
+   já está com o produto na outra mão. */
+function fotoMiniHtml(produtoId, lado, aoTerminar){
   if(!produtoId) return '';
   const temFoto = fotoTemDono(produtoId);
   const L = lado || 42;
-  const vazio = `<div style="width:${L}px;height:${L}px;border:1px dashed var(--border);border-radius:7px;
-      display:flex;align-items:center;justify-content:center;font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);
-      flex-shrink:0;">📷</div>`;
-  if(!temFoto) return vazio;
+  const volta = aoTerminar || 'rerenderTelaAtual()';
+  const abrir = `onclick="event.stopPropagation(); abrirFotoDoProduto('${escapeAttr(produtoId)}', ()=>${volta})"`;
+  const comum = `width:${L}px;height:${L}px;border-radius:7px;flex-shrink:0;cursor:pointer;`;
+
+  if(!temFoto){
+    return `<div ${abrir} title="Tocar pra adicionar a foto"
+      style="${comum}border:1px dashed var(--border);display:flex;align-items:center;justify-content:center;
+             font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);background:#fff;">📷</div>`;
+  }
   const pronta = FOTO_CACHE[produtoId];
   if(pronta){
-    return `<img src="${pronta}" alt="" style="width:${L}px;height:${L}px;object-fit:contain;border:1px solid var(--border);
-        border-radius:7px;background:#fff;flex-shrink:0;">`;
+    return `<img src="${pronta}" alt="" ${abrir} title="Tocar pra trocar a foto"
+      style="${comum}object-fit:contain;border:1px solid var(--border);background:#fff;">`;
   }
   /* ainda não carregou do disco: pede e redesenha quando chegar */
   fotoCarregar(produtoId).then(d=>{ if(d) rerenderTelaAtual(); });
-  return vazio;
+  return `<div ${abrir} style="${comum}border:1px dashed var(--border);display:flex;align-items:center;
+      justify-content:center;font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);background:#fff;">📷</div>`;
 }
 
 /* =========================================================
@@ -56500,7 +56580,7 @@ function balListaCelularHtml(){
     const passou = it.comodato && qtd > it.saldoComodato;
     return `<div style="padding:10px 11px;border-bottom:1px solid var(--border);display:flex;
         justify-content:space-between;gap:10px;align-items:center;">
-      ${fotoMiniHtml(it.produtoId || ch, 40)}
+      ${fotoMiniHtml(it.produtoId || ch, 40, 'renderBalanco()')}
       ${balFichaItemHtml(it)}
       <div style="text-align:right;white-space:nowrap;">
         ${naoContado
@@ -56872,7 +56952,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 07:10';
+const SISTEMA_VERSAO = '11/11/2026 09:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
