@@ -47050,6 +47050,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-i',
+    data: '2026-11-11',
+    titulo: 'Filtro de quantidade divergente, e a contagem não some mais ao vincular',
+    itens: [
+      'NA LISTA DO COMODATO, três filtros novos: ⚠ QUANTIDADE DIVERGENTE, 🟢 Bateu e ○ Não contei. O divergente junta os dois lados de propósito — tem mais e tem menos —, porque na conversa com a ECOVILLE os dois são a mesma pergunta: por que o que está aqui não é o que vocês dizem. 524 linhas não se olham uma a uma; o que resolve é separar o monte.',
+      'UM ERRO MEU QUE EU ACHEI AGORA: se você vinculasse um item no MEIO da contagem, o que já tinha sido contado nele ficava pendurado na chave antiga e sumia da tela. Você ia contar de novo sem entender por quê. Agora a contagem, a etiqueta e o código escolhido vão junto pro item vinculado — e voltam, se você desfizer o vínculo.',
+      'Lembrando o que mudou às 13:05, caso você ainda não tenha recarregado: a lista do comodato ganhou a coluna CONTEI, com 🟢 bateu, 🟡 passou +N, 🔴 faltou −N ou "não contei", linha por linha.'
+    ]
+  },
+  {
     id: '2026-11-11-h',
     data: '2026-11-11',
     titulo: 'A contagem aparece na lista da ECOVILLE, e o vínculo pergunta a descrição',
@@ -52830,9 +52840,35 @@ function confTrazerValor(barras, qual){
 /* ---------------------------------------------------------------
    A TELA
    --------------------------------------------------------------- */
+/* OS FILTROS DA CONTAGEM
+
+   "em conferência do comodato precisa mostrar que está ok a contagem;
+    caso esteja menor do que a planilha, ele vai mostrar quantos que
+    faltou, marcar que quantidade divergente"
+
+   O selo por linha já diz. Mas 524 linhas não se olham uma a uma: o que
+   ela precisa é separar o monte. Divergente junta os dois lados — tem
+   mais e tem menos —, porque na conversa com a ECOVILLE os dois são a
+   mesma pergunta: por que o que está aqui não é o que vocês dizem. */
+function confEstadoContagem(l){
+  const c = confContagem(l, confBalancoPraContagem());
+  return c ? c.estado : null;
+}
+
+function confFiltroDeContagem(qual){
+  return String(qual||'').indexOf('cont-') === 0;
+}
+
+function confCasaContagem(l, qual){
+  const e = confEstadoContagem(l);
+  if(qual === 'cont-divergente') return e === 'passou' || e === 'faltou';
+  return e === qual.slice(5);
+}
+
 function confLinhasFiltradas(){
   let lista = CONF_LINHAS || [];
-  if(confFiltro !== 'todos') lista = lista.filter(l=>confSituacao(l) === confFiltro);
+  if(confFiltroDeContagem(confFiltro)) lista = lista.filter(l=>confCasaContagem(l, confFiltro));
+  else if(confFiltro !== 'todos') lista = lista.filter(l=>confSituacao(l) === confFiltro);
   const t = ncmNormalizar(confBusca);
   if(t.length >= 2){
     const palavras = t.split(' ').filter(Boolean);
@@ -52845,6 +52881,8 @@ function confLinhasFiltradas(){
 }
 
 function confContar(situacao){
+  if(confFiltroDeContagem(situacao))
+    return (CONF_LINHAS||[]).filter(l=>confCasaContagem(l, situacao)).length;
   return (CONF_LINHAS||[]).filter(l=>confSituacao(l) === situacao).length;
 }
 
@@ -53680,6 +53718,37 @@ function vincLinhaPorId(id){
   return (CONF_LINHAS||[]).find(l=>l.id === id) || null;
 }
 
+/* O QUE JÁ FOI CONTADO NÃO PODE SUMIR NO VÍNCULO.
+
+   Enquanto a linha não tem produto, o balanço guarda os bipes sob a
+   chave da planilha ('c:9011461'). No instante em que ela vincula, o
+   item passa a ser o produto ('p:pE') — e tudo que ela já tinha contado
+   ficaria pendurado numa chave que ninguém mais olha. Ela contaria de
+   novo sem saber por quê. O juntar do balanço já fazia essa mudança;
+   a tela Vincular precisa fazer igual, porque ela pode muito bem
+   vincular no meio da contagem. */
+function vincMigrarContagem(chaveAntiga, chaveNova){
+  if(!chaveAntiga || !chaveNova || chaveAntiga === chaveNova) return 0;
+  let mexeu = 0;
+  (STATE.balancos||[]).forEach(b=>{
+    (STATE.balancoBipes||[]).forEach(x=>{
+      if(x.balancoId === b.id && x.chave === chaveAntiga){ x.chave = chaveNova; mexeu++; }
+    });
+    if(b.etiquetas && b.etiquetas[chaveAntiga]){ b.etiquetas[chaveNova] = true; delete b.etiquetas[chaveAntiga]; }
+    if(b.excedenteAceito && b.excedenteAceito[chaveAntiga]){ b.excedenteAceito[chaveNova] = true; delete b.excedenteAceito[chaveAntiga]; }
+    if(b.planilha && b.planilha[chaveAntiga] != null){ b.planilha[chaveNova] = b.planilha[chaveAntiga]; delete b.planilha[chaveAntiga]; }
+  });
+  /* e o código que ela tinha escolhido pra linha vai junto */
+  const meu = (STATE.codigosPrincipais||{})[chaveAntiga];
+  if(meu){
+    if(!STATE.codigosApelido) STATE.codigosApelido = {};
+    STATE.codigosApelido[meu] = chaveNova;
+    delete STATE.codigosPrincipais[chaveAntiga];
+  }
+  if(typeof balAtualChave !== 'undefined' && balAtualChave === chaveAntiga) balAtualChave = chaveNova;
+  return mexeu;
+}
+
 function vincVincular(linhaId, produtoId){
   const l = vincLinhaPorId(linhaId);
   const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
@@ -53691,28 +53760,37 @@ function vincVincular(linhaId, produtoId){
     return;
   }
 
+  const chaveAntiga = 'c:' + String(l.codigo || l.barras || '');
   l.produtoId = p.id;
   l.produtoIdEscolhido = p.id;
   l.produto = p;
   l.semIgual = false;
   const feitos = vincPreencherLacunas(l, p);
+  /* o código de barras do produto pode já ter sido usado pra bipar:
+     leva o que foi contado pra chave nova, senão ela conta de novo */
+  const migrados = vincMigrarContagem(chaveAntiga, 'p:' + p.id);
 
   confGuardarLinhas();
   saveState();
   balRecarregarCatalogo();
   vincAberto = null; vincBuscaManual = '';
-  showToast(feitos.length
-    ? `Vinculado. Preenchi o que estava vazio: ${feitos.join(', ')}.`
-    : 'Vinculado.', 'success');
+  showToast((feitos.length
+      ? `Vinculado. Preenchi o que estava vazio: ${feitos.join(', ')}.`
+      : 'Vinculado.')
+    + (migrados ? ' O que você já tinha contado veio junto.' : ''), 'success');
   vincPerguntarDescricao(l.id, p.id, ()=>renderConferencia());
 }
 
 function vincDesvincular(linhaId){
   const l = vincLinhaPorId(linhaId);
   if(!l) return;
+  const antiga = l.produtoId ? ('p:' + l.produtoId) : null;
   l.produtoId = null;
   l.produtoIdEscolhido = null;
   l.produto = null;
+  /* desfazendo, a contagem volta pra chave da planilha — só se a linha
+     continuar fora do cadastro, senão ela ficaria órfã */
+  if(antiga) vincMigrarContagem(antiga, 'c:' + String(l.codigo || l.barras || ''));
   confGuardarLinhas();
   saveState();
   balRecarregarCatalogo();
@@ -54105,6 +54183,11 @@ function renderConferenciaAgora(){
         ${confBotaoFiltro('🟢 Completos', 'ok', 'var(--positive)')}
         ${confBotaoFiltro('🟡 Falta preencher', 'incompleto', 'var(--warning)')}
         ${confBotaoFiltro('🔴 Não existe aqui', 'novo', 'var(--negative)')}
+        ${confBalancoPraContagem() ? `
+          <span style="width:1px;height:22px;background:var(--border);margin:0 2px;"></span>
+          ${confBotaoFiltro('⚠ Quantidade divergente', 'cont-divergente', 'var(--negative)')}
+          ${confBotaoFiltro('🟢 Bateu', 'cont-bateu', 'var(--positive)')}
+          ${confBotaoFiltro('○ Não contei', 'cont-naocontei', 'var(--ink-soft)')}` : ''}
         <button class="btn btn-sm btn-primary" onclick="confCompletarTodos()">✓ Completar os que dá</button>
         <button class="btn btn-sm" onclick="confTrocarPlanilha()">Trocar a planilha</button>
         <div class="field" style="max-width:260px;margin:0 0 0 auto;">
@@ -57692,7 +57775,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 13:05';
+const SISTEMA_VERSAO = '11/11/2026 14:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
