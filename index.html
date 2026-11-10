@@ -47041,6 +47041,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-e',
+    data: '2026-11-11',
+    titulo: 'Foto antes do produto existir, comodato que o código não achava, e fornecedor sugerido',
+    itens: [
+      'FOTO NOS ITENS DO COMODATO: antes o botão da foto só aparecia em produto já cadastrado — e a maioria das linhas da planilha da ECOVILLE ainda não é produto aqui. Era justamente onde você precisava e não achava. Agora dá pra fotografar qualquer item do balanço, e quando o balanço fecha e a linha vira produto, a foto vai junto.',
+      'O CONTRÁRIO DO JUNTAR: você bipou o código e caiu no produto da loja, enquanto o mesmo produto estava na planilha com outro código — e ia contar como Mizu uma coisa que é da ECOVILLE. Agora, quando o item aberto é da loja e existe uma linha da planilha com nome parecido, o sistema mostra e pergunta: "esse produto está na planilha da ECOVILLE?".',
+      'FORNECEDOR SUGERIDO PELA MARCA (ideia sua): o DAXXEN novo olha os DAXXEN que já estão no cadastro, vê que são da AKORA e sugere. Você toca e pronto. Sugere, não preenche sozinho — o mesmo nome pode vir de dois fornecedores, e preencher calado faria a nota sair errada. O fornecedor escolhido entra no cadastro quando o balanço fechar.',
+      'A migração da planilha do comodato agora acontece AO ABRIR O SISTEMA, não só ao entrar na Conferência. E quando a planilha não tiver chegado num aparelho, a tela avisa — antes ficava calada e 500 produtos entravam como Mizu sem você desconfiar.'
+    ]
+  },
+  {
     id: '2026-11-11-d',
     data: '2026-11-11',
     titulo: 'A planilha do comodato agora vai pro celular — e foto do produto no balanço',
@@ -52622,21 +52633,23 @@ async function confAplicarLeitura(r){
   showToast(`${r.linhas.length} produto(s) com saldo lidos. ${r.ignoradasSemSaldo} sem saldo ficaram de fora.`, 'success');
 }
 
+/* Mudança de casa: o que ficou no espaço antigo do navegador entra no
+   estado que sincroniza, uma vez só. Numa máquina que nunca teve a
+   planilha (o celular), não faz nada — e não apaga nada. */
+async function confMigrarPlanilhaSeFaltar(){
+  if(confLinhasDoEstado().length > 0) return false;
+  let antiga = null;
+  try{ antiga = await confIdb('get', 'atual'); }catch(e){ return false; }
+  if(!antiga || !Array.isArray(antiga.linhas) || !antiga.linhas.length) return false;
+  STATE.conferenciaLinhas = antiga.linhas.map(l=>Object.assign({ id: uid('cl') }, l));
+  saveState();
+  console.log('Planilha do comodato movida pro sincronismo:', antiga.linhas.length, 'linhas.');
+  return true;
+}
+
 async function confCarregarGuardada(){
   if(CONF_LINHAS) return CONF_LINHAS;
-
-  /* mudança de casa: o que ficou no espaço antigo do navegador entra no
-     STATE uma vez e passa a sincronizar dali em diante */
-  if(confLinhasDoEstado().length === 0){
-    try{
-      const antiga = await confIdb('get', 'atual');
-      if(antiga && Array.isArray(antiga.linhas) && antiga.linhas.length){
-        STATE.conferenciaLinhas = antiga.linhas.map(l=>Object.assign({ id: uid('cl') }, l));
-        saveState();
-        console.log('Planilha do comodato movida pro sincronismo:', antiga.linhas.length, 'linhas.');
-      }
-    }catch(e){ console.warn(e); }
-  }
+  try{ await confMigrarPlanilhaSeFaltar(); }catch(e){ console.warn(e); }
 
   try{
     const g = { linhas: confLinhasDoEstado() };
@@ -54212,6 +54225,7 @@ function balCatalogo(){
       saldoComodato: Number(l.saldo||0),
       saldoMizu: 0,
       barrasPlanilha: l.barras || '',
+      fornecedorEscolhido: l.fornecedorEscolhido || '',
       codigos: l.barras ? [l.barras] : []
     });
   });
@@ -54643,12 +54657,15 @@ function balFecharMesmo(b, fornecedor, zerar){
         custo: Number(it.custo||0), precoVenda: Number(it.venda||0),
         estoqueAtual: 0, estoqueMinimo: 0,
         codigoNF: it.barrasPlanilha || it.codigos[0] || '',
+        fornecedor: it.fornecedorEscolhido || '',
         criadoEm: new Date().toISOString()
       };
       p.sku = proximoSku(p.id);
       if(!STATE.produtos) STATE.produtos = [];
       STATE.produtos.push(p);
       criados++;
+      /* a foto tirada durante a contagem acompanha o produto que nasce */
+      balMudarDonoDaFoto(chave, p.id);
     }
 
     const parteComodato = it.comodato ? Math.min(qtd, Number(it.saldoComodato||0)) : 0;
@@ -54923,12 +54940,34 @@ function renderBalancoAgora(){
 /* ---------------------------------------------------------------
    SEM BALANÇO ABERTO
    --------------------------------------------------------------- */
+/* "procurei vários itens que tem comodato mas não aparece"
+
+   Quando a planilha ainda não chegou neste aparelho, o balanço não tem
+   como saber o que é comodato — e some, calado, com quinhentos produtos.
+   Calado é o pior jeito de errar: ela conta tudo como Mizu sem
+   desconfiar. Então a tela diz. */
+function balFaltaPlanilhaHtml(){
+  const res = STATE.conferenciaResumo || {};
+  const temResumo = !!(res.arquivo || res.total);
+  const temLinhas = (CONF_LINHAS||[]).length > 0;
+  if(temLinhas || !temResumo) return '';
+  return `<div style="background:#FBF1E2;border:1px solid #E8D3A8;border-left:4px solid var(--warning);
+      border-radius:10px;padding:12px 13px;margin-bottom:12px;font-size:13.5px;line-height:1.45;">
+    <strong style="color:#7A4F0B;">A planilha do comodato ainda não chegou neste aparelho.</strong><br>
+    Sem ela o balanço não sabe o que é da ${escapeHtml(CONF_FORNECEDOR_PADRAO)}, e <strong>tudo entra como Mizu</strong>
+    — ${fmtNum(res.total || 0)} produtos ficam de fora da contagem do comodato.
+    <div style="margin-top:7px;">Abra o sistema <strong>no computador</strong> uma vez e espere o sincronismo:
+      a planilha vem pra cá sozinha. Depois é só atualizar esta tela.</div>
+  </div>`;
+}
+
 function balTelaInicio(){
   const quantos = BAL_CAT ? BAL_CAT.size : 0;
   const comodato = BAL_CAT ? [...BAL_CAT.values()].filter(i=>i.comodato).length : 0;
   const ultimo = (STATE.balancos||[]).filter(x=>!x.aberto)
                   .sort((a,c)=>String(c.fechadoEm||'').localeCompare(String(a.fechadoEm||'')))[0];
   return `
+    ${balFaltaPlanilhaHtml()}
     <div class="card">
       <h3>📦 Balanço de Estoque</h3>
       <p class="help-text">Bipa o produto, diz quanto tem, e segue. O sistema soma, separa o que é do
@@ -55154,11 +55193,14 @@ function balItemHtml(grande){
       <button class="btn btn-primary" style="flex:1;min-width:190px;padding:${grande?'14':'11'}px;
         font-size:${grande?'16':'14.5'}px;font-weight:700;" onclick="balConfirmar()">Contar e ler o próximo</button>
     </div>
-    ${it.produtoId ? `<div style="display:flex;gap:9px;align-items:center;margin-top:10px;">
-        ${fotoMiniHtml(it.produtoId, 46)}
-        <button class="btn btn-sm" onclick="abrirFotoDoProduto('${escapeAttr(it.produtoId)}', ()=>renderBalanco())">
-          ${(STATE.produtos||[]).find(x=>x.id===it.produtoId && x.temFoto) ? '📷 trocar a foto' : '📷 foto do produto'}</button>
-      </div>` : `<div class="help-text" style="margin-top:9px;">A foto entra depois que o balanço fechar e esse produto nascer no cadastro.</div>`}
+    ${(()=>{ const dono = it.produtoId || it.chave;
+      return `<div style="display:flex;gap:9px;align-items:center;margin-top:10px;">
+        ${fotoMiniHtml(dono, 46)}
+        <button class="btn btn-sm" onclick="abrirFotoDoProduto('${escapeAttr(dono)}', ()=>renderBalanco())">
+          ${fotoTemDono(dono) ? '📷 trocar a foto' : '📷 foto do produto'}</button>
+        ${it.produtoId ? '' : '<span class="help-text" style="margin:0;">vai junto quando o produto nascer</span>'}
+      </div>`; })()}
+    ${balFornecedorHtml(it)}
     ${balJuntarHtml(it.chave)}
     <label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-size:13px;color:var(--ink-soft);cursor:pointer;">
       <input type="checkbox" id="bal-etiqueta" ${balQuerEtiqueta(it.chave)?'checked':''}
@@ -55663,22 +55705,76 @@ async function fotoCarregar(produtoId){
   return FOTO_CACHE[produtoId];
 }
 
+/* A FOTO NÃO PODE ESPERAR O PRODUTO EXISTIR.
+
+   No começo eu só deixei fotografar quem já era produto do cadastro — e
+   isso derrubava justamente o caso principal dela: a maioria das linhas
+   da planilha da ECOVILLE ainda não virou produto aqui. Resultado, ela
+   bipava o item, ia tirar a foto e não achava o botão.
+
+   Agora a foto se amarra na CHAVE do item, seja produto ou linha da
+   planilha. Quando o balanço fecha e a linha vira produto, a foto muda
+   de dono junto — ver balMudarDonoDaFoto. */
+function fotoDonoDaLinha(chave){
+  return (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
+}
+
+function fotoMarcarDono(chave, tem){
+  const p = (STATE.produtos||[]).find(x=>x.id === chave);
+  if(p){
+    if(tem){ p.temFoto = true; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
+    else { delete p.temFoto; delete p.mostrarFoto; }
+    saveState();
+    return;
+  }
+  const l = fotoDonoDaLinha(chave);
+  if(l){
+    if(tem) l.temFoto = true; else delete l.temFoto;
+    if(typeof confGuardarLinhas === 'function') confGuardarLinhas();
+    saveState();
+  }
+}
+
+function fotoTemDono(chave){
+  const p = (STATE.produtos||[]).find(x=>x.id === chave);
+  if(p) return !!p.temFoto;
+  const l = fotoDonoDaLinha(chave);
+  return !!(l && l.temFoto);
+}
+
+function fotoNomeDoDono(chave){
+  const p = (STATE.produtos||[]).find(x=>x.id === chave);
+  if(p) return p.nome;
+  const l = fotoDonoDaLinha(chave);
+  return l ? (l.nomeEscolhido || l.nome) : '';
+}
+
 async function fotoGuardar(produtoId, dados){
   await fotoIdb('put', produtoId, dados);
   FOTO_CACHE[produtoId] = dados.recortada || dados.original || null;
-  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
-  if(p){
-    p.temFoto = true;
-    if(p.mostrarFoto === undefined) p.mostrarFoto = true;
-    saveState();
-  }
+  fotoMarcarDono(produtoId, true);
+}
+
+/* Ao fechar o balanço, a linha da planilha vira produto — a foto tirada
+   na contagem muda de dono junto, senão ela se perderia bem depois de
+   ela ter tido o trabalho de tirar. */
+async function balMudarDonoDaFoto(chaveVelha, produtoId){
+  try{
+    const g = await fotoIdb('get', chaveVelha);
+    if(!g) return;
+    await fotoIdb('put', produtoId, g);
+    await fotoIdb('del', chaveVelha);
+    FOTO_CACHE[produtoId] = g.recortada || g.original || null;
+    delete FOTO_CACHE[chaveVelha];
+    const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+    if(p){ p.temFoto = true; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
+  }catch(e){ console.warn(e); }
 }
 
 async function fotoApagar(produtoId){
   try{ await fotoIdb('del', produtoId); }catch(e){ console.warn(e); }
   delete FOTO_CACHE[produtoId];
-  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
-  if(p){ delete p.temFoto; delete p.mostrarFoto; saveState(); }
+  fotoMarcarDono(produtoId, false);
 }
 
 /* QUADRADA, COM O PRODUTO NO MEIO.
@@ -55759,8 +55855,9 @@ function fotoDoCanvas(canvas, comFundo){
 /* A TELA DA FOTO: tirar na hora, ou anexar uma já pronta (é por aqui
    que entra o recorte que ela fizer no próprio iPhone). */
 function abrirFotoDoProduto(produtoId, aoTerminar){
-  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
-  if(!p){ showToast('Produto não encontrado.', 'error'); return; }
+  const nome = fotoNomeDoDono(produtoId);
+  if(!nome){ showToast('Produto não encontrado.', 'error'); return; }
+  const p = { id: produtoId, nome };
 
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
@@ -55971,12 +56068,12 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
 /* a miniatura que aparece nas listas */
 function fotoMiniHtml(produtoId, lado){
   if(!produtoId) return '';
-  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  const temFoto = fotoTemDono(produtoId);
   const L = lado || 42;
   const vazio = `<div style="width:${L}px;height:${L}px;border:1px dashed var(--border);border-radius:7px;
       display:flex;align-items:center;justify-content:center;font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);
       flex-shrink:0;">📷</div>`;
-  if(!p || !p.temFoto) return vazio;
+  if(!temFoto) return vazio;
   const pronta = FOTO_CACHE[produtoId];
   if(pronta){
     return `<img src="${pronta}" alt="" style="width:${L}px;height:${L}px;object-fit:contain;border:1px solid var(--border);
@@ -56006,6 +56103,33 @@ function fotoMiniHtml(produtoId, lado){
    ========================================================= */
 function balPalavrasDoNome(nome){
   return ncmNormalizar(String(nome||'')).split(' ').filter(w=>w.length >= 4);
+}
+
+/* O CONTRÁRIO TAMBÉM: ela bipou o código e caiu no produto da loja,
+   enquanto o mesmo produto estava na planilha com outro código. Foi o
+   que aconteceu no inseticida — o sistema levou pro lado errado e ela
+   contaria como Mizu uma coisa que é da ECOVILLE. Então, quando o item
+   aberto é um produto SEM comodato, ele procura a linha da planilha que
+   combina e oferece juntar. */
+function balLinhasParecidas(chave){
+  const it = balItem(chave);
+  if(!it || !it.produtoId || it.comodato) return [];
+  const minhas = balPalavrasDoNome(it.nome);
+  if(minhas.length === 0) return [];
+  const saida = [];
+  (CONF_LINHAS||[]).forEach(l=>{
+    if(l.produtoId) return;
+    const nome = l.nomeEscolhido || l.nome;
+    const dele = balPalavrasDoNome(nome);
+    if(dele.length === 0) return;
+    const juntas = minhas.filter(w=>dele.includes(w)).length;
+    if(juntas >= Math.min(2, minhas.length)) saida.push({ linha: l, nome, juntas });
+  });
+  return saida.sort((a,b)=>b.juntas - a.juntas).slice(0, 3);
+}
+
+function balJuntarLinhaNoProduto(chaveLinha, produtoId){
+  balJuntarComProduto(chaveLinha, produtoId);
 }
 
 function balParecidos(chave){
@@ -56075,7 +56199,99 @@ function balJuntarComProduto(chave, produtoId){
     }, 'É o mesmo — juntar');
 }
 
+/* =========================================================
+   O FORNECEDOR QUE O PRÓPRIO CADASTRO JÁ SABE
+
+   Ideia dela, e é boa: "se o DAXXEN já tem cadastrado com o fornecedor
+   AKORA, quando eu adicionar o produto de repasse ele vai vir sem
+   fornecedor — aí automaticamente ele já sugere."
+
+   O produto novo nasce com o nome quase igual ao que já existe. O
+   fornecedor está ali do lado, no cadastro, e mesmo assim ela teria que
+   digitar de novo mil e quatrocentas vezes. Então o sistema olha os
+   produtos de nome parecido, vê de quem eles são, e sugere — ela toca e
+   pronto. Sugere, não preenche: o mesmo nome pode vir de dois
+   fornecedores, e preencher calado faria a nota sair com o errado.
+   ========================================================= */
+function balFornecedorSugerido(it){
+  if(!it) return null;
+  const jaTem = it.produtoId
+    ? String(((STATE.produtos||[]).find(x=>x.id === it.produtoId)||{}).fornecedor||'').trim()
+    : '';
+  if(jaTem) return null;
+
+  const minhas = balPalavrasDoNome(it.nome);
+  if(minhas.length === 0) return null;
+
+  /* conta quantos produtos de nome parecido são de cada fornecedor */
+  const votos = {};
+  (STATE.produtos||[]).forEach(p=>{
+    if(p.id === it.produtoId) return;
+    const forn = String(p.fornecedor||'').trim();
+    if(!forn) return;
+    const dele = balPalavrasDoNome(p.nome);
+    const juntas = minhas.filter(w=>dele.includes(w)).length;
+    if(juntas < Math.min(2, minhas.length)) return;
+    if(!votos[forn]) votos[forn] = { nome: forn, quantos: 0, forca: 0, exemplo: p.nome };
+    votos[forn].quantos++;
+    votos[forn].forca += juntas;
+  });
+  const lista = Object.values(votos).sort((a,b)=>b.forca - a.forca);
+  return lista.length ? lista[0] : null;
+}
+
+function balAplicarFornecedor(chave, nome){
+  const it = balItem(chave);
+  if(!it) return;
+  const p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id === it.produtoId) : null;
+  if(p){
+    p.fornecedor = nome;
+    const f = (STATE.fornecedores||[]).find(x=>String(x.nome||'').trim().toUpperCase() === nome.trim().toUpperCase());
+    p.fornecedorId = f ? f.id : null;
+    saveState();
+  }else{
+    /* linha da planilha: guarda a escolha pra quando o produto nascer */
+    const l = (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+    if(l){ l.fornecedorEscolhido = nome; confGuardarLinhas(); }
+  }
+  balRecarregarCatalogo();
+  renderBalanco();
+  showToast(`Fornecedor ${nome} aplicado.`, 'success');
+}
+
+function balFornecedorHtml(it){
+  const s = balFornecedorSugerido(it);
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === it.chave);
+  if(l && l.fornecedorEscolhido){
+    return `<div class="help-text" style="margin-top:7px;">fornecedor: <strong>${escapeHtml(l.fornecedorEscolhido)}</strong>
+      <span>— entra no cadastro quando o balanço fechar</span></div>`;
+  }
+  if(!s) return '';
+  return `<div style="margin-top:8px;font-size:13px;">
+    <span class="help-text" style="margin:0;">Sem fornecedor. Os parecidos aqui são da</span>
+    <button class="btn btn-sm" style="margin-left:4px;"
+      onclick="balAplicarFornecedor('${escapeAttr(it.chave)}','${escapeAttr(s.nome)}')">
+      ${escapeHtml(s.nome)}</button>
+    <span class="help-text" style="margin:0;">— ${fmtNum(s.quantos)} produto(s), tipo "${escapeHtml(String(s.exemplo).slice(0,38))}"</span>
+  </div>`;
+}
+
 function balJuntarHtml(chave){
+  /* produto da loja que talvez seja o mesmo de uma linha da planilha */
+  const daPlanilha = balLinhasParecidas(chave);
+  if(daPlanilha.length){
+    return `<div style="background:var(--primary-soft,#E8F3F6);border:1px solid #C5DEE6;border-radius:9px;
+        padding:9px 11px;margin-top:9px;font-size:13px;">
+      <strong style="color:var(--primary-escuro,#1B4B5A);">Esse produto está na planilha da ${escapeHtml(CONF_FORNECEDOR_PADRAO)}?</strong>
+      <div class="help-text" style="margin:2px 0 7px;">Se for o mesmo, junte: o saldo da planilha vira comodato
+        e o que passar dele é da Mizu.</div>
+      ${daPlanilha.map(x=>`<button class="btn btn-sm" style="display:block;width:100%;text-align:left;margin-bottom:5px;"
+          onclick="balJuntarLinhaNoProduto('${escapeAttr('c:' + String(x.linha.codigo || x.linha.barras || ''))}','${escapeAttr(chave.slice(2))}')">
+          é o mesmo: <strong>${escapeHtml(x.nome)}</strong>
+          <span class="help-text">saldo ${fmtNum(x.linha.saldo)}${x.linha.barras ? ' · ' + escapeHtml(x.linha.barras) : ''}</span>
+        </button>`).join('')}
+    </div>`;
+  }
   const iguais = balParecidos(chave);
   if(iguais.length === 0) return '';
   return `<div style="background:#FBF1E2;border:1px solid #E8D3A8;border-radius:9px;padding:9px 11px;margin-top:9px;font-size:13px;">
@@ -56131,6 +56347,7 @@ function balTelaComputador(b){
       <button class="btn btn-sm" onclick="balVerComoCelular()">ver como fica no celular</button>
     </div>
 
+    ${balFaltaPlanilhaHtml()}
     ${balKpisHtml()}
 
     <div class="card">
@@ -56187,6 +56404,7 @@ function balTelaCelular(b){
         </div>
       </div>
 
+      ${balFaltaPlanilhaHtml()}
       <button class="btn" style="width:100%;padding:15px;font-size:16px;font-weight:700;
           background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);color:#fff;margin-bottom:11px;"
         onclick="balCamera()">📷 Bipar com a câmera</button>
@@ -56282,7 +56500,7 @@ function balListaCelularHtml(){
     const passou = it.comodato && qtd > it.saldoComodato;
     return `<div style="padding:10px 11px;border-bottom:1px solid var(--border);display:flex;
         justify-content:space-between;gap:10px;align-items:center;">
-      ${it.produtoId ? fotoMiniHtml(it.produtoId, 40) : ''}
+      ${fotoMiniHtml(it.produtoId || ch, 40)}
       ${balFichaItemHtml(it)}
       <div style="text-align:right;white-space:nowrap;">
         ${naoContado
@@ -56654,7 +56872,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 05:30';
+const SISTEMA_VERSAO = '11/11/2026 07:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -58399,6 +58617,17 @@ async function iniciarSistema(){
   renderFaixaSimulacao();
   versaoIniciarVigia();
   nuvemIniciar();
+  /* A PLANILHA DO COMODATO TEM QUE SAIR DAQUI SOZINHA.
+
+     A mudança de casa (do espaço privado do navegador pro estado que
+     sincroniza) acontecia só quando ela abria a Conferência. Se ela
+     abrisse o sistema no celular primeiro, a planilha continuava presa
+     no computador e o balanço do celular seguia sem comodato nenhum —
+     que foi exatamente o que ela viu. Agora a mudança acontece ao abrir
+     o sistema, em qualquer máquina que ainda tenha a planilha guardada
+     no lugar antigo. */
+  try{ await confMigrarPlanilhaSeFaltar(); }catch(e){ console.warn(e); }
+
   const el = document.getElementById('last-saved');
   if(el) el.textContent = 'Dados carregados';
   /* O QR do balanço abre o sistema com #balanco no endereço: cai direto
