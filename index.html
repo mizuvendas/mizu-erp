@@ -2717,7 +2717,11 @@ function verificarBackupAoAbrirApp(){
    MODAL CONFIRM genérico
    ========================================================= */
 let _confirmCallback = null;
-function confirmAction(title, text, onConfirm, labelBotaoOk){
+let _confirmCancelCallback = null;
+/* onCancelar: quando "não" também é uma resposta, não só desistir.
+   É o caso de "quer trocar a descrição?" — dizer não é escolher ficar
+   com a sua, e o sistema precisa seguir o fluxo do mesmo jeito. */
+function confirmAction(title, text, onConfirm, labelBotaoOk, onCancelar){
   document.getElementById('modal-confirm-title').textContent = title;
   document.getElementById('modal-confirm-text').textContent = text;
   const btnOk = document.getElementById('modal-confirm-ok');
@@ -2741,15 +2745,20 @@ function confirmAction(title, text, onConfirm, labelBotaoOk){
   document.body.appendChild(modalConfirmEl);
   modalConfirmEl.classList.add('open');
   _confirmCallback = onConfirm;
+  _confirmCancelCallback = onCancelar || null;
 }
 document.getElementById('modal-confirm-cancel').addEventListener('click', ()=>{
   document.getElementById('modal-confirm').classList.remove('open');
+  const fn = _confirmCancelCallback;
   _confirmCallback = null;
+  _confirmCancelCallback = null;
+  if(typeof fn === 'function') fn();
 });
 document.getElementById('modal-confirm-ok').addEventListener('click', ()=>{
   document.getElementById('modal-confirm').classList.remove('open');
   const callback = _confirmCallback;
   _confirmCallback = null;
+  _confirmCancelCallback = null;
   if(callback) callback();
 });
 
@@ -47041,6 +47050,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-h',
+    data: '2026-11-11',
+    titulo: 'A contagem aparece na lista da ECOVILLE, e o vínculo pergunta a descrição',
+    itens: [
+      'NA LISTA DO COMODATO, coluna CONTEI: enquanto você conta, cada linha da ECOVILLE mostra 🟢 bateu, 🟡 passou +N, 🔴 faltou −N ou "não contei". É dessa lista que sai a conversa com eles no fim, então ela tem que estar pronta sozinha — sem você ter que abrir outra tela pra cruzar.',
+      'AO VINCULAR, O SISTEMA PERGUNTA A DESCRIÇÃO. Vinculado, o item vira um só, e um só pode ter um nome. Os dois lados erram em casos diferentes: a planilha manda coisa lançada como caixa quando é unidade, e o seu cadastro tem nome de antes do produto mudar de embalagem. Mostro os dois e você escolhe — e só pergunto quando são mesmo diferentes. Vale na tela Vincular e no juntar do balanço.',
+      'O vínculo também traz MARCA e SETOR do seu cadastro, que a planilha não tem. Custo e preço continuam intocados: quem manda neles é a planilha.',
+      'E pra ficar claro de uma vez: vincular NÃO soma estoque. Comodato 7 e Mizu 41 ficam lado a lado. Quem decide é a contagem — até 7 é comodato, o que passar é da Mizu.'
+    ]
+  },
+  {
     id: '2026-11-11-g',
     data: '2026-11-11',
     titulo: 'Tela Vincular: resolver tudo sentada, antes do balanço',
@@ -53586,7 +53606,13 @@ function vincPreencherLacunas(l, p){
     feitos.push('código de barras do cadastro');
   }
 
-  /* cadastro -> planilha */
+  /* cadastro -> planilha
+     "apenas vai puxar os dados complementares que não estão na planilha,
+      como marca, fabricante. Valores, custos, vendas, deixa como está."
+     A planilha da ECOVILLE não traz marca nem setor — isso só existe no
+     cadastro dela, e é o que o item ganha ao ser vinculado. Custo e
+     preço não entram nesta lista de propósito: quem manda neles é a
+     planilha, e já é assim no balanço. */
   if(!String(l.ncm||'').trim() && String(p.ncm||'').trim()){
     l.ncm = ncmSo8(p.ncm); feitos.push('NCM da linha');
   }
@@ -53596,12 +53622,56 @@ function vincPreencherLacunas(l, p){
   if(!String(l.fornecedorEscolhido||'').trim() && String(p.fornecedor||'').trim()){
     l.fornecedorEscolhido = p.fornecedor; feitos.push('fornecedor');
   }
+  if(!String(l.marca||'').trim() && String(p.marca||'').trim()){
+    l.marca = p.marca; feitos.push('marca');
+  }
+  if(!String(l.setor||'').trim() && String(p.setor||'').trim()){
+    l.setor = p.setor; feitos.push('setor');
+  }
 
   /* o item é da ECOVILLE a partir de agora */
   p.comodato = true;
   p.comodatoDe = p.comodatoDe || CONF_FORNECEDOR_PADRAO;
 
   return feitos;
+}
+
+/* ---------------------------------------------------------------
+   A DESCRIÇÃO — pergunta, nunca decide sozinho
+
+   "e também perguntar se quero atualizar a descrição do produto"
+
+   Vinculado, o item vira UM só, e um só pode ter um nome. Os dois lados
+   erram em casos diferentes: a planilha da ECOVILLE manda coisa lançada
+   como caixa quando é unidade, e o cadastro dela tem nome antigo, de
+   antes de o produto mudar de embalagem. Não dá pra escolher por regra.
+   Então mostro os dois e ela decide — e só pergunto quando são mesmo
+   diferentes, pra não virar um clique a cada vínculo. */
+function vincPerguntarDescricao(linhaId, produtoId, depois){
+  const l = vincLinhaPorId(linhaId);
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  const seguir = depois || function(){};
+  if(!l || !p) return seguir();
+
+  const daPlanilha = String(l.nomeEscolhido || l.nome || '').trim();
+  const doCadastro = String(p.nome || '').trim();
+  if(!daPlanilha || !doCadastro || daPlanilha === doCadastro) return seguir();
+
+  confirmAction('Atualizar a descrição?',
+    `SEU CADASTRO (é o que vale hoje):\n${doCadastro}\n\n`
+    + `PLANILHA DA ${CONF_FORNECEDOR_PADRAO}:\n${daPlanilha}\n\n`
+    + `Quer trocar a descrição do produto pela da planilha?\n\n`
+    + `Se não, fica a sua — e a da planilha é esquecida. Nenhum valor muda nos dois casos.`,
+    ()=>{
+      p.nome = daPlanilha;
+      l.nomeEscolhido = null;
+      saveState();
+      balRecarregarCatalogo();
+      seguir();
+      showToast('Descrição atualizada pela da planilha.', 'success');
+    },
+    'Usar a da planilha',
+    ()=>{ l.nomeEscolhido = null; confGuardarLinhas(); saveState(); balRecarregarCatalogo(); seguir(); });
 }
 
 /* ---- as ações ---- */
@@ -53631,10 +53701,10 @@ function vincVincular(linhaId, produtoId){
   saveState();
   balRecarregarCatalogo();
   vincAberto = null; vincBuscaManual = '';
-  renderConferencia();
   showToast(feitos.length
     ? `Vinculado. Preenchi o que estava vazio: ${feitos.join(', ')}.`
     : 'Vinculado.', 'success');
+  vincPerguntarDescricao(l.id, p.id, ()=>renderConferencia());
 }
 
 function vincDesvincular(linhaId){
@@ -54060,16 +54130,80 @@ function renderConferenciaAgora(){
   });
 }
 
+/* =========================================================
+   A CONTAGEM DENTRO DA LISTA DO COMODATO
+
+   "e nele automaticamente vai atualizar o saldo na conferência de
+    comodato, mostrando se a contagem bateu e se passou do excedente,
+    pra que depois você veja, ou se faltou"
+
+   Esta lista é a da ECOVILLE — é o que eles dizem que está aqui. O
+   relatório do balanço já mostrava contei × planilha, mas só depois, e
+   numa tela separada. Ela quer ver na própria lista do fornecedor,
+   enquanto conta: bateu, passou, faltou, ou nem passei por esse ainda.
+   É dessa lista que sai a conversa com eles no fim.
+   ========================================================= */
+function confBalancoPraContagem(){
+  const aberto = (typeof balAberto === 'function') ? balAberto() : null;
+  if(aberto) return aberto;
+  return (typeof confBalancoDoRelatorio === 'function') ? confBalancoDoRelatorio() : null;
+}
+
+function confChaveNoBalanco(l){
+  return l.produtoId ? ('p:' + l.produtoId) : ('c:' + String(l.codigo || l.barras || ''));
+}
+
+/* a contagem é a mesma pras 524 linhas — montar o mapa uma vez por
+   desenho, não uma vez por linha, que é 524 varreduras dos bipes */
+let CONF_CONTADOS = null;
+function confContadosDe(b){
+  if(!b) return null;
+  if(CONF_CONTADOS && CONF_CONTADOS.id === b.id) return CONF_CONTADOS.mapa;
+  CONF_CONTADOS = { id: b.id, mapa: balContados(b.id) };
+  return CONF_CONTADOS.mapa;
+}
+
+function confContagem(l, b){
+  if(!b) return null;
+  const chave = confChaveNoBalanco(l);
+  const contados = confContadosDe(b);
+  const tem = contados.has(chave);
+  const qtd = tem ? Number(contados.get(chave) || 0) : 0;
+  const saldo = Number(l.saldo || 0);
+  if(!tem) return { estado: 'naocontei', qtd: 0, saldo, dif: null };
+  if(qtd === saldo) return { estado: 'bateu', qtd, saldo, dif: 0 };
+  if(qtd > saldo)   return { estado: 'passou', qtd, saldo, dif: qtd - saldo };
+  return { estado: 'faltou', qtd, saldo, dif: qtd - saldo };
+}
+
+function confContagemHtml(c){
+  if(!c) return '';
+  if(c.estado === 'naocontei')
+    return `<td class="num"><span class="help-text" style="margin:0;">não contei</span></td>`;
+  const cor = c.estado === 'bateu'  ? ['#E7F4EE', '#1F6047']
+            : c.estado === 'passou' ? ['#FBF1E2', '#8A5D14']
+                                    : ['#FBE9E7', '#B02A37'];
+  const selo = c.estado === 'bateu'  ? '🟢 bateu'
+             : c.estado === 'passou' ? `🟡 passou +${fmtNum(c.dif)}`
+                                     : `🔴 faltou ${fmtNum(c.dif)}`;
+  return `<td class="num"><strong>${fmtNum(c.qtd)}</strong>
+    <div style="margin:2px 0 0;"><span class="badge" style="background:${cor[0]};color:${cor[1]};">${selo}</span></div></td>`;
+}
+
 function confTabela(lista){
   if(lista.length === 0){
     return `<div id="conf-tabela-wrap" class="empty-state" style="padding:24px;"><p>Nenhuma linha com esse filtro.</p></div>`;
   }
+  CONF_CONTADOS = null;   /* cada desenho recomeça: ela acabou de bipar */
+  const b = confBalancoPraContagem();
   return `<div id="conf-tabela-wrap" class="table-wrap" style="max-height:calc(100vh - 330px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
         <th>Produto</th><th style="width:90px;">Unidade</th><th style="width:130px;">NCM</th>
         <th class="num" style="width:110px;">Custo</th><th class="num" style="width:110px;">Venda</th>
-        <th class="num" style="width:80px;">Saldo</th><th>O que falta</th><th style="width:150px;">Ações</th>
+        <th class="num" style="width:80px;">Saldo</th>
+        ${b ? `<th class="num" style="width:120px;">Contei</th>` : ''}
+        <th>O que falta</th><th style="width:150px;">Ações</th>
       </tr></thead>
       <tbody>${lista.slice(0, 400).map(l=>confLinha(l)).join('')}</tbody>
     </table>
@@ -54130,6 +54264,7 @@ function confLinha(l){
     <td class="num">${fmtMoney(l.custo)}${difCusto?`<div class="help-text" style="margin:0;">aqui: ${fmtMoney(p.custo||0)}</div>`:''}</td>
     <td class="num">${l.venda>0?fmtMoney(l.venda):'—'}${difVenda?`<div class="help-text" style="margin:0;">aqui: ${fmtMoney(p.precoVenda||0)}</div>`:''}</td>
     <td class="num"><strong>${fmtNum(l.saldo)}</strong></td>
+    ${confContagemHtml(confContagem(l, confBalancoPraContagem()))}
     <td>${selo}${falta.length?`<div class="help-text" style="margin:2px 0 0;">${escapeHtml(falta.join(', '))}</div>`:''}</td>
     <td><div class="cell-actions">
       ${p ? `<button class="btn btn-sm" onclick="confCompletarLinha('${l.barras}')">Completar</button>`
@@ -54232,6 +54367,8 @@ function confGuardarLinhas(){
     guardada.produtoIdEscolhido = l.produtoIdEscolhido || null;
     guardada.semIgual = !!l.semIgual;
     guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
+    guardada.marca = l.marca || null;
+    guardada.setor = l.setor || null;
   });
   saveState();
 }
@@ -56875,8 +57012,10 @@ function balJuntarComProduto(chave, produtoId){
       confGuardarLinhas();
       saveState();
       balRecarregarCatalogo();
-      renderBalanco();
       showToast(`Juntados: agora é um produto só, com saldo de comodato e da Mizu.`, 'success');
+      /* mesma pergunta da tela Vincular: vinculado, o item vira um só,
+         e um só pode ter um nome. Quem decide é ela. */
+      vincPerguntarDescricao(linha.id, p.id, ()=>renderBalanco());
     }, 'É o mesmo — juntar');
 }
 
@@ -57553,7 +57692,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 11:40';
+const SISTEMA_VERSAO = '11/11/2026 13:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
