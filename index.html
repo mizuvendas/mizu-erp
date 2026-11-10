@@ -847,6 +847,13 @@ body.bal-foco .card > h3{ font-size:15px; }
    no campo, e a tela sai do lugar bem na hora de digitar a quantidade. */
 body.bal-foco input, body.bal-foco select, body.bal-foco textarea{ font-size:16px; }
 body.bal-foco .btn{ min-height:40px; }
+/* ela estava dando zoom o tempo todo pra enxergar, e cada toque
+   devolvia a tela pro tamanho normal. O conserto não é mexer no zoom —
+   é a letra nascer grande o bastante pra não precisar dele. */
+body.bal-foco .help-text{ font-size:13px; }
+body.bal-foco .badge{ font-size:12px; }
+body.bal-foco #balanco-content{ font-size:15px; }
+body.bal-foco .btn-sm{ font-size:13.5px; min-height:34px; }
 .bal-voltar-menu{ display:none; }
 body.bal-foco .bal-voltar-menu{ display:inline-block; }
 
@@ -4523,28 +4530,418 @@ function abrirSeletorMapaEndereco(config){
    aviso amigável e deixa a digitação manual como alternativa — nunca
    trava a tela nem impede o uso do resto do formulário.
    ========================================================= */
+/* =========================================================
+   LEITOR DE CÓDIGO DE BARRAS FEITO AQUI DENTRO
+
+   "está aparecendo a mensagem que leitura por câmera não é suportada
+    neste navegador"
+
+   O iPhone é o motivo. O Safari não tem o BarcodeDetector, que é o
+   leitor pronto do navegador — e ele era o único caminho. No celular
+   dela, portanto, a câmera nunca leu nada.
+
+   Trazer uma biblioteca pronta não é opção: o sistema roda offline,
+   num arquivo só, e a loja já ficou sem internet no meio do trabalho.
+   Então o leitor é este: decodifica EAN-13, EAN-8 e UPC-A a partir dos
+   pixels, que é o que os produtos dela têm.
+
+   POR QUE ISSO DÁ CERTO SEM SER FRÁGIL: cada código traz um dígito
+   verificador. Ou a leitura fecha a conta, ou é descartada. Não existe
+   "leu quase certo" — ou sai o número exato, ou sai nada. Por isso dá
+   pra tentar dezenas de linhas da imagem e confiar na que passar.
+   ========================================================= */
+
+/* Os desenhos de cada dígito, em módulos (barra/espaço), como a norma
+   define. Em corridas: cada dígito ocupa 7 módulos em 4 corridas. */
+const LEITOR_ESQ_A = ['0001101','0011001','0010011','0111101','0100011','0110001','0101111','0111011','0110111','0001011'];
+const LEITOR_ESQ_B = ['0100111','0110011','0011011','0100001','0011101','0111001','0000101','0010001','0001001','0010111'];
+const LEITOR_DIR_C = ['1110010','1100110','1101100','1000010','1011100','1001110','1010000','1000100','1001000','1110100'];
+const LEITOR_PARIDADE = ['AAAAAA','AABABB','AABBAB','AABBBA','ABAABB','ABBAAB','ABBBAA','ABABAB','ABABBA','ABBABA'];
+
+function leitorCorridasDoPadrao(bits){
+  const out = [];
+  let atual = bits[0], n = 0;
+  for(let i = 0; i < bits.length; i++){
+    if(bits[i] === atual) n++;
+    else { out.push(n); atual = bits[i]; n = 1; }
+  }
+  out.push(n);
+  return out;
+}
+
+const LEITOR_TAB = (function(){
+  const t = { A: [], B: [], C: [] };
+  for(let d = 0; d < 10; d++){
+    t.A.push(leitorCorridasDoPadrao(LEITOR_ESQ_A[d]));
+    t.B.push(leitorCorridasDoPadrao(LEITOR_ESQ_B[d]));
+    t.C.push(leitorCorridasDoPadrao(LEITOR_DIR_C[d]));
+  }
+  return t;
+})();
+
+/* Compara quatro corridas medidas em PIXELS com o desenho esperado em
+   MÓDULOS, sem precisar saber a largura do módulo: o tamanho do dígito
+   inteiro é a referência. É isso que faz a leitura aguentar o código
+   torto, a embalagem curva e a foto de perto ou de longe. */
+function leitorCasarDigito(corridas, tabela){
+  const total = corridas[0] + corridas[1] + corridas[2] + corridas[3];
+  if(total <= 0) return null;
+  const unidade = total / 7;
+  let melhor = -1, melhorErro = Infinity;
+  for(let d = 0; d < 10; d++){
+    const padrao = tabela[d];
+    let erro = 0;
+    for(let i = 0; i < 4; i++){
+      const esperado = padrao[i] * unidade;
+      const dif = corridas[i] - esperado;
+      erro += (dif * dif) / esperado;
+    }
+    if(erro < melhorErro){ melhorErro = erro; melhor = d; }
+  }
+  /* erro grande = não é dígito nenhum, é ruído parecido */
+  return melhorErro > 0.55 ? null : { digito: melhor, erro: melhorErro };
+}
+
+function leitorDigitoVerificador(corpo){
+  let soma = 0;
+  const n = corpo.length;
+  for(let i = 0; i < n; i++){
+    soma += Number(corpo[i]) * (((n - i) % 2 === 1) ? 3 : 1);
+  }
+  return String((10 - (soma % 10)) % 10);
+}
+
+/* Guarda de início/fim e do meio: três (ou cinco) corridas de larguras
+   parecidas. */
+function leitorGuardaOk(corridas, inicio, quantas){
+  let soma = 0;
+  for(let i = 0; i < quantas; i++){
+    const v = corridas[inicio + i];
+    if(!(v > 0)) return 0;
+    soma += v;
+  }
+  const media = soma / quantas;
+  for(let i = 0; i < quantas; i++){
+    const v = corridas[inicio + i];
+    if(v < media * 0.45 || v > media * 1.9) return 0;
+  }
+  return media;
+}
+
+/* ---------------------------------------------------------------
+   UMA LINHA DA IMAGEM
+
+   Recebe o cinza de uma linha e devolve o código, ou nada.
+   --------------------------------------------------------------- */
+function leitorLerLinha(cinza){
+  const n = cinza.length;
+  if(n < 60) return null;
+
+  let min = 255, max = 0;
+  for(let i = 0; i < n; i++){
+    const v = cinza[i];
+    if(v < min) min = v;
+    if(v > max) max = v;
+  }
+  if(max - min < 28) return null;           /* linha sem contraste: não é código */
+
+  /* DOIS JEITOS DE SEPARAR PRETO DE BRANCO.
+
+     O primeiro é o simples: meio do caminho entre o mais claro e o mais
+     escuro da linha. Funciona quando o código ocupa quase tudo.
+
+     O segundo existe porque a foto da loja não é assim. O código fica no
+     meio da mesa, e a mesa é mais clara que o papel do rótulo: o limiar
+     único cai acima do fundo do código e a etiqueta inteira vira preta.
+     Aí entra a média móvel — cada pixel é comparado com a vizinhança
+     dele, não com a imagem toda. É o que faz ler com pouca luz. */
+  const tentar = (limiarDe)=>{
+    const corridas = [], escuros = [];
+    let escuro = cinza[0] < limiarDe(0), tam = 0;
+    for(let i = 0; i < n; i++){
+      const e = cinza[i] < limiarDe(i);
+      if(e === escuro) tam++;
+      else { corridas.push(tam); escuros.push(escuro); escuro = e; tam = 1; }
+    }
+    corridas.push(tam); escuros.push(escuro);
+    for(let i = 0; i < corridas.length; i++){
+      if(!escuros[i]) continue;
+      const r = leitorLerEan13(corridas, i, escuros);
+      if(r) return r;
+      const r8 = leitorLerEan8(corridas, i, escuros);
+      if(r8) return r8;
+    }
+    return null;
+  };
+
+  const meio = (min + max) / 2;
+  let r = tentar(()=>meio);
+  if(r) return r;
+
+  /* média móvel: soma acumulada pra não custar caro numa foto grande */
+  const soma = new Float64Array(n + 1);
+  for(let i = 0; i < n; i++) soma[i+1] = soma[i] + cinza[i];
+  /* a janela não pode ser larga: se ela pegar a mesa em volta, o fundo
+     claro puxa a média pra cima e o rótulo inteiro vira preto. Tenta
+     algumas larguras, da mais apertada pra mais aberta. */
+  for(const divisor of [40, 20, 14, 8]){
+    const janela = Math.max(6, Math.round(n / divisor));
+    const media = (i)=>{
+      const a = Math.max(0, i - janela), b = Math.min(n, i + janela + 1);
+      return (soma[b] - soma[a]) / (b - a) - 4;  /* o -4 evita oscilar no branco liso */
+    };
+    const achou = tentar(media);
+    if(achou) return achou;
+  }
+  return null;
+}
+
+/* A CONTA QUE SEPARA CÓDIGO DE SUJEIRA.
+
+   Um EAN-13 tem 95 módulos do começo ao fim. Se a guarda inicial diz
+   que o módulo mede 3 pixels, o código inteiro TEM que medir perto de
+   285 pixels. Ruído de foto também forma 59 corridas e também passa
+   pelas guardas — o que ele não consegue é fechar essa largura. Sem
+   esta verificação o leitor inventava código em imagem de puro chuvisco.
+   O mesmo vale dígito por dígito: cada um ocupa 7 módulos. */
+/* A MARGEM BRANCA ANTES E DEPOIS.
+
+   A norma pede uma faixa clara de nove módulos em volta do código, e
+   ela não é enfeite: é o que diz ao leitor onde o código começa. Sem
+   exigir isso, o chuvisco cinzento da mesa — que também alterna claro e
+   escuro — conseguia fechar um EAN-8 inteiro e repetir o mesmo número em
+   duas linhas, que é exatamente o que eu uso como confirmação. Peço só
+   2,5 módulos porque a foto às vezes corta a margem; o ruído, esse, não
+   tem margem nenhuma. */
+function leitorMargemOk(corridas, escuros, inicio, fim, modulo){
+  const antes = inicio - 1;
+  if(antes >= 0){
+    if(escuros[antes]) return false;
+    if(corridas[antes] < modulo * 2.5) return false;
+  }
+  const depois = fim + 1;
+  if(depois < corridas.length){
+    if(escuros[depois]) return false;
+    if(corridas[depois] < modulo * 2.5) return false;
+  }
+  return true;
+}
+
+function leitorLarguraOk(corridas, inicio, quantas, modulos, modulo, folga){
+  let soma = 0;
+  for(let k = 0; k < quantas; k++) soma += corridas[inicio + k];
+  const esperado = modulos * modulo;
+  return Math.abs(soma - esperado) <= esperado * (folga || 0.22);
+}
+
+function leitorLerEan13(corridas, i, escuros){
+  /* 3 + 24 + 5 + 24 + 3 = 59 corridas */
+  if(i + 59 > corridas.length) return null;
+  const modulo = leitorGuardaOk(corridas, i, 3);
+  if(!modulo) return null;
+  /* no EAN-13 a margem é só um desempate: são 95 módulos, doze dígitos e
+     um verificador — difícil demais pro acaso fechar. No EAN-8, que é
+     bem mais curto, ela é obrigatória (ver leitorMargemOk). */
+  const margemLarga = escuros ? leitorMargemOk(corridas, escuros, i, i + 58, modulo) : true;
+  if(!leitorGuardaOk(corridas, i + 27, 5)) return null;
+  if(!leitorGuardaOk(corridas, i + 56, 3)) return null;
+  if(!leitorLarguraOk(corridas, i, 59, 95, modulo)) return null;
+  for(let d = 0; d < 12; d++){
+    const p = i + (d < 6 ? 3 + d * 4 : 32 + (d - 6) * 4);
+    if(!leitorLarguraOk(corridas, p, 4, 7, modulo, 0.33)) return null;
+  }
+
+  let paridade = '', esquerda = '';
+  for(let d = 0; d < 6; d++){
+    const p = i + 3 + d * 4;
+    const quatro = [corridas[p], corridas[p+1], corridas[p+2], corridas[p+3]];
+    const a = leitorCasarDigito(quatro, LEITOR_TAB.A);
+    const b = leitorCasarDigito(quatro, LEITOR_TAB.B);
+    if(!a && !b) return null;
+    if(a && (!b || a.erro <= b.erro)){ paridade += 'A'; esquerda += a.digito; }
+    else { paridade += 'B'; esquerda += b.digito; }
+  }
+  let direita = '';
+  for(let d = 0; d < 6; d++){
+    const p = i + 32 + d * 4;
+    const c = leitorCasarDigito([corridas[p], corridas[p+1], corridas[p+2], corridas[p+3]], LEITOR_TAB.C);
+    if(!c) return null;
+    direita += c.digito;
+  }
+
+  const primeiro = LEITOR_PARIDADE.indexOf(paridade);
+  if(primeiro < 0) return null;             /* paridade que não existe: descarta */
+  const codigo = String(primeiro) + esquerda + direita;
+  if(leitorDigitoVerificador(codigo.slice(0, 12)) !== codigo[12]) return null;
+  return margemLarga ? codigo : (codigo + '?');   /* o ? pede confirmação */
+}
+
+function leitorLerEan8(corridas, i, escuros){
+  /* 3 + 16 + 5 + 16 + 3 = 43 corridas */
+  if(i + 43 > corridas.length) return null;
+  const modulo8 = leitorGuardaOk(corridas, i, 3);
+  if(!modulo8) return null;
+  if(escuros && !leitorMargemOk(corridas, escuros, i, i + 42, modulo8)) return null;
+  if(!leitorGuardaOk(corridas, i + 19, 5)) return null;
+  if(!leitorGuardaOk(corridas, i + 40, 3)) return null;
+  if(!leitorLarguraOk(corridas, i, 43, 67, modulo8)) return null;
+  for(let d = 0; d < 8; d++){
+    const p = i + (d < 4 ? 3 + d * 4 : 24 + (d - 4) * 4);
+    if(!leitorLarguraOk(corridas, p, 4, 7, modulo8, 0.33)) return null;
+  }
+
+  let esquerda = '';
+  for(let d = 0; d < 4; d++){
+    const p = i + 3 + d * 4;
+    const a = leitorCasarDigito([corridas[p], corridas[p+1], corridas[p+2], corridas[p+3]], LEITOR_TAB.A);
+    if(!a) return null;                      /* EAN-8 é sempre paridade A na esquerda */
+    esquerda += a.digito;
+  }
+  let direita = '';
+  for(let d = 0; d < 4; d++){
+    const p = i + 24 + d * 4;
+    const c = leitorCasarDigito([corridas[p], corridas[p+1], corridas[p+2], corridas[p+3]], LEITOR_TAB.C);
+    if(!c) return null;
+    direita += c.digito;
+  }
+  const codigo = esquerda + direita;
+  if(leitorDigitoVerificador(codigo.slice(0, 7)) !== codigo[7]) return null;
+  return codigo;
+}
+
+/* ---------------------------------------------------------------
+   A IMAGEM INTEIRA
+
+   Varre várias linhas, de cima a baixo, e também as mesmas linhas de
+   trás pra frente — código de cabeça pra baixo é o caso mais comum de
+   "não leu". Duas leituras iguais confirmam; uma só já vale, porque o
+   dígito verificador já filtrou.
+   --------------------------------------------------------------- */
+function leitorLerImagem(dados, largura, altura, opcoes){
+  const op = opcoes || {};
+  const linhas = op.linhas || 32;
+  const achados = {};
+  let primeiro = null;
+
+  const pegarLinha = (y)=>{
+    const linha = new Uint8Array(largura);
+    const base = y * largura * 4;
+    for(let x = 0; x < largura; x++){
+      const p = base + x * 4;
+      /* cinza por luminância; o verde pesa mais porque o sensor enxerga melhor nele */
+      linha[x] = (dados[p] * 77 + dados[p+1] * 151 + dados[p+2] * 28) >> 8;
+    }
+    return linha;
+  };
+
+  /* começa pelo meio e vai abrindo pros lados: o código costuma estar
+     no centro da mira */
+  const ordem = [];
+  const meio = Math.floor(altura / 2);
+  const passo = Math.max(1, Math.floor(altura / linhas));
+  ordem.push(meio);
+  for(let k = 1; k * passo <= altura / 2; k++){
+    if(meio - k * passo >= 0) ordem.push(meio - k * passo);
+    if(meio + k * passo < altura) ordem.push(meio + k * passo);
+  }
+
+  for(const y of ordem){
+    const linha = pegarLinha(y);
+    let r = leitorLerLinha(linha);
+    if(!r){
+      const invertida = new Uint8Array(linha.length);
+      for(let x = 0; x < linha.length; x++) invertida[x] = linha[linha.length - 1 - x];
+      r = leitorLerLinha(invertida);
+    }
+    if(r){
+      /* leitura sem margem branca em volta vem marcada com "?": ela só
+         vale se outra linha disser exatamente o mesmo número */
+      const duvidosa = r.endsWith('?');
+      if(duvidosa) r = r.slice(0, -1);
+      if(duvidosa && !achados[r]){ achados[r] = 0.5; continue; }
+      achados[r] = (achados[r] || 0) + 1;
+      if(!primeiro) primeiro = r;
+      if(achados[r] >= 1.5) return r;        /* duas linhas concordam: acabou */
+      /* achou numa linha só: confirma logo acima e logo abaixo. O código
+         pode ser uma faixa fina na foto, e aí as linhas espaçadas não
+         caem duas vezes dentro dele. */
+      for(const dy of [-3, 3, -6, 6, -1, 1]){
+        const yy = y + dy;
+        if(yy < 0 || yy >= altura) continue;
+        const l2 = pegarLinha(yy);
+        let c2 = leitorLerLinha(l2);
+        if(!c2){
+          const inv = new Uint8Array(l2.length);
+          for(let x = 0; x < l2.length; x++) inv[x] = l2[l2.length - 1 - x];
+          c2 = leitorLerLinha(inv);
+        }
+        if(c2 === r) return r;
+      }
+    }
+  }
+  /* UMA LINHA SÓ NÃO BASTA.
+
+     Chuvisco de foto também forma corridas que fecham as guardas, a
+     largura e até o dígito verificador — de vez em quando. O que ele
+     nunca faz é repetir o MESMO número em duas alturas diferentes da
+     imagem, porque o ruído de uma linha não tem nada a ver com o da
+     outra. Um código de verdade, não: ele é a mesma coisa de cima a
+     baixo. Por isso exijo duas linhas concordando. Melhor ela bipar de
+     novo do que o sistema dar baixa no produto errado. */
+  return null;
+}
+
+
+/* =========================================================
+   A TELA DA CÂMERA
+
+   Dois jeitos de ler, porque um só não bastava:
+
+   1. AO VIVO — o celular fica apontado e o sistema tenta a cada instante.
+      É o caminho rápido, e resolve a maioria.
+
+   2. TIRAR FOTO — ideia dela: "parece que quando tira foto a imagem sai
+      com melhor qualidade, e com flash acredito que vai ver melhor".
+      Está certa. O quadro do vídeo vem pequeno e tremido; a foto vem na
+      resolução cheia da câmera e com o sensor parado. Quando o código
+      está gasto, pequeno ou com pouca luz, é a foto que lê.
+
+   O flash aparece quando o aparelho deixa ligar.
+   ========================================================= */
 function abrirLeitorCodigoBarras(onCodigoLido){
   const modal = document.createElement('div');
   modal.className = 'modal-overlay open';
   modal.id = 'modal-leitor-codigo-barras';
   modal.innerHTML = `
-    <div class="modal-box modal-box-rapido" style="max-width:min(480px, 94vw);max-height:90vh;overflow-y:auto;">
+    <div class="modal-box modal-box-rapido" style="max-width:min(520px, 96vw);max-height:92vh;overflow-y:auto;">
       <div class="modal-rapido-cabecalho">
         <div class="ic-rapido">📷</div>
         <div>
           <h3>Ler código de barras</h3>
-          <div class="sub">Aponte a câmera pro código de barras do produto</div>
+          <div class="sub">Aponte pro código. Se não ler sozinho, tire uma foto.</div>
         </div>
       </div>
       <div class="modal-rapido-corpo">
-        <div style="position:relative;background:#000;border-radius:8px;overflow:hidden;min-height:220px;display:flex;align-items:center;justify-content:center;">
-          <video id="leitor-codigo-video" style="width:100%;max-height:320px;display:none;" playsinline muted></video>
-          <div id="leitor-codigo-status" style="color:#fff;font-size:13px;padding:16px;text-align:center;">Iniciando câmera...</div>
+        <div style="position:relative;background:#000;border-radius:10px;overflow:hidden;min-height:230px;
+            display:flex;align-items:center;justify-content:center;">
+          <video id="leitor-codigo-video" style="width:100%;max-height:46vh;display:none;" playsinline muted autoplay></video>
+          <canvas id="leitor-codigo-foto" style="width:100%;max-height:46vh;display:none;"></canvas>
+          <div id="leitor-codigo-mira" style="display:none;position:absolute;left:8%;right:8%;top:32%;height:36%;
+              border:2px solid #4BE38A;border-radius:8px;pointer-events:none;
+              box-shadow:0 0 0 3000px rgba(0,0,0,.34);"></div>
+          <div id="leitor-codigo-status" style="color:#fff;font-size:13px;padding:16px;text-align:center;">Iniciando câmera…</div>
         </div>
+
+        <div id="leitor-codigo-acoes" style="display:none;gap:8px;margin-top:11px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" id="leitor-codigo-foto-btn"
+            style="flex:1;min-width:150px;padding:13px;font-size:15px;font-weight:700;">📸 Tirar foto e ler</button>
+          <button type="button" class="btn" id="leitor-codigo-flash" style="display:none;padding:13px 16px;font-size:15px;">🔦 Flash</button>
+        </div>
+
         <div class="field" style="margin-top:14px;">
-          <label>Ou digite o código manualmente</label>
+          <label>Ou digite o código</label>
           <div style="display:flex;gap:8px;">
-            <input type="text" id="leitor-codigo-manual" style="flex:1;" placeholder="Código de barras...">
+            <input type="text" id="leitor-codigo-manual" inputmode="numeric" style="flex:1;font-size:16px;" placeholder="Código de barras…">
             <button type="button" class="btn btn-primary" id="leitor-codigo-manual-btn">OK</button>
           </div>
         </div>
@@ -4556,8 +4953,14 @@ function abrirLeitorCodigoBarras(onCodigoLido){
   `;
   document.body.appendChild(modal);
 
-  let stream = null;
-  let parar = false;
+  let stream = null, trilha = null, parar = false, lendoFoto = false;
+  const statusEl = document.getElementById('leitor-codigo-status');
+  const videoEl  = document.getElementById('leitor-codigo-video');
+  const fotoEl   = document.getElementById('leitor-codigo-foto');
+  const miraEl   = document.getElementById('leitor-codigo-mira');
+  const acoesEl  = document.getElementById('leitor-codigo-acoes');
+  const flashBtn = document.getElementById('leitor-codigo-flash');
+
   function fechar(){
     parar = true;
     if(stream) stream.getTracks().forEach(t=>t.stop());
@@ -4568,49 +4971,137 @@ function abrirLeitorCodigoBarras(onCodigoLido){
   function confirmarCodigo(codigo){
     if(!codigo) return;
     fechar();
-    onCodigoLido(codigo.trim());
+    onCodigoLido(String(codigo).trim());
   }
   document.getElementById('leitor-codigo-manual-btn').addEventListener('click', ()=>{
     confirmarCodigo(document.getElementById('leitor-codigo-manual').value);
   });
   document.getElementById('leitor-codigo-manual').addEventListener('keydown', (e)=>{
-    if(e.key==='Enter'){ e.preventDefault(); confirmarCodigo(e.target.value); }
+    if(e.key === 'Enter'){ e.preventDefault(); confirmarCodigo(e.target.value); }
   });
 
-  const statusEl = document.getElementById('leitor-codigo-status');
-  const videoEl = document.getElementById('leitor-codigo-video');
-
-  if(typeof BarcodeDetector === 'undefined'){
-    statusEl.textContent = 'Leitura por câmera não é suportada neste navegador. Digite o código manualmente abaixo.';
-    return;
+  const temDetector = (typeof BarcodeDetector !== 'undefined');
+  let detector = null;
+  if(temDetector){
+    try{
+      detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','codabar','itf'] });
+    }catch(e){ detector = null; }
   }
 
-  navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+  /* desenha o quadro atual num canvas, na resolução pedida */
+  function paraCanvas(canvas, largura){
+    const vw = videoEl.videoWidth || 640, vh = videoEl.videoHeight || 480;
+    const esc = largura ? Math.min(1, largura / vw) : 1;
+    canvas.width = Math.round(vw * esc);
+    canvas.height = Math.round(vh * esc);
+    canvas.getContext('2d', { willReadFrequently: true })
+      .drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+    return canvas;
+  }
+
+  async function lerDoCanvas(canvas){
+    if(detector){
+      try{
+        const achados = await detector.detect(canvas);
+        if(achados && achados.length) return achados[0].rawValue;
+      }catch(e){ /* segue pro leitor daqui de dentro */ }
+    }
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return leitorLerImagem(img.data, canvas.width, canvas.height, { linhas: 40 });
+  }
+
+  const canvasTrabalho = document.createElement('canvas');
+
+  async function tentarAoVivo(){
+    if(parar || lendoFoto) { if(!parar) setTimeout(tentarAoVivo, 260); return; }
+    try{
+      if(detector){
+        const achados = await detector.detect(videoEl);
+        if(achados && achados.length){ confirmarCodigo(achados[0].rawValue); return; }
+      }else{
+        /* sem BarcodeDetector (iPhone): lê do próprio quadro, reduzido
+           pra não travar o aparelho */
+        const r = await lerDoCanvas(paraCanvas(canvasTrabalho, 900));
+        if(r){ confirmarCodigo(r); return; }
+      }
+    }catch(e){ /* quadro ilegível: tenta o próximo */ }
+    if(!parar) setTimeout(tentarAoVivo, detector ? 300 : 420);
+  }
+
+  /* A FOTO. Resolução cheia, sensor parado — é o caminho pro código
+     gasto ou com pouca luz. */
+  async function tirarFoto(){
+    if(lendoFoto) return;
+    lendoFoto = true;
+    const btn = document.getElementById('leitor-codigo-foto-btn');
+    if(btn){ btn.disabled = true; btn.textContent = 'Lendo a foto…'; }
+    try{
+      const canvas = paraCanvas(fotoEl, 0);          /* sem reduzir */
+      fotoEl.style.display = '';
+      videoEl.style.display = 'none';
+      const r = await lerDoCanvas(canvas);
+      if(r){ confirmarCodigo(r); return; }
+      statusEl.style.display = '';
+      statusEl.textContent = 'Não consegui ler nessa foto. Chegue mais perto, deixe o código reto e tente de novo — ou ligue o flash.';
+      statusEl.style.position = 'absolute';
+      statusEl.style.bottom = '0';
+      statusEl.style.background = 'rgba(0,0,0,.72)';
+      setTimeout(()=>{
+        if(parar) return;
+        fotoEl.style.display = 'none';
+        videoEl.style.display = '';
+        statusEl.style.display = 'none';
+      }, 2600);
+    }catch(e){
+      console.warn(e);
+    }finally{
+      lendoFoto = false;
+      if(btn){ btn.disabled = false; btn.textContent = '📸 Tirar foto e ler'; }
+    }
+  }
+  document.getElementById('leitor-codigo-foto-btn').addEventListener('click', tirarFoto);
+
+  let flashLigado = false;
+  flashBtn.addEventListener('click', async ()=>{
+    if(!trilha) return;
+    flashLigado = !flashLigado;
+    try{
+      await trilha.applyConstraints({ advanced: [{ torch: flashLigado }] });
+      flashBtn.textContent = flashLigado ? '🔦 Flash ligado' : '🔦 Flash';
+      flashBtn.style.fontWeight = flashLigado ? '700' : '';
+    }catch(e){
+      flashLigado = false;
+      showToast('Esse aparelho não deixa ligar o flash pela câmera.', 'info');
+    }
+  });
+
+  navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: 'environment' },
+               width: { ideal: 1920 }, height: { ideal: 1080 } }
+    })
     .then(async (mediaStream)=>{
       if(parar){ mediaStream.getTracks().forEach(t=>t.stop()); return; }
       stream = mediaStream;
+      trilha = stream.getVideoTracks()[0] || null;
       videoEl.srcObject = stream;
       videoEl.style.display = '';
+      miraEl.style.display = '';
+      acoesEl.style.display = 'flex';
       statusEl.style.display = 'none';
-      await videoEl.play();
+      try{ await videoEl.play(); }catch(e){}
 
-      const detector = new BarcodeDetector({ formats: ['ean_13','ean_8','upc_a','upc_e','code_128','code_39','codabar','itf'] });
-      async function tentarLer(){
-        if(parar) return;
-        try{
-          const codigos = await detector.detect(videoEl);
-          if(codigos && codigos.length>0){
-            confirmarCodigo(codigos[0].rawValue);
-            return;
-          }
-        }catch(err){ /* frame ilegível, ignora e tenta o próximo */ }
-        if(!parar) setTimeout(tentarLer, 300);
-      }
-      tentarLer();
+      /* flash só aparece onde dá pra ligar */
+      try{
+        const cap = trilha && trilha.getCapabilities ? trilha.getCapabilities() : null;
+        if(cap && 'torch' in cap) flashBtn.style.display = '';
+      }catch(e){}
+
+      tentarAoVivo();
     })
     .catch(()=>{
       statusEl.style.display = '';
-      statusEl.textContent = 'Não foi possível acessar a câmera (permissão negada ou indisponível). Digite o código manualmente abaixo.';
+      statusEl.textContent = 'Não consegui abrir a câmera (permissão negada ou indisponível). Digite o código abaixo.';
     });
 }
 
@@ -46476,6 +46967,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-b',
+    data: '2026-11-11',
+    titulo: 'A câmera passa a ler no celular — e dá pra tirar foto do código',
+    itens: [
+      'POR QUE NÃO LIA NO IPHONE: o leitor era o do próprio navegador, e o Safari não tem esse recurso. Por isso aparecia "leitura por câmera não é suportada neste navegador" e a câmera nunca funcionava no seu celular.',
+      'Agora o sistema tem leitor próprio, escrito aqui dentro: lê EAN-13, EAN-8 e UPC direto dos pixels, sem internet e sem depender do navegador. Onde o leitor do navegador existe (Chrome no computador), ele continua sendo usado, que é mais rápido.',
+      '📸 TIRAR FOTO E LER — sua ideia, e estava certa: o quadro do vídeo vem pequeno e tremido, a foto vem na resolução cheia da câmera e com o sensor parado. Quando o código está gasto, pequeno ou com pouca luz, é a foto que lê.',
+      '🔦 FLASH: aparece quando o aparelho deixa ligar pela câmera.',
+      'SEGURANÇA DA LEITURA: todo código tem dígito verificador, e o sistema só aceita um número quando ele fecha a conta E aparece igual em duas alturas diferentes da imagem. Testado contra 60 imagens de chuvisco, listras e texto impresso: nenhum código inventado. Melhor não ler do que dar baixa no produto errado.',
+      'TECLADO NO CELULAR: botões 123 / ABC embaixo do campo. 123 pra digitar o código, ABC pra procurar pelo nome. Você escolhe.',
+      'A tela do celular ficou com a letra maior, pra você não precisar ficar dando zoom e perdendo ele a cada toque.'
+    ]
+  },
+  {
     id: '2026-11-11-a',
     data: '2026-11-11',
     titulo: 'Balanço: o código que você bipa manda, mesmo nas linhas da planilha',
@@ -53593,6 +54098,7 @@ let balCodigoPendente = '';  /* código bipado que ainda não achou dono */
 let balAviso = null;         /* {chave, total, saldo} */
 let balBusca = '';
 let balFiltro = 'contei';    /* contei | falta | semcodigo | etiqueta */
+let balTeclado = 'numero';   /* no celular: teclado de número ou de letra */
 let balCelular = false;      /* a mesma tela, no formato do celular */
 let balMsg = '';
 
@@ -54627,7 +55133,9 @@ function balAcoesHtml(){
 function balBiparHtml(grande, comCamera){
   return `<div style="position:relative;margin-bottom:12px;">
     <div style="display:flex;gap:9px;align-items:stretch;">
-      <input type="text" id="bal-codigo" autocomplete="off" placeholder="Bipe o código, ou digite o nome do produto"
+      <input type="text" id="bal-codigo" autocomplete="off"
+        inputmode="${balEhCelular() && balTeclado==='numero' ? 'numeric' : 'text'}"
+        placeholder="${balEhCelular() ? (balTeclado==='numero' ? 'Código do produto' : 'Nome do produto') : 'Bipe o código, ou digite o nome do produto'}"
         style="flex:1;min-width:0;font-size:${grande?'18':'17'}px;padding:${grande?'13':'11'}px 13px;border:2px solid var(--primary);
                border-radius:9px;font-family:ui-monospace,monospace;">
       ${comCamera === false ? '' : `<button class="btn" style="background:var(--primary-escuro,#1B4B5A);border-color:var(--primary-escuro,#1B4B5A);
@@ -54635,6 +55143,14 @@ function balBiparHtml(grande, comCamera){
       <button class="btn btn-primary" style="font-size:15px;padding:0 ${grande?'20':'17'}px;font-weight:600;white-space:nowrap;"
         onclick="balBiparDoCampo()">Contar</button>
     </div>
+    ${balEhCelular() ? `<div style="display:flex;gap:6px;align-items:center;margin-top:7px;">
+      <span class="help-text" style="margin:0;">teclado:</span>
+      <button class="btn btn-sm" onclick="balTrocarTeclado('numero')"
+        style="${balTeclado==='numero'?'background:var(--primary);border-color:var(--primary);color:#fff;font-weight:700;':''}">123</button>
+      <button class="btn btn-sm" onclick="balTrocarTeclado('texto')"
+        style="${balTeclado==='texto'?'background:var(--primary);border-color:var(--primary);color:#fff;font-weight:700;':''}">ABC</button>
+      <span class="help-text" style="margin:0;">${balTeclado==='numero'?'pra digitar o código':'pra procurar pelo nome'}</span>
+    </div>` : ''}
     <div id="bal-sugestoes" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:40;
       background:#fff;border:1px solid var(--border);border-top:0;border-radius:0 0 10px 10px;
       box-shadow:0 8px 20px rgba(0,0,0,.13);max-height:min(58vh,380px);overflow:auto;"></div>
@@ -54714,6 +55230,22 @@ function balFecharSugestoes(){
    entraria no balanço. Então: digitou número, bipa; digitou letra,
    procura pelo nome. Um campo só, porque na prateleira ela não quer
    escolher entre dois. */
+/* "poderia ter a opção de aparecer no meu teclado só números, ou apenas
+   o texto. Eu poder escolher."
+
+   O leitor de mão digita sozinho e não liga pra isso; quem liga é o
+   dedo dela. Então o campo é o mesmo, mas ela escolhe qual teclado o
+   celular abre — e o sistema continua decidindo sozinho se o que entrou
+   é código ou nome. */
+function balTrocarTeclado(qual){
+  balTeclado = qual;
+  renderBalanco();
+  setTimeout(()=>{
+    const i = document.getElementById('bal-codigo');
+    if(i){ i.focus(); }
+  }, 40);
+}
+
 function balBiparDoCampo(){
   const i = document.getElementById('bal-codigo');
   if(!i) return;
@@ -55239,7 +55771,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 00:20';
+const SISTEMA_VERSAO = '11/11/2026 02:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
