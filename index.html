@@ -47041,6 +47041,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-g',
+    data: '2026-11-11',
+    titulo: 'Tela Vincular: resolver tudo sentada, antes do balanço',
+    itens: [
+      'IDEIA SUA, E É A MELHOR DESTA SEMANA. Vincular no meio da contagem é a pior hora possível: você está de pé, com o produto na mão, e o sistema para pra perguntar se aquilo é o mesmo item de um cadastro que você não está vendo — mil e quatrocentas vezes. Agora tem a aba 🔗 VINCULAR na Conferência, pra fazer isso sentada, antes. O que você resolver lá não pergunta mais nada no balanço: bipa, diz quanto tem, segue.',
+      'EM CIMA, as linhas da ECOVILLE sem vínculo, com sugestão por nome, busca manual e o botão "não tem igual aqui" pro que é só deles. Contador de quantas faltam.',
+      'EMBAIXO, os produtos só do nosso cadastro — pra você varrer depois de terminar o comodato, como você falou. Em cada um aparece a linha da planilha que sobrou parecida, e o produto que pode estar cadastrado duas vezes.',
+      'A REGRA É A SUA: a planilha manda. Custo, venda e quantidade continuam sendo os da ECOVILLE — vincular não encosta neles. O seu cadastro só preenche o que está em branco: NCM, fornecedor, unidade e código de barras. Nunca por cima. E isso mudou também no balanço: antes o custo que aparecia era o do cadastro, agora é o da planilha.',
+      'UM BURACO SÉRIO QUE EU ACHEI NO MEIO DISSO: quando você juntava um item no balanço, o vínculo ficava só na memória. Ao reabrir o sistema, ele refazia o casamento pelo código de barras e a sua escolha sumia — e como é justamente o código de barras que não acha esses itens, sumia sempre. Você estava refazendo trabalho sem saber. Agora a sua escolha é gravada e manda mais que o código.',
+      'JUNTAR DOIS PRODUTOS NOSSOS repetidos: você escolhe qual é o válido, o estoque dos dois é somado nele, e as vendas antigas continuam exatamente como foram no dia — nome, preço e quantidade não mudam. Só o vínculo passa pro válido, pra que daqui pra frente caia no item certo.',
+      'E O CÓDIGO DA AGUA PASSAR: o balanço mostrava 7908662100676 e a Conferência dizia "sem código". Os dois estavam certos — o código estava na linha da planilha, não no cadastro. Agora a Conferência mostra o código e de onde ele vem, com o botão "usar no cadastro" no lugar do "gerar", pra você não criar um código interno pra um produto que já tem o de verdade na embalagem.'
+    ]
+  },
+  {
     id: '2026-11-11-f',
     data: '2026-11-11',
     titulo: 'O ícone da foto agora é botão — e o fundo não é mais apagado sozinho',
@@ -52669,7 +52683,14 @@ async function confCarregarGuardada(){
       CONF_LINHAS = g.linhas.map(l=>{
         const achados = l.barras ? (ix.get(l.barras) || []) : [];
         /* nomeEscolhido, unidade e ncm vêm no próprio l: são a decisão
-           dela, e precisam voltar igual quando ela reabre a tela */
+           dela, e precisam voltar igual quando ela reabre a tela.
+           E a mão dela manda mais que o código de barras: se ela
+           vinculou na tela Vincular, é esse produto, mesmo que a barra
+           da planilha aponte pra outro (ou pra nenhum). */
+        const meu = l.produtoIdEscolhido
+          ? (STATE.produtos||[]).find(p=>p.id === l.produtoIdEscolhido)
+          : null;
+        if(meu) return Object.assign({}, l, { produto: meu, produtoId: meu.id, ambiguo: false });
         return Object.assign({}, l, { produto: achados[0] || null,
                                       produtoId: achados[0] ? achados[0].id : null,
                                       ambiguo: achados.length > 1 });
@@ -52687,6 +52708,10 @@ function confRecasar(){
   if(!CONF_LINHAS) return;
   const ix = confIndiceProdutos();
   CONF_LINHAS.forEach(l=>{
+    const meu = l.produtoIdEscolhido
+      ? (STATE.produtos||[]).find(p=>p.id === l.produtoIdEscolhido)
+      : null;
+    if(meu){ l.produto = meu; l.produtoId = meu.id; l.ambiguo = false; return; }
     const achados = l.barras ? (ix.get(l.barras) || []) : [];
     l.produto = achados[0] || null;
     l.produtoId = achados[0] ? achados[0].id : null;
@@ -53167,6 +53192,8 @@ function confAbasHtml(){
   };
   return `<div style="border-bottom:1px solid var(--border);margin-bottom:14px;">
     ${aba('comodato','📋 Comodato (planilha)')}
+    ${aba('vincular', '🔗 Vincular' + (typeof vincPendentes === 'function' && CONF_LINHAS
+        ? ` <span style="font-weight:400;color:var(--ink-soft);">${vincPendentes().length}</span>` : ''))}
     ${aba('loja','🏪 Produtos da loja')}
     ${confBalancoDoRelatorio() ? aba('relatorio','📊 Relatório do balanço') : ''}
   </div>`;
@@ -53315,6 +53342,27 @@ function relDiferenca(l){
 
 /* Bipar o código direto no relatório: mesmo caso do balanço, só que
    aqui ela está acertando o cadastro, não contando. */
+/* O código estava na planilha e não no cadastro. Um toque resolve —
+   mas só se ele fechar o dígito verificador: a planilha da ECOVILLE tem
+   código digitado errado (o 7992020000114 é um 8 que virou 9) e código
+   de enchimento. Gravar um desses no cadastro só ia aparecer lá na
+   frente, na hora de emitir a nota. */
+function relUsarCodigoDaPlanilha(produtoId, codigo){
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  const d = String(codigo||'').replace(/\D/g,'');
+  if(!p || !d) return;
+  if(![8,12,13,14].includes(d.length) || !balGtinValido(d)){
+    showToast(`${d} não fecha o dígito verificador — esse código está errado na planilha. Bipe o da embalagem.`, 'error');
+    return;
+  }
+  p.codigoBarras = d;
+  p.tipoBarras = '';
+  saveState();
+  balRecarregarCatalogo();
+  renderConferencia();
+  showToast(`${d} gravado no cadastro de "${p.nome}".`, 'success');
+}
+
 function relBiparCodigo(produtoId){
   const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
   if(!p) return;
@@ -53380,13 +53428,30 @@ function relTabela(lista){
             <div class="help-text" style="margin:0;">${escapeHtml(p.sku||'sem código interno')}${
               it.comodato?` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}</span>`:''}${
               l.etiqueta?' · 🏷️ etiqueta':''}</div></td>
-          <td>${String(p.codigoBarras||'').trim()
-              ? lojaCampo(p, 'codigoBarras', p.codigoBarras)
-              : `<span style="color:var(--negative);font-size:12px;">sem código</span>`}
+          <td>${(()=>{
+            const meu = String(p.codigoBarras||'').trim();
+            if(meu) return lojaCampo(p, 'codigoBarras', meu);
+            /* O QUE ELA VIU: o balanço mostrava 7908662100676 na AGUA PASSAR
+               e aqui aparecia "sem código". Os dois estavam certos olhando
+               lugares diferentes — o código está na LINHA DA PLANILHA, não
+               no cadastro. Ficar calado era o pior dos mundos: do lado do
+               "sem código" tem o botão GERAR, e ela ia criar um código
+               interno pra um produto que já tem código de verdade na
+               embalagem. Então mostro de onde ele vem, e escondo o gerar. */
+            const daPlanilha = String((it.codigos||[])[0]||'').trim();
+            if(daPlanilha) return `<span style="font-size:12px;">${escapeHtml(daPlanilha)}</span>
+              <div class="help-text" style="margin:0;font-size:11px;color:var(--warning,#8A5D14);">
+                vem da planilha ${escapeHtml(CONF_FORNECEDOR_PADRAO)} — não está no cadastro</div>`;
+            return `<span style="color:var(--negative);font-size:12px;">sem código</span>`;
+          })()}
             <div class="help-text" style="margin:1px 0 0;">
               <button class="btn btn-sm" style="padding:0 6px;" onclick="relBiparCodigo('${escapeAttr(p.id)}')"
                 title="Ler o código impresso na embalagem">📷 bipar</button>
-              <button class="btn btn-sm" style="padding:0 6px;" onclick="lojaGerarBarras('${escapeAttr(p.id)}')">gerar</button>
+              ${String(p.codigoBarras||'').trim() || !String((it.codigos||[])[0]||'').trim()
+                ? `<button class="btn btn-sm" style="padding:0 6px;" onclick="lojaGerarBarras('${escapeAttr(p.id)}')">gerar</button>`
+                : `<button class="btn btn-sm" style="padding:0 6px;"
+                     onclick="relUsarCodigoDaPlanilha('${escapeAttr(p.id)}','${escapeAttr(String((it.codigos||[])[0]||''))}')"
+                     title="Grava esse código no cadastro do produto">usar no cadastro</button>`}
             </div></td>
           <td>${lojaCampo(p, 'unidade', p.unidade)}</td>
           <td>${lojaCampo(p, 'ncm', p.ncm ? ncmFormatado(p.ncm) : '', 'Clique e procure por nome')}</td>
@@ -53409,6 +53474,516 @@ function relTabela(lista){
   </div>`;
 }
 
+/* =========================================================
+   VINCULAR — a tela que ela pediu, e que muda a ordem das coisas
+
+   "e se criarmos um menu onde vou poder em cada item vincular um
+    produto já cadastrado... pra que quando eu for fazer o balanço ele
+    já não vai aparecer aquele produto mais pra vincular, vai resolver o
+    problema do balanço ter que ficar vinculando um por vez"
+
+   Está certíssima. Vincular no meio da contagem é a pior hora: ela está
+   de pé, com o produto na mão, e o sistema para pra perguntar se aquilo
+   é o mesmo item de um cadastro que ela não está vendo. Mil e
+   quatrocentas vezes. Aqui ela faz isso sentada, antes, com calma, e o
+   balanço vira o que tem que ser: bipa, diz quanto tem, segue.
+
+   A REGRA QUE ELA DITOU, e que vale pra tudo nesta tela:
+
+     "produto que tem Mizu e comodato segue planilha, e dados do
+      produto Mizu só preenche lacunas vazias"
+
+   Ou seja: a linha da ECOVILLE é a base. Custo, venda e quantidade são
+   os dela e não se mexe. O cadastro da loja entra só onde a planilha
+   está em branco — NCM, fornecedor, unidade, código de barras. Nunca
+   por cima.
+
+   DUAS LISTAS, NESSA ORDEM — também decisão dela:
+
+     em cima  : linhas da planilha sem vínculo
+     embaixo  : produtos só do cadastro, "porque depois que eu finalizar
+                os vínculos do comodato eu vou para os nossos, porque
+                pode acontecer de ter mesmo produto"
+
+   E nada é marcado sozinho. Ela toca um por um — a sugestão por nome
+   erra, e erro aqui vira nota fiscal errada depois.
+   ========================================================= */
+
+let vincBusca = '';
+let vincBuscaLoja = '';
+let vincAberto = null;        /* id da linha com a busca manual aberta */
+let vincBuscaManual = '';
+let vincAbertoProd = null;    /* id do produto com a busca manual aberta */
+let vincMostrarResolvidos = false;
+
+/* ---- quem já está resolvido e quem não está ---- */
+
+function vincLinhas(){
+  return (CONF_LINHAS || []).slice();
+}
+
+function vincPendentes(){
+  return vincLinhas().filter(l => !l.produtoId && !l.semIgual);
+}
+
+function vincResolvidas(){
+  return vincLinhas().filter(l => l.produtoId || l.semIgual);
+}
+
+/* produtos que ainda não estão amarrados a nenhuma linha da planilha */
+function vincProdutosLivres(){
+  const presos = new Set();
+  vincLinhas().forEach(l=>{ if(l.produtoId) presos.add(l.produtoId); });
+  return (STATE.produtos||[]).filter(p=>!presos.has(p.id));
+}
+
+/* ---- índice de palavras, feito uma vez por render ---- */
+function vincIndiceProdutos(lista){
+  return lista.map(p=>({ p, palavras: balPalavrasDoNome(p.nome) }));
+}
+
+function vincParecidos(nome, indice, quantos){
+  const minhas = balPalavrasDoNome(nome);
+  if(minhas.length === 0) return [];
+  const precisa = Math.min(2, minhas.length);
+  const saida = [];
+  indice.forEach(({p, palavras})=>{
+    if(palavras.length === 0) return;
+    let juntas = 0;
+    for(let i = 0; i < minhas.length; i++) if(palavras.includes(minhas[i])) juntas++;
+    if(juntas >= precisa) saida.push({ p, juntas });
+  });
+  return saida.sort((a,b)=>b.juntas - a.juntas).slice(0, quantos || 4);
+}
+
+/* ---------------------------------------------------------------
+   PREENCHER LACUNA — o coração da regra dela
+
+   Os dois lados se completam, e nenhum dos dois sobrescreve o outro.
+   O que já tem valor fica como está, dos dois lados.
+
+   O código de barras tem um cuidado a mais: só passa pro cadastro se
+   fechar o dígito verificador. Na planilha da ECOVILLE tem código de
+   enchimento (0000000000003) e tem código digitado errado — gravar
+   isso no cadastro seria plantar um problema que só ia aparecer na
+   hora de emitir a nota.
+   --------------------------------------------------------------- */
+function vincPreencherLacunas(l, p){
+  if(!l || !p) return [];
+  const feitos = [];
+
+  /* planilha -> cadastro */
+  if(!String(p.ncm||'').trim() && String(l.ncm||'').trim()){
+    p.ncm = ncmSo8(l.ncm); feitos.push('NCM do cadastro');
+  }
+  if(!String(p.unidade||'').trim() && String(l.unidade||'').trim()){
+    p.unidade = l.unidade; feitos.push('unidade do cadastro');
+  }
+  const barraDaLinha = String(l.barras||'').replace(/\D/g,'');
+  if(!String(p.codigoBarras||'').trim() && barraDaLinha
+     && [8,12,13,14].includes(barraDaLinha.length) && balGtinValido(barraDaLinha)){
+    p.codigoBarras = barraDaLinha; p.tipoBarras = '';
+    feitos.push('código de barras do cadastro');
+  }
+
+  /* cadastro -> planilha */
+  if(!String(l.ncm||'').trim() && String(p.ncm||'').trim()){
+    l.ncm = ncmSo8(p.ncm); feitos.push('NCM da linha');
+  }
+  if(!String(l.unidade||'').trim() && String(p.unidade||'').trim()){
+    l.unidade = p.unidade; feitos.push('unidade da linha');
+  }
+  if(!String(l.fornecedorEscolhido||'').trim() && String(p.fornecedor||'').trim()){
+    l.fornecedorEscolhido = p.fornecedor; feitos.push('fornecedor');
+  }
+
+  /* o item é da ECOVILLE a partir de agora */
+  p.comodato = true;
+  p.comodatoDe = p.comodatoDe || CONF_FORNECEDOR_PADRAO;
+
+  return feitos;
+}
+
+/* ---- as ações ---- */
+
+function vincLinhaPorId(id){
+  return (CONF_LINHAS||[]).find(l=>l.id === id) || null;
+}
+
+function vincVincular(linhaId, produtoId){
+  const l = vincLinhaPorId(linhaId);
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(!l || !p) return;
+
+  const jaTem = (CONF_LINHAS||[]).find(x=>x.produtoId === p.id && x.id !== l.id);
+  if(jaTem){
+    showToast(`"${p.nome}" já está vinculado a outra linha da planilha.`, 'error');
+    return;
+  }
+
+  l.produtoId = p.id;
+  l.produtoIdEscolhido = p.id;
+  l.produto = p;
+  l.semIgual = false;
+  const feitos = vincPreencherLacunas(l, p);
+
+  confGuardarLinhas();
+  saveState();
+  balRecarregarCatalogo();
+  vincAberto = null; vincBuscaManual = '';
+  renderConferencia();
+  showToast(feitos.length
+    ? `Vinculado. Preenchi o que estava vazio: ${feitos.join(', ')}.`
+    : 'Vinculado.', 'success');
+}
+
+function vincDesvincular(linhaId){
+  const l = vincLinhaPorId(linhaId);
+  if(!l) return;
+  l.produtoId = null;
+  l.produtoIdEscolhido = null;
+  l.produto = null;
+  confGuardarLinhas();
+  saveState();
+  balRecarregarCatalogo();
+  renderConferencia();
+  showToast('Vínculo desfeito. O que foi preenchido continua no cadastro.', 'success');
+}
+
+function vincSemIgual(linhaId){
+  const l = vincLinhaPorId(linhaId);
+  if(!l) return;
+  l.semIgual = true;
+  confGuardarLinhas();
+  saveState();
+  renderConferencia();
+}
+
+function vincVoltarPraLista(linhaId){
+  const l = vincLinhaPorId(linhaId);
+  if(!l) return;
+  l.semIgual = false;
+  confGuardarLinhas();
+  saveState();
+  renderConferencia();
+}
+
+function vincAbrirBusca(linhaId){
+  vincAberto = (vincAberto === linhaId) ? null : linhaId;
+  vincBuscaManual = '';
+  renderConferencia();
+}
+
+function vincAbrirBuscaProd(produtoId){
+  vincAbertoProd = (vincAbertoProd === produtoId) ? null : produtoId;
+  vincBuscaManual = '';
+  renderConferencia();
+}
+
+/* ---------------------------------------------------------------
+   JUNTAR DOIS PRODUTOS DA LOJA
+
+   "pode acontecer de ter mesmo produto" — e pode mesmo: o inseticida
+   estava cadastrado duas vezes. Ela confirmou como é pra funcionar:
+   o histórico de venda continua intacto, e daqui pra frente tudo cai
+   no item válido.
+
+   O sistema já sabe fazer isso (mesclarProdutos): ele não reescreve
+   nada das vendas antigas — nome, preço e quantidade de cada venda
+   ficam como foram no dia. O que ele faz é repontar o vínculo daquelas
+   linhas pro produto válido, somar o estoque e guardar o registro da
+   mesclagem. Aqui é só a porta de entrada, com a conferida na frente.
+   --------------------------------------------------------------- */
+function vincJuntarProdutos(baseId, outroId){
+  const base = (STATE.produtos||[]).find(p=>p.id === baseId);
+  const outro = (STATE.produtos||[]).find(p=>p.id === outroId);
+  if(!base || !outro || base.id === outro.id) return;
+
+  const vendasDele = (STATE.vendas||[]).filter(v=>(v.itens||[]).some(it=>it.produtoId === outro.id)).length;
+  const estoqueDele = Number(outro.estoqueAtual||0);
+
+  confirmAction('É o mesmo produto?',
+    `VÁLIDO (fica): ${base.nome}${String(base.codigoBarras||'').trim() ? ' — ' + base.codigoBarras : ' — sem código'}\n`
+    + `SAI: ${outro.nome}${String(outro.codigoBarras||'').trim() ? ' — ' + outro.codigoBarras : ' — sem código'}\n\n`
+    + `O estoque de ${fmtNum(estoqueDele)} passa pro válido.\n`
+    + (vendasDele
+        ? `As ${vendasDele} venda(s) antigas continuam como estão — nome, preço e quantidade do dia não mudam. Só o vínculo passa pro válido, pra que daqui pra frente caia no item certo.\n\n`
+        : `Ele não tem venda registrada.\n\n`)
+    + `O cadastro que sai some da busca de venda, pra você não escolher o errado de novo.`,
+    ()=>{
+      const dados = {
+        nome: base.nome,
+        marca: base.marca || outro.marca || '',
+        fornecedorId: base.fornecedorId || outro.fornecedorId || null,
+        fornecedor: String(base.fornecedor||'').trim() || outro.fornecedor || '',
+        codigoBarras: String(base.codigoBarras||'').trim() || String(outro.codigoBarras||'').trim(),
+        ncm: ncmSo8(String(base.ncm||'').trim() || outro.ncm || ''),
+        custo: Number(base.custo||0) || Number(outro.custo||0),
+        precoVenda: Number(base.precoVenda||0) || Number(outro.precoVenda||0),
+        localCompraId: base.localCompraId || outro.localCompraId || null,
+        ondeComprado: base.ondeComprado || outro.ondeComprado || ''
+      };
+      mesclarProdutos(base.id, [outro.id], dados);
+      /* alguma linha da planilha apontava pro que saiu? passa pro válido */
+      (CONF_LINHAS||[]).forEach(l=>{
+        if(l.produtoIdEscolhido === outro.id) l.produtoIdEscolhido = base.id;
+        if(l.produtoId === outro.id){ l.produtoId = base.id; l.produto = base; }
+      });
+      confGuardarLinhas();
+      saveState();
+      balRecarregarCatalogo();
+      renderConferencia();
+      showToast(`Juntados em "${base.nome}". O histórico ficou intacto.`, 'success');
+    }, 'É o mesmo — juntar');
+}
+
+/* ---- a tela ---- */
+
+function vincTrocarResolvidos(){
+  vincMostrarResolvidos = !vincMostrarResolvidos;
+  renderConferencia();
+}
+
+function vincFiltrar(lista, texto, pegaNome){
+  const q = ncmNormalizar(String(texto||''));
+  if(!q) return lista;
+  return lista.filter(x=>ncmNormalizar(pegaNome(x)).includes(q));
+}
+
+function vincBotaoProduto(p, acao){
+  const barras = String(p.codigoBarras||'').trim();
+  return `<button type="button" class="btn btn-sm" onclick="${acao}"
+    style="text-align:left;max-width:100%;white-space:normal;line-height:1.3;padding:5px 9px;">
+    ${escapeHtml(p.nome)}
+    <span class="help-text" style="display:block;margin:0;font-size:11px;">
+      ${barras ? escapeHtml(barras) : 'sem código'}${p.fornecedor ? ' · ' + escapeHtml(p.fornecedor) : ''}
+      ${Number(p.estoqueAtual||0) ? ' · estoque ' + fmtNum(p.estoqueAtual) : ''}</span>
+  </button>`;
+}
+
+function vincLinhaHtml(l, indice){
+  const nome = l.nomeEscolhido || l.nome || '';
+  const sug = vincParecidos(nome, indice, 4);
+  const aberta = vincAberto === l.id;
+
+  let manual = '';
+  if(aberta){
+    const achados = vincBuscaManual.trim().length >= 2
+      ? vincFiltrar(vincProdutosLivres(), vincBuscaManual, p=>p.nome + ' ' + (p.codigoBarras||'') + ' ' + (p.sku||'')).slice(0, 12)
+      : [];
+    manual = `<div style="margin-top:8px;padding:8px;background:var(--surface-2,#F6F7F8);border-radius:6px;">
+      <input type="text" class="vinc-busca-manual" data-linha="${escapeAttr(l.id)}"
+        value="${escapeAttr(vincBuscaManual)}" placeholder="🔍 Procurar no cadastro pelo nome ou código..."
+        style="width:100%;max-width:420px;">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;">
+        ${achados.length
+          ? achados.map(p=>vincBotaoProduto(p, `vincVincular('${escapeAttr(l.id)}','${escapeAttr(p.id)}')`)).join('')
+          : `<span class="help-text" style="margin:0;">${vincBuscaManual.trim().length >= 2
+              ? 'Nenhum produto livre com esse nome.' : 'Escreva pelo menos 2 letras.'}</span>`}
+      </div>
+    </div>`;
+  }
+
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;">
+      <strong style="flex:1 1 240px;min-width:0;">${escapeHtml(nome)}</strong>
+      <span class="help-text" style="margin:0;">
+        saldo ${fmtNum(l.saldo)} · custo ${fmtMoney(l.custo||0)} · venda ${fmtMoney(l.venda||0)}
+        ${l.barras ? ' · ' + escapeHtml(l.barras) : ' · sem código'}</span>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px;align-items:center;">
+      ${sug.length
+        ? sug.map(x=>vincBotaoProduto(x.p, `vincVincular('${escapeAttr(l.id)}','${escapeAttr(x.p.id)}')`)).join('')
+        : `<span class="help-text" style="margin:0;">Nenhuma sugestão pelo nome.</span>`}
+      <button type="button" class="btn btn-sm" onclick="vincAbrirBusca('${escapeAttr(l.id)}')"
+        style="padding:5px 9px;">${aberta ? 'fechar busca' : '🔍 procurar outro'}</button>
+      <button type="button" class="btn btn-sm" onclick="vincSemIgual('${escapeAttr(l.id)}')"
+        style="padding:5px 9px;" title="Some da lista. É só da ECOVILLE, não existe no seu cadastro.">
+        não tem igual aqui</button>
+    </div>
+    ${manual}
+  </div>`;
+}
+
+function vincProdutoHtml(p, indiceProd, pendentes){
+  /* duas sugestões diferentes: linha de comodato que sobrou, e outro
+     produto do cadastro que pode ser o mesmo item repetido */
+  const minhas = balPalavrasDoNome(p.nome);
+  const precisa = Math.min(2, minhas.length);
+  const linhas = [];
+  if(minhas.length){
+    pendentes.forEach(l=>{
+      const nome = l.nomeEscolhido || l.nome || '';
+      const dele = balPalavrasDoNome(nome);
+      if(!dele.length) return;
+      let juntas = 0;
+      for(let i = 0; i < minhas.length; i++) if(dele.includes(minhas[i])) juntas++;
+      if(juntas >= precisa) linhas.push({ l, nome, juntas });
+    });
+    linhas.sort((a,b)=>b.juntas - a.juntas);
+  }
+  const iguais = vincParecidos(p.nome, indiceProd.filter(x=>x.p.id !== p.id), 3);
+  const aberta = vincAbertoProd === p.id;
+
+  let manual = '';
+  if(aberta){
+    const achados = vincBuscaManual.trim().length >= 2
+      ? vincFiltrar(vincPendentes(), vincBuscaManual, l=>(l.nomeEscolhido||l.nome||'') + ' ' + (l.barras||'')).slice(0, 12)
+      : [];
+    manual = `<div style="margin-top:8px;padding:8px;background:var(--surface-2,#F6F7F8);border-radius:6px;">
+      <input type="text" class="vinc-busca-manual" data-produto="${escapeAttr(p.id)}"
+        value="${escapeAttr(vincBuscaManual)}" placeholder="🔍 Procurar na planilha da ${escapeAttr(CONF_FORNECEDOR_PADRAO)}..."
+        style="width:100%;max-width:420px;">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:7px;">
+        ${achados.length
+          ? achados.map(l=>`<button type="button" class="btn btn-sm"
+              onclick="vincVincular('${escapeAttr(l.id)}','${escapeAttr(p.id)}')"
+              style="text-align:left;max-width:100%;white-space:normal;line-height:1.3;padding:5px 9px;">
+              ${escapeHtml(l.nomeEscolhido||l.nome||'')}
+              <span class="help-text" style="display:block;margin:0;font-size:11px;">saldo ${fmtNum(l.saldo)}${
+                l.barras ? ' · ' + escapeHtml(l.barras) : ''}</span></button>`).join('')
+          : `<span class="help-text" style="margin:0;">${vincBuscaManual.trim().length >= 2
+              ? 'Nenhuma linha da planilha com esse nome.' : 'Escreva pelo menos 2 letras.'}</span>`}
+      </div>
+    </div>`;
+  }
+
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+    <div style="display:flex;flex-wrap:wrap;gap:10px;align-items:baseline;">
+      <strong style="flex:1 1 240px;min-width:0;">${escapeHtml(p.nome)}</strong>
+      <span class="help-text" style="margin:0;">
+        estoque ${fmtNum(p.estoqueAtual||0)} · custo ${fmtMoney(p.custo||0)} · venda ${fmtMoney(p.precoVenda||0)}
+        ${String(p.codigoBarras||'').trim() ? ' · ' + escapeHtml(p.codigoBarras) : ' · sem código'}</span>
+    </div>
+    ${linhas.length ? `<div style="margin-top:8px;">
+      <div class="help-text" style="margin:0 0 4px;">Pode ser esta linha da ${escapeHtml(CONF_FORNECEDOR_PADRAO)}:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${linhas.slice(0, 3).map(x=>`<button type="button" class="btn btn-sm"
+          onclick="vincVincular('${escapeAttr(x.l.id)}','${escapeAttr(p.id)}')"
+          style="text-align:left;max-width:100%;white-space:normal;line-height:1.3;padding:5px 9px;">
+          ${escapeHtml(x.nome)}
+          <span class="help-text" style="display:block;margin:0;font-size:11px;">saldo ${fmtNum(x.l.saldo)}${
+            x.l.barras ? ' · ' + escapeHtml(x.l.barras) : ''}</span></button>`).join('')}
+      </div></div>` : ''}
+    ${iguais.length ? `<div style="margin-top:8px;">
+      <div class="help-text" style="margin:0 0 4px;">Parece o mesmo produto, cadastrado duas vezes:</div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+        ${iguais.map(x=>vincBotaoProduto(x.p, `vincJuntarProdutos('${escapeAttr(p.id)}','${escapeAttr(x.p.id)}')`)).join('')}
+      </div>
+      <div class="help-text" style="margin:4px 0 0;font-size:11px;">Clicando, "${escapeHtml(p.nome)}" é o que fica.</div>
+    </div>` : ''}
+    <div style="margin-top:8px;">
+      <button type="button" class="btn btn-sm" onclick="vincAbrirBuscaProd('${escapeAttr(p.id)}')"
+        style="padding:5px 9px;">${aberta ? 'fechar busca' : '🔍 procurar na planilha'}</button>
+    </div>
+    ${manual}
+  </div>`;
+}
+
+function renderConferenciaVincular(box){
+  if(!CONF_LINHAS || !CONF_LINHAS.length){
+    box.innerHTML = confAbasHtml() + `<div class="card">
+      <h3>🔗 Vincular</h3>
+      <p class="help-text">A planilha da ${escapeHtml(CONF_FORNECEDOR_PADRAO)} ainda não chegou neste aparelho.
+        Carregue na aba <strong>Comodato (planilha)</strong> e volte aqui.</p></div>`;
+    return;
+  }
+
+  const pendentes = vincPendentes();
+  const resolvidas = vincResolvidas();
+  const vinculadas = resolvidas.filter(l=>l.produtoId).length;
+  const semIgual = resolvidas.filter(l=>!l.produtoId && l.semIgual).length;
+
+  const livres = vincProdutosLivres();
+  const indiceLivres = vincIndiceProdutos(livres);
+
+  const mostradas = vincFiltrar(pendentes, vincBusca, l=>(l.nomeEscolhido||l.nome||'') + ' ' + (l.barras||'')).slice(0, 60);
+  const prodMostrados = vincFiltrar(livres, vincBuscaLoja, p=>p.nome + ' ' + (p.codigoBarras||'') + ' ' + (p.sku||'')).slice(0, 40);
+  const indiceProd = vincIndiceProdutos(livres);
+
+  box.innerHTML = `
+    ${confAbasHtml()}
+    <div class="card">
+      <h3>🔗 Vincular <span class="hint">antes do balanço, sentada</span></h3>
+      <p class="help-text">Aqui você resolve de uma vez o que hoje o balanço pergunta item por item, de pé.
+        Item vinculado aqui não pergunta mais nada lá: bipa, diz quanto tem, segue.</p>
+      <p class="help-text" style="margin-top:-6px;"><strong>A planilha manda.</strong> Custo, venda e quantidade
+        continuam sendo os da ${escapeHtml(CONF_FORNECEDOR_PADRAO)}. O seu cadastro só preenche o que está em branco —
+        NCM, fornecedor, unidade e código de barras.</p>
+
+      <div style="display:flex;gap:16px;flex-wrap:wrap;margin:12px 0;">
+        <div><div class="help-text" style="margin:0;">Faltam</div>
+          <div style="font-size:20px;font-weight:700;">${fmtNum(pendentes.length)}</div></div>
+        <div><div class="help-text" style="margin:0;">Vinculadas</div>
+          <div style="font-size:20px;font-weight:700;color:var(--positive);">${fmtNum(vinculadas)}</div></div>
+        <div><div class="help-text" style="margin:0;">Sem igual aqui</div>
+          <div style="font-size:20px;font-weight:700;color:var(--ink-soft);">${fmtNum(semIgual)}</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>📋 Linhas da ${escapeHtml(CONF_FORNECEDOR_PADRAO)} sem vínculo</h3>
+      <div class="field" style="max-width:380px;margin:8px 0 12px;">
+        <input type="text" id="vinc-busca" value="${escapeAttr(vincBusca)}" placeholder="🔍 Nome ou código da planilha...">
+      </div>
+      ${mostradas.length
+        ? mostradas.map(l=>vincLinhaHtml(l, indiceLivres)).join('')
+        : `<p class="help-text">${pendentes.length ? 'Nenhuma linha com esse nome.' : '🎉 Todas as linhas estão resolvidas.'}</p>`}
+      ${pendentes.length > mostradas.length
+        ? `<p class="help-text">Mostrando ${mostradas.length} de ${fmtNum(pendentes.length)}. Use a busca.</p>` : ''}
+      ${resolvidas.length ? `<div style="margin-top:10px;">
+        <button type="button" class="btn btn-sm" onclick="vincTrocarResolvidos()">
+          ${vincMostrarResolvidos ? 'esconder' : 'ver'} as ${fmtNum(resolvidas.length)} já resolvidas</button>
+        ${vincMostrarResolvidos ? `<div style="margin-top:8px;">${resolvidas.slice(0, 80).map(l=>`
+          <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--border);">
+            <span style="flex:1 1 220px;min-width:0;">${escapeHtml(l.nomeEscolhido||l.nome||'')}</span>
+            <span class="help-text" style="margin:0;">${l.produtoId
+              ? '→ ' + escapeHtml(((STATE.produtos||[]).find(p=>p.id===l.produtoId)||{}).nome || 'produto')
+              : 'sem igual aqui'}</span>
+            <button type="button" class="btn btn-sm" style="padding:2px 8px;"
+              onclick="${l.produtoId ? `vincDesvincular('${escapeAttr(l.id)}')` : `vincVoltarPraLista('${escapeAttr(l.id)}')`}">desfazer</button>
+          </div>`).join('')}</div>` : ''}
+      </div>` : ''}
+    </div>
+
+    <div class="card">
+      <h3>🏪 Produtos só do nosso cadastro <span class="hint">${fmtNum(livres.length)} sem linha de comodato</span></h3>
+      <p class="help-text">Depois de terminar o comodato lá em cima, varra esta lista: aqui aparece a linha da
+        planilha que sobrou parecida com cada um, e o produto que pode estar cadastrado duas vezes.</p>
+      <div class="field" style="max-width:380px;margin:8px 0 12px;">
+        <input type="text" id="vinc-busca-loja" value="${escapeAttr(vincBuscaLoja)}" placeholder="🔍 Nome, código...">
+      </div>
+      ${prodMostrados.length
+        ? prodMostrados.map(p=>vincProdutoHtml(p, indiceProd, pendentes)).join('')
+        : `<p class="help-text">Nenhum produto com esse nome.</p>`}
+      ${livres.length > prodMostrados.length
+        ? `<p class="help-text">Mostrando ${prodMostrados.length} de ${fmtNum(livres.length)}. Use a busca.</p>` : ''}
+    </div>`;
+
+  const b1 = document.getElementById('vinc-busca');
+  if(b1) b1.addEventListener('input', (e)=>{ vincBusca = e.target.value; vincRedesenhar('vinc-busca'); });
+  const b2 = document.getElementById('vinc-busca-loja');
+  if(b2) b2.addEventListener('input', (e)=>{ vincBuscaLoja = e.target.value; vincRedesenhar('vinc-busca-loja'); });
+  document.querySelectorAll('.vinc-busca-manual').forEach(inp=>{
+    inp.addEventListener('input', (e)=>{ vincBuscaManual = e.target.value; vincRedesenhar('vinc-manual'); });
+  });
+}
+
+/* redesenha e devolve o cursor pro campo que ela estava digitando */
+let vincRedesenhando = null;
+function vincRedesenhar(qual){
+  if(vincRedesenhando) clearTimeout(vincRedesenhando);
+  vincRedesenhando = setTimeout(()=>{
+    vincRedesenhando = null;
+    renderConferencia();
+    let alvo = null;
+    if(qual === 'vinc-busca') alvo = document.getElementById('vinc-busca');
+    else if(qual === 'vinc-busca-loja') alvo = document.getElementById('vinc-busca-loja');
+    else alvo = document.querySelector('.vinc-busca-manual');
+    if(alvo){ alvo.focus(); alvo.setSelectionRange(alvo.value.length, alvo.value.length); }
+  }, 160);
+}
+
 function renderConferencia(){
   preservandoRolagem(()=>renderConferenciaAgora());
 }
@@ -53417,6 +53992,7 @@ function renderConferenciaAgora(){
   const box = document.getElementById('conferencia-content');
   if(!box) return;
   if(confAba === 'relatorio'){ renderConferenciaRelatorio(box); return; }
+  if(confAba === 'vincular'){ renderConferenciaVincular(box); return; }
   if(confAba === 'loja'){ renderConferenciaLoja(box); return; }
 
   if(!CONF_LINHAS){
@@ -53645,6 +54221,17 @@ function confGuardarLinhas(){
     guardada.nomeEscolhido = l.nomeEscolhido || null;
     guardada.unidade = l.unidade || null;
     guardada.ncm = l.ncm || null;
+    /* O VÍNCULO PRECISA SOBREVIVER AO FECHAR A TELA.
+
+       Isto aqui estava faltando, e era um buraco sério: quando ela
+       juntava a linha com um produto do cadastro, o produtoId ficava
+       só na memória. Ao reabrir, confCarregarGuardada() refazia o
+       casamento pelo código de barras e o vínculo dela sumia — como o
+       casamento por barras é justamente o que não acha esses itens,
+       sumia sempre. Agora a escolha dela é gravada e manda. */
+    guardada.produtoIdEscolhido = l.produtoIdEscolhido || null;
+    guardada.semIgual = !!l.semIgual;
+    guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
   });
   saveState();
 }
@@ -54210,8 +54797,15 @@ function balCatalogo(){
       it.comodatoDe = it.comodatoDe || CONF_FORNECEDOR_PADRAO;
       it.saldoComodato = Number(l.saldo||0);
       if(l.nomeEscolhido) it.nome = l.nomeEscolhido;
-      if(!it.custo) it.custo = Number(l.custo||0);
-      if(!it.venda) it.venda = Number(l.venda||0);
+      /* REGRA DELA, E ELA ESTÁ CERTA: "produto que tem Mizu e comodato
+         segue planilha; os dados do produto Mizu só preenchem lacuna
+         vazia." O item é da ECOVILLE — o custo e a venda que valem são
+         os que a ECOVILLE passou, não os que o cadastro da loja tinha
+         de antes. O cadastro só entra onde a planilha está em branco. */
+      if(Number(l.custo||0) > 0) it.custo = Number(l.custo);
+      else if(!it.custo) it.custo = Number(l.custo||0);
+      if(Number(l.venda||0) > 0) it.venda = Number(l.venda);
+      else if(!it.venda) it.venda = Number(l.venda||0);
       if(l.barras && !it.codigos.includes(l.barras)) it.codigos.push(l.barras);
       return;
     }
@@ -54236,6 +54830,7 @@ function balCatalogo(){
       saldoComodato: Number(l.saldo||0),
       saldoMizu: 0,
       barrasPlanilha: l.barras || '',
+      semIgual: !!l.semIgual,
       fornecedorEscolhido: l.fornecedorEscolhido || '',
       codigos: l.barras ? [l.barras] : []
     });
@@ -56215,6 +56810,10 @@ function balJuntarLinhaNoProduto(chaveLinha, produtoId){
 function balParecidos(chave){
   const it = balItem(chave);
   if(!it || it.produtoId) return [];      /* já tem cadastro: nada a juntar */
+  /* ela já olhou esse item na tela Vincular e disse que não existe igual
+     no cadastro. Perguntar de novo no meio da contagem é justamente o
+     que esta tela veio evitar. */
+  if(it.semIgual) return [];
   const minhas = balPalavrasDoNome(it.nome);
   if(minhas.length === 0) return [];
   /* produtos do cadastro que ainda não estão amarrados a nenhuma linha */
@@ -56247,7 +56846,9 @@ function balJuntarComProduto(chave, produtoId){
     + `O que você já contou continua valendo.`,
     ()=>{
       linha.produtoId = p.id;
+      linha.produtoIdEscolhido = p.id;   /* grava a escolha dela, pra não sumir ao reabrir */
       linha.produto = p;
+      vincPreencherLacunas(linha, p);
       /* o que foi contado na linha passa pro produto, pra não perder */
       const b = balAberto();
       if(b){
@@ -56952,7 +57553,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 09:20';
+const SISTEMA_VERSAO = '11/11/2026 11:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
