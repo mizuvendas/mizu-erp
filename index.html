@@ -2003,6 +2003,11 @@ function defaultState(){
     balancos: [],
     balancoBipes: [],
     codigosApelido: {},
+    /* { chave do item do balanço -> código de barras que ELA escolheu }.
+       Serve pras linhas da planilha que ainda não são produto: a ECOVILLE
+       manda item com código de enchimento, e o que ela bipa na embalagem
+       é que vale. */
+    codigosPrincipais: {},
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
@@ -46471,6 +46476,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-a',
+    data: '2026-11-11',
+    titulo: 'Balanço: o código que você bipa manda, mesmo nas linhas da planilha',
+    itens: [
+      'CORRIGIDO: alguns itens da planilha da ECOVILLE vêm com código de enchimento (0000000000003 e parecidos) no lugar do código de verdade. Você bipava o código da embalagem, apontava o produto — e a ficha continuava mostrando o 0000000000003, que era o que ia pro cadastro no fim do balanço.',
+      'Agora o código que VOCÊ bipou vira o principal daquele item: é ele que aparece na ficha, é ele que sai na etiqueta, e é com ele que o produto nasce quando o balanço fecha.',
+      'O código da planilha não é jogado fora — fica atrás, na lista do item, pra quem bipar a caixa antiga ainda encontrar, e vai pro cadastro como "código do fornecedor".',
+      'A ficha diz de onde veio o outro: "na planilha vinha 0000000000003 — vale o que você bipou".',
+      'O botão "📷 bipar o código" agora também funciona nas linhas da planilha que ainda não são produto aqui.'
+    ]
+  },
+  {
     id: '2026-11-10-h',
     data: '2026-11-10',
     titulo: 'Balanço: o código bipado agora COLA no produto, e o relatório mostra o que não bateu',
@@ -53483,8 +53500,25 @@ function balCatalogo(){
       comodatoDe: CONF_FORNECEDOR_PADRAO,
       saldoComodato: Number(l.saldo||0),
       saldoMizu: 0,
+      barrasPlanilha: l.barras || '',
       codigos: l.barras ? [l.barras] : []
     });
+  });
+
+  /* O CÓDIGO QUE ELA ESCOLHEU MANDA.
+
+     Na planilha da ECOVILLE tem item com código de enchimento
+     (0000000000003 e parecidos) — é o que ela vê na embalagem que vale.
+     Quando ela bipa o código de verdade e aponta o produto, esse código
+     passa a ser o PRIMEIRO: é ele que aparece na ficha, é ele que vai pra
+     etiqueta, e é ele que nasce no cadastro quando o balanço fecha. O da
+     planilha continua na lista, mais atrás, pra quem bipar a caixa antiga
+     ainda achar. */
+  const escolhidos = STATE.codigosPrincipais || {};
+  itens.forEach((it, chave)=>{
+    const meu = String(escolhidos[chave]||'').replace(/\D/g,'');
+    if(!meu) return;
+    it.codigos = [meu].concat(it.codigos.filter(c=>c !== meu));
   });
 
   return itens;
@@ -53757,6 +53791,13 @@ function balEsseMesmo(chave){
         }
       }
     }
+    if(!it.produtoId){
+      /* linha da planilha que ainda não é produto: não tem cadastro pra
+         receber o código, então ele fica guardado como o código principal
+         daquele item do balanço */
+      if(!STATE.codigosPrincipais) STATE.codigosPrincipais = {};
+      STATE.codigosPrincipais[chave] = codigo;
+    }
     if(!STATE.codigosApelido) STATE.codigosApelido = {};
     STATE.codigosApelido[codigo] = chave;
     saveState();
@@ -53883,10 +53924,13 @@ function balFecharMesmo(b, fornecedor, zerar){
         id: uid('prod'), nome: it.nome, marca: '', sku: '',
         codigoBarras: (it.codigos[0] || gerarCodigoBarrasInterno()),
         tipoBarras: it.codigos[0] ? '' : 'gerencial',
+        /* o código da planilha continua valendo pra leitura, mas atrás do
+           que ela escolheu — e é ele que fica como código do fornecedor */
+        codigosExtras: it.codigos.slice(1),
         ncm: it.ncm || '', unidade: it.unidade || '',
         custo: Number(it.custo||0), precoVenda: Number(it.venda||0),
         estoqueAtual: 0, estoqueMinimo: 0,
-        codigoNF: it.codigos[0] || '',
+        codigoNF: it.barrasPlanilha || it.codigos[0] || '',
         criadoEm: new Date().toISOString()
       };
       p.sku = proximoSku(p.id);
@@ -54344,6 +54388,8 @@ function balItemHtml(grande){
             onclick="balGerarCodigoDoItem('${escapeAttr(it.chave)}')">gerar um interno</button>`}` : ''}${
         it.sku?' · '+escapeHtml(it.sku):''}
       ${it.comodato ? ` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}: ${fmtNum(it.saldoComodato)}</span>` : ''}
+      ${it.barrasPlanilha && it.barrasPlanilha !== it.codigos[0]
+        ? `<div style="margin:1px 0 0;">na planilha vinha ${escapeHtml(it.barrasPlanilha)} — vale o que você bipou</div>` : ''}
     </div>
     <div class="help-text" style="margin:3px 0 0;">
       custo <strong>${fmtMoney(it.custo)}</strong> · venda <strong>${fmtMoney(it.venda)}</strong>
@@ -54726,7 +54772,7 @@ function balProcurarNome(termo){
    porque os dois leem o mesmo produto. */
 function balBiparCodigoDoItem(chave){
   const it = balItem(chave);
-  if(!it || !it.produtoId) return;
+  if(!it) return;
   if(typeof abrirLeitorCodigoBarras !== 'function'){
     showToast('O leitor não está disponível.', 'error');
     return;
@@ -54744,21 +54790,25 @@ function balBiparCodigoDoItem(chave){
       return;
     }
 
-    const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
-    if(!p) return;
-    if(!String(p.codigoBarras||'').trim()){
-      p.codigoBarras = d;
-      p.tipoBarras = '';
+    const p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id === it.produtoId) : null;
+    if(p){
+      if(!String(p.codigoBarras||'').trim()){
+        p.codigoBarras = d;
+        p.tipoBarras = '';
+      }else{
+        if(!p.codigosExtras) p.codigosExtras = [];
+        if(!p.codigosExtras.includes(d)) p.codigosExtras.push(d);
+      }
     }else{
-      if(!p.codigosExtras) p.codigosExtras = [];
-      if(!p.codigosExtras.includes(d)) p.codigosExtras.push(d);
+      if(!STATE.codigosPrincipais) STATE.codigosPrincipais = {};
+      STATE.codigosPrincipais[chave] = d;
     }
     if(!STATE.codigosApelido) STATE.codigosApelido = {};
     STATE.codigosApelido[d] = chave;
     saveState();
     balRecarregarCatalogo();
     renderBalanco();
-    showToast(`${d} gravado em "${p.nome}". Vale no balanço e na Conferência.`, 'success');
+    showToast(`${d} gravado em "${p ? p.nome : it.nome}". Vale no balanço e na Conferência.`, 'success');
   });
 }
 
@@ -55189,7 +55239,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '10/11/2026 23:30';
+const SISTEMA_VERSAO = '11/11/2026 00:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
