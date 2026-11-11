@@ -47059,6 +47059,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-n',
+    data: '2026-11-11',
+    titulo: 'A marca aparecendo, o fornecedor entrando sozinho, e o TOTVS chegando no cadastro',
+    itens: [
+      'A MARCA JÁ VINHA, VOCÊ É QUE NÃO VIA. A ficha do item no balanço não mostrava marca em lugar nenhum — falha de tela, não de dado. Agora aparece ali, junto com o NCM.',
+      'FORNECEDOR PELO CNPJ, não por adivinhação. O TOTVS manda o fornecedor só como CNPJ, sem nome (por isso aquele campo chegou 0%). O nome está no seu cadastro de Fornecedores. Casando os dois, o fornecedor entra sozinho e certo — e o que aparece é o NOME, nunca o CNPJ. Se o CNPJ não existir no seu cadastro, não inventa nada.',
+      'CANDIDATO ÚNICO ENTRA SOZINHO: "toda vez preciso marcar DETMOL", e são mil e quatrocentos itens. Aquela regra de sugerir sem preencher nasceu do seu receio de que o mesmo nome viesse de dois fornecedores — quando existe UM candidato só, esse receio não se aplica. Entra marcado como "(sugerido)" com o botão trocar do lado. Com dois ou mais, continua perguntando.',
+      'O TOTVS AGORA CHEGA NO CADASTRO ao fechar o balanço. Antes a correção parava no balanço: produto que já existia aqui só tinha o estoque mexido. Agora campo VAZIO é preenchido sozinho — não há o que decidir entre um valor e nada. Campo que já tem valor e está DIFERENTE não é tocado: vira uma lista no relatório, com os dois valores lado a lado e os botões "usar" e "manter". Custo trocado calado é erro que só aparece semanas depois, na margem.',
+      'E o produto que nasce no fechamento leva também a marca, a categoria e a classificação, que antes ficavam para trás.',
+      'ARMADILHA MINHA, CORRIGIDA: marcar um campo novo (o NCM, por exemplo) não valia até você clicar em "Atualizar a referência". Dava pra marcar, ver "1.007 produtos valendo" e ir embora achando que estava feito. Agora regrava sozinho.',
+      'A ABA TOTVS ABRE PRONTA: a última consulta fica guardada, então recarregar a página não obriga mais a buscar os 1.347 produtos de novo só pra ver a tabela.',
+      'E a aba Comodato mostra o nome do TOTVS em cima do da planilha, pra você não ficar olhando "caixa com 12" depois de já ter corrigido lá.'
+    ]
+  },
+  {
     id: '2026-11-11-m',
     data: '2026-11-11',
     titulo: 'O TOTVS entrou no balanço — e as 508 do comodato se resolveram sozinhas',
@@ -53348,6 +53363,54 @@ function relLinhas(b){
   return linhas.sort((a,c)=>String(a.it.nome||'').localeCompare(String(c.it.nome||''),'pt-BR'));
 }
 
+/* ---------------------------------------------------------------
+   O QUE O TOTVS DIZ DIFERENTE DO SEU CADASTRO
+
+   Ao fechar, o campo que estava VAZIO aqui foi preenchido sozinho — não
+   havia o que decidir. O que estava preenchido e diferente não foi
+   tocado, e vem parar nesta lista.
+
+   É de propósito que custo e preço entrem aqui em vez de serem
+   trocados calados: custo errado não aparece na hora, aparece semanas
+   depois, na margem — e aí ninguém mais lembra de onde veio.
+   --------------------------------------------------------------- */
+function relConflitosTotvsHtml(b){
+  const regs = Array.isArray(b.conflitosTotvs) ? b.conflitosTotvs : [];
+  if(!regs.length) return '';
+  const quantos = regs.reduce((s,r)=>s + r.campos.length, 0);
+  const mostra = (campo, v)=>(campo === 'custo' || campo === 'precoVenda')
+    ? fmtMoney(Number(v||0)) : escapeHtml(String(v == null ? '—' : v));
+
+  return `<div class="card" style="border-left:4px solid var(--warning,#8A5D14);">
+    <h3>⚠ O TOTVS diz diferente em ${fmtNum(quantos)} campo(s)</h3>
+    <p class="help-text">O que estava em branco no seu cadastro já foi preenchido. Aqui ficou só o que
+      <strong>já tinha valor e não bate</strong> — eu não troquei nada por conta própria. Custo trocado calado
+      é erro que só aparece lá na frente, na margem.</p>
+    <div style="margin:10px 0;">
+      <button class="btn btn-sm" onclick="balAplicarTodosConflitos('${escapeAttr(b.id)}')">usar o do TOTVS em todos</button>
+    </div>
+    <div class="table-wrap" style="max-height:340px;overflow:auto;">
+      <table class="data-table">
+        <thead><tr><th>Produto</th><th style="width:130px;">Campo</th>
+          <th style="width:190px;">Aqui</th><th style="width:190px;">No TOTVS</th>
+          <th style="width:150px;">Ações</th></tr></thead>
+        <tbody>${regs.map(r=>{
+          const p = (STATE.produtos||[]).find(x=>x.id === r.produtoId);
+          return r.campos.map(c=>`<tr>
+            <td>${escapeHtml(p ? p.nome : 'produto removido')}</td>
+            <td>${escapeHtml(c.rotulo)}</td>
+            <td>${mostra(c.campo, c.aqui)}</td>
+            <td><strong>${mostra(c.campo, c.noTotvs)}</strong></td>
+            <td><div class="cell-actions">
+              <button class="btn btn-sm" onclick="balAplicarConflito('${escapeAttr(b.id)}','${escapeAttr(r.produtoId)}','${escapeAttr(c.campo)}')">usar</button>
+              <button class="btn btn-sm" onclick="balDispensarConflito('${escapeAttr(b.id)}','${escapeAttr(r.produtoId)}','${escapeAttr(c.campo)}')">manter</button>
+            </div></td></tr>`).join('');
+        }).join('')}</tbody>
+      </table>
+    </div>
+  </div>`;
+}
+
 function renderConferenciaRelatorio(box){
   const b = confBalancoDoRelatorio();
   if(!b){ box.innerHTML = confAbasHtml() + `<div class="card"><p class="help-text">Nenhum balanço ainda.</p></div>`; return; }
@@ -53392,6 +53455,7 @@ function renderConferenciaRelatorio(box){
 
   box.innerHTML = `
     ${confAbasHtml()}
+    ${relConflitosTotvsHtml(b)}
     <div class="card">
       <h3>📊 Relatório do balanço <span class="hint">${b.aberto ? 'ainda em andamento'
         : 'fechado em ' + fmtDate(String(b.fechadoEm||'').slice(0,10))}</span></h3>
@@ -54330,11 +54394,25 @@ function totvsEscolhas(){
   return STATE.totvsCampos;
 }
 
+/* Se o catálogo já está valendo, mudar uma marcação regrava na hora.
+   Sem isso ela marcava o NCM, via embaixo "1.007 produtos valendo" e
+   ia embora achando que estava feito — quando na verdade o catálogo
+   continuava com os campos de antes. Armadilha minha. */
+function totvsRegravarSeJaVale(){
+  if(!totvsCatalogo().length) return;
+  if(!TOTVS_AMOSTRA || !TOTVS_AMOSTRA.produtos) return;
+  const e = totvsEscolhas();
+  /* desmarcou o último campo: não é hora de reclamar, é só não regravar */
+  if(!Object.keys(e).some(c => e[c] && e[c].usar && e[c].destino)) return;
+  totvsGuardarCatalogo();
+}
+
 function totvsMarcarCampo(campo, usar){
   const e = totvsEscolhas();
   if(!e[campo]) e[campo] = { destino: totvsPalpiteDestino(campo) };
   e[campo].usar = !!usar;
   saveState();
+  totvsRegravarSeJaVale();
   renderConferencia();
 }
 
@@ -54344,6 +54422,7 @@ function totvsDestinoCampo(campo, destino){
   e[campo].destino = destino || '';
   if(!destino) e[campo].usar = false;
   saveState();
+  totvsRegravarSeJaVale();
   renderConferencia();
 }
 
@@ -54501,7 +54580,12 @@ function totvsGuardarCatalogo(){
        balanço, porque contar o que não existe mais só gera confusão */
     if(p.ativo === false) return;
 
+    /* o CNPJ não é campo de mostrar, é chave de casamento: a API manda
+       o fornecedor só como CNPJ, sem nome, e o nome está no cadastro de
+       fornecedores dela. Então ele vem sempre, marcado ou não. */
+    const cnpj = String(totvsValorDe(p, 'fornecedorCnpj') || '').trim();
     const reg = { id: 't' + id, idTotvs: id, barras: barras };
+    if(cnpj) reg.fornecedorCnpj = cnpj;
     usados.forEach(campo => {
       const destino = escolhas[campo].destino;
       const v = totvsValorDe(p, campo);
@@ -54512,6 +54596,17 @@ function totvsGuardarCatalogo(){
   });
 
   STATE.totvsProdutos = guardados;
+  /* o resumo dos campos fica guardado também, pra tela abrir pronta
+     quando ela voltar. Sem isso a aba volta vazia depois de recarregar
+     e ela teria que buscar os 1.347 de novo só pra ver a tabela. */
+  STATE.totvsResumo = {
+    total: a.produtos.length,
+    atualizadoEm: a.atualizadoEm || new Date().toISOString(),
+    campos: totvsCamposDaAmostra(a.produtos).map(c=>({
+      campo: c.campo, preenchidos: c.preenchidos,
+      exemplo: c.exemplo == null ? null : String(totvsMostrar(c.exemplo))
+    }))
+  };
   saveState();
   balRecarregarCatalogo();
   return guardados.length;
@@ -54535,6 +54630,22 @@ function totvsLimparCatalogo(){
       renderConferencia();
       showToast('TOTVS removido da referência do balanço.', 'success');
     }, 'Tirar');
+}
+
+/* CNPJ -> fornecedor do cadastro dela. Só dígito dos dois lados,
+   porque um escreve com ponto e barra e o outro não. */
+let TOTVS_IX_FORN = null;
+function totvsFornecedorPorCnpj(cnpj){
+  const d = String(cnpj||'').replace(/\D/g,'');
+  if(!d) return null;
+  if(!TOTVS_IX_FORN){
+    TOTVS_IX_FORN = new Map();
+    (STATE.fornecedores||[]).forEach(f=>{
+      const c = String(f.cnpj || f.documento || f.cpfCnpj || '').replace(/\D/g,'');
+      if(c && !TOTVS_IX_FORN.has(c)) TOTVS_IX_FORN.set(c, f);
+    });
+  }
+  return TOTVS_IX_FORN.get(d) || null;
 }
 
 /* código de barras -> produto do TOTVS */
@@ -54580,6 +54691,17 @@ function totvsAplicarNoItem(it, t){
   if(t.sku && !it.sku) it.sku = t.sku;
   if(t.codigoNF) it.codigoNF = t.codigoNF;
   if(t.fornecedor && !it.fornecedorEscolhido) it.fornecedorEscolhido = t.fornecedor;
+  /* O FORNECEDOR PELO CNPJ.
+
+     A API do TOTVS manda o fornecedor só como CNPJ, sem nome — foi por
+     isso que aquele campo chegou 0%. Mas o nome está do lado de cá, no
+     cadastro de fornecedores dela. Casar os dois acerta sempre, e é
+     melhor do que adivinhar por semelhança de nome, que era o que
+     obrigava ela a confirmar item por item. */
+  if(!it.fornecedorEscolhido && t.fornecedorCnpj){
+    const f = totvsFornecedorPorCnpj(t.fornecedorCnpj);
+    if(f){ it.fornecedorEscolhido = f.nome; it.fornecedorId = f.id; }
+  }
   if(t.estoqueMin != null) it.estoqueMin = t.estoqueMin;
 
   if(!it.comodato){
@@ -54611,6 +54733,15 @@ function renderConferenciaTotvs(box){
       ${cfg.url ? `<p class="help-text" style="margin:8px 0 0;font-size:11.5px;">Servidor: ${escapeHtml(cfg.url)}${
         cfg.chave ? '' : ' — falta a chave de acesso'}</p>` : ''}
     </div>`;
+
+  /* Tela recarregada: usa o resumo guardado em vez de obrigar ela a
+     buscar os 1.347 de novo só pra ver a tabela de campos. */
+  const guardado = STATE.totvsResumo;
+  if(!a && guardado && Array.isArray(guardado.campos) && guardado.campos.length){
+    box.innerHTML = cabeca + totvsCruzamentoHtml(null)
+      + totvsTabelaCamposHtml(guardado.campos, guardado.total, true);
+    return;
+  }
 
   if(!a){
     box.innerHTML = cabeca + `<div class="card"><p class="help-text">
@@ -54645,21 +54776,41 @@ function renderConferenciaTotvs(box){
   const total = produtos.length;
   const escolhidos = campos.filter(c=>escolhas[c.campo] && escolhas[c.campo].usar).length;
 
-  /* o cruzamento com a ECOVILLE, que é pra isso que ele quer o TOTVS */
-  const barrasTotvs = new Map();
-  produtos.forEach(p=>{
-    const d = String(totvsValorDe(p, 'codigoBarras') || p.codigoBarras || '').replace(/\D/g,'');
-    if(d) barrasTotvs.set(d, p);
-  });
-  const linhas = (CONF_LINHAS || []);
-  let nosDois = 0, soEcoville = 0;
-  linhas.forEach(l=>{
-    const d = String(l.barras||'').replace(/\D/g,'');
-    if(d && barrasTotvs.has(d)) nosDois++; else soEcoville++;
-  });
-  const soTotvs = barrasTotvs.size - nosDois;
+  box.innerHTML = cabeca + totvsCruzamentoHtml(produtos)
+    + totvsTabelaCamposHtml(campos, total, false);
+  return;
+}
 
-  box.innerHTML = cabeca + `
+/* O CRUZAMENTO, em função própria: a tela precisa dele tanto depois de
+   buscar quanto quando abre com o resumo guardado. */
+function totvsCruzamentoHtml(produtos){
+  const linhas = (CONF_LINHAS || []);
+  let total, nosDois = 0, soEcoville = 0, soTotvs = 0;
+
+  if(produtos){
+    const barrasTotvs = new Map();
+    produtos.forEach(p=>{
+      const d = String(totvsValorDe(p, 'codigoBarras') || p.codigoBarras || '').replace(/\D/g,'');
+      if(d) barrasTotvs.set(d, p);
+    });
+    total = produtos.length;
+    linhas.forEach(l=>{
+      const d = String(l.barras||'').replace(/\D/g,'');
+      if(d && barrasTotvs.has(d)) nosDois++; else soEcoville++;
+    });
+    soTotvs = barrasTotvs.size - nosDois;
+  }else{
+    /* sem a busca na mão, conta pelo catálogo já guardado */
+    const ix = totvsIndice();
+    total = totvsCatalogo().length;
+    linhas.forEach(l=>{
+      const d = String(l.barras||'').replace(/\D/g,'');
+      if(d && ix.has(d)) nosDois++; else soEcoville++;
+    });
+    soTotvs = ix.size - nosDois;
+  }
+
+  return `
     <div class="card">
       <h3>O cruzamento pelo código de barras</h3>
       ${linhas.length ? `
@@ -54677,8 +54828,13 @@ function renderConferenciaTotvs(box){
           pros que têm código de barras nos dois lados — quem não tem continua na tela Vincular, no olho.</p>`
       : `<p class="help-text">A planilha da ${escapeHtml(CONF_FORNECEDOR_PADRAO)} ainda não chegou neste aparelho,
           então não dá pra cruzar. Carregue na aba Comodato e volte aqui.</p>`}
-    </div>
+    </div>`;
+}
 
+function totvsTabelaCamposHtml(campos, total, doCache){
+  const escolhas = totvsEscolhas();
+  const escolhidos = campos.filter(c=>escolhas[c.campo] && escolhas[c.campo].usar).length;
+  return `
     <div class="card">
       <h3>Os campos que chegaram <span class="hint">${campos.length} campos · amostra de ${fmtNum(total)} produtos</span></h3>
       <p class="help-text">Marque o que você quer aproveitar e confira pra onde vai. O destino vem com um palpite meu
@@ -54729,6 +54885,10 @@ function renderConferenciaTotvs(box){
         <span class="help-text" style="margin:0 0 0 8px;">Pede o produto sem conversão nenhuma — é o que mostra o nome de verdade de cada campo.</span>
       </div>
       ${totvsVerCru ? totvsCruHtml() : ''}
+      ${doCache ? `<p class="help-text" style="margin:10px 0 0;">
+        Esta tabela é a da última consulta${STATE.totvsResumo && STATE.totvsResumo.atualizadoEm
+          ? ' (' + fmtDate(String(STATE.totvsResumo.atualizadoEm).slice(0,10)) + ')'
+          : ''}. Clique em "Perguntar ao TOTVS" pra buscar de novo.</p>` : ''}
     </div>`;
 }
 
@@ -54931,6 +55091,17 @@ function confLinha(l){
 
   return `<tr>
     <td>
+      ${(()=>{
+        /* O NOME DO TOTVS AQUI TAMBÉM.
+           Esta aba mostrava a planilha crua, com o "detergente caixa
+           com 12" que ela já corrigiu no TOTVS. Ver o nome errado aqui
+           depois de corrigido lá só confunde. Então mostro o do TOTVS
+           em cima e o da planilha embaixo, miúdo, pra conferência. */
+        const t = l.barras ? totvsIndice().get(String(l.barras).replace(/\D/g,'')) : null;
+        if(!t || !t.nome || String(t.nome).trim().toUpperCase() === String(nome).trim().toUpperCase()) return '';
+        return `<div><strong>${escapeHtml(t.nome)}</strong>
+          <span class="help-text" style="margin:0;">no TOTVS</span></div>`;
+      })()}
       <span class="conf-edit" data-barras="${l.barras}" data-campo="nome"
             title="Clique para alterar a descrição">${escapeHtml(nome)}</span>
       ${l.nomeEscolhido ? '<span class="help-text" style="margin:0;">descrição alterada por você</span>' : ''}
@@ -55716,6 +55887,9 @@ function balCatalogo(){
         fornecedorEscolhido: String(t.fornecedor || ''),
         codigos: [t.barras]
       };
+      /* passa pelo mesmo caminho dos outros, pra pegar o fornecedor
+         casado pelo CNPJ e tudo o mais que vier marcado */
+      totvsAplicarNoItem(it, t);
       itens.set(chave, it);
     });
   }
@@ -55798,6 +55972,7 @@ let balMsg = '';
 
 function balRecarregarCatalogo(){
   TOTVS_IX = null;   /* o índice do TOTVS é refeito junto, senão fica velho */
+  TOTVS_IX_FORN = null;
   BAL_CAT = balCatalogo();
   BAL_IX = balIndice(BAL_CAT);
 }
@@ -55840,6 +56015,7 @@ function balBipar(codigo){
 
 function balAbrirItem(chave, codigoBipado){
   balAtualChave = chave;
+  balFornecedorAutomatico(chave);
   balQtd = 1;
   balEscolhas = null; balNaoAchei = null;
   /* bipou um código que ainda não estava no item: guarda o apelido pra
@@ -56097,6 +56273,111 @@ function balFechar(){
     ()=>balFecharMesmo(b, fornecedor, zerar), 'Fechar o balanço');
 }
 
+/* ---------------------------------------------------------------
+   O QUE O TOTVS CORRIGE NO CADASTRO, AO FECHAR
+
+   Dois pesos, de propósito:
+
+   CAMPO VAZIO -> preenche. Não existe decisão a tomar entre um valor
+   e nada; perguntar aqui seria só atrito.
+
+   CAMPO DIFERENTE -> não toca, e anota. O caso que me preocupa é o
+   custo: trocar calado o custo de um produto que ela já vende é erro
+   que não aparece na hora, aparece semanas depois na margem. Ela
+   decide, com os dois valores na frente.
+
+   Comodato fica de fora de custo e preço, como sempre: ali quem manda
+   é a ECOVILLE.
+   --------------------------------------------------------------- */
+const BAL_TOTVS_CAMPOS = [
+  ['nome',        'nome',        'descrição'],
+  ['marca',       'marca',       'marca'],
+  ['unidade',     'unidade',     'unidade'],
+  ['ncm',         'ncm',         'NCM'],
+  ['categoria',   'categoria',   'categoria'],
+  ['setor',       'setor',       'setor'],
+  ['classificacao','classificacao','classificação'],
+  ['origemItem',  'origemItem',  'origem do item'],
+  ['custo',       'custo',       'custo'],
+  ['venda',       'precoVenda',  'preço de venda']
+];
+
+function balTotvsPreencherVazios(p, it){
+  if(!p || !it || !it.totvsId) return [];
+  const conflitos = [];
+  p.idTotvs = p.idTotvs != null ? p.idTotvs : it.totvsId;
+
+  BAL_TOTVS_CAMPOS.forEach(([doItem, noProduto, rotulo])=>{
+    const novo = it[doItem];
+    if(novo == null || novo === '') return;
+    /* custo e preço de item de comodato são da ECOVILLE, não do TOTVS */
+    if(it.comodato && (noProduto === 'custo' || noProduto === 'precoVenda')) return;
+
+    const atual = p[noProduto];
+    const numero = (noProduto === 'custo' || noProduto === 'precoVenda');
+    const vazio = numero ? !Number(atual||0) : !String(atual||'').trim();
+
+    if(vazio){ p[noProduto] = numero ? Number(novo) : novo; return; }
+
+    const igual = numero
+      ? Math.abs(Number(atual||0) - Number(novo||0)) < 0.005
+      : String(atual).trim().toUpperCase() === String(novo).trim().toUpperCase();
+    if(!igual) conflitos.push({ campo: noProduto, rotulo, aqui: atual, noTotvs: novo });
+  });
+
+  if(!String(p.codigoBarras||'').trim() && it.codigos && it.codigos[0]){
+    p.codigoBarras = it.codigos[0];
+    p.tipoBarras = '';
+  }
+  return conflitos;
+}
+
+/* "usar o do TOTVS" numa linha da lista de divergências */
+function balAplicarConflito(balancoId, produtoId, campo){
+  const b = (STATE.balancos||[]).find(x=>x.id === balancoId);
+  const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
+  if(!b || !p || !Array.isArray(b.conflitosTotvs)) return;
+  const reg = b.conflitosTotvs.find(c=>c.produtoId === produtoId);
+  if(!reg) return;
+  const linha = reg.campos.find(c=>c.campo === campo);
+  if(!linha) return;
+  p[campo] = (campo === 'custo' || campo === 'precoVenda') ? Number(linha.noTotvs) : linha.noTotvs;
+  reg.campos = reg.campos.filter(c=>c.campo !== campo);
+  if(!reg.campos.length) b.conflitosTotvs = b.conflitosTotvs.filter(c=>c.produtoId !== produtoId);
+  saveState();
+  balRecarregarCatalogo();
+  renderConferencia();
+  showToast(`${linha.rotulo} atualizado pelo TOTVS.`, 'success');
+}
+
+function balDispensarConflito(balancoId, produtoId, campo){
+  const b = (STATE.balancos||[]).find(x=>x.id === balancoId);
+  if(!b || !Array.isArray(b.conflitosTotvs)) return;
+  const reg = b.conflitosTotvs.find(c=>c.produtoId === produtoId);
+  if(!reg) return;
+  reg.campos = reg.campos.filter(c=>c.campo !== campo);
+  if(!reg.campos.length) b.conflitosTotvs = b.conflitosTotvs.filter(c=>c.produtoId !== produtoId);
+  saveState();
+  renderConferencia();
+}
+
+function balAplicarTodosConflitos(balancoId, campo){
+  const b = (STATE.balancos||[]).find(x=>x.id === balancoId);
+  if(!b || !Array.isArray(b.conflitosTotvs)) return;
+  const alvos = [];
+  b.conflitosTotvs.forEach(reg=>{
+    reg.campos.forEach(c=>{ if(!campo || c.campo === campo) alvos.push([reg.produtoId, c.campo]); });
+  });
+  if(!alvos.length) return;
+  confirmAction('Usar o do TOTVS em todos',
+    `${alvos.length} alteração(ões) de uma vez.\n\n`
+    + 'O que estiver diferente aqui passa a ser o valor do TOTVS. O estoque não muda.',
+    ()=>{
+      alvos.forEach(([pid, c])=>balAplicarConflito(balancoId, pid, c));
+      showToast(`${alvos.length} campo(s) atualizados pelo TOTVS.`, 'success');
+    }, 'Usar o do TOTVS');
+}
+
 function balFecharMesmo(b, fornecedor, zerar){
   const contados = balContados(b.id);
   let mexidos = 0, criados = 0, zerados = 0;
@@ -56122,7 +56403,10 @@ function balFecharMesmo(b, fornecedor, zerar){
        o que a planilha tem. Sem isso o saldo contado não teria onde morar. */
     if(!p){
       p = {
-        id: uid('prod'), nome: it.nome, marca: '', sku: '',
+        id: uid('prod'), nome: it.nome, marca: it.marca || '', sku: '',
+        categoria: it.categoria || '', setor: it.setor || '',
+        classificacao: it.classificacao || '', origemItem: it.origemItem || '',
+        idTotvs: it.totvsId != null ? it.totvsId : null,
         codigoBarras: (it.codigos[0] || gerarCodigoBarrasInterno()),
         tipoBarras: it.codigos[0] ? '' : 'gerencial',
         /* o código da planilha continua valendo pra leitura, mas atrás do
@@ -56141,6 +56425,24 @@ function balFecharMesmo(b, fornecedor, zerar){
       criados++;
       /* a foto tirada durante a contagem acompanha o produto que nasce */
       balMudarDonoDaFoto(chave, p.id);
+    }
+
+    else {
+      /* PRODUTO QUE JÁ EXISTE AQUI.
+         Até agora o fechamento só mexia no estoque dele — então toda a
+         correção vinda do TOTVS (nome certo, marca, NCM, unidade)
+         parava no balanço e nunca chegava no cadastro.
+
+         O que está VAZIO aqui é preenchido sem perguntar: não há o que
+         decidir entre um valor e nada. O que está preenchido e
+         DIFERENTE não é tocado — vira uma linha da lista que ela
+         aprova depois, no relatório. Sobrescrever o custo dela calado
+         é erro que só aparece na margem, semanas depois. */
+      const conflitos = balTotvsPreencherVazios(p, it);
+      if(conflitos.length){
+        if(!b.conflitosTotvs) b.conflitosTotvs = [];
+        b.conflitosTotvs.push({ produtoId: p.id, chave, campos: conflitos });
+      }
     }
 
     const parteComodato = it.comodato ? Math.min(qtd, Number(it.saldoComodato||0)) : 0;
@@ -56646,6 +56948,8 @@ function balItemHtml(grande){
           it.codigos.length ? '' : ` <button class="btn btn-sm" style="padding:1px 7px;"
             onclick="balGerarCodigoDoItem('${escapeAttr(it.chave)}')">gerar um interno</button>`}` : ''}${
         it.sku?' · '+escapeHtml(it.sku):''}
+      ${it.marca ? ` · <span style="font-weight:600;">${escapeHtml(it.marca)}</span>` : ''}${
+        it.ncm ? ` · NCM ${escapeHtml(ncmFormatado(it.ncm))}` : ''}
       ${it.comodato ? ` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}: ${fmtNum(it.saldoComodato)}</span>` : ''}
       ${it.barrasPlanilha && it.barrasPlanilha !== it.codigos[0]
         ? `<div style="margin:1px 0 0;">na planilha vinha ${escapeHtml(it.barrasPlanilha)} — vale o que você bipou</div>` : ''}
@@ -57765,8 +58069,12 @@ function balJuntarComProduto(chave, produtoId){
    pronto. Sugere, não preenche: o mesmo nome pode vir de dois
    fornecedores, e preencher calado faria a nota sair com o errado.
    ========================================================= */
+let balPularAutomatico = null;
+
 function balFornecedorSugerido(it){
   if(!it) return null;
+  /* já veio pelo CNPJ do TOTVS, ou ela já escolheu: não tem o que sugerir */
+  if(String(it.fornecedorEscolhido||'').trim()) return null;
   const jaTem = it.produtoId
     ? String(((STATE.produtos||[]).find(x=>x.id === it.produtoId)||{}).fornecedor||'').trim()
     : '';
@@ -57789,8 +58097,62 @@ function balFornecedorSugerido(it){
     votos[forn].forca += juntas;
   });
   const lista = Object.values(votos).sort((a,b)=>b.forca - a.forca);
-  return lista.length ? lista[0] : null;
+  if(!lista.length) return null;
+  /* quantos fornecedores diferentes disputam este item. Um só significa
+     que não há ambiguidade nenhuma — e era a ambiguidade, e só ela, que
+     justificava perguntar. */
+  lista[0].sozinho = lista.length === 1;
+  return lista[0];
 }
+
+/* CANDIDATO ÚNICO ENTRA SOZINHO.
+
+   "toda vez preciso marcar DETMOL" — e são mil e quatrocentos itens.
+   A regra antiga ("sugere, não preenche") nasceu do receio dela de que
+   o mesmo nome viesse de dois fornecedores. Quando existe UM candidato
+   só, esse receio não se aplica: não há o que confundir. Então entra
+   sozinho, marcado como sugerido e com o botão de trocar do lado —
+   visível e desfazível. Com dois ou mais, continua perguntando. */
+function balFornecedorAutomatico(chave){
+  if(balPularAutomatico === chave) return false;
+  const it = balItem(chave);
+  if(!it) return false;
+  if(String(it.fornecedorEscolhido||'').trim()) return false;
+  const s = balFornecedorSugerido(it);
+  if(!s || !s.sozinho) return false;
+  it.fornecedorEscolhido = s.nome;
+  it.fornecedorSugerido = true;
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+  if(l){ l.fornecedorEscolhido = s.nome; l.fornecedorSugerido = true; confGuardarLinhas(); }
+  else if(it.produtoId){
+    const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+    if(p && !String(p.fornecedor||'').trim()){
+      p.fornecedor = s.nome;
+      const f = (STATE.fornecedores||[]).find(x=>String(x.nome||'').trim().toUpperCase() === s.nome.trim().toUpperCase());
+      p.fornecedorId = f ? f.id : null;
+      saveState();
+    }
+  }
+  return true;
+}
+
+/* "trocar": tira o fornecedor que entrou sozinho e devolve a escolha
+   pra ela. Sem isso o automático viraria uma porta de mão única. */
+function balTrocarFornecedor(chave){
+  const it = balItem(chave);
+  if(!it) return;
+  it.fornecedorEscolhido = '';
+  it.fornecedorSugerido = false;
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+  if(l){ l.fornecedorEscolhido = null; l.fornecedorSugerido = false; confGuardarLinhas(); }
+  if(it.produtoId){
+    const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+    if(p){ p.fornecedor = ''; p.fornecedorId = null; saveState(); }
+  }
+  balPularAutomatico = chave;   /* não deixa o automático repor na hora */
+  renderBalanco();
+}
+
 
 function balAplicarFornecedor(chave, nome){
   const it = balItem(chave);
@@ -57814,9 +58176,14 @@ function balAplicarFornecedor(chave, nome){
 function balFornecedorHtml(it){
   const s = balFornecedorSugerido(it);
   const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === it.chave);
-  if(l && l.fornecedorEscolhido){
-    return `<div class="help-text" style="margin-top:7px;">fornecedor: <strong>${escapeHtml(l.fornecedorEscolhido)}</strong>
-      <span>— entra no cadastro quando o balanço fechar</span></div>`;
+  const escolhido = String(it.fornecedorEscolhido||'').trim() || (l ? String(l.fornecedorEscolhido||'').trim() : '');
+  if(escolhido){
+    const sugerido = it.fornecedorSugerido || (l && l.fornecedorSugerido);
+    return `<div class="help-text" style="margin-top:7px;">fornecedor: <strong>${escapeHtml(escolhido)}</strong>${
+      sugerido ? ' <span style="color:var(--ink-soft);">(sugerido)</span>' : ''}
+      <button class="btn btn-sm" style="padding:0 7px;margin-left:5px;"
+        onclick="balTrocarFornecedor('${escapeAttr(it.chave)}')">trocar</button>${
+      it.produtoId ? '' : ' <span>— entra no cadastro quando o balanço fechar</span>'}</div>`;
   }
   if(!s) return '';
   return `<div style="margin-top:8px;font-size:13px;">
@@ -58424,7 +58791,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 20:15';
+const SISTEMA_VERSAO = '11/11/2026 22:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
