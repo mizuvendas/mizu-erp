@@ -47059,6 +47059,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-b',
+    data: '2026-11-12',
+    titulo: 'Dois erros meus que o seu print mostrou',
+    itens: [
+      'O CNPJ APARECIA NO LUGAR DO NOME DO FORNECEDOR. Eu te disse que o CNPJ nunca apareceria, e aí ele apareceu: "fornecedor: 52.392.927/0001-18". A culpa foi do meu palpite — o campo se chama fornecedorCnpj, meu palpite viu "fornecedor" dentro do nome e mandou pro destino Fornecedor. Agora campo de CNPJ não tem destino, e mesmo que um número chegue no lugar do nome, ele é tratado como CNPJ e vira o NOME do seu cadastro. A escolha errada que já estava gravada se desfaz sozinha.',
+      'AS SUGESTÕES "É O MESMO?" VIRARAM RUÍDO PERIGOSO. Você abriu o LIMPADOR PINHO e o sistema ofereceu LIMPADOR LAVANDA, LIMPADOR TALCO e LIMPADOR CASAFLOR — produtos diferentes, parecidos só no nome. Isso fazia sentido quando o código de barras não achava nada; agora que as 508 casaram todas pelo código, um toque errado ali juntaria dois produtos que não têm nada a ver. Linha que o código de barras já colocou não é mais oferecida. Sugestão por nome fica só pra linha que o código não conseguiu colocar em lugar nenhum.'
+    ]
+  },
+  {
     id: '2026-11-12-a',
     data: '2026-11-12',
     titulo: 'As fotos que o TOTVS já tem vêm pra cá',
@@ -54320,6 +54329,13 @@ function totvsPalpiteDestino(campo){
      comparação abaixo casava e o palpite vinha sempre vazio. */
   const c = ncmNormalizar(String(campo||'')).replace(/\s+/g,'').toLowerCase();
   const tem = (...ps)=>ps.some(p=>c.includes(p));
+  /* CNPJ NÃO É NOME DE FORNECEDOR.
+     O palpite antigo via "fornecedor" dentro de "fornecedorCnpj" e
+     mandava pro destino Fornecedor. Marcado, o produto ficava com
+     "52.392.927/0001-18" escrito no lugar do nome. O CNPJ é chave de
+     casamento, não texto pra mostrar — e ele já vem sempre, marcado
+     ou não. */
+  if(tem('cnpj','documento')) return '';
   if(tem('codigodebarras','codbarras','codigobarras','ean','gtin')) return 'codigoBarras';
   if(tem('ncm')) return 'ncm';
   if(tem('marca')) return 'marca';
@@ -54403,6 +54419,15 @@ function totvsCamposDaAmostra(produtos){
 /* ---- o que ela escolheu, guardado ---- */
 function totvsEscolhas(){
   if(!STATE.totvsCampos || typeof STATE.totvsCampos !== 'object') STATE.totvsCampos = {};
+  /* conserta a escolha que o meu palpite errado já pode ter gravado:
+     campo de CNPJ apontando pro destino Fornecedor, que fazia o número
+     aparecer escrito no lugar do nome */
+  Object.keys(STATE.totvsCampos).forEach(c=>{
+    const e = STATE.totvsCampos[c];
+    if(e && e.destino === 'fornecedor' && /cnpj|documento/i.test(c)){
+      e.destino = ''; e.usar = false;
+    }
+  });
   return STATE.totvsCampos;
 }
 
@@ -54706,7 +54731,13 @@ function totvsAplicarNoItem(it, t){
   if(t.origemItem)    it.origemItem = t.origemItem;
   if(t.sku && !it.sku) it.sku = t.sku;
   if(t.codigoNF) it.codigoNF = t.codigoNF;
-  if(t.fornecedor && !it.fornecedorEscolhido) it.fornecedorEscolhido = t.fornecedor;
+  /* cinto de segurança: se o que veio no lugar do nome for um CNPJ
+     (porque alguém marcou o campo errado), trata como CNPJ em vez de
+     escrever o número como se fosse o nome do fornecedor */
+  const fornTexto = String(t.fornecedor||'').trim();
+  const fornEhCnpj = fornTexto && fornTexto.replace(/\D/g,'').length === 14
+                     && !/[a-zA-Z]/.test(fornTexto);
+  if(fornTexto && !fornEhCnpj && !it.fornecedorEscolhido) it.fornecedorEscolhido = fornTexto;
   /* O FORNECEDOR PELO CNPJ.
 
      A API do TOTVS manda o fornecedor só como CNPJ, sem nome — foi por
@@ -54714,8 +54745,8 @@ function totvsAplicarNoItem(it, t){
      cadastro de fornecedores dela. Casar os dois acerta sempre, e é
      melhor do que adivinhar por semelhança de nome, que era o que
      obrigava ela a confirmar item por item. */
-  if(!it.fornecedorEscolhido && t.fornecedorCnpj){
-    const f = totvsFornecedorPorCnpj(t.fornecedorCnpj);
+  if(!it.fornecedorEscolhido){
+    const f = totvsFornecedorPorCnpj(t.fornecedorCnpj || (fornEhCnpj ? fornTexto : ''));
     if(f){ it.fornecedorEscolhido = f.nome; it.fornecedorId = f.id; }
   }
   if(t.estoqueMin != null) it.estoqueMin = t.estoqueMin;
@@ -56054,7 +56085,7 @@ function balCatalogo(){
         comodatoDe: '',
         saldoComodato: 0,
         saldoMizu: 0,
-        fornecedorEscolhido: String(t.fornecedor || ''),
+        fornecedorEscolhido: '',   /* quem preenche é totvsAplicarNoItem, que sabe tratar CNPJ */
         codigos: [t.barras]
       };
       /* passa pelo mesmo caminho dos outros, pra pegar o fornecedor
@@ -58143,8 +58174,20 @@ function balLinhasParecidas(chave){
   const minhas = balPalavrasDoNome(it.nome);
   if(minhas.length === 0) return [];
   const saida = [];
+  const ixTotvs = totvsIndice();
   (CONF_LINHAS||[]).forEach(l=>{
     if(l.produtoId) return;
+    /* JÁ TEM IDENTIDADE PELO CÓDIGO DE BARRAS: NÃO SE SUGERE NADA.
+
+       Com o TOTVS ligado, as 508 linhas da ECOVILLE casaram todas pelo
+       código. Continuar oferecendo "é o mesmo?" por semelhança de nome
+       depois disso é só ruído — e ruído perigoso: ela via LIMPADOR
+       PINHO e o sistema oferecia LIMPADOR LAVANDA, LIMPADOR TALCO,
+       LIMPADOR CASAFLOR. Um toque errado juntaria dois produtos que
+       não têm nada a ver. Sugestão por nome fica só pra linha que o
+       código de barras não conseguiu colocar em lugar nenhum. */
+    const b = String(l.barras||'').replace(/\D/g,'');
+    if(b && ixTotvs.has(b)) return;
     const nome = l.nomeEscolhido || l.nome;
     const dele = balPalavrasDoNome(nome);
     if(dele.length === 0) return;
@@ -58165,6 +58208,10 @@ function balParecidos(chave){
      no cadastro. Perguntar de novo no meio da contagem é justamente o
      que esta tela veio evitar. */
   if(it.semIgual) return [];
+  /* mesma razão do caminho inverso: se o código de barras já colocou
+     este item num produto do TOTVS, nome parecido não acrescenta nada
+     e só abre porta pra engano */
+  if(it.totvsId) return [];
   const minhas = balPalavrasDoNome(it.nome);
   if(minhas.length === 0) return [];
   /* produtos do cadastro que ainda não estão amarrados a nenhuma linha */
@@ -58969,7 +59016,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 00:20';
+const SISTEMA_VERSAO = '12/11/2026 01:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
