@@ -2063,6 +2063,11 @@ function defaultState(){
        dela de o que aproveitar do TOTVS. Só decisão; nada é gravado no
        cadastro até o balanço fechar. Ver MÓDULO: O QUE O TOTVS MANDA. */
     totvsCampos: {},
+    /* O catálogo do TOTVS virado referência do balanço, com SÓ os campos
+       que ela marcou. Um registro por produto, pra sincronizar com o
+       celular igual a planilha do comodato. Ver MÓDULO: O TOTVS ENTRANDO
+       NO BALANÇO. */
+    totvsProdutos: [],
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
@@ -47054,6 +47059,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-m',
+    data: '2026-11-11',
+    titulo: 'O TOTVS entrou no balanço — e as 508 do comodato se resolveram sozinhas',
+    itens: [
+      'O CRUZAMENTO DEU ZERO SOBRANDO. Todas as 508 linhas da ECOVILLE existem no TOTVS com o mesmo código de barras. Aquele "Vincular 290" era falta de dado, não produto faltando. Agora, no botão "Usar isso no balanço", elas viram comodato sozinhas — sem você vincular uma por uma.',
+      'O NOME VEM DO TOTVS, de propósito, e isso inverte a regra antiga de que a planilha manda. O motivo é seu: na planilha vem "detergente caixa com 12" quando na verdade é unidade, e você já corrigiu isso no TOTVS. Trazer o nome da planilha seria trazer o erro de volta. Marca, unidade e NCM vêm junto.',
+      'SALDO, CUSTO E VENDA CONTINUAM SENDO DA ECOVILLE no item de comodato — o produto é deles. Só no produto que é só seu é que o custo e o preço do TOTVS valem. É a regra que você ditou, e tem teste cobrando os dois lados.',
+      'Produto DESATIVADO no TOTVS não entra no balanço. Contar o que não existe mais só geraria confusão.',
+      'Produto do TOTVS SEM código de barras também fica de fora, de propósito: sem ele eu não tenho como saber se já é um produto seu com outro nome, e o preço de errar seria duplicar o cadastro inteiro. Esses continuam pelo caminho normal.',
+      'E O FREIO DE SEMPRE: nada disso grava no seu cadastro. O TOTVS é referência até o balanço fechar. Tem um botão pra tirar ele do balanço a qualquer hora, e aí tudo volta como estava — sem perder nada do que você já contou.',
+      'O catálogo guardado leva SÓ os campos que você marcou, um registro por produto, e sincroniza com o celular igual a planilha do comodato.'
+    ]
+  },
+  {
     id: '2026-11-11-l',
     data: '2026-11-11',
     titulo: 'Ver o produto cru da TOTVS, direto da tela',
@@ -54430,6 +54449,147 @@ function totvsCruHtml(){
 }
 
 /* ---- a tela ---- */
+/* =========================================================
+   O TOTVS ENTRANDO NO BALANÇO
+
+   "as 508 viram comodato sozinhas" — esse é o ponto. O cruzamento pelo
+   código de barras achou TODAS as 508 linhas da ECOVILLE dentro do
+   TOTVS, com zero sobrando. Então o trabalho de vincular item por item,
+   que era o que mais assustava, simplesmente deixa de existir.
+
+   A REGRA, do jeito que ele ditou:
+
+     item que está nos dois  -> nome, marca, unidade e NCM do TOTVS
+                                saldo, custo e venda da ECOVILLE
+     item só do TOTVS        -> é produto dele, com custo e preço de lá
+
+   O nome vem do TOTVS de propósito, e isso inverte a regra antiga de
+   que "a planilha manda". O motivo é dele: na planilha vem "detergente
+   caixa com 12" quando na verdade é unidade, e ele já corrigiu isso no
+   TOTVS. Trazer o nome da planilha seria trazer o erro de volta.
+
+   E NADA DISSO GRAVA NO CADASTRO. O TOTVS é referência até o balanço
+   fechar — decisão dele, e é o que torna tudo isso seguro de ligar.
+   ========================================================= */
+
+function totvsCatalogo(){
+  return Array.isArray(STATE.totvsProdutos) ? STATE.totvsProdutos : [];
+}
+
+/* Guarda só o que ele marcou, com o nome do campo já traduzido pro
+   nosso. Guardar os 27 campos de 1.347 produtos encheria o sincronismo
+   de coisa que ninguém pediu. */
+function totvsGuardarCatalogo(){
+  const a = TOTVS_AMOSTRA;
+  if(!a || !a.produtos || !a.produtos.length){
+    showToast('Busque os produtos no TOTVS primeiro.', 'error');
+    return 0;
+  }
+  const escolhas = totvsEscolhas();
+  const usados = Object.keys(escolhas).filter(c => escolhas[c] && escolhas[c].usar && escolhas[c].destino);
+  if(usados.length === 0){
+    showToast('Marque pelo menos um campo pra puxar.', 'error');
+    return 0;
+  }
+
+  const guardados = [];
+  a.produtos.forEach(p => {
+    const barras = String(totvsValorDe(p, 'codigoBarras') || '').replace(/\D/g, '');
+    const id = p.idTotvs != null ? p.idTotvs : (p.id != null ? p.id : null);
+    if(id == null) return;
+    /* ativo=false é produto que ele desativou no TOTVS: não entra no
+       balanço, porque contar o que não existe mais só gera confusão */
+    if(p.ativo === false) return;
+
+    const reg = { id: 't' + id, idTotvs: id, barras: barras };
+    usados.forEach(campo => {
+      const destino = escolhas[campo].destino;
+      const v = totvsValorDe(p, campo);
+      if(v == null || v === '') return;
+      reg[destino] = v;
+    });
+    guardados.push(reg);
+  });
+
+  STATE.totvsProdutos = guardados;
+  saveState();
+  balRecarregarCatalogo();
+  return guardados.length;
+}
+
+function totvsUsarNoBalanco(){
+  const quantos = totvsGuardarCatalogo();
+  if(!quantos) return;
+  renderConferencia();
+  showToast(`${fmtNum(quantos)} produtos do TOTVS entraram como referência do balanço.`, 'success');
+}
+
+function totvsLimparCatalogo(){
+  confirmAction('Tirar o TOTVS do balanço',
+    'O balanço volta a usar só a planilha da ECOVILLE e o seu cadastro.\n\n'
+    + 'Nada que você já contou se perde, e nada do cadastro muda — o TOTVS era só referência.',
+    ()=>{
+      STATE.totvsProdutos = [];
+      saveState();
+      balRecarregarCatalogo();
+      renderConferencia();
+      showToast('TOTVS removido da referência do balanço.', 'success');
+    }, 'Tirar');
+}
+
+/* código de barras -> produto do TOTVS */
+let TOTVS_IX = null;
+function totvsIndice(){
+  if(TOTVS_IX) return TOTVS_IX;
+  TOTVS_IX = new Map();
+  totvsCatalogo().forEach(t => {
+    if(t.barras && !TOTVS_IX.has(t.barras)) TOTVS_IX.set(t.barras, t);
+  });
+  return TOTVS_IX;
+}
+
+function totvsAchaPorCodigos(codigos){
+  const ix = totvsIndice();
+  if(!ix.size) return null;
+  for(let i = 0; i < (codigos || []).length; i++){
+    const d = String(codigos[i] || '').replace(/\D/g, '');
+    if(d && ix.has(d)) return ix.get(d);
+  }
+  return null;
+}
+
+/* ---------------------------------------------------------------
+   APLICAR NO ITEM DO BALANÇO
+
+   Custo e preço têm tratamento separado, e é a parte que mais importa
+   acertar: no item de comodato quem manda é a ECOVILLE, porque o
+   produto é deles. Só no produto que é só dele é que o custo do TOTVS
+   vale — que é exatamente o que ele pediu.
+   --------------------------------------------------------------- */
+function totvsAplicarNoItem(it, t){
+  if(!it || !t) return;
+  it.totvsId = t.idTotvs;
+  if(t.nome)     it.nome = t.nome;
+  if(t.marca)    it.marca = t.marca;
+  if(t.unidade)  it.unidade = t.unidade;
+  if(t.ncm)      it.ncm = t.ncm;
+  if(t.categoria) it.categoria = t.categoria;
+  if(t.setor)    it.setor = t.setor;
+  if(t.classificacao) it.classificacao = t.classificacao;
+  if(t.origemItem)    it.origemItem = t.origemItem;
+  if(t.sku && !it.sku) it.sku = t.sku;
+  if(t.codigoNF) it.codigoNF = t.codigoNF;
+  if(t.fornecedor && !it.fornecedorEscolhido) it.fornecedorEscolhido = t.fornecedor;
+  if(t.estoqueMin != null) it.estoqueMin = t.estoqueMin;
+
+  if(!it.comodato){
+    if(t.custo != null && Number(t.custo) > 0) it.custo = Number(t.custo);
+    if(t.precoVenda != null && Number(t.precoVenda) > 0) it.venda = Number(t.precoVenda);
+  }
+
+  if(t.barras && !it.codigos.includes(t.barras)) it.codigos.push(t.barras);
+}
+
 function renderConferenciaTotvs(box){
   const cfg = getConfigTotvs();
   const a = TOTVS_AMOSTRA;
@@ -54552,6 +54712,18 @@ function renderConferenciaTotvs(box){
           }).join('')}</tbody>
         </table>
       </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:14px;
+                  padding-top:12px;border-top:1px solid var(--border);">
+        <button class="btn btn-primary" onclick="totvsUsarNoBalanco()">
+          ${totvsCatalogo().length ? '🔄 Atualizar a referência do balanço' : '✓ Usar isso no balanço'}</button>
+        ${totvsCatalogo().length
+          ? `<button class="btn btn-sm" onclick="totvsLimparCatalogo()">tirar o TOTVS do balanço</button>
+             <span class="help-text" style="margin:0;">
+               ${fmtNum(totvsCatalogo().length)} produtos do TOTVS valendo como referência agora.</span>`
+          : `<span class="help-text" style="margin:0;">
+               Guarda os campos marcados e liga o cruzamento. Continua sem gravar nada no cadastro.</span>`}
+      </div>
+
       <div style="margin-top:10px;">
         <button class="btn btn-sm" onclick="totvsTrocarCru()">${totvsVerCru ? 'esconder' : 'ver'} um produto cru da TOTVS</button>
         <span class="help-text" style="margin:0 0 0 8px;">Pede o produto sem conversão nenhuma — é o que mostra o nome de verdade de cada campo.</span>
@@ -55501,6 +55673,53 @@ function balCatalogo(){
     it.codigos = [meu].concat(it.codigos.filter(c=>c !== meu));
   });
 
+  /* O TOTVS ENTRA AQUI, se ele tiver mandado entrar.
+
+     Duas coisas, nesta ordem. Primeiro ele corrige o que já existe:
+     a linha da ECOVILLE com nome de caixa vira o nome certo do TOTVS,
+     e ganha marca, unidade e NCM. Isso vale pras 508 do comodato, que
+     foi o cruzamento que deu zero sobrando.
+
+     Depois entram os produtos que SÓ existem no TOTVS — e só os que
+     têm código de barras ainda livre. Produto sem código de barras
+     fica de fora de propósito: sem ele não dá pra saber se já é um
+     produto do cadastro dele com outro nome, e o preço de errar é
+     duplicar o cadastro inteiro. Esses continuam no caminho normal. */
+  if(totvsCatalogo().length){
+    const tomados = new Set();
+    itens.forEach(it=>{
+      const t = totvsAchaPorCodigos(it.codigos);
+      if(!t) return;
+      totvsAplicarNoItem(it, t);
+      tomados.add(t.idTotvs);
+    });
+
+    totvsCatalogo().forEach(t=>{
+      if(!t.barras || tomados.has(t.idTotvs)) return;
+      const chave = 't:' + t.idTotvs;
+      if(itens.has(chave)) return;
+      const it = {
+        chave,
+        produtoId: null,
+        totvsId: t.idTotvs,
+        nome: String(t.nome || ''),
+        sku: String(t.sku || ''),
+        unidade: String(t.unidade || ''),
+        ncm: String(t.ncm || ''),
+        marca: String(t.marca || ''),
+        custo: Number(t.custo || 0),
+        venda: Number(t.precoVenda || 0),
+        comodato: false,
+        comodatoDe: '',
+        saldoComodato: 0,
+        saldoMizu: 0,
+        fornecedorEscolhido: String(t.fornecedor || ''),
+        codigos: [t.barras]
+      };
+      itens.set(chave, it);
+    });
+  }
+
   return itens;
 }
 
@@ -55578,6 +55797,7 @@ let balCelular = false;      /* a mesma tela, no formato do celular */
 let balMsg = '';
 
 function balRecarregarCatalogo(){
+  TOTVS_IX = null;   /* o índice do TOTVS é refeito junto, senão fica velho */
   BAL_CAT = balCatalogo();
   BAL_IX = balIndice(BAL_CAT);
 }
@@ -58204,7 +58424,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 18:05';
+const SISTEMA_VERSAO = '11/11/2026 20:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
