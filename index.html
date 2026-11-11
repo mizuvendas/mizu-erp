@@ -2059,6 +2059,10 @@ function defaultState(){
        manda item com código de enchimento, e o que ela bipa na embalagem
        é que vale. */
     codigosPrincipais: {},
+    /* { "campoNoTotvs": { usar:true, destino:"codigoBarras" } } — a escolha
+       dela de o que aproveitar do TOTVS. Só decisão; nada é gravado no
+       cadastro até o balanço fechar. Ver MÓDULO: O QUE O TOTVS MANDA. */
+    totvsCampos: {},
     anosArquivados: [], // { ano, totalBruto, totalDespesas, totalLucro, porMes, topProdutos, topClientes, qtdVendas, arquivadoEm }
     vendas: [],       // { id, data, clienteId, vendedor, itens:[{produtoId, qtd, precoUnit, custoUnit}], obs, pagadorId, repasse:{descontoPct, abatimentos:[{data,valor}]} }
     despesas: [],      // { id, tipo: fixa|variavel|parcelada, descricao, categoria, valor, vencimento, parcelas, parcelaAtual, grupoParcelaId, status, dataPagamento }
@@ -47050,6 +47054,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-j',
+    data: '2026-11-11',
+    titulo: 'O TOTVS entra como referência — e você escolhe o que ele traz',
+    itens: [
+      'ABA 🔌 TOTVS na Conferência. Ela pergunta ao servidor-ponte quais produtos existem no TOTVS e mostra, campo por campo, o que realmente chega: nome do campo, um valor de exemplo de verdade, e QUANTOS produtos vieram com aquele campo preenchido. Essa última coluna é a que vale — campo que existe mas vem vazio em 90% não serve pra nada, e sem ela você só descobriria isso no meio do balanço.',
+      'POR QUE ASSIM E NÃO UMA LISTA PRONTA: eu não consigo saber daqui quais campos o TOTVS tem. O servidor-ponte é repositório privado e a documentação da API não abre no meu ambiente. Qualquer lista que eu escrevesse seria chute — e chute em campo fiscal vira nota rejeitada lá na frente. Então a tela pergunta em vez de adivinhar.',
+      'VOCÊ MARCA O QUE QUER e para onde vai (descrição, marca, fornecedor, NCM, EAN, unidade...). O destino vem com um palpite meu pelo nome do campo, e é palpite mesmo — nada vem marcado sozinho. A escolha fica guardada.',
+      'BOTÃO "VER UM PRODUTO CRU": mostra o JSON inteiro de um produto. É o que diz se o servidor-ponte está filtrando campos antes de mandar — se só chegar o punhado que o Mizu já usa, o conserto é lá no server.js, não aqui.',
+      'O CRUZAMENTO PELO CÓDIGO DE BARRAS já aparece: nos dois (é comodato), só no TOTVS (é seu), só na ECOVILLE (não cadastrado).',
+      'E O MAIS IMPORTANTE: esta tela NÃO GRAVA NADA no seu cadastro. Nem cria, nem atualiza, nem vincula. O TOTVS entra como lista de referência pra organizar a conferência; só vira cadastro de verdade quando o balanço fechar, junto com o estoque contado.'
+    ]
+  },
+  {
     id: '2026-11-11-i',
     data: '2026-11-11',
     titulo: 'Filtro de quantidade divergente, e a contagem não some mais ao vincular',
@@ -53253,6 +53270,7 @@ function confAbasHtml(){
     ${aba('vincular', '🔗 Vincular' + (typeof vincPendentes === 'function' && CONF_LINHAS
         ? ` <span style="font-weight:400;color:var(--ink-soft);">${vincPendentes().length}</span>` : ''))}
     ${aba('loja','🏪 Produtos da loja')}
+    ${aba('totvs','🔌 TOTVS')}
     ${confBalancoDoRelatorio() ? aba('relatorio','📊 Relatório do balanço') : ''}
   </div>`;
 }
@@ -54132,6 +54150,336 @@ function vincRedesenhar(qual){
   }, 160);
 }
 
+/* =========================================================
+   O QUE O TOTVS MANDA
+
+   "no sistema não dá pra nós decidir o que ele vai puxar, me mostrando
+    todas as possibilidades do que ele é capaz de puxar os dados?"
+
+   Dá — e é a única forma honesta de responder essa pergunta. Eu não
+   consigo saber daqui quais campos existem: o servidor-ponte é um
+   repositório privado e a documentação da API do Varejonline não abre
+   neste ambiente. Qualquer lista que eu escrevesse seria chute, e chute
+   em campo fiscal vira nota rejeitada lá na frente.
+
+   Então esta tela não adivinha nada. Ela pede uma amostra de produtos
+   de verdade ao servidor e mostra TUDO que chegou: cada campo, com um
+   valor de exemplo e quantos produtos vieram com ele preenchido. Essa
+   segunda coluna é a que importa de verdade — campo que existe mas vem
+   vazio em 90% dos produtos não serve pra nada, e sem contar você só
+   descobriria isso no meio do balanço.
+
+   E tem o botão de ver um produto CRU, o JSON inteiro. É o que diz se
+   o servidor-ponte está filtrando campos antes de mandar: se só chegar
+   o punhado de campos que o Mizu já usa, o conserto é lá no server.js,
+   não aqui.
+
+   NADA DESTA TELA GRAVA NO CADASTRO. A decisão dele foi clara: o TOTVS
+   entra como lista de referência pra organizar a conferência, e só vira
+   cadastro de verdade quando o balanço fechar.
+   ========================================================= */
+
+const TOTVS_DESTINOS = [
+  ['', '— não puxar —'],
+  ['nome', 'Descrição do produto'],
+  ['codigoBarras', 'Código de barras (EAN)'],
+  ['marca', 'Marca'],
+  ['fornecedor', 'Fornecedor'],
+  ['ncm', 'NCM'],
+  ['unidade', 'Unidade'],
+  ['custo', 'Custo'],
+  ['precoVenda', 'Preço de venda'],
+  ['sku', 'Código interno'],
+  ['codigoNF', 'Código na nota'],
+  ['categoria', 'Categoria'],
+  ['setor', 'Setor'],
+  ['origemItem', 'Origem do item (ICMS)'],
+  ['classificacao', 'Classificação do produto'],
+  ['estoqueMin', 'Estoque mínimo'],
+  ['obs', 'Observação']
+];
+
+/* o palpite inicial do destino, só pela cara do nome do campo. É
+   palpite mesmo — ela confere e corrige, por isso nada vem marcado
+   como "puxar" sozinho. */
+function totvsPalpiteDestino(campo){
+  /* ncmNormalizar devolve MAIÚSCULO — sem o toLowerCase aqui, nenhuma
+     comparação abaixo casava e o palpite vinha sempre vazio. */
+  const c = ncmNormalizar(String(campo||'')).replace(/\s+/g,'').toLowerCase();
+  const tem = (...ps)=>ps.some(p=>c.includes(p));
+  if(tem('codigodebarras','codbarras','codigobarras','ean','gtin')) return 'codigoBarras';
+  if(tem('ncm')) return 'ncm';
+  if(tem('marca')) return 'marca';
+  if(tem('fornecedor','fabricante')) return 'fornecedor';
+  if(tem('unidade','unidademedida','sigla')) return 'unidade';
+  if(tem('precovenda','precodevenda','valorvenda')) return 'precoVenda';
+  if(tem('custo')) return 'custo';
+  if(tem('descricao','nome')) return 'nome';
+  if(tem('sku','codigointerno')) return 'sku';
+  if(tem('codigonf')) return 'codigoNF';
+  if(tem('categoria','grupo')) return 'categoria';
+  if(tem('setor','secao')) return 'setor';
+  if(tem('origem')) return 'origemItem';
+  if(tem('classificacao')) return 'classificacao';
+  if(tem('estoquemin','minimo')) return 'estoqueMin';
+  return '';
+}
+
+/* ---------------------------------------------------------------
+   LER OS CAMPOS DE UMA AMOSTRA
+
+   Objeto aninhado vira caminho com ponto (marca.nome), porque é assim
+   que ele vai ser lido depois. Lista a gente não abre: mostra que é
+   lista e quantos itens tem — abrir uma lista de preços por tabela
+   dentro desta tela só ia confundir, e não é o que ela precisa agora.
+   --------------------------------------------------------------- */
+function totvsAchatar(obj, prefixo, saida, nivel){
+  saida = saida || {};
+  nivel = nivel || 0;
+  if(nivel > 2) return saida;
+  Object.keys(obj || {}).forEach(k=>{
+    const caminho = prefixo ? (prefixo + '.' + k) : k;
+    const v = obj[k];
+    if(v && typeof v === 'object' && !Array.isArray(v)){
+      totvsAchatar(v, caminho, saida, nivel + 1);
+    }else{
+      saida[caminho] = v;
+    }
+  });
+  return saida;
+}
+
+function totvsValorDe(obj, caminho){
+  return String(caminho||'').split('.').reduce((o,k)=> (o == null ? o : o[k]), obj);
+}
+
+function totvsPreenchido(v){
+  if(v == null) return false;
+  if(Array.isArray(v)) return v.length > 0;
+  if(typeof v === 'object') return Object.keys(v).length > 0;
+  const s = String(v).trim();
+  return s !== '' && s !== '0' && s.toLowerCase() !== 'null';
+}
+
+function totvsMostrar(v){
+  if(v == null) return '—';
+  if(Array.isArray(v)) return `[lista com ${v.length}]`;
+  if(typeof v === 'object') return '{objeto}';
+  const s = String(v);
+  return s.length > 60 ? s.slice(0, 60) + '…' : s;
+}
+
+function totvsCamposDaAmostra(produtos){
+  const campos = new Map();
+  produtos.forEach(p=>{
+    const plano = totvsAchatar(p);
+    Object.keys(plano).forEach(c=>{
+      if(!campos.has(c)) campos.set(c, { campo: c, preenchidos: 0, exemplo: null });
+      const info = campos.get(c);
+      const v = plano[c];
+      if(totvsPreenchido(v)){
+        info.preenchidos++;
+        if(info.exemplo == null) info.exemplo = v;
+      }
+    });
+  });
+  return Array.from(campos.values())
+    .sort((a,b)=> b.preenchidos - a.preenchidos || a.campo.localeCompare(b.campo, 'pt-BR'));
+}
+
+/* ---- o que ela escolheu, guardado ---- */
+function totvsEscolhas(){
+  if(!STATE.totvsCampos || typeof STATE.totvsCampos !== 'object') STATE.totvsCampos = {};
+  return STATE.totvsCampos;
+}
+
+function totvsMarcarCampo(campo, usar){
+  const e = totvsEscolhas();
+  if(!e[campo]) e[campo] = { destino: totvsPalpiteDestino(campo) };
+  e[campo].usar = !!usar;
+  saveState();
+  renderConferencia();
+}
+
+function totvsDestinoCampo(campo, destino){
+  const e = totvsEscolhas();
+  if(!e[campo]) e[campo] = { usar: false };
+  e[campo].destino = destino || '';
+  if(!destino) e[campo].usar = false;
+  saveState();
+  renderConferencia();
+}
+
+/* ---- a busca ---- */
+let TOTVS_AMOSTRA = null;    /* { produtos, atualizadoEm, erro, carregando } */
+
+async function totvsBuscarAmostra(){
+  const cfg = getConfigTotvs();
+  if(!cfg.url || !cfg.chave){
+    abrirConfigTotvs(()=>totvsBuscarAmostra());
+    return;
+  }
+  TOTVS_AMOSTRA = { carregando: true };
+  renderConferencia();
+
+  let resposta, dados;
+  try{
+    const url = `${cfg.url}/produtos?chave=${encodeURIComponent(cfg.chave)}&atualizar=true`;
+    resposta = await fetch(url);
+    dados = await resposta.json();
+  }catch(err){
+    TOTVS_AMOSTRA = { erro: 'Não consegui falar com o servidor-ponte. Confira a internet e o endereço configurado.' };
+    renderConferencia();
+    return;
+  }
+
+  if(!resposta.ok || (dados && dados.erro)){
+    const msg = (dados && dados.erro) ? dados.erro : `Erro ${resposta.status} ao consultar o servidor.`;
+    TOTVS_AMOSTRA = { erro: msg, precisaLogin: /nenhum login|não foi possível renovar/i.test(msg), url: cfg.url };
+    renderConferencia();
+    return;
+  }
+
+  const produtos = (dados && dados.produtos) || [];
+  TOTVS_AMOSTRA = { produtos, atualizadoEm: dados && dados.atualizadoEm };
+  renderConferencia();
+}
+
+let totvsVerCru = false;
+function totvsTrocarCru(){ totvsVerCru = !totvsVerCru; renderConferencia(); }
+
+/* ---- a tela ---- */
+function renderConferenciaTotvs(box){
+  const cfg = getConfigTotvs();
+  const a = TOTVS_AMOSTRA;
+
+  const cabeca = `
+    ${confAbasHtml()}
+    <div class="card">
+      <h3>🔌 O que o TOTVS manda</h3>
+      <p class="help-text">Esta tela <strong>não grava nada no seu cadastro</strong>. Ela pergunta ao servidor-ponte
+        quais produtos existem no TOTVS e mostra, campo por campo, o que realmente chega — com um valor de exemplo e
+        quantos produtos vieram com aquele campo preenchido.</p>
+      <p class="help-text" style="margin-top:-6px;">Campo que existe mas vem vazio na maioria não serve pra nada.
+        É por isso que a coluna <strong>"vieram preenchidos"</strong> vale mais do que a lista de campos em si.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 0;">
+        <button class="btn btn-primary" onclick="totvsBuscarAmostra()">
+          ${a && a.produtos ? '🔄 Buscar de novo' : '🔌 Perguntar ao TOTVS'}</button>
+        <button class="btn" onclick="abrirConfigTotvs(()=>renderConferencia())">Configurar servidor</button>
+      </div>
+      ${cfg.url ? `<p class="help-text" style="margin:8px 0 0;font-size:11.5px;">Servidor: ${escapeHtml(cfg.url)}${
+        cfg.chave ? '' : ' — falta a chave de acesso'}</p>` : ''}
+    </div>`;
+
+  if(!a){
+    box.innerHTML = cabeca + `<div class="card"><p class="help-text">
+      O servidor é do plano gratuito, então ele dorme quando ninguém usa — a primeira pergunta pode levar até um minuto.</p></div>`;
+    return;
+  }
+
+  if(a.carregando){
+    box.innerHTML = cabeca + `<div class="card"><div class="empty-state"><div class="ic">⏳</div>
+      <p>Perguntando ao TOTVS…<br>Se o servidor estava dormindo, isso leva até um minuto na primeira vez.</p></div></div>`;
+    return;
+  }
+
+  if(a.erro){
+    box.innerHTML = cabeca + `<div class="card"><div class="empty-state"><div class="ic">⚠️</div>
+      <p>${escapeHtml(a.erro)}</p>
+      ${a.precisaLogin ? `<p>É só o login que venceu — o plano gratuito do Render perde o token a cada reinício.
+        Abra <a href="${escapeAttr(a.url)}/autorizar" target="_blank" rel="noopener">${escapeHtml(a.url)}/autorizar</a>,
+        faça o login no TOTVS e pergunte de novo.</p>` : ''}</div></div>`;
+    return;
+  }
+
+  const produtos = a.produtos || [];
+  if(!produtos.length){
+    box.innerHTML = cabeca + `<div class="card"><div class="empty-state">
+      <p>O servidor respondeu, mas não veio nenhum produto.</p></div></div>`;
+    return;
+  }
+
+  const campos = totvsCamposDaAmostra(produtos);
+  const escolhas = totvsEscolhas();
+  const total = produtos.length;
+  const escolhidos = campos.filter(c=>escolhas[c.campo] && escolhas[c.campo].usar).length;
+
+  /* o cruzamento com a ECOVILLE, que é pra isso que ele quer o TOTVS */
+  const barrasTotvs = new Map();
+  produtos.forEach(p=>{
+    const d = String(totvsValorDe(p, 'codigoBarras') || p.codigoBarras || '').replace(/\D/g,'');
+    if(d) barrasTotvs.set(d, p);
+  });
+  const linhas = (CONF_LINHAS || []);
+  let nosDois = 0, soEcoville = 0;
+  linhas.forEach(l=>{
+    const d = String(l.barras||'').replace(/\D/g,'');
+    if(d && barrasTotvs.has(d)) nosDois++; else soEcoville++;
+  });
+  const soTotvs = barrasTotvs.size - nosDois;
+
+  box.innerHTML = cabeca + `
+    <div class="card">
+      <h3>O cruzamento pelo código de barras</h3>
+      ${linhas.length ? `
+        <p class="help-text">Comparando os <strong>${fmtNum(total)}</strong> produtos do TOTVS com as
+          <strong>${fmtNum(linhas.length)}</strong> linhas da ${escapeHtml(CONF_FORNECEDOR_PADRAO)}:</p>
+        <div style="display:flex;gap:18px;flex-wrap:wrap;margin:10px 0;">
+          <div><div class="help-text" style="margin:0;">Nos dois → é comodato</div>
+            <div style="font-size:22px;font-weight:700;color:var(--primary-escuro,#1B4B5A);">${fmtNum(nosDois)}</div></div>
+          <div><div class="help-text" style="margin:0;">Só no TOTVS → é seu</div>
+            <div style="font-size:22px;font-weight:700;">${fmtNum(soTotvs < 0 ? 0 : soTotvs)}</div></div>
+          <div><div class="help-text" style="margin:0;">Só na ${escapeHtml(CONF_FORNECEDOR_PADRAO)}</div>
+            <div style="font-size:22px;font-weight:700;color:var(--warning,#8A5D14);">${fmtNum(soEcoville)}</div></div>
+        </div>
+        <p class="help-text" style="margin:0;">Isso é só a conta, ainda não mexe em nada. O cruzamento só vale
+          pros que têm código de barras nos dois lados — quem não tem continua na tela Vincular, no olho.</p>`
+      : `<p class="help-text">A planilha da ${escapeHtml(CONF_FORNECEDOR_PADRAO)} ainda não chegou neste aparelho,
+          então não dá pra cruzar. Carregue na aba Comodato e volte aqui.</p>`}
+    </div>
+
+    <div class="card">
+      <h3>Os campos que chegaram <span class="hint">${campos.length} campos · amostra de ${fmtNum(total)} produtos</span></h3>
+      <p class="help-text">Marque o que você quer aproveitar e confira pra onde vai. O destino vem com um palpite meu
+        pelo nome do campo — <strong>é palpite</strong>, confira antes de marcar. Nada vem marcado sozinho.
+        ${escolhidos ? `<strong>${escolhidos} campo(s) marcados.</strong>` : ''}</p>
+      <div class="table-wrap" style="max-height:calc(100vh - 420px);overflow:auto;">
+        <table class="data-table">
+          <thead><tr>
+            <th style="width:60px;">Puxar</th><th>Campo no TOTVS</th>
+            <th class="num" style="width:150px;">Vieram preenchidos</th>
+            <th style="width:230px;">Exemplo</th><th style="width:210px;">Onde entra aqui</th>
+          </tr></thead>
+          <tbody>${campos.map(c=>{
+            const e = escolhas[c.campo] || {};
+            const destino = e.destino != null ? e.destino : totvsPalpiteDestino(c.campo);
+            const pct = total ? Math.round(c.preenchidos * 100 / total) : 0;
+            const cor = pct >= 80 ? 'var(--positive)' : pct >= 30 ? 'var(--warning,#8A5D14)' : 'var(--negative)';
+            return `<tr>
+              <td style="text-align:center;">
+                <input type="checkbox" ${e.usar ? 'checked' : ''} ${destino ? '' : 'disabled'}
+                  onchange="totvsMarcarCampo('${escapeAttr(c.campo)}', this.checked)"></td>
+              <td><code style="font-size:12px;">${escapeHtml(c.campo)}</code></td>
+              <td class="num"><strong style="color:${cor};">${pct}%</strong>
+                <div class="help-text" style="margin:0;">${fmtNum(c.preenchidos)} de ${fmtNum(total)}</div></td>
+              <td><span class="help-text" style="margin:0;">${escapeHtml(totvsMostrar(c.exemplo))}</span></td>
+              <td><select onchange="totvsDestinoCampo('${escapeAttr(c.campo)}', this.value)"
+                    style="width:100%;font-size:12.5px;">
+                ${TOTVS_DESTINOS.map(([v,r])=>`<option value="${escapeAttr(v)}" ${v===destino?'selected':''}>${escapeHtml(r)}</option>`).join('')}
+              </select></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+      <div style="margin-top:10px;">
+        <button class="btn btn-sm" onclick="totvsTrocarCru()">${totvsVerCru ? 'esconder' : 'ver'} um produto cru</button>
+        <span class="help-text" style="margin:0 0 0 8px;">É assim que se descobre se o servidor-ponte está filtrando campos antes de mandar.</span>
+      </div>
+      ${totvsVerCru ? `<pre style="margin:10px 0 0;padding:10px;background:var(--surface-2,#F6F7F8);border-radius:6px;
+        overflow:auto;max-height:320px;font-size:11.5px;">${escapeHtml(JSON.stringify(produtos[0], null, 2))}</pre>` : ''}
+    </div>`;
+}
+
 function renderConferencia(){
   preservandoRolagem(()=>renderConferenciaAgora());
 }
@@ -54141,6 +54489,7 @@ function renderConferenciaAgora(){
   if(!box) return;
   if(confAba === 'relatorio'){ renderConferenciaRelatorio(box); return; }
   if(confAba === 'vincular'){ renderConferenciaVincular(box); return; }
+  if(confAba === 'totvs'){ renderConferenciaTotvs(box); return; }
   if(confAba === 'loja'){ renderConferenciaLoja(box); return; }
 
   if(!CONF_LINHAS){
@@ -57775,7 +58124,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 14:30';
+const SISTEMA_VERSAO = '11/11/2026 16:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
