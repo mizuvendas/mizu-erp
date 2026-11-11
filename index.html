@@ -47059,6 +47059,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-c',
+    data: '2026-11-12',
+    titulo: 'Foto na lista do balanço, e quanto a planilha dizia que tinha',
+    itens: [
+      'A LISTA DO BALANÇO no computador ganhou a coluna da foto, igual já tinha no celular. Tocando nela você troca ou tira a foto ali mesmo.',
+      'E NA COLUNA COMODATO agora aparece embaixo "na planilha N": quanto a ECOVILLE dizia que tinha daquele item. Antes você via só o que contou, e pra saber se bateu tinha que ir em outra tela. Vale no computador e no celular.'
+    ]
+  },
+  {
     id: '2026-11-12-b',
     data: '2026-11-12',
     titulo: 'Dois erros meus que o seu print mostrou',
@@ -57300,6 +57309,7 @@ function balListaHtml(limite){
     <div class="table-wrap" style="max-height:calc(100vh - 470px);overflow:auto;">
     <table class="data-table">
       <thead><tr>
+        <th style="width:52px;">Foto</th>
         <th>Produto</th><th class="num" style="width:78px;">Contei</th>
         <th class="num" style="width:92px;">Comodato</th><th class="num" style="width:78px;">Mizu</th>
         <th class="num" style="width:112px;">Custo un.</th><th class="num" style="width:112px;">Venda un.</th>
@@ -57316,6 +57326,7 @@ function balListaHtml(limite){
           const passou = it.comodato && qtd > it.saldoComodato;
           const naoContado = !contados.has(ch);
           return `<tr${naoContado ? ' style="opacity:.72;"' : (it.produtoId ? '' : ' style="background:#FFFBF2;"')}>
+            <td style="text-align:center;">${fotoMiniHtml(it.produtoId || ch, 36, 'renderBalanco()')}</td>
             <td><strong>${escapeHtml(it.nome)}</strong>
               <div class="help-text" style="margin:0;">${it.codigos.length
                   ? escapeHtml(it.codigos[0])
@@ -57324,7 +57335,10 @@ function balListaHtml(limite){
             <td class="num">${naoContado
                 ? `<button class="btn btn-sm" onclick="balAbrirItem('${escapeAttr(ch)}')">contar</button>`
                 : `<strong>${fmtNum(qtd)}</strong>`}</td>
-            <td class="num">${it.comodato ? fmtNum(naoContado ? it.saldoComodato : pc) : '—'}</td>
+            <td class="num">${it.comodato
+                ? `${fmtNum(naoContado ? it.saldoComodato : pc)}
+                   <div class="help-text" style="margin:0;">na planilha ${fmtNum(it.saldoComodato)}</div>`
+                : '—'}</td>
             <td class="num">${naoContado ? '—' : (pm ? fmtNum(pm) : '—')}</td>
             <td class="num">${fmtMoney(it.custo)}
               ${qtd ? `<div class="help-text" style="margin:0;">total ${fmtMoney(qtd * Number(it.custo||0))}</div>` : ''}</td>
@@ -58654,6 +58668,7 @@ function balListaCelularHtml(){
                  ? `comodato ${fmtNum(Math.min(qtd, it.saldoComodato))}${(qtd - Math.min(qtd, it.saldoComodato))
                      ? ` · Mizu ${fmtNum(qtd - Math.min(qtd, it.saldoComodato))}` : ''}`
                  : `Mizu ${fmtNum(qtd)}`}</div>
+             ${it.comodato ? `<div class="help-text" style="margin:0;">na planilha ${fmtNum(it.saldoComodato)}</div>` : ''}
              ${passou ? '<div class="help-text" style="margin:0;color:#8A5D14;font-weight:700;">passou do comodato</div>' : ''}
              <button class="btn btn-sm" style="padding:0 7px;margin-top:3px;"
                onclick="balRefazer('${escapeAttr(ch)}')" title="Contar de novo">↺</button>`}
@@ -59016,7 +59031,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 01:30';
+const SISTEMA_VERSAO = '12/11/2026 02:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
