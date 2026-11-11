@@ -47054,6 +47054,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-l',
+    data: '2026-11-11',
+    titulo: 'Ver o produto cru da TOTVS, direto da tela',
+    itens: [
+      'O botão "ver um produto cru" agora pede o produto ao servidor SEM conversão nenhuma, em vez de mostrar o já convertido. Mostrar o convertido não servia pra nada: ele só tem os campos que a ponte decidiu mandar, e o que a gente precisa descobrir é justamente o que ela está deixando de fora — a marca, que chega 0%.',
+      'E ele responde a segunda pergunta de quebra: eu peço 2 produtos; se voltarem 300, a API está ignorando o limite que o servidor manda, e é por isso que o catálogo para em 300. A tela avisa qual dos dois casos é.',
+      'Fiz pela tela e não pela URL do servidor de propósito: por lá você teria que digitar a chave de acesso à mão, e chave não se digita em lugar que depois vira print.'
+    ]
+  },
+  {
     id: '2026-11-11-k',
     data: '2026-11-11',
     titulo: 'O aviso de login do TOTVS agora aparece',
@@ -54353,8 +54363,71 @@ async function totvsBuscarAmostra(){
   renderConferencia();
 }
 
+/* ---------------------------------------------------------------
+   O PRODUTO CRU, DIRETO DA TOTVS
+
+   Mostrar o produto já convertido não serve: ele só tem os campos que
+   a ponte decidiu mandar, e o que a gente precisa descobrir é
+   justamente o que ela está deixando de fora. Então o botão pede o
+   /produtos-cru do servidor, que devolve o produto do jeito que a API
+   respondeu, sem conversão nenhuma.
+
+   De quebra isso responde a segunda pergunta: se eu peço 2 produtos e
+   voltam 300, a API está ignorando o limite que eu mando — e é por
+   isso que o catálogo para em 300.
+
+   A chave de acesso fica no navegador dela, e é daqui que ela sai.
+   Pela URL do servidor ela teria que digitar a chave à mão, e chave
+   não se digita em lugar nenhum que depois vira print. */
 let totvsVerCru = false;
-function totvsTrocarCru(){ totvsVerCru = !totvsVerCru; renderConferencia(); }
+let TOTVS_CRU = null;   /* { amostra, quantosVieram, erro, carregando } */
+
+async function totvsTrocarCru(){
+  totvsVerCru = !totvsVerCru;
+  if(!totvsVerCru || TOTVS_CRU){ renderConferencia(); return; }
+
+  const cfg = getConfigTotvs();
+  if(!cfg.url || !cfg.chave){ abrirConfigTotvs(()=>renderConferencia()); return; }
+
+  TOTVS_CRU = { carregando: true };
+  renderConferencia();
+
+  try{
+    const url = `${cfg.url}/produtos-cru?chave=${encodeURIComponent(cfg.chave)}&quantos=2`;
+    const r = await fetch(url);
+    const d = await r.json();
+    if(!r.ok || d.erro){
+      TOTVS_CRU = { erro: d && d.erro ? d.erro : `Erro ${r.status}.` };
+    }else{
+      TOTVS_CRU = { amostra: d.amostra, quantosVieram: d.quantosVieram, status: d.status };
+    }
+  }catch(e){
+    TOTVS_CRU = { erro: 'Não consegui falar com o servidor-ponte. Se ele for a versão antiga, esse endereço ainda não existe lá.' };
+  }
+  renderConferencia();
+}
+
+function totvsCruHtml(){
+  const c = TOTVS_CRU;
+  if(!c) return '';
+  if(c.carregando) return `<p class="help-text" style="margin:10px 0 0;">Pedindo o produto cru ao servidor…</p>`;
+  if(c.erro) return `<p class="help-text" style="margin:10px 0 0;color:var(--negative);">${escapeHtml(c.erro)}</p>`;
+
+  /* Pedi 2. Se vierem 300, o limite está sendo ignorado — essa é a
+     resposta pro catálogo que não passa de 300. */
+  const pedidos = 2;
+  const aviso = c.quantosVieram == null ? ''
+    : c.quantosVieram > pedidos
+      ? `<p class="help-text" style="margin:8px 0 0;color:var(--negative);">
+           ⚠ Pedi ${pedidos} produtos e vieram ${fmtNum(c.quantosVieram)}: a API está ignorando o limite que o servidor manda.
+           É por isso que o catálogo para em 300 — o nome do parâmetro de paginação é outro.</p>`
+      : `<p class="help-text" style="margin:8px 0 0;color:var(--positive);">
+           ✓ Pedi ${pedidos} e vieram ${fmtNum(c.quantosVieram)}: a API respeita o limite, então a paginação funciona.</p>`;
+
+  const primeiro = Array.isArray(c.amostra) ? c.amostra[0] : c.amostra;
+  return aviso + `<pre style="margin:10px 0 0;padding:10px;background:var(--surface-2,#F6F7F8);border-radius:6px;
+    overflow:auto;max-height:360px;font-size:11.5px;">${escapeHtml(JSON.stringify(primeiro, null, 2))}</pre>`;
+}
 
 /* ---- a tela ---- */
 function renderConferenciaTotvs(box){
@@ -54480,11 +54553,10 @@ function renderConferenciaTotvs(box){
         </table>
       </div>
       <div style="margin-top:10px;">
-        <button class="btn btn-sm" onclick="totvsTrocarCru()">${totvsVerCru ? 'esconder' : 'ver'} um produto cru</button>
-        <span class="help-text" style="margin:0 0 0 8px;">É assim que se descobre se o servidor-ponte está filtrando campos antes de mandar.</span>
+        <button class="btn btn-sm" onclick="totvsTrocarCru()">${totvsVerCru ? 'esconder' : 'ver'} um produto cru da TOTVS</button>
+        <span class="help-text" style="margin:0 0 0 8px;">Pede o produto sem conversão nenhuma — é o que mostra o nome de verdade de cada campo.</span>
       </div>
-      ${totvsVerCru ? `<pre style="margin:10px 0 0;padding:10px;background:var(--surface-2,#F6F7F8);border-radius:6px;
-        overflow:auto;max-height:320px;font-size:11.5px;">${escapeHtml(JSON.stringify(produtos[0], null, 2))}</pre>` : ''}
+      ${totvsVerCru ? totvsCruHtml() : ''}
     </div>`;
 }
 
@@ -58132,7 +58204,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 16:40';
+const SISTEMA_VERSAO = '11/11/2026 18:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
