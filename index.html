@@ -9466,7 +9466,7 @@ async function sincronizarProdutosTotvs(){
 
   if(!resposta.ok || dados.erro){
     const mensagemErro = dados && dados.erro ? dados.erro : `Erro ${resposta.status} ao consultar o servidor.`;
-    const precisaLogin = /nenhum login|não foi possível renovar/i.test(mensagemErro);
+    const precisaLogin = /nenhum login|nenhum token|sem token|token expirado|não foi possível renovar|autorizar/i.test(mensagemErro);
     container.innerHTML = `
       <div class="card">
         <h3>Sincronizar com o TOTVS</h3>
@@ -47054,6 +47054,14 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-11-k',
+    data: '2026-11-11',
+    titulo: 'O aviso de login do TOTVS agora aparece',
+    itens: [
+      'O servidor respondeu "Nenhum token encontrado. Acesse /autorizar primeiro" e a tela mostrou só a mensagem seca, sem o link. Erro meu: eu só reconhecia duas frases de erro, e essa não era nenhuma das duas. Agora reconhece também falta de token e token expirado, e o link de login aparece junto do aviso — que é a única coisa que resolve.'
+    ]
+  },
+  {
     id: '2026-11-11-j',
     data: '2026-11-11',
     titulo: 'O TOTVS entra como referência — e você escolhe o que ele traz',
@@ -54335,7 +54343,7 @@ async function totvsBuscarAmostra(){
 
   if(!resposta.ok || (dados && dados.erro)){
     const msg = (dados && dados.erro) ? dados.erro : `Erro ${resposta.status} ao consultar o servidor.`;
-    TOTVS_AMOSTRA = { erro: msg, precisaLogin: /nenhum login|não foi possível renovar/i.test(msg), url: cfg.url };
+    TOTVS_AMOSTRA = { erro: msg, precisaLogin: /nenhum login|nenhum token|sem token|token expirado|não foi possível renovar|autorizar/i.test(msg), url: cfg.url };
     renderConferencia();
     return;
   }
@@ -58124,7 +58132,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 16:10';
+const SISTEMA_VERSAO = '11/11/2026 16:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
