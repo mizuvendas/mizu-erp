@@ -47059,6 +47059,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-a',
+    data: '2026-11-12',
+    titulo: 'As fotos que o TOTVS já tem vêm pra cá',
+    itens: [
+      'SÃO UMAS 390 FOTOS QUE VOCÊ NÃO VAI PRECISAR TIRAR. Na aba TOTVS tem o botão "Trazer as fotos" — ele baixa, reduz pro mesmo quadrado 600x600 das que você tira aqui (pra caber no aparelho e funcionar sem internet) e vincula sozinho.',
+      'O VÍNCULO JÁ VEM PRONTO: cada produto do TOTVS traz a URL da foto e o código de barras no mesmo registro. Não tem que casar nada à mão — a foto já sabe de quem é.',
+      'PRODUTO QUE JÁ TEM FOTO SUA NÃO É TOCADO. A do TOTVS só preenche o que está vazio. Rodar de novo também não refaz o que já veio — só busca o que falta.',
+      'Tem barra de progresso e botão de parar, porque são centenas de fotos e isso leva um tempo. Parar no meio não perde o que já veio.',
+      'O POR QUÊ DE UM DETALHE TÉCNICO: as fotos ficam num servidor da Amazon que não autoriza outro site a ler a imagem. O sistema tenta direto e, se o navegador recusar, pede pela ponte — que não tem essa regra. Você não precisa fazer nada; é automático.'
+    ]
+  },
+  {
     id: '2026-11-11-n',
     data: '2026-11-11',
     titulo: 'A marca aparecendo, o fornecedor entrando sozinho, e o TOTVS chegando no cadastro',
@@ -54586,6 +54598,10 @@ function totvsGuardarCatalogo(){
     const cnpj = String(totvsValorDe(p, 'fornecedorCnpj') || '').trim();
     const reg = { id: 't' + id, idTotvs: id, barras: barras };
     if(cnpj) reg.fornecedorCnpj = cnpj;
+    /* a URL da foto também vem sempre: não é campo de mostrar, é de
+       onde a imagem vai ser buscada depois */
+    const foto = String(totvsValorDe(p, 'fotoUrl') || '').trim();
+    if(foto) reg.fotoUrl = foto;
     usados.forEach(campo => {
       const destino = escolhas[campo].destino;
       const v = totvsValorDe(p, campo);
@@ -54712,6 +54728,156 @@ function totvsAplicarNoItem(it, t){
   if(t.barras && !it.codigos.includes(t.barras)) it.codigos.push(t.barras);
 }
 
+/* =========================================================
+   AS FOTOS QUE O TOTVS JÁ TEM
+
+   29% dos produtos do TOTVS vêm com foto — umas 390. São 390 produtos
+   que ela não vai precisar pegar na mão e fotografar no meio do
+   balanço. É a maior economia de trabalho desta frente inteira.
+
+   O VÍNCULO JÁ VEM PRONTO: cada produto do TOTVS traz a URL da foto e
+   o código de barras no mesmo registro. Não tem que casar nada à mão —
+   a foto já sabe de quem é.
+
+   DUAS COISAS QUE PRECISAM DE CUIDADO:
+
+   1. O NAVEGADOR PODE RECUSAR. As fotos estão num bucket da Amazon que
+      não autoriza outros sites a lerem a imagem. Sem autorização, dá
+      pra MOSTRAR a foto mas não dá pra reduzir pro tamanho padrão — e
+      guardar foto de 4 MB vezes 390 não cabe em lugar nenhum. Então:
+      tenta direto, e se o navegador recusar, pede pela ponte, que não
+      tem essa regra. O usuário não precisa saber de nada disso.
+
+   2. NÃO SOBRESCREVER O TRABALHO DELA. Produto que já tem foto — a que
+      ela tirou — fica como está. A do TOTVS só preenche vazio.
+   ========================================================= */
+
+let FOTOS_TOTVS = null;   /* { total, feitas, pulou, falhou, rodando, parar } */
+
+function totvsFotosPendentes(){
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const ix = totvsIndice();
+  if(!ix.size) return [];
+  const saida = [];
+  BAL_CAT.forEach(it=>{
+    const t = totvsAchaPorCodigos(it.codigos);
+    if(!t || !t.fotoUrl) return;
+    const dono = it.produtoId || it.chave;
+    if(fotoTemDono(dono)) return;     /* já tem foto: não encosta */
+    saida.push({ dono, url: t.fotoUrl, nome: it.nome });
+  });
+  return saida;
+}
+
+/* Busca a imagem e devolve já quadrada e reduzida. Tenta direto; se o
+   navegador recusar, pede pela ponte. */
+async function totvsBaixarImagem(url){
+  let blob = null;
+  try{
+    const r = await fetch(url, { mode: 'cors' });
+    if(r.ok) blob = await r.blob();
+  }catch(e){ /* era o esperado em bucket sem autorização */ }
+
+  if(!blob){
+    const cfg = getConfigTotvs();
+    if(!cfg.url || !cfg.chave) return null;
+    const r2 = await fetch(`${cfg.url}/foto?chave=${encodeURIComponent(cfg.chave)}&url=${encodeURIComponent(url)}`);
+    if(!r2.ok) return null;
+    blob = await r2.blob();
+  }
+  if(!blob || !blob.size) return null;
+
+  const bmp = await createImageBitmap(blob);
+  const c = fotoQuadrada(bmp, FOTO_LADO);
+  if(bmp.close) bmp.close();
+  return c.toDataURL('image/jpeg', 0.82);
+}
+
+async function totvsTrazerFotos(){
+  if(FOTOS_TOTVS && FOTOS_TOTVS.rodando) return;
+  const lista = totvsFotosPendentes();
+  if(!lista.length){
+    showToast('Nenhuma foto nova pra trazer do TOTVS.', 'success');
+    return;
+  }
+
+  FOTOS_TOTVS = { total: lista.length, feitas: 0, falhou: 0, rodando: true, parar: false };
+  renderConferencia();
+
+  /* de quatro em quatro: uma a uma demora demais, e todas de uma vez
+     derruba a conexão e o servidor gratuito junto */
+  const fila = lista.slice();
+  async function trabalhador(){
+    while(fila.length && !FOTOS_TOTVS.parar){
+      const item = fila.shift();
+      try{
+        const dataUrl = await totvsBaixarImagem(item.url);
+        if(dataUrl){
+          await fotoGuardar(item.dono, {
+            original: dataUrl, recortada: null,
+            em: new Date().toISOString(), doTotvs: true
+          });
+          FOTOS_TOTVS.feitas++;
+        }else{
+          FOTOS_TOTVS.falhou++;
+        }
+      }catch(e){
+        FOTOS_TOTVS.falhou++;
+      }
+      if((FOTOS_TOTVS.feitas + FOTOS_TOTVS.falhou) % 10 === 0) renderConferencia();
+    }
+  }
+  await Promise.all([trabalhador(), trabalhador(), trabalhador(), trabalhador()]);
+
+  FOTOS_TOTVS.rodando = false;
+  saveState();
+  balRecarregarCatalogo();
+  renderConferencia();
+  showToast(FOTOS_TOTVS.falhou
+    ? `${FOTOS_TOTVS.feitas} foto(s) trazidas. ${FOTOS_TOTVS.falhou} não vieram.`
+    : `${FOTOS_TOTVS.feitas} foto(s) do TOTVS trazidas.`, 'success');
+}
+
+function totvsPararFotos(){
+  if(FOTOS_TOTVS) FOTOS_TOTVS.parar = true;
+}
+
+function totvsFotosHtml(){
+  if(!totvsCatalogo().length) return '';
+  const comUrl = totvsCatalogo().filter(t=>t.fotoUrl).length;
+  if(!comUrl) return '';
+
+  const f = FOTOS_TOTVS;
+  if(f && f.rodando){
+    const feitas = f.feitas + f.falhou;
+    const pct = f.total ? Math.round(feitas * 100 / f.total) : 0;
+    return `<div class="card">
+      <h3>📷 Trazendo as fotos do TOTVS</h3>
+      <div style="background:var(--border);border-radius:99px;height:9px;overflow:hidden;margin:10px 0;">
+        <div style="background:var(--primary);height:100%;width:${pct}%;transition:width .2s;"></div>
+      </div>
+      <p class="help-text">${fmtNum(feitas)} de ${fmtNum(f.total)}${
+        f.falhou ? ` · ${fmtNum(f.falhou)} não vieram` : ''}</p>
+      <button class="btn btn-sm" onclick="totvsPararFotos()">parar</button>
+    </div>`;
+  }
+
+  const pendentes = totvsFotosPendentes().length;
+  return `<div class="card">
+    <h3>📷 Fotos que o TOTVS já tem <span class="hint">${fmtNum(comUrl)} produtos com foto lá</span></h3>
+    <p class="help-text">São ${fmtNum(comUrl)} produtos que você não precisa fotografar no balanço. A foto vem
+      vinculada pelo código de barras — não tem que casar nada à mão — e é reduzida pro mesmo quadrado 600x600
+      das que você tira aqui, pra caber no aparelho e funcionar sem internet.</p>
+    <p class="help-text" style="margin-top:-6px;"><strong>Produto que já tem foto sua não é tocado.</strong>
+      A do TOTVS só preenche o que está vazio.</p>
+    ${pendentes
+      ? `<button class="btn btn-primary" onclick="totvsTrazerFotos()">📷 Trazer ${fmtNum(pendentes)} foto(s)</button>
+         ${f && (f.feitas || f.falhou) ? `<span class="help-text" style="margin:0 0 0 10px;">
+           última vez: ${fmtNum(f.feitas)} trazidas${f.falhou ? `, ${fmtNum(f.falhou)} não vieram` : ''}</span>` : ''}`
+      : `<p class="help-text" style="margin:0;color:var(--positive);">✓ Todas as fotos do TOTVS já estão aqui.</p>`}
+  </div>`;
+}
+
 function renderConferenciaTotvs(box){
   const cfg = getConfigTotvs();
   const a = TOTVS_AMOSTRA;
@@ -54739,12 +54905,15 @@ function renderConferenciaTotvs(box){
   const guardado = STATE.totvsResumo;
   if(!a && guardado && Array.isArray(guardado.campos) && guardado.campos.length){
     box.innerHTML = cabeca + totvsCruzamentoHtml(null)
+      + totvsFotosHtml()
       + totvsTabelaCamposHtml(guardado.campos, guardado.total, true);
     return;
   }
 
   if(!a){
-    box.innerHTML = cabeca + `<div class="card"><p class="help-text">
+    /* o quadro das fotos vale mesmo sem consulta: quem manda nele é o
+       catálogo já guardado, não a busca da vez */
+    box.innerHTML = cabeca + totvsFotosHtml() + `<div class="card"><p class="help-text">
       O servidor é do plano gratuito, então ele dorme quando ninguém usa — a primeira pergunta pode levar até um minuto.</p></div>`;
     return;
   }
@@ -54777,6 +54946,7 @@ function renderConferenciaTotvs(box){
   const escolhidos = campos.filter(c=>escolhas[c.campo] && escolhas[c.campo].usar).length;
 
   box.innerHTML = cabeca + totvsCruzamentoHtml(produtos)
+    + totvsFotosHtml()
     + totvsTabelaCamposHtml(campos, total, false);
   return;
 }
@@ -57495,6 +57665,14 @@ async function fotoCarregar(produtoId){
    planilha. Quando o balanço fecha e a linha vira produto, a foto muda
    de dono junto — ver balMudarDonoDaFoto. */
 function fotoDonoDaLinha(chave){
+  const c = String(chave||'');
+  /* produto que só existe no TOTVS ainda não é produto nem linha da
+     planilha: o dono da foto é o registro do catálogo do TOTVS, até o
+     balanço fechar e ele virar produto de verdade */
+  if(c.indexOf('t:') === 0){
+    const id = 't' + c.slice(2);
+    return totvsCatalogo().find(t=>t.id === id) || null;
+  }
   return (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
 }
 
@@ -58791,7 +58969,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '11/11/2026 22:40';
+const SISTEMA_VERSAO = '12/11/2026 00:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
