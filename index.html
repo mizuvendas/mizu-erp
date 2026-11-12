@@ -12429,6 +12429,13 @@ function salvarRascunhoOrcamento(){
     observacoes: document.getElementById('orc-obs').value,
     itens: carrinhoOrcamentoAtual,
     orcamentoEmEdicaoId,
+    /* o que a escola exige também entra no rascunho: digitar
+       Responsável e Cargo e perder na saída da tela é o tipo de coisa
+       que faz a pessoa não confiar mais no rascunho */
+    numeroPesquisa: ((document.getElementById('orc-num-pesquisa')||{}).value)||'',
+    responsavel: ((document.getElementById('orc-responsavel')||{}).value)||'',
+    cargoResponsavel: ((document.getElementById('orc-cargo')||{}).value)||'',
+    prazoEntrega: ((document.getElementById('orc-prazo-entrega')||{}).value)||'',
     salvoEm: new Date().toISOString()
   };
   localStorage.setItem(RASCUNHO_ORCAMENTO_KEY, JSON.stringify(rascunho));
@@ -14347,7 +14354,10 @@ function renderOrcamentos(){
       const select = document.getElementById('orc-cliente');
       select.innerHTML = `<option value="">Selecione...</option>` +
         STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteCriado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
-      atualizarBotaoHistoricoComprasOrcamento();
+      /* trocar a lista por código não dispara o evento de troca, e era
+         isso que deixava o bloco da Escola escondido mesmo com o cliente
+         cadastrado como Escola. Dispara na mão. */
+      select.dispatchEvent(new Event('change'));
     });
   });
 
@@ -14385,7 +14395,11 @@ function renderOrcamentos(){
       const select = document.getElementById('orc-cliente');
       select.innerHTML = `<option value="">Selecione...</option>` +
         STATE.clientes.map(c=>`<option value="${c.id}" ${c.id===clienteAtualizado.id?'selected':''}>${escapeHtml(c.nome)}</option>`).join('');
-      atualizarBotaoHistoricoComprasOrcamento();
+      /* ELA CONSERTA O CADASTRO E A TELA TEM QUE OBEDECER NA HORA.
+         Entrar aqui, marcar "Escola" e voltar não acendia o bloco: a
+         lista era reescrita por código, e o evento de troca nunca
+         acontecia. Ela via o cadastro certo e a tela errada. */
+      select.dispatchEvent(new Event('change'));
     });
   });
 
@@ -14450,6 +14464,22 @@ function renderOrcamentos(){
             </div>`;
           document.getElementById('orc-rascunho-retomar').addEventListener('click', ()=>{
             document.getElementById('orc-cliente').value = rascunho.clienteId||'';
+            /* RETOMAR RASCUNHO NÃO ACORDAVA OS BLOCOS DO CLIENTE.
+
+               O valor do cliente era escrito direto no campo, e quem
+               mostra os campos extras (Escola, Órgão Público) só roda no
+               evento de troca — que escrever por código não dispara.
+               Resultado: ela retomava um rascunho de uma escola e os
+               campos de Responsável, Cargo e Nº da pesquisa simplesmente
+               não apareciam. Nada avisava; ela só ia descobrir quando o
+               PDF saísse sem o cabeçalho que a escola exige. */
+            atualizarBlocoEscolaOrcamento();
+            atualizarBlocoPublicoOrcamento();
+            const poeSeTiver = (id, v)=>{ const e=document.getElementById(id); if(e && v) e.value = v; };
+            poeSeTiver('orc-num-pesquisa', rascunho.numeroPesquisa);
+            poeSeTiver('orc-responsavel', rascunho.responsavel);
+            poeSeTiver('orc-cargo', rascunho.cargoResponsavel);
+            poeSeTiver('orc-prazo-entrega', rascunho.prazoEntrega);
             document.getElementById('orc-data').value = rascunho.data||todayISO();
             document.getElementById('orc-validade').value = rascunho.validadeDias||7;
             definirVendedor('orc-vendedor', rascunho.vendedor||'');
@@ -47425,6 +47455,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-h',
+    data: '2026-11-12',
+    titulo: 'Cliente Escola: os campos a mais voltaram a aparecer',
+    itens: [
+      'VOCÊ TINHA RAZÃO: o bloco de Nº da pesquisa, Responsável e Cargo não aparecia, mesmo com o cliente cadastrado como Escola. Eram DUAS portas pro mesmo defeito, e as duas estão fechadas.',
+      'PRIMEIRA: retomar um rascunho. O cliente voltava, mas os campos da escola continuavam escondidos — e nada avisava. Você só ia descobrir quando o PDF saísse sem o cabeçalho que a escola exige. Agora o bloco acende junto com o cliente.',
+      'E O RASCUNHO PASSOU A GUARDAR o Nº da pesquisa, o Responsável, o Cargo e o prazo de entrega. Antes esses quatro campos se perdiam e tinham que ser digitados de novo.',
+      'SEGUNDA, e essa é provavelmente a que você viveu: entrar em "Editar cliente" de dentro do orçamento, marcar Escola e voltar. O cadastro ficava certo e a tela continuava errada. Agora obedece na hora, sem recarregar nada. O mesmo vale pra quando você cadastra um cliente novo ali dentro.'
+    ]
+  },
+  {
     id: '2026-11-12-g',
     data: '2026-11-12',
     titulo: 'A tarefa virou um bloco só — coleta e entrega não se separam mais',
@@ -59442,7 +59483,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 14:20';
+const SISTEMA_VERSAO = '12/11/2026 16:05';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
