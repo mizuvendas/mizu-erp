@@ -47455,6 +47455,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-i',
+    data: '2026-11-12',
+    titulo: 'As fotos passaram a viajar entre o computador e o celular',
+    itens: [
+      'ERA ISSO QUE FALTAVA: a foto ficava guardada só no aparelho onde você tirou ou baixou. O que viajava era apenas a marquinha "esse produto tem foto" — por isso o celular mostrava o quadradinho vazio, e a tela do TOTVS ainda respondia "já está tudo aqui", te deixando sem saída.',
+      'AGORA VAI NOS DOIS SENTIDOS. Foto tirada no celular aparece no computador; foto que está no computador aparece no celular. Ela desce sozinha na hora que você bipa o produto — não precisa baixar nada antes.',
+      'SEM SINAL NÃO PERDE NADA. A foto fica na fila do aparelho e sobe sozinha quando a internet voltar. No depósito, onde o sinal cai, isso é o que importa.',
+      'ANTES DE DESCER PRO DEPÓSITO, na tela do Balanço tem o botão "Trazer N foto(s) pra este aparelho" — baixa todas de uma vez e aí você conta offline, com as fotos na mão.',
+      'FALTA UM PASSO SEU, UMA VEZ SÓ: criar o depósito das fotos no Supabase (Storage → New bucket → nome "fotos"). Enquanto não criar, o sistema avisa na tela com o passo a passo e guarda tudo aqui — nenhuma foto se perde.',
+      'As fotos vão por um caminho separado do resto, de propósito: elas não entram no sincronismo do cadastro, então não atrapalham orçamento, venda nem estoque. E ocupam o espaço de arquivos, que é de 1 GB grátis — cada foto pesa uns 60 KB.'
+    ]
+  },
+  {
     id: '2026-11-12-h',
     data: '2026-11-12',
     titulo: 'Cliente Escola: os campos a mais voltaram a aparecer',
@@ -55334,6 +55347,69 @@ function totvsPararFotos(){
   if(FOTOS_TOTVS) FOTOS_TOTVS.parar = true;
 }
 
+/* O ESTADO DAS FOTOS NESTE APARELHO.
+
+   Ela precisa enxergar os dois lados separados, porque são problemas
+   diferentes: "tirei aqui e ainda não subiu" se resolve com internet;
+   "existe lá e não está aqui" se resolve baixando. Antes não havia
+   nenhum dos dois — o celular simplesmente mostrava quadradinho vazio
+   e dizia que estava tudo certo. */
+function fotoNuvemHtml(){
+  const subir = fotoFilaLer().length;
+  let faltam = 0;
+  try{ faltam = fotoFaltandoAqui().length; }catch(e){}
+
+  if(FOTO_NUVEM_ERRO === 'balde'){
+    return `<div class="card" style="border-left:4px solid var(--negative);">
+      <h3>📷 As fotos ainda não têm onde ficar na nuvem</h3>
+      <p class="help-text">Falta criar o depósito de fotos no Supabase — é uma vez só, leva um minuto,
+        e não custa nada (o plano gratuito dá 1 GB, e cada foto pesa uns 60 KB).</p>
+      <p class="help-text">No painel do Supabase: <strong>Storage</strong> → <strong>New bucket</strong> →
+        nome <strong>fotos</strong> → criar. Depois, em <strong>Policies</strong> desse bucket, libere
+        leitura e escrita para usuários autenticados. Enquanto isso, as fotos continuam guardadas
+        aqui no aparelho — nenhuma se perde.</p>
+      <button class="btn btn-sm" onclick="FOTO_NUVEM_ERRO=null; fotoSincronizar().then(()=>rerenderTelaAtual())">
+        Já criei — tentar de novo</button></div>`;
+  }
+
+  if(!subir && !faltam) return '';
+
+  return `<div class="card">
+    <h3>📷 Fotos entre os aparelhos</h3>
+    ${subir ? `<p class="help-text">${fmtNum(subir)} foto(s) tirada(s) aqui ainda não subiram — sobem sozinhas
+      quando houver internet. Pode fechar o sistema: elas ficam guardadas.</p>` : ''}
+    ${faltam ? `<p class="help-text">${fmtNum(faltam)} foto(s) existem nos outros aparelhos e ainda não estão
+      neste. Elas descem sozinhas quando você abre o produto — ou traga todas de uma vez agora, pra usar
+      no depósito sem sinal.</p>
+      <button class="btn btn-primary" onclick="fotoTrazerTodas()">⬇ Trazer ${fmtNum(faltam)} foto(s) pra este aparelho</button>` : ''}
+  </div>`;
+}
+
+function fotoPintarAviso(){
+  try{ if(typeof rerenderTelaAtual === 'function' && !nuvemTrabalhoEmAndamento()) rerenderTelaAtual(); }
+  catch(e){}
+}
+
+/* Baixar tudo de uma vez é pro caso dela: o depósito não tem sinal.
+   Ela prepara o celular antes de descer e conta offline. */
+let FOTO_TRAZENDO = null;
+async function fotoTrazerTodas(){
+  if(FOTO_TRAZENDO) return;
+  if(!fotoPodeNuvem()){ showToast('Sem internet agora — tente de novo quando conectar.', 'error'); return; }
+  const lista = fotoFaltandoAqui();
+  if(!lista.length){ showToast('Já está tudo neste aparelho.', 'success'); return; }
+  FOTO_TRAZENDO = { total: lista.length, feitas: 0, falhou: 0 };
+  showToast(`Trazendo ${fmtNum(lista.length)} foto(s)...`, 'info');
+  for(const chave of lista){
+    try{ if(await fotoBaixarUma(chave)) FOTO_TRAZENDO.feitas++; else FOTO_TRAZENDO.falhou++; }
+    catch(e){ FOTO_TRAZENDO.falhou++; }
+  }
+  const r = FOTO_TRAZENDO; FOTO_TRAZENDO = null;
+  showToast(`${fmtNum(r.feitas)} foto(s) trazidas${r.falhou?`, ${fmtNum(r.falhou)} ainda não estavam na nuvem`:''}.`,
+            r.feitas ? 'success' : 'error');
+  rerenderTelaAtual();
+}
+
 function totvsFotosHtml(){
   if(!totvsCatalogo().length) return '';
   const comUrl = totvsCatalogo().filter(t=>t.fotoUrl).length;
@@ -55397,7 +55473,7 @@ function renderConferenciaTotvs(box){
   const guardado = STATE.totvsResumo;
   if(!a && guardado && Array.isArray(guardado.campos) && guardado.campos.length){
     box.innerHTML = cabeca + totvsCruzamentoHtml(null)
-      + totvsFotosHtml()
+      + fotoNuvemHtml() + totvsFotosHtml()
       + totvsTabelaCamposHtml(guardado.campos, guardado.total, true);
     return;
   }
@@ -55405,7 +55481,7 @@ function renderConferenciaTotvs(box){
   if(!a){
     /* o quadro das fotos vale mesmo sem consulta: quem manda nele é o
        catálogo já guardado, não a busca da vez */
-    box.innerHTML = cabeca + totvsFotosHtml() + `<div class="card"><p class="help-text">
+    box.innerHTML = cabeca + fotoNuvemHtml() + totvsFotosHtml() + `<div class="card"><p class="help-text">
       O servidor é do plano gratuito, então ele dorme quando ninguém usa — a primeira pergunta pode levar até um minuto.</p></div>`;
     return;
   }
@@ -55438,7 +55514,7 @@ function renderConferenciaTotvs(box){
   const escolhidos = campos.filter(c=>escolhas[c.campo] && escolhas[c.campo].usar).length;
 
   box.innerHTML = cabeca + totvsCruzamentoHtml(produtos)
-    + totvsFotosHtml()
+    + fotoNuvemHtml() + totvsFotosHtml()
     + totvsTabelaCamposHtml(campos, total, false);
   return;
 }
@@ -57372,7 +57448,10 @@ function renderBalancoAgora(){
   const b = balAberto();
   if(!b){ box.innerHTML = balTelaInicio(); balLigarEventos(); return; }
 
-  box.innerHTML = balEhCelular() ? balTelaCelular(b) : balTelaComputador(b);
+  /* o aviso das fotos vem ANTES da contagem: no celular, é ali que ela
+     descobre que as fotos não vieram — e dá tempo de trazer antes de
+     descer pro depósito, onde não tem sinal */
+  box.innerHTML = fotoNuvemHtml() + (balEhCelular() ? balTelaCelular(b) : balTelaComputador(b));
   balLigarEventos();
 }
 
@@ -58127,10 +58206,11 @@ function fotoIdb(modo, chave, valor){
     req.onsuccess = ()=>{
       const db = req.result;
       let tx;
-      try{ tx = db.transaction('produtos', modo === 'get' ? 'readonly' : 'readwrite'); }
+      try{ tx = db.transaction('produtos', (modo === 'get' || modo === 'chaves') ? 'readonly' : 'readwrite'); }
       catch(e){ return reject(e); }
       const store = tx.objectStore('produtos');
       const op = modo === 'get' ? store.get(chave)
+               : modo === 'chaves' ? store.getAllKeys()
                : modo === 'del' ? store.delete(chave)
                : store.put(valor, chave);
       op.onsuccess = ()=>resolve(op.result);
@@ -58142,12 +58222,35 @@ function fotoIdb(modo, chave, valor){
 /* o que já foi carregado nesta sessão, pra não ir no disco a cada desenho */
 const FOTO_CACHE = {};
 
+/* NÃO TEM NA GAVETA DAQUI? BUSCA NA NUVEM, NA HORA.
+
+   É isto que ela pediu: bipar no celular e a foto aparecer. O aparelho
+   não precisa ter baixado tudo antes — basta o cadastro dizer que a
+   foto existe. Ela desce sozinha, uma só, e fica guardada aqui. */
 async function fotoCarregar(produtoId){
   if(FOTO_CACHE[produtoId] !== undefined) return FOTO_CACHE[produtoId];
+  let local = null;
   try{
     const g = await fotoIdb('get', produtoId);
-    FOTO_CACHE[produtoId] = (g && g.recortada) || (g && g.original) || null;
-  }catch(e){ FOTO_CACHE[produtoId] = null; }
+    local = (g && g.recortada) || (g && g.original) || null;
+  }catch(e){ local = null; }
+
+  const vDono  = fotoVersaoDoDono(produtoId);
+  const vAqui  = fotoVersaoLocal(produtoId);
+  const faltaOuVelha = vDono != null && (!local || !vAqui || vAqui < vDono);
+
+  if(local) FOTO_CACHE[produtoId] = local;
+
+  if(faltaOuVelha && fotoPodeNuvem() && !FOTO_BUSCANDO[produtoId]){
+    FOTO_BUSCANDO[produtoId] = true;
+    try{
+      const vinda = await fotoBaixarUma(produtoId);
+      if(vinda) return (FOTO_CACHE[produtoId] = vinda);
+    }catch(e){ /* sem rede agora: fica com o que tem, tenta de novo depois */ }
+    finally{ delete FOTO_BUSCANDO[produtoId]; }
+  }
+
+  if(FOTO_CACHE[produtoId] === undefined) FOTO_CACHE[produtoId] = local;
   return FOTO_CACHE[produtoId];
 }
 
@@ -58173,20 +58276,44 @@ function fotoDonoDaLinha(chave){
   return (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
 }
 
-function fotoMarcarDono(chave, tem){
+/* A MARCA "TEM FOTO" VIAJA; A FOTO NÃO VIAJAVA.
+
+   Era esse o nó: o cadastro sincroniza entre os aparelhos, a gaveta de
+   fotos de cada aparelho não. O celular recebia a marca, não tinha o
+   arquivo, e mostrava o quadradinho vazio pra sempre — e a tela do
+   TOTVS, olhando a mesma marca, ainda respondia "já está tudo aqui".
+   Ela ficava sem saída nenhuma no celular.
+
+   Junto com a marca viaja agora a VERSÃO (fotoV): o carimbo de quando
+   a foto foi tirada. Cada aparelho guarda, só pra ele, qual versão tem
+   na gaveta. Versão de fora diferente da daqui = tem foto nova lá, vou
+   buscar. É o que faz a foto tirada no celular aparecer no computador,
+   e a do computador aparecer no celular. */
+function fotoMarcarDono(chave, tem, versao){
+  const v = tem ? (versao || Date.now()) : null;
   const p = (STATE.produtos||[]).find(x=>x.id === chave);
   if(p){
-    if(tem){ p.temFoto = true; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
-    else { delete p.temFoto; delete p.mostrarFoto; }
+    if(tem){ p.temFoto = true; p.fotoV = v; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
+    else { delete p.temFoto; delete p.mostrarFoto; delete p.fotoV; }
     saveState();
-    return;
+    return v;
   }
   const l = fotoDonoDaLinha(chave);
   if(l){
-    if(tem) l.temFoto = true; else delete l.temFoto;
+    if(tem){ l.temFoto = true; l.fotoV = v; } else { delete l.temFoto; delete l.fotoV; }
     if(typeof confGuardarLinhas === 'function') confGuardarLinhas();
     saveState();
   }
+  return v;
+}
+
+/* a versão que o cadastro (que viaja) diz existir */
+function fotoVersaoDoDono(chave){
+  const p = (STATE.produtos||[]).find(x=>x.id === chave);
+  if(p) return p.temFoto ? (p.fotoV || 0) : null;
+  const l = fotoDonoDaLinha(chave);
+  if(l && l.temFoto) return l.fotoV || 0;
+  return null;
 }
 
 function fotoTemDono(chave){
@@ -58206,7 +58333,195 @@ function fotoNomeDoDono(chave){
 async function fotoGuardar(produtoId, dados){
   await fotoIdb('put', produtoId, dados);
   FOTO_CACHE[produtoId] = dados.recortada || dados.original || null;
-  fotoMarcarDono(produtoId, true);
+  const v = fotoMarcarDono(produtoId, true);
+  /* sobe pra nuvem: é isso que faz ela aparecer no outro aparelho */
+  fotoVersaoLocalGravar(produtoId, v);
+  fotoEnfileirar(produtoId);
+  /* sem esperar a próxima rodada: ela tira a foto e já quer no outro
+     aparelho. Sem internet, fotoSincronizar não faz nada e a foto
+     continua na fila — é por isso que não há condição aqui. */
+  fotoSincronizar();
+}
+
+/* =========================================================
+   AS FOTOS TAMBÉM PRECISAM VIAJAR
+
+   O cadastro vai pela tabela de registros, que o sincronismo já
+   carrega inteira a cada rodada. Foto ali dentro seria o fim: 600x600
+   dá uns 60 KB, e mil fotos derrubariam o localStorage de 5 MB e
+   todas as rodadas junto.
+
+   Então foto vai pelo ARQUIVO (Storage do Supabase), que é um balde
+   separado, com 1 GB no plano gratuito — e o sincronismo normal nem
+   encosta nele. Desce uma por vez, só quando alguém vai olhar.
+
+   Quem decide o que falta é a versão: o cadastro diz "esta foto é da
+   versão X", o aparelho sabe qual versão tem na gaveta, e o que não
+   bate é buscado. Sem precisar listar o balde, sem precisar de uma
+   tabela de controle.
+   ========================================================= */
+const FOTO_BUCKET   = 'fotos';
+const FOTO_VLOCAL   = 'mizu_fotos_versao_v1';  // o que ESTE aparelho tem
+const FOTO_FILA     = 'mizu_fotos_fila_v1';    // o que falta subir daqui
+let   FOTO_NUVEM_ERRO = null;                  // ex.: balde ainda não criado
+let   FOTO_SUBINDO  = false;
+const FOTO_BUSCANDO = {};                      // evita buscar a mesma duas vezes
+
+function fotoVersoesLocais(){
+  try{ return JSON.parse(localStorage.getItem(FOTO_VLOCAL) || '{}') || {}; }
+  catch(e){ return {}; }
+}
+function fotoVersaoLocal(chave){ return fotoVersoesLocais()[chave] || null; }
+function fotoVersaoLocalGravar(chave, v){
+  const m = fotoVersoesLocais();
+  if(v) m[chave] = v; else delete m[chave];
+  try{ localStorage.setItem(FOTO_VLOCAL, JSON.stringify(m)); }catch(e){}
+}
+
+function fotoFilaLer(){
+  try{ return JSON.parse(localStorage.getItem(FOTO_FILA) || '[]') || []; }
+  catch(e){ return []; }
+}
+function fotoFilaGravar(f){
+  try{ localStorage.setItem(FOTO_FILA, JSON.stringify(f.slice(0, 5000))); }catch(e){}
+}
+/* SEM INTERNET A FOTO NÃO SE PERDE.
+   Ela fica na fila do aparelho e sobe sozinha na próxima rodada de
+   sincronismo. No balanço isso não é detalhe: o depósito é justamente
+   onde o sinal cai. */
+function fotoEnfileirar(chave){
+  const f = fotoFilaLer();
+  if(f.indexOf(chave) < 0){ f.push(chave); fotoFilaGravar(f); }
+}
+function fotoTirarDaFila(chave){
+  fotoFilaGravar(fotoFilaLer().filter(c=>c !== chave));
+}
+
+function fotoDataUrlParaBlob(dataUrl){
+  const s = String(dataUrl||'');
+  const corte = s.indexOf(',');
+  if(corte < 0) return null;
+  const tipo = (s.slice(0, corte).match(/data:([^;]+)/) || [,'image/jpeg'])[1];
+  const bin = atob(s.slice(corte + 1));
+  const buf = new Uint8Array(bin.length);
+  for(let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+  return new Blob([buf], { type: tipo });
+}
+
+function fotoBlobParaDataUrl(blob){
+  return new Promise((resolve, reject)=>{
+    const fr = new FileReader();
+    fr.onload = ()=>resolve(fr.result);
+    fr.onerror = ()=>reject(fr.error);
+    fr.readAsDataURL(blob);
+  });
+}
+
+/* O caminho dentro do balde. A chave do item pode ter ":" e outros
+   sinais que o Storage não aceita em nome de arquivo. */
+function fotoCaminhoNuvem(chave){
+  return FOTO_BUCKET + '/' + String(chave).replace(/[^A-Za-z0-9_-]/g, '_') + '.jpg';
+}
+
+function fotoPodeNuvem(){
+  return typeof nuvemSessao !== 'undefined' && nuvemSessao && nuvemSessao.access_token
+      && typeof navigator !== 'undefined' && navigator.onLine;
+}
+
+async function fotoSubirUma(chave){
+  const g = await fotoIdb('get', chave);
+  const dados = g && (g.recortada || g.original);
+  if(!dados){ fotoTirarDaFila(chave); return false; }
+  const blob = fotoDataUrlParaBlob(dados);
+  if(!blob){ fotoTirarDaFila(chave); return false; }
+  const r = await nuvemFetch('/storage/v1/object/' + fotoCaminhoNuvem(chave), {
+    method: 'POST',
+    headers: { 'Content-Type': blob.type || 'image/jpeg', 'x-upsert': 'true' },
+    body: blob
+  });
+  if(!r.ok){
+    const txt = await r.text().catch(()=>'');
+    if(r.status === 404 || /bucket not found/i.test(txt)){
+      FOTO_NUVEM_ERRO = 'balde';
+      throw new Error('O lugar das fotos na nuvem ainda não existe.');
+    }
+    throw new Error('não subiu (' + r.status + ')');
+  }
+  FOTO_NUVEM_ERRO = null;
+  fotoTirarDaFila(chave);
+  return true;
+}
+
+async function fotoBaixarUma(chave){
+  const r = await nuvemFetch('/storage/v1/object/' + fotoCaminhoNuvem(chave), { method: 'GET' });
+  if(!r.ok){
+    if(r.status === 404) return null;     /* ainda não subiu do outro aparelho */
+    throw new Error('não baixou (' + r.status + ')');
+  }
+  const blob = await r.blob();
+  const dataUrl = await fotoBlobParaDataUrl(blob);
+  await fotoIdb('put', chave, { recortada: dataUrl });
+  FOTO_CACHE[chave] = dataUrl;
+  fotoVersaoLocalGravar(chave, fotoVersaoDoDono(chave) || Date.now());
+  return dataUrl;
+}
+
+/* O que este aparelho não tem, e o cadastro diz que existe. */
+function fotoFaltandoAqui(){
+  const locais = fotoVersoesLocais();
+  const faltam = [];
+  const olhar = (chave)=>{
+    const v = fotoVersaoDoDono(chave);
+    if(v == null) return;
+    if(locais[chave] && locais[chave] >= v) return;
+    faltam.push(chave);
+  };
+  (STATE.produtos||[]).forEach(p=>olhar(p.id));
+  (typeof CONF_LINHAS !== 'undefined' && CONF_LINHAS ? CONF_LINHAS : []).forEach(l=>{
+    olhar('c:' + String(l.codigo || l.barras || ''));
+  });
+  return faltam;
+}
+
+/* PRIMEIRA VEZ DEPOIS DESTA ATUALIZAÇÃO.
+   As fotos que já estavam na gaveta deste aparelho nunca subiram — não
+   havia pra onde. Sem isto, elas ficariam presas aqui pra sempre e o
+   celular continuaria vazio. Então na primeira rodada o aparelho
+   confere a gaveta inteira e põe na fila o que a nuvem ainda não tem. */
+async function fotoEnfileirarAntigas(){
+  if(localStorage.getItem('mizu_fotos_antigas_v1')) return;
+  try{
+    const chaves = await fotoIdb('chaves');
+    const locais = fotoVersoesLocais();
+    (chaves||[]).forEach(ch=>{
+      const k = String(ch);
+      if(fotoVersaoDoDono(k) && locais[k]) return;   /* já combinado com a nuvem */
+      const v = fotoMarcarDono(k, true) || Date.now();
+      fotoVersaoLocalGravar(k, v);
+      fotoEnfileirar(k);
+    });
+    localStorage.setItem('mizu_fotos_antigas_v1', '1');
+  }catch(e){ console.warn('[fotos]', e); }
+}
+
+/* Sobe algumas por rodada. Não é pressa: é pra não ocupar a linha toda
+   com foto enquanto ela está trabalhando. */
+async function fotoSincronizar(limite){
+  if(FOTO_SUBINDO || !fotoPodeNuvem()) return 0;
+  FOTO_SUBINDO = true;
+  let feitas = 0;
+  try{
+    const fila = fotoFilaLer().slice(0, limite || 8);
+    for(const chave of fila){
+      try{ if(await fotoSubirUma(chave)) feitas++; }
+      catch(e){
+        if(FOTO_NUVEM_ERRO === 'balde') break;   /* sem balde, nenhuma vai subir */
+        break;                                    /* rede ruim: tenta na próxima */
+      }
+    }
+  }finally{ FOTO_SUBINDO = false; }
+  if(feitas) fotoPintarAviso();
+  return feitas;
 }
 
 /* Ao fechar o balanço, a linha da planilha vira produto — a foto tirada
@@ -58221,7 +58536,13 @@ async function balMudarDonoDaFoto(chaveVelha, produtoId){
     FOTO_CACHE[produtoId] = g.recortada || g.original || null;
     delete FOTO_CACHE[chaveVelha];
     const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
-    if(p){ p.temFoto = true; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
+    if(p){ p.temFoto = true; p.fotoV = Date.now(); if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
+    /* a foto trocou de dono: na nuvem ela também precisa trocar de nome,
+       senão o outro aparelho procura pelo nome novo e não acha */
+    fotoVersaoLocalGravar(chaveVelha, null);
+    fotoVersaoLocalGravar(produtoId, p ? p.fotoV : Date.now());
+    fotoTirarDaFila(chaveVelha);
+    fotoEnfileirar(produtoId);
   }catch(e){ console.warn(e); }
 }
 
@@ -58229,6 +58550,13 @@ async function fotoApagar(produtoId){
   try{ await fotoIdb('del', produtoId); }catch(e){ console.warn(e); }
   delete FOTO_CACHE[produtoId];
   fotoMarcarDono(produtoId, false);
+  fotoVersaoLocalGravar(produtoId, null);
+  fotoTirarDaFila(produtoId);
+  /* apaga também na nuvem, senão o outro aparelho baixa de volta */
+  if(fotoPodeNuvem()){
+    try{ await nuvemFetch('/storage/v1/object/' + fotoCaminhoNuvem(produtoId), { method:'DELETE' }); }
+    catch(e){ /* some na próxima: a marca já caiu no cadastro */ }
+  }
 }
 
 /* QUADRADA, COM O PRODUTO NO MEIO.
@@ -59483,7 +59811,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 16:05';
+const SISTEMA_VERSAO = '12/11/2026 18:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -60603,6 +60931,12 @@ async function nuvemSincronizar(silencioso){
     let erroAoSubir = null;
     try{ await nuvemSubir(); }catch(e){ erroAoSubir = e; }
     baixados += await nuvemBaixar();
+    /* AS FOTOS VÃO POR FORA, E DE PROPÓSITO.
+       Elas não entram na tabela de registros (derrubariam o
+       localStorage), e um erro aqui não pode derrubar o sincronismo do
+       resto: pedido e orçamento valem mais que foto. */
+    try{ await fotoEnfileirarAntigas(); await fotoSincronizar(); }
+    catch(e){ console.warn('[fotos]', e); }
     if(erroAoSubir) throw erroAoSubir;
     nuvemUltimoErro = null;
     if(baixados > 0){
