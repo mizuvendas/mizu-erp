@@ -2074,6 +2074,11 @@ function defaultState(){
     licitacoes: [],     // { id, orgao, objeto, numero, status, valorEstimado, dataAbertura, dataResultado, obs, historico:[], origem:'manual'|'pncp', ...campos extras quando origem==='pncp', ver buscarOportunidadesPNCP() }
     licitacoesRevisao: [], // resultados de "Buscar Oportunidades" AINDA NÃO decididos — mesmo formato do item de 'licitacoes', mas fora do funil até o usuário mover pra Potencial (ou excluir), ver executarBuscaOportunidadesPNCP() e moverRevisaoParaPotencial()
     licitacoesGeocodeCache: {}, // { [codigoIbge]: {lat,lng,municipio,uf} } — cache pra não geocodificar o mesmo município toda busca
+    /* A TAREFA que amarra coleta e entrega. "Pra vender e entregar, eu
+       preciso primeiro coletar pra poder entregar" — então a entrega de
+       uma tarefa espera as coletas DELA, e não todas as coletas do dia.
+       Ver MÓDULO: TAREFAS DE COLETA E ENTREGA. */
+    servicos: [], // { id, descricao, clienteId, concluido, concluidoEm, criadoEm }
     paradasAvulsas: [], // { id, nome, endereco, lat, lng, tarefas:[{id,texto,feita}], concluida, concluidaEm, criadoEm } — parada do roteiro que não vem de orçamento (banco, contabilidade...). Ver MÓDULO: PARADAS AVULSAS NO ROTEIRO.
     movimentosEstoque: [], // { id, produtoId, tipo: entrada|saida|ajuste, qtd, motivo, refId, data }
     planosCompra: [], // ...ordemFornecedores:[] = ordem das colunas da Cotação, escolhida arrastando // { id, nome, periodoInicio, periodoFim, percentual, status, itens:[{...,opcoes:[{fornecedor,preco}]}], fornecedores:{}, observacoes } — ver MÓDULO: PLANO DE COMPRA
@@ -17590,6 +17595,60 @@ function paradasAvulsasAtivas(){
   return paradasAvulsas().filter(p=>!p.concluida);
 }
 
+/* =========================================================
+   MÓDULO: TAREFAS DE COLETA E ENTREGA
+
+   "eu tenho que resolver uma questão para uma pessoa, só que dentro
+    disso eu vou precisar coletar e entregar para ele... o sistema vai
+    ser como se fosse a venda, porque pra vender e entregar eu preciso
+    primeiro coletar"
+
+   É isso: uma tarefa é uma venda sem produto. Tem uma descrição geral
+   ("levar o armário do Joaquim"), um ou mais lugares onde buscar, e o
+   lugar onde entregar.
+
+   O QUE ISSO CONSERTA, além de organizar: a regra antiga era grosseira
+   demais. Enquanto existisse QUALQUER coleta avulsa pendente, TODAS as
+   entregas avulsas ficavam seguradas — uma coleta no outro extremo da
+   cidade atrasava uma entrega que não tinha nada a ver com ela, e o
+   roteiro saía com aquele vai-e-volta sem explicação. Agora cada
+   entrega espera só as coletas da própria tarefa.
+   ========================================================= */
+function servicos(){
+  if(!Array.isArray(STATE.servicos)) STATE.servicos = [];
+  return STATE.servicos;
+}
+
+function servicosAtivos(){
+  return servicos().filter(s=>!s.concluido);
+}
+
+function servicoPorId(id){
+  return id ? (servicos().find(s=>s.id===id) || null) : null;
+}
+
+function servicoCriar(descricao, clienteId){
+  const s = { id: uid('serv'), descricao: String(descricao||'').trim(),
+              clienteId: clienteId||null, concluido:false, criadoEm: todayISO() };
+  servicos().push(s);
+  saveState();
+  return s;
+}
+
+/* As paradas de uma tarefa, na ordem natural: primeiro onde buscar,
+   depois onde levar. */
+function paradasDoServico(servicoId){
+  const peso = { coleta:0, outra:1, entrega:2 };
+  return paradasAvulsas()
+    .filter(p=>p.servicoId === servicoId)
+    .sort((a,b)=>(peso[a.papel||'outra']||1) - (peso[b.papel||'outra']||1));
+}
+
+function servicoConcluido(servicoId){
+  const ps = paradasDoServico(servicoId);
+  return ps.length > 0 && ps.every(p=>p.concluida);
+}
+
 /* Quais paradas avulsas o usuário marcou pra entrar no roteiro de hoje.
    Mesma ideia das entregas: parada nova já nasce marcada, e a escolha
    fica só na tela (não precisa ir pro STATE). */
@@ -17621,6 +17680,8 @@ function paradasAvulsasParaRoteiro(){
       return {
         tipo: 'avulsa',
         papel: p.papel || 'outra',
+        servicoId: p.servicoId || null,
+        servicoDescricao: (servicoPorId(p.servicoId)||{}).descricao || '',
         chave: 'avulsa:' + p.id,
         id: p.id,
         nome: p.nome,
@@ -17709,7 +17770,24 @@ function contarTarefasAvulsa(parada){
 
 /* ---------- criar / editar ---------- */
 
-function abrirFormParadaAvulsa(id){
+/* O CAMINHO CURTO PRA UMA TAREFA.
+
+   Criar a tarefa, abrir a coleta, salvar, abrir a entrega, salvar — se
+   ela tiver que fazer isso tudo na mão, não usa. Aqui é um clique: ela
+   descreve a tarefa e o sistema já abre a coleta e, em seguida, a
+   entrega, as duas com a tarefa escolhida. */
+function abrirFormTarefaColetaEntrega(){
+  const desc = prompt('O que é essa tarefa?\n\nEx: levar o armário do Joaquim, buscar a peça na assistência');
+  if(!desc || !desc.trim()) return;
+  const sv = servicoCriar(desc);
+  showToast('Tarefa criada. Agora o lugar de COLETAR.', 'success');
+  abrirFormParadaAvulsa(null, { servicoId: sv.id, papel: 'coleta', depois: ()=>{
+    showToast('Agora o lugar de ENTREGAR.', 'success');
+    abrirFormParadaAvulsa(null, { servicoId: sv.id, papel: 'entrega' });
+  }});
+}
+
+function abrirFormParadaAvulsa(id, inicio){
   const parada = id ? paradasAvulsas().find(p=>p.id===id) : null;
   document.getElementById('modal-parada-avulsa')?.remove();
 
@@ -17742,9 +17820,23 @@ function abrirFormParadaAvulsa(id){
             ${[['outra','📌 Outra coisa — banco, contabilidade, assinar, pagar'],
                ['coleta','📦 Coletar — buscar mercadoria'],
                ['entrega','🏠 Entregar — levar mercadoria']]
-              .map(([v,t])=>`<option value="${v}" ${((parada&&parada.papel)||'outra')===v?'selected':''}>${t}</option>`).join('')}
+              .map(([v,t])=>`<option value="${v}" ${
+                ((parada&&parada.papel) || (inicio&&inicio.papel) || 'outra')===v?'selected':''}>${t}</option>`).join('')}
           </select>
           <div class="help-text">É isso que o roteiro usa pra saber o que vem antes: não dá pra entregar o que ainda não foi pego, então as paradas de <strong>entrega</strong> só entram depois das de <strong>coleta</strong>. As entregas dos orçamentos seguem a regra delas — assim que a mercadoria está pronta, saem no caminho. Quem não mexe com mercadoria anda livre.</div>
+        </div>
+        <div class="field" id="pa-campo-servico">
+          <label>Faz parte de uma tarefa? <span class="hint">coleta e entrega amarradas</span></label>
+          <select id="pa-servico">
+            <option value="">— parada solta, sem tarefa —</option>
+            ${servicosAtivos().map(sv=>`<option value="${escapeAttr(sv.id)}" ${
+              ((parada && parada.servicoId===sv.id) || (inicio && inicio.servicoId===sv.id)) ? 'selected' : ''
+              }>${escapeHtml(sv.descricao||'(sem descrição)')}</option>`).join('')}
+            <option value="__nova">+ Criar uma tarefa nova…</option>
+          </select>
+          <div class="help-text">Amarrar as duas pontas muda o roteiro: a entrega <strong>dessa tarefa</strong>
+            passa a esperar só as coletas <strong>dela</strong>. Sem isso, qualquer coleta pendente no outro lado
+            da cidade segura essa entrega — é o que fazia a rota dar voltas sem explicação.</div>
         </div>
         <div class="field">
           <label>Endereço</label>
@@ -17755,9 +17847,9 @@ function abrirFormParadaAvulsa(id){
           <div class="help-text" id="pa-mapa-status">${parada&&parada.lat!=null?`Localização salva (${Number(parada.lat).toFixed(5)}, ${Number(parada.lng).toFixed(5)})`:'Sem localização ainda — sem ela a parada entra no fim do roteiro, porque o sistema não tem como medir a distância.'}</div>
         </div>
         <div class="field">
-          <label>Tarefas nessa parada <span class="hint">opcional</span></label>
+          <label>Lembretes nessa parada <span class="hint">opcional</span></label>
           <div id="pa-tarefas"></div>
-          <button type="button" class="btn btn-sm" id="pa-btn-add-tarefa" style="margin-top:6px;">+ Adicionar tarefa</button>
+          <button type="button" class="btn btn-sm" id="pa-btn-add-tarefa" style="margin-top:6px;">+ Adicionar lembrete</button>
           <div class="help-text">Cada linha vira uma caixinha de marcar, e sai no roteiro impresso e no WhatsApp.</div>
         </div>
         <div class="form-actions">
@@ -17920,6 +18012,25 @@ function abrirFormParadaAvulsa(id){
     }
   });
 
+  /* "+ Criar uma tarefa nova" pergunta a descrição na hora e já deixa
+     escolhida, pra ela não ter que sair do formulário pra criar e voltar. */
+  let servicoEscolhido = parada ? (parada.servicoId || '') : ((inicio && inicio.servicoId) || '');
+  const selServico = document.getElementById('pa-servico');
+  if(selServico){
+    selServico.addEventListener('change', ()=>{
+      if(selServico.value !== '__nova'){ servicoEscolhido = selServico.value || ''; return; }
+      const desc = prompt('O que é essa tarefa?\n\nEx: levar o armário do Joaquim, buscar a peça na assistência');
+      if(!desc || !desc.trim()){ selServico.value = servicoEscolhido || ''; return; }
+      const nova = servicoCriar(desc);
+      servicoEscolhido = nova.id;
+      const opt = document.createElement('option');
+      opt.value = nova.id; opt.textContent = nova.descricao;
+      selServico.insertBefore(opt, selServico.options[selServico.options.length-1]);
+      selServico.value = nova.id;
+      showToast('Tarefa criada. Agora marque se esta parada é a coleta ou a entrega dela.', 'success');
+    });
+  }
+
   document.getElementById('pa-salvar').addEventListener('click', ()=>{
     lerTarefasDoFormulario();
     const nome = document.getElementById('pa-nome').value.trim();
@@ -17927,6 +18038,7 @@ function abrirFormParadaAvulsa(id){
     const dados = {
       nome,
       papel: document.getElementById('pa-papel').value || 'outra',
+      servicoId: servicoEscolhido || null,
       endereco: document.getElementById('pa-endereco').value.trim(),
       lat: latEscolhida,
       lng: lngEscolhida,
@@ -17949,6 +18061,7 @@ function abrirFormParadaAvulsa(id){
     saveState();
     modal.remove();
     renderLogistica();
+    if(inicio && typeof inicio.depois === 'function') inicio.depois();
   });
 }
 
@@ -18049,7 +18162,9 @@ function cardParadasAvulsasLogistica(){
           <span class="badge" style="background:${papelDaParada(p).cor};color:#fff;font-size:10px;" title="Coleta vem antes de entrega no roteiro">${papelDaParada(p).icone} ${papelDaParada(p).rotulo}</span>
           <strong>${escapeHtml(p.nome)}</strong>
           ${local.vinculo ? `<div class="help-text" style="margin:2px 0 0;" title="O endereço vem do cadastro — corrigir lá vale aqui">🔗 ${escapeHtml(local.vinculo.registro.nome)} (${local.vinculo.oque})</div>` : ''}
-          ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} tarefa(s) feita(s)</div>` : ''}
+          ${p.servicoId ? `<div class="help-text" style="margin:2px 0 0;color:var(--primary-escuro,#1B4B5A);">
+            🧩 tarefa: <strong>${escapeHtml((servicoPorId(p.servicoId)||{}).descricao || '(tarefa removida)')}</strong></div>` : ''}
+          ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} lembrete(s) feito(s)</div>` : ''}
         </td>
         <td style="font-size:12px;color:var(--ink-soft);">
           ${escapeHtml(local.endereco||'Endereço não informado')}
@@ -18073,7 +18188,10 @@ function cardParadasAvulsasLogistica(){
           <h3 style="margin:0;">📌 Paradas avulsas</h3>
           <p class="help-text" style="margin:2px 0 0;">Entram no mesmo roteiro das coletas e entregas dos orçamentos. Cada uma diz se é coleta, entrega ou outra coisa (banco, contabilidade) — e o roteiro ordena por proximidade respeitando isso.</p>
         </div>
-        <button class="btn btn-primary" onclick="abrirFormParadaAvulsa()">+ Adicionar parada</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn btn-primary" onclick="abrirFormTarefaColetaEntrega()">🧩 + Tarefa (coleta e entrega)</button>
+          <button class="btn" onclick="abrirFormParadaAvulsa()">+ Parada solta</button>
+        </div>
       </div>
       ${ativas.length ? `
       <div class="table-wrap" style="margin-top:10px;">
@@ -18368,10 +18486,26 @@ function calcularRoteiro(entregasParaRoteiro){
     // Enquanto sobrar coleta avulsa pendente, as entregas avulsas ficam de
     // fora dos candidatos. As entregas dos orçamentos não: a mercadoria
     // delas já está resolvida pela regra própria, então saem no caminho.
-    const faltaColetaAvulsa = avulsasPendentes.some(a=>a.papel==='coleta');
-    const avulsasLiberadas = faltaColetaAvulsa
-      ? avulsasPendentes.filter(a=>a.papel!=='entrega')
-      : avulsasPendentes;
+    /* CADA ENTREGA ESPERA AS COLETAS DELA, não as do dia inteiro.
+
+       Antes bastava existir uma coleta avulsa pendente em qualquer
+       canto pra segurar TODAS as entregas avulsas. Era o que fazia o
+       roteiro sair com vai-e-volta: a entrega do vizinho ficava pro
+       fim porque havia uma coleta no outro lado da cidade. */
+    const coletasPendentesPorServico = new Set();
+    let temColetaAvulsaSolta = false;
+    avulsasPendentes.forEach(a=>{
+      if(a.papel !== 'coleta') return;
+      if(a.servicoId) coletasPendentesPorServico.add(a.servicoId);
+      else temColetaAvulsaSolta = true;
+    });
+    const avulsasLiberadas = avulsasPendentes.filter(a=>{
+      if(a.papel !== 'entrega') return true;
+      /* entrega de uma tarefa: só as coletas da própria tarefa a seguram */
+      if(a.servicoId) return !coletasPendentesPorServico.has(a.servicoId);
+      /* entrega solta, sem tarefa: regra antiga, por falta de coisa melhor */
+      return !temColetaAvulsaSolta;
+    });
     const candidatos = [...coletasPendentes, ...avulsasLiberadas, ...entregasProntas];
     if(candidatos.length===0) break; // sobrou só entrega travada por item sem origem — sai do loop, tratada à parte
     const escolhido = popMaisProximo(candidatos);
@@ -18417,14 +18551,23 @@ function otimizarRoteiro2opt(roteiro){
     }
   });
 
-  // mesma amarra do passo anterior, agora na hora de encurtar o trajeto:
-  // nenhuma reordenação pode jogar uma entrega avulsa antes de uma coleta
-  // avulsa, por mais curto que o caminho fique
-  const totalColetasAvulsas = roteiro.filter(s=>s.tipo==='avulsa' && s.papel==='coleta').length;
+  // mesma amarra do passo anterior, agora na hora de encurtar o trajeto —
+  // e com a mesma correção: a entrega de uma tarefa espera as coletas DELA.
+  // Sem isso o 2-opt continuaria recusando trocas boas por causa de uma
+  // coleta que não tem nada a ver com aquela entrega.
+  const totalColetasAvulsasSoltas = roteiro.filter(s=>
+    s.tipo==='avulsa' && s.papel==='coleta' && !s.servicoId).length;
+  const coletasPorServico = new Map();
+  roteiro.forEach(s=>{
+    if(s.tipo==='avulsa' && s.papel==='coleta' && s.servicoId){
+      coletasPorServico.set(s.servicoId, (coletasPorServico.get(s.servicoId)||0) + 1);
+    }
+  });
 
   function precedenciaValida(ordem){
     const coletadoAteAqui = new Set();
     let coletasAvulsasFeitas = 0;
+    const feitasPorServico = new Map();
     for(const stop of ordem){
       if(stop.tipo==='coleta'){
         coletadoAteAqui.add(stop.chave);
@@ -18433,9 +18576,15 @@ function otimizarRoteiro2opt(roteiro){
         if(deps){ for(const dep of deps){ if(!coletadoAteAqui.has(dep)) return false; } }
       }else if(stop.tipo==='avulsa'){
         if(stop.papel==='coleta'){
-          coletasAvulsasFeitas++;
-        }else if(stop.papel==='entrega' && coletasAvulsasFeitas < totalColetasAvulsas){
-          return false;
+          if(stop.servicoId) feitasPorServico.set(stop.servicoId, (feitasPorServico.get(stop.servicoId)||0) + 1);
+          else coletasAvulsasFeitas++;
+        }else if(stop.papel==='entrega'){
+          if(stop.servicoId){
+            const precisa = coletasPorServico.get(stop.servicoId) || 0;
+            if((feitasPorServico.get(stop.servicoId)||0) < precisa) return false;
+          }else if(coletasAvulsasFeitas < totalColetasAvulsasSoltas){
+            return false;
+          }
         }
         // papel 'outra' (banco, contabilidade): sem amarra nenhuma
       }
@@ -47211,6 +47360,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-f',
+    data: '2026-11-12',
+    titulo: 'Tarefa com coleta e entrega amarradas — e a rota deixa de dar voltas',
+    itens: [
+      'NOVA TAREFA na Logística: você escreve o que é ("levar o armário do Joaquim"), marca onde vai COLETAR e onde vai ENTREGAR, e o roteiro trata como uma venda — pra entregar, primeiro coleta. O botão 🧩 Tarefa já abre a coleta e, em seguida, a entrega, as duas amarradas.',
+      'E AQUI ESTÁ BOA PARTE DA BAGUNÇA QUE VOCÊ VIU: a regra antiga segurava TODAS as entregas avulsas enquanto existisse QUALQUER coleta avulsa pendente. Uma coleta no outro extremo da cidade atrasava uma entrega do vizinho, e a rota saía com vai-e-volta sem explicação. Agora cada entrega espera só as coletas da própria tarefa — tanto na montagem quanto na etapa que encurta o trajeto.',
+      'O que ficava escrito como "tarefas nessa parada" virou LEMBRETES, pra palavra tarefa não significar duas coisas diferentes na mesma tela.',
+      'SOBRE MÃO ÚNICA E CONTRAMÃO, a verdade: o roteiro mede em linha reta. Ele não conhece rua — dois pontos a 300 metros em linha reta podem estar a 2 km de carro por causa de um canteiro. Isso o ajuste de hoje não resolve, porque a informação de rua não existe no sistema. Resolver de verdade exige um serviço de mapas com as ruas, que tem opção gratuita mas precisa de internet na hora de calcular. Me avisa quando quiser que eu levante as opções.'
+    ]
+  },
+  {
     id: '2026-11-12-e',
     data: '2026-11-12',
     titulo: 'O desconto por item agora aparece — no resumo e no papel',
@@ -59207,7 +59367,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 11:20';
+const SISTEMA_VERSAO = '12/11/2026 13:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
