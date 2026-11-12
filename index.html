@@ -47455,6 +47455,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-j',
+    data: '2026-11-12',
+    titulo: 'Por que só uma das duas fotos apareceu no celular',
+    itens: [
+      'DOIS MOTIVOS, OS DOIS CONSERTADOS. O primeiro: quando a foto era de uma linha da planilha da ECOVILLE (e não de um produto já cadastrado), a marca "tem foto" não era gravada. A foto subia pra nuvem e nenhum aparelho ficava sabendo que ela existia. Agora grava — e o celular acha.',
+      'O SEGUNDO: a fila subia 8 fotos por rodada, de propósito, pra não ocupar sua internet enquanto você trabalha. Com as centenas que vieram do TOTVS isso leva horas, e no meio do caminho umas estão lá e outras não — parece defeito, e foi exatamente o que você viu.',
+      'AGORA VOCÊ MANDA: na tela do Balanço tem "⬆ Subir as N agora", que sobe tudo de uma vez e mostra o número andando. E quando a fila está grande, ela acelera sozinha.',
+      'E O CELULAR PASSOU A CONTAR CERTO. Antes ele só sabia das linhas da planilha depois que você abria a Conferência — entrando direto no Balanço, ele dizia que não faltava nada quando faltava tudo.'
+    ]
+  },
+  {
     id: '2026-11-12-i',
     data: '2026-11-12',
     titulo: 'As fotos passaram a viajar entre o computador e o celular',
@@ -55376,8 +55387,9 @@ function fotoNuvemHtml(){
 
   return `<div class="card">
     <h3>📷 Fotos entre os aparelhos</h3>
-    ${subir ? `<p class="help-text">${fmtNum(subir)} foto(s) tirada(s) aqui ainda não subiram — sobem sozinhas
-      quando houver internet. Pode fechar o sistema: elas ficam guardadas.</p>` : ''}
+    ${subir ? `<p class="help-text">${fmtNum(subir)} foto(s) deste aparelho ainda não subiram — sobem sozinhas,
+      aos poucos, pra não ocupar a internet toda. Pode fechar o sistema: elas ficam guardadas.</p>
+      <button class="btn" onclick="fotoSubirTodas()" style="margin-bottom:9px;">⬆ Subir as ${fmtNum(subir)} agora</button><br>` : ''}
     ${faltam ? `<p class="help-text">${fmtNum(faltam)} foto(s) existem nos outros aparelhos e ainda não estão
       neste. Elas descem sozinhas quando você abre o produto — ou traga todas de uma vez agora, pra usar
       no depósito sem sinal.</p>
@@ -55388,6 +55400,37 @@ function fotoNuvemHtml(){
 function fotoPintarAviso(){
   try{ if(typeof rerenderTelaAtual === 'function' && !nuvemTrabalhoEmAndamento()) rerenderTelaAtual(); }
   catch(e){}
+}
+
+/* "tem dois adicionados lá, os dois têm foto, porém só um apareceu"
+
+   Era a fila: ela sobe 8 por rodada, de propósito, pra não ocupar a
+   internet enquanto ela trabalha. Com centenas de fotos vindas do
+   TOTVS, isso vira horas — e no meio do caminho umas estão lá e outras
+   não, sem nenhuma lógica visível pra quem olha. Parece defeito.
+
+   Agora ela pode mandar subir tudo de uma vez, vendo o número andar. */
+let FOTO_SUBINDO_TUDO = null;
+async function fotoSubirTodas(){
+  if(FOTO_SUBINDO_TUDO) return;
+  if(!fotoPodeNuvem()){ showToast('Sem internet agora — elas sobem sozinhas quando conectar.', 'error'); return; }
+  const total = fotoFilaLer().length;
+  if(!total){ showToast('Já subiu tudo.', 'success'); return; }
+  FOTO_SUBINDO_TUDO = true;
+  showToast(`Subindo ${fmtNum(total)} foto(s)...`, 'info');
+  let feitas = 0, parou = null;
+  try{
+    while(fotoFilaLer().length){
+      const n = await fotoSincronizar(25);
+      if(!n){ parou = FOTO_NUVEM_ERRO === 'balde' ? 'balde' : 'rede'; break; }
+      feitas += n;
+    }
+  }finally{ FOTO_SUBINDO_TUDO = null; }
+  showToast(parou
+    ? `${fmtNum(feitas)} subiram; o resto fica na fila e sobe depois.`
+    : `${fmtNum(feitas)} foto(s) no ar — já aparecem no celular.`,
+    parou ? 'error' : 'success');
+  rerenderTelaAtual();
 }
 
 /* Baixar tudo de uma vez é pro caso dela: o depósito não tem sinal.
@@ -55962,6 +56005,15 @@ function confGuardarLinhas(){
     guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
     guardada.marca = l.marca || null;
     guardada.setor = l.setor || null;
+    /* A FOTO DA LINHA DA PLANILHA TAMBÉM PRECISA SER GRAVADA.
+
+       Faltava, e o sintoma foi exato: dois produtos com foto no
+       computador, só um apareceu no celular. O que apareceu era produto
+       do cadastro; o outro era linha da planilha da ECOVILLE, e a marca
+       "tem foto" morria aqui — a foto subia pra nuvem, mas nenhum
+       aparelho ficava sabendo que ela existia. */
+    if(l.temFoto){ guardada.temFoto = true; guardada.fotoV = l.fotoV || Date.now(); }
+    else { delete guardada.temFoto; delete guardada.fotoV; }
   });
   saveState();
 }
@@ -58273,7 +58325,16 @@ function fotoDonoDaLinha(chave){
     const id = 't' + c.slice(2);
     return totvsCatalogo().find(t=>t.id === id) || null;
   }
-  return (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
+  /* CONF_LINHAS só existe depois que a Conferência foi aberta nesta
+     sessão. No celular ela entra direto no Balanço — e aí a linha "não
+     existia", a foto dela não era encontrada e o quadradinho ficava
+     vazio. O estado guardado serve igual e está sempre lá. */
+  const naTela = (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave);
+  if(naTela) return naTela;
+  try{
+    return (typeof confLinhasDoEstado === 'function' ? confLinhasDoEstado() : [])
+      .find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
+  }catch(e){ return null; }
 }
 
 /* A MARCA "TEM FOTO" VIAJA; A FOTO NÃO VIAJAVA.
@@ -58477,9 +58538,22 @@ function fotoFaltandoAqui(){
     faltam.push(chave);
   };
   (STATE.produtos||[]).forEach(p=>olhar(p.id));
-  (typeof CONF_LINHAS !== 'undefined' && CONF_LINHAS ? CONF_LINHAS : []).forEach(l=>{
-    olhar('c:' + String(l.codigo || l.barras || ''));
-  });
+  /* LÊ DO ESTADO, NÃO DA MEMÓRIA DA TELA.
+     CONF_LINHAS só existe depois que a Conferência foi aberta. No
+     celular, ela entra direto no Balanço — e a conta dava zero, dizendo
+     que não faltava nada quando faltava tudo. */
+  try{
+    (typeof confLinhasDoEstado === 'function' ? confLinhasDoEstado() : []).forEach(l=>{
+      olhar('c:' + String(l.codigo || l.barras || ''));
+    });
+  }catch(e){}
+  /* produto que ainda só existe no TOTVS: a foto é do registro de lá,
+     e a chave dela é "t:" + o id sem a letra inicial */
+  try{
+    (typeof totvsCatalogo === 'function' ? totvsCatalogo() : []).forEach(t=>{
+      if(t && t.id) olhar('t:' + String(t.id).slice(1));
+    });
+  }catch(e){}
   return faltam;
 }
 
@@ -58489,7 +58563,7 @@ function fotoFaltandoAqui(){
    celular continuaria vazio. Então na primeira rodada o aparelho
    confere a gaveta inteira e põe na fila o que a nuvem ainda não tem. */
 async function fotoEnfileirarAntigas(){
-  if(localStorage.getItem('mizu_fotos_antigas_v1')) return;
+  if(localStorage.getItem('mizu_fotos_antigas_v2')) return;
   try{
     const chaves = await fotoIdb('chaves');
     const locais = fotoVersoesLocais();
@@ -58500,7 +58574,7 @@ async function fotoEnfileirarAntigas(){
       fotoVersaoLocalGravar(k, v);
       fotoEnfileirar(k);
     });
-    localStorage.setItem('mizu_fotos_antigas_v1', '1');
+    localStorage.setItem('mizu_fotos_antigas_v2', '1');
   }catch(e){ console.warn('[fotos]', e); }
 }
 
@@ -58511,7 +58585,11 @@ async function fotoSincronizar(limite){
   FOTO_SUBINDO = true;
   let feitas = 0;
   try{
-    const fila = fotoFilaLer().slice(0, limite || 8);
+    const toda = fotoFilaLer();
+    /* fila curta: devagar, pra não atrapalhar quem está trabalhando.
+       Fila longa (as centenas que vieram do TOTVS): acelera, senão
+       levaria horas e ela ia ver foto aparecendo pela metade. */
+    const fila = toda.slice(0, limite || (toda.length > 50 ? 30 : 8));
     for(const chave of fila){
       try{ if(await fotoSubirUma(chave)) feitas++; }
       catch(e){
@@ -59811,7 +59889,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 18:40';
+const SISTEMA_VERSAO = '12/11/2026 20:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
