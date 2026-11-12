@@ -2952,7 +2952,8 @@ function buscarGlobalResultados(termoBruto){
 
   const clientes = STATE.clientes.filter(c=>
     normalizarBusca(c.nome).includes(termo) ||
-    normalizarBusca(c.documento).includes(termo)
+    normalizarBusca(c.documento).includes(termo) ||
+    casaDocumento(c.documento, termo)
   ).slice(0,6);
 
   const orcamentos = STATE.orcamentos.filter(o=>{
@@ -3538,12 +3539,12 @@ function renderTabelaClientes(){
   /* Por PALAVRA, não pela frase inteira: "ribeiro oscar" e "oscar ribeiro"
      acham o mesmo cliente, e cada palavra pode estar num campo diferente
      (nome numa, cidade noutra). */
-  const palavrasBusca = normalizarBusca(clientesBuscaTexto).split(/[\s#\-\/]+/).filter(Boolean);
+  const palavrasBusca = palavrasDeBusca(clientesBuscaTexto);
   if(palavrasBusca.length){
     clientes = clientes.filter(c=>{
       const alvo = [c.nome, c.nomeFantasia, c.documento, c.contato, c.pessoaContato, c.cidade, c.cidadeEstruturada]
-        .map(normalizarBusca).join(' ');
-      return palavrasBusca.every(pal => alvo.includes(pal));
+        .map(normalizarBusca).join(' ') + ' ' + soDigitos(c.documento);
+      return palavrasBusca.every(pal => alvo.includes(pal) || casaDocumento(c.documento, pal));
     });
   }
 
@@ -4119,6 +4120,19 @@ function abrirFormCliente(id, onCriado){
       }
     }
 
+    const mesmoNome = cadastroComMesmoNome(STATE.clientes, data.nome, cliente);
+    if(mesmoNome && !cliente){
+      confirmAction('Já existe um cliente com esse nome',
+        `"${mesmoNome.nome}"${mesmoNome.documento ? ' — ' + mesmoNome.documento : ' (sem documento)'}${
+          mesmoNome.cidade ? ', ' + mesmoNome.cidade : ''}\n\n`
+        + 'Se for o mesmo cliente, cancele e use o que já existe: dois cadastros partem o histórico de compras dele em dois.\n\n'
+        + 'Se forem clientes diferentes de mesmo nome, pode cadastrar.',
+        ()=>gravarCliente(), 'Cadastrar mesmo assim');
+      return;
+    }
+    gravarCliente();
+
+    function gravarCliente(){
     let clienteFinal;
     if(cliente){
       Object.assign(cliente, data);
@@ -4140,6 +4154,7 @@ function abrirFormCliente(id, onCriado){
       onCriado(clienteFinal);
     }else{
       renderClientes();
+    }
     }
   });
 }
@@ -5466,6 +5481,17 @@ function criarModuloEndereco(config){
           }
         }
       }
+      const mesmoNome = item ? null : cadastroComMesmoNome(STATE[chaveEstado], data.nome, item);
+      if(mesmoNome){
+        confirmAction(`Já existe ${tituloSingular.toLowerCase()} com esse nome`,
+          `"${mesmoNome.nome}"${mesmoNome.cnpj || mesmoNome.documento ? ' — ' + (mesmoNome.cnpj || mesmoNome.documento) : ' (sem CNPJ)'}\n\n`
+          + 'Se for o mesmo, cancele e use o que já existe. Dois cadastros iguais deixam a lista confusa e espalham as compras entre os dois.',
+          ()=>gravarCadastro(), 'Cadastrar mesmo assim');
+        return;
+      }
+      gravarCadastro();
+
+      function gravarCadastro(){
       if(item){
         Object.assign(item, data);
         showToast(`${tituloSingular} atualizado.`, 'success');
@@ -5478,6 +5504,7 @@ function criarModuloEndereco(config){
       saveState();
       modal.remove();
       render();
+      }
     });
   }
 
@@ -6020,6 +6047,55 @@ function normalizarBusca(t){
   return String(t||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 }
 
+/* DOCUMENTO SE PROCURA PELO NÚMERO, NÃO PELA PONTUAÇÃO.
+
+   Um cadastro tem "52.392.927/0001-18", outro tem "52392927000118", e
+   quem digita copia de qualquer um dos dois. Comparar o texto cru fazia
+   a busca falhar nos dois sentidos — e falhar calada, parecendo que o
+   cliente não existe, que é como se cadastra o mesmo cliente duas
+   vezes.
+
+   Só vale quando o que foi digitado tem 2 dígitos ou mais: senão
+   qualquer número solto no meio de um nome viraria resultado. */
+function soDigitos(t){
+  return String(t||'').replace(/\D/g,'');
+}
+
+/* "52.392.927/0001-18" digitado é UM documento, não quatro pedaços.
+   Quebrar por ponto e barra gerava "52", "392", "927", "0001", "18" —
+   cinco termos que precisavam bater todos, e nunca batiam. Quando o
+   que foi digitado só tem número e pontuação, vira um termo só de
+   dígitos. Texto normal continua sendo quebrado como sempre. */
+function palavrasDeBusca(termo){
+  const t = String(termo||'').trim();
+  const d = soDigitos(t);
+  if(d.length >= 2 && /^[\d.\-\/\s]+$/.test(t)) return [d];
+  return normalizarBusca(t).split(/[\s#\-\/]+/).filter(Boolean);
+}
+
+/* NOME IGUAL NÃO TRAVA, MAS NÃO PASSA CALADO.
+
+   O documento identifica de verdade, e repetido já é bloqueado. Mas
+   metade dos cadastros dele não tem documento nenhum, e aí nada
+   impedia o mesmo cliente de entrar duas vezes — foi assim que o
+   histórico de compras ficou partido.
+
+   Travar por nome seria pior: duas filiais com o mesmo nome e dois
+   homônimos existem de verdade. Então pergunta, mostrando quem já
+   está lá, e ele decide. */
+function cadastroComMesmoNome(lista, nome, excluir){
+  const n = ncmNormalizar(nome);
+  if(!n || n.length < 3) return null;
+  return (lista||[]).find(x => x !== excluir && ncmNormalizar(x.nome) === n) || null;
+}
+
+function casaDocumento(valorGuardado, termoDigitado){
+  const a = soDigitos(valorGuardado);
+  const b = soDigitos(termoDigitado);
+  if(!a || b.length < 2) return false;
+  return a.includes(b);
+}
+
 /* Busca dentro de um <select> de clientes.
    A lista continua sendo um select de verdade (o resto do sistema lê o
    .value e remonta as opções em vários lugares), mas ganha um campo em
@@ -6071,7 +6147,7 @@ function ligarSugestaoCliente(selectId, placeholder){
   }
 
   function filtrar(termo){
-    const palavras = normalizarBusca(termo).split(/[\s#\-\/]+/).filter(Boolean);
+    const palavras = palavrasDeBusca(termo);
     /* A opção sem valor ("— todos —", "— selecione —") só aparece com o
        campo vazio. Sem isso, num filtro ela escolhia um cliente e não
        tinha mais como voltar pra "todos". */
@@ -6340,7 +6416,7 @@ if(document.readyState === 'loading') document.addEventListener('DOMContentLoade
 else modalIniciarXs();
 
 function filtrarProdutosPorTexto(lista, texto){
-  const palavras = normalizarBusca(texto).split(/[\s#\-\/]+/).filter(Boolean);
+  const palavras = palavrasDeBusca(texto);
   if(palavras.length===0) return lista;
   return lista.filter(p=>{
     const textoCompleto = [p.nome, p.categoria, p.marca, p.fornecedor, p.codigoNF, p.sku, p.codigoBarras].map(normalizarBusca).join(' ');
@@ -6982,35 +7058,26 @@ function ncmIndice(){
     }
   };
 
-  /* 1) os produtos dela */
-  (STATE.produtos||[]).forEach(p=>{
-    if(!p || !p.ncm) return;
-    juntar(p.ncm, p.nome, 'seu cadastro', 3);
-    if(p.marca) juntar(p.ncm, p.marca + ' ' + (p.nome||''), 'seu cadastro', 0);
-  });
+  /* SÓ A TABELA. NUNCA O QUE JÁ ESTÁ CADASTRADO.
 
-  /* 2) os itens das notas de entrada — a descrição do fornecedor */
-  (STATE.entradas||[]).forEach(e=>{
-    (e.itens||[]).forEach(it=>{
-      if(!it || !it.ncm) return;
-      juntar(it.ncm, it.nomeNaNota || it.nomeProduto, 'suas notas', 2);
-    });
-  });
+     Antes esta busca juntava os NCMs dos produtos dele e das notas, e
+     dava a eles +300 pontos contra +50 da tabela oficial. Parecia
+     esperto — "o que ele já usou vale mais" — e era exatamente o
+     contrário: ele disse, com razão, que PODE SER QUE UM PRODUTO NOSSO
+     ESTEJA ERRADO. E estando errado, o errado aparecia em primeiro
+     lugar e se multiplicava pelos produtos seguintes. Um NCM errado
+     não avisa: ele vira nota rejeitada ou imposto pago a mais, meses
+     depois.
 
-  /* 3) a leitura das notas da Receita (análise de ST), que tem NCM e nomes */
-  const st = (STATE.analiseST && STATE.analiseST.porNcm) || {};
-  Object.keys(st).forEach(k=>{
-    const g = st[k];
-    if(!g || !g.ncm) return;
-    (g.nomes||[]).forEach(n=>juntar(g.ncm, n, 'suas notas', 1));
-  });
-
-  /* 4) a tabela oficial, se ela importou */
+     Então a sugestão vem da tabela e só dela. Conferir é o trabalho
+     dele; o meu é não contaminar a conferência com o palpite anterior
+     dele mesmo. */
   if(NCM_OFICIAL){
     NCM_OFICIAL.forEach(par=>juntar(par[0], par[1], 'tabela oficial', 0));
   }
 
-  /* 5) a lista básica do ramo — por último, e marcada */
+  /* a lista básica do ramo só enquanto a tabela oficial não foi
+     importada — são 70 posições, serve de muleta, não de fonte */
   NCM_BASE_RAMO.forEach(par=>juntar(par[0], par[1], 'sugestão do sistema', 0));
 
   ncmIndiceCache = [...mapa.values()].map(e=>({
@@ -7044,16 +7111,19 @@ function ncmBuscar(termo, limite){
     return palavras.every(p=>e.busca.includes(p));
   });
 
-  /* Ordem: o que ela já usou primeiro. Um NCM que já passou numa nota
-     dela vale mais que uma sugestão genérica, sempre. */
+  /* Ordem: código digitado bate primeiro, depois tabela oficial, depois
+     nome que começa com o que ele escreveu. Nada do cadastro dele entra
+     na conta — é justamente o que ele não quer ver aqui. */
   const pontos = (e)=>{
-    let p = e.usos * 10;
+    let p = 0;
     if(digitos.length >= 2 && e.codigo.startsWith(digitos)) p += 1000;
-    if(e.fontes.includes('seu cadastro')) p += 300;
-    if(e.fontes.includes('suas notas')) p += 200;
-    if(e.fontes.includes('tabela oficial')) p += 50;
-    /* nome que COMEÇA com o que ela digitou vem antes do que só contém */
+    if(e.fontes.includes('tabela oficial')) p += 100;
+    /* nome que COMEÇA com o que ele digitou vem antes do que só contém */
     if(e.nomes.some(n=>ncmNormalizar(n).startsWith(palavras[0]))) p += 80;
+    /* descrição mais curta costuma ser a posição mais específica, e é a
+       que ele quer ver primeiro — "PAPEL HIGIENICO" antes de
+       "OUTRAS OBRAS DE PASTA DE CELULOSE, PAPEL OU CARTAO, INCLUSIVE..." */
+    p += Math.max(0, 60 - Math.floor((e.nomes[0]||'').length / 4));
     return p;
   };
   return achados.sort((a,b)=>pontos(b)-pontos(a)).slice(0, limite || 12);
@@ -8202,7 +8272,7 @@ function ativarFormProduto(produto, acoes){
     const fechar = ()=>{ lista.style.display='none'; };
     const desenhar = ()=>{
       const termo = campo.value || '';
-      const palavras = normalizarBusca(termo).split(/[\s#\-\/]+/).filter(Boolean);
+      const palavras = palavrasDeBusca(termo);
       const todas = (obterLista() || []).filter(Boolean);
       const achadas = todas.filter(x=>{
         const alvo = normalizarBusca(x);
@@ -19856,6 +19926,18 @@ function renderClienteAreaPDF(dados, clienteExistente){
       </div>
     `;
     document.getElementById('pdf-btn-cadastrar-cliente').addEventListener('click', ()=>{
+      /* o mesmo cuidado dos outros caminhos: CNPJ que já existe reusa
+         o cliente em vez de criar um segundo cadastro dele */
+      const docPdf = String(dados.cnpjCliente||'').replace(/\D/g,'');
+      const jaExiste = docPdf
+        ? (STATE.clientes||[]).find(c=>String(c.documento||'').replace(/\D/g,'') === docPdf)
+        : null;
+      if(jaExiste){
+        pdfClienteEscolhido = jaExiste.id;
+        showToast(`Esse CNPJ já é de "${jaExiste.nome}" — usei o cadastro que já existe.`, 'success');
+        renderClienteAreaPDF(dados, jaExiste);
+        return;
+      }
       const novoCliente = {
         id: uid('cli'), nome: dados.cliente||'Cliente importado', documento: dados.cnpjCliente||'',
         contato:'', pessoaContato:'', cidade:'', tipo:'', endereco:'', obs:'Importado via PDF de orçamento',
@@ -47059,6 +47141,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-d',
+    data: '2026-11-12',
+    titulo: 'NCM só da tabela, CNPJ com ou sem ponto, e cadastro repetido',
+    itens: [
+      'O NCM SUGERIDO AGORA VEM SÓ DA TABELA. Você tinha razão e o problema era pior do que parecia: a busca dava +300 pontos pro NCM que já estava nos SEUS produtos e só +50 pra tabela oficial. Ou seja, se um produto seu estava com NCM errado, ele aparecia em primeiro lugar — e o erro se copiava pro produto seguinte. Agora nada do seu cadastro entra na sugestão. A busca continua aceitando palavras mescladas, em qualquer ordem, por pedaço ("deterg" acha detergente) e pelo código com ou sem ponto.',
+      'IMPORTANTE: a tabela oficial está zerada aí. Enquanto ela não for importada, a sugestão sai de uma lista básica de 70 NCMs do seu ramo, que é pouco. Baixe a tabela no Portal Único Siscomex (Classificação Fiscal → download em JSON) e importe em Configurações da NF-e. É uma vez só.',
+      'CNPJ COM PONTO OU SEM: antes, um cadastro guardado como "52.392.927/0001-18" não era achado por quem digitava "52392927000118", e vice-versa — e a busca falhava calada, parecendo que o cliente não existe. É assim que se cadastra o mesmo cliente duas vezes. Agora a comparação é pelos números, nos dois sentidos, na busca rápida, na lista de clientes, no orçamento e em fornecedores.',
+      'CADASTRO REPETIDO: CNPJ/CPF igual já era bloqueado. Faltava o caso de quem cadastra sem documento — agora o sistema avisa quando já existe cliente ou fornecedor com o mesmo nome, mostrando qual é, e você decide. Aviso, não trava: duas filiais e dois homônimos existem de verdade.',
+      'E o cadastro de cliente pelo PDF de orçamento agora reusa o cliente quando o CNPJ já existe, em vez de criar um segundo.'
+    ]
+  },
+  {
     id: '2026-11-12-c',
     data: '2026-11-12',
     titulo: 'Foto na lista do balanço, e quanto a planilha dizia que tinha',
@@ -59031,7 +59125,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 02:10';
+const SISTEMA_VERSAO = '12/11/2026 09:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
