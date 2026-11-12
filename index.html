@@ -3239,7 +3239,28 @@ function impostoPctDoProduto(produtoId){
 function impostoPctDoItem(item){ return impostoPctDoProduto(item && item.produtoId); }
 
 function calcularItemVenda(item, temComissao){
-  const brutoOriginal = item.qtd * item.precoUnit;
+  /* O DESCONTO POR ITEM DO ORÇAMENTO SUMIA DO RESUMO.
+
+     São dois jeitos de dar desconto num item, e eles guardam a coisa de
+     formas diferentes:
+
+       venda     -> precoUnit fica cheio e o desconto vai em item.desconto
+       orçamento -> precoUnit JÁ sai descontado, e o preço de tabela fica
+                    guardado em precoUnitOriginal
+
+     Como o "valor original" era calculado em cima do precoUnit, no
+     orçamento ele já vinha descontado — e o KPI "Desconto" lá em cima,
+     que é original menos final, dava zero. O desconto existia na conta
+     do cliente e não aparecia em lugar nenhum pra ela conferir.
+
+     Agora o valor original é o preço de TABELA quando ele existe. Nada
+     muda no que o cliente paga; imposto e comissão continuam sobre o
+     valor recebido, não sobre este. */
+  const precoCheio = (item.descontoItemTipo && item.precoUnitOriginal != null
+                      && Number(item.precoUnitOriginal) > Number(item.precoUnit))
+    ? Number(item.precoUnitOriginal) : Number(item.precoUnit);
+  const brutoOriginal = item.qtd * precoCheio;
+  const brutoComDescontoDoItem = item.qtd * Number(item.precoUnit);
   const custoTotal = item.qtd * item.custoUnit;
   // desconto individual do item (opcional) — reduz o valor de venda recebido.
   // IMPOSTO e COMISSÃO incidem sobre o valor RECEBIDO: é o que vai na nota e
@@ -3247,9 +3268,9 @@ function calcularItemVenda(item, temComissao){
   // sobre o valor cheio, antes do desconto — ela derrubou essa regra:
   // "o imposto não deveria ser em cima do que o cliente paga?".)
   const d = item.desconto || {};
-  let bruto = brutoOriginal;
-  if(d.valor!=null) bruto = Math.max(0, brutoOriginal-d.valor);
-  else if(d.pct!=null) bruto = brutoOriginal*(1-d.pct/100);
+  let bruto = brutoComDescontoDoItem;
+  if(d.valor!=null) bruto = Math.max(0, bruto-d.valor);
+  else if(d.pct!=null) bruto = bruto*(1-d.pct/100);
   const imposto = bruto * (impostoPctDoItem(item)/100);
   const comissao = temComissao ? bruto * (STATE.config.comissaoPct/100) : 0;
   const lucro = bruto - custoTotal - imposto - comissao;
@@ -17046,16 +17067,37 @@ function gerarPdfOrcamento(id){
   const acrescimo = orcamento.acrescimo ? orcamento.acrescimo.valor : 0;
   const validadeAte = addDays(orcamento.data, orcamento.validadeDias);
 
-  const linhasItens = orcamento.itens.map((it,idx)=>`
+  /* A COLUNA DE DESCONTO, NO MODELO QUE ELE MANDOU.
+
+     A conta de cada linha fica conferível no papel: quantidade vezes
+     valor unitário, menos o desconto, dá o valor total. Pra isso o
+     valor unitário tem que ser o de TABELA — mostrar o já descontado e
+     ainda subtrair o desconto ao lado não fecharia, e quem recebe o
+     orçamento ia achar que tem erro. */
+  let qtdeTotal = 0, descontoDosItens = 0;
+  const linhasItens = orcamento.itens.map((it,idx)=>{
+    const ci = calcularItemVenda(it, false);
+    const descItem = Math.max(0, ci.brutoOriginal - ci.bruto);
+    descontoDosItens += descItem;
+    const qtdExib = itemQtdExibicao(it);
+    qtdeTotal += Number(qtdExib) || 0;
+    /* no modo caixa o preço mostrado é o da caixa; a proporção mantém a
+       conta certa sem precisar de um segundo caminho de cálculo */
+    const precoExib = itemPrecoUnitExibicao(it);
+    const precoCheioExib = (ci.brutoOriginal > ci.bruto && Number(it.precoUnit) > 0)
+      ? precoExib * (ci.brutoOriginal / (Number(it.qtd) * Number(it.precoUnit)))
+      : precoExib;
+    return `
     <tr>
       <td style="text-align:center;">${idx+1}</td>
       <td>${escapeHtml(it.nome)}</td>
       <td style="text-align:center;">${escapeHtml(itemUnidadeExibicao(it))}</td>
-      <td style="text-align:center;">${fmtNum(itemQtdExibicao(it))}</td>
-      <td style="text-align:right;">${fmtMoney(itemPrecoUnitExibicao(it))}</td>
-      <td style="text-align:right;">${fmtMoney(it.qtd*it.precoUnit)}</td>
-    </tr>
-  `).join('');
+      <td style="text-align:center;">${fmtNum(qtdExib)}</td>
+      <td style="text-align:right;">${fmtMoney(precoCheioExib)}</td>
+      <td style="text-align:right;">${descItem ? fmtMoney(descItem) : '—'}</td>
+      <td style="text-align:right;">${fmtMoney(ci.bruto)}</td>
+    </tr>`;
+  }).join('');
 
   /* Linha que SOME quando não tem o quê mostrar. Campo em branco não deve
      deixar rótulo órfão no papel: um "RESPONSÁVEL:" sozinho, sem nome, fica
@@ -17144,6 +17186,12 @@ function gerarPdfOrcamento(id){
         .bloco-escola div{ overflow-wrap:anywhere; }
         .titulo-tabela{ background:#1B4B5A; color:#fff; font-weight:bold; font-size:12.5px;
                         letter-spacing:1px; padding:6px 8px; margin-top:14px; }
+        .fechamento{ width:auto; margin:10px 0 0 auto; font-size:12px; }
+        .fechamento td{ border-bottom:1px solid #ddd; padding:5px 8px; }
+        .fechamento td:first-child{ text-align:right; color:#444; padding-right:22px; }
+        .fechamento td:last-child{ text-align:right; font-variant-numeric:tabular-nums; min-width:110px; }
+        .fechamento tr.liquido td{ font-weight:bold; font-size:13.5px; color:#1B4B5A;
+                                   border-top:2px solid #1B4B5A; border-bottom:none; }
         .rodape-interno{ margin-top:22px; font-size:10.5px; color:#888; }
         .prazos{ margin-top:14px; border-top:1px solid #ccc; padding-top:9px; font-size:12px; line-height:1.7; }
         .prazos .rot{ font-weight:bold; color:#1B4B5A; }
@@ -17167,20 +17215,42 @@ function gerarPdfOrcamento(id){
       </div>
 
       ${ehEscola ? '' : `<h2>Orçamento${orcamento.numero!=null ? ' Nº '+escapeHtml(String(orcamento.numero)) : ''}</h2>
+      <!-- CNPJ, ENDEREÇO E VENDEDOR, pedido dele: "no orçamento,
+           principalmente no das empresas, constar endereço, CNPJ,
+           vendedor". Orçamento que vai pro financeiro de uma empresa
+           sem CNPJ volta pra pedir o CNPJ. Linha vazia não aparece. -->
       <div class="meta">
         Cliente: <strong>${escapeHtml(cliente?cliente.nome:'')}</strong><br>
-        Data: ${fmtDate(orcamento.data)}
+        ${cliente && cliente.documento
+          ? `${String(cliente.documento).replace(/\D/g,'').length === 11 ? 'CPF' : 'CNPJ'}: ${escapeHtml(cliente.documento)}<br>` : ''}
+        ${cliente && cliente.inscricaoEstadual ? `Inscrição Estadual: ${escapeHtml(cliente.inscricaoEstadual)}<br>` : ''}
+        ${cliente && cliente.endereco ? `Endereço: ${escapeHtml(cliente.endereco)}<br>` : ''}
+        ${cliente && (cliente.cidadeEstruturada || cliente.cidade)
+          ? `Município: ${escapeHtml(cliente.cidadeEstruturada || cliente.cidade)}${cliente.uf ? ' / ' + escapeHtml(cliente.uf) : ''}${
+              cliente.cep ? '  ·  CEP: ' + escapeHtml(fmtCep(cliente.cep)) : ''}<br>` : ''}
+        ${cliente && cliente.pessoaContato ? `Contato: ${escapeHtml(cliente.pessoaContato)}<br>` : ''}
+        Data: ${fmtDate(orcamento.data)}${orcamento.vendedor ? `<br>Vendedor: ${escapeHtml(orcamento.vendedor)}` : ''}
       </div>
       <div class="validade">Válido até: ${fmtDate(validadeAte)}</div>`}
       ${blocoEscola}
       ${ehEscola ? `<div class="titulo-tabela">ORÇAMENTO</div>` : ''}
 
       <table>
-        <thead><tr><th style="text-align:center;">Item</th><th>Produto</th><th style="text-align:center;">Und.</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Valor Total</th></tr></thead>
+        <thead><tr><th style="text-align:center;">Item</th><th>Produto</th><th style="text-align:center;">Und.</th><th style="text-align:center;">Qtd</th><th style="text-align:right;">Valor Unit.</th><th style="text-align:right;">Desconto</th><th style="text-align:right;">Valor Total</th></tr></thead>
         <tbody>${linhasItens}</tbody>
-        ${acrescimo>0 ? `<tr><td colspan="5" style="text-align:right;">Acréscimo${orcamento.acrescimo.descricao?' ('+escapeHtml(orcamento.acrescimo.descricao)+')':''}</td><td style="text-align:right;">${fmtMoney(acrescimo)}</td></tr>` : ''}
-        ${c.temDesconto ? `<tr><td colspan="5" style="text-align:right;">Desconto</td><td style="text-align:right;">-${fmtMoney(c.brutoOriginal-c.bruto)}</td></tr>` : ''}
-        <tfoot><tr><td colspan="5" style="text-align:right;">Total</td><td style="text-align:right;">${fmtMoney(c.bruto)}</td></tr></tfoot>
+      </table>
+
+      <!-- O fechamento, no modelo que ele mandou. Linha que vale zero não
+           entra: quatro linhas zeradas (frete, seguro, outras despesas)
+           só ocupam papel e fazem o leitor procurar o que não existe. -->
+      <table class="fechamento">
+        <tr><td>Qtde total</td><td>${fmtNum(qtdeTotal)}</td></tr>
+        ${(c.brutoOriginal - c.bruto) > 0
+          ? `<tr><td>Total desconto</td><td>${fmtMoney(c.brutoOriginal - c.bruto)}</td></tr>` : ''}
+        <tr><td>Total bruto</td><td>${fmtMoney(c.brutoOriginal)}</td></tr>
+        ${acrescimo > 0
+          ? `<tr><td>Frete${orcamento.acrescimo && orcamento.acrescimo.descricao ? ' ('+escapeHtml(orcamento.acrescimo.descricao)+')' : ''}</td><td>${fmtMoney(acrescimo)}</td></tr>` : ''}
+        <tr class="liquido"><td>Total líquido</td><td>${fmtMoney(c.bruto)}</td></tr>
       </table>
 
       ${prazos ? `<div class="prazos">${prazos}</div>` : ''}
@@ -47141,6 +47211,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-e',
+    data: '2026-11-12',
+    titulo: 'O desconto por item agora aparece — no resumo e no papel',
+    itens: [
+      'O DESCONTO POR ITEM SUMIA DO RESUMO, e a causa era chata: existem dois jeitos de dar desconto num item e eles guardam a coisa de formas diferentes. Na venda o preço fica cheio e o desconto vai num campo à parte; no orçamento o preço já sai descontado e o de tabela fica guardado separado. Como o "valor original" era calculado pelo preço, no orçamento ele já vinha descontado — e o KPI Desconto, que é original menos final, dava zero. O desconto existia na conta do cliente e não aparecia em lugar nenhum pra você conferir.',
+      'NO PDF, A COLUNA DESCONTO, no modelo que você mandou. A conta de cada linha fecha no papel: quantidade × valor unitário − desconto = valor total. Pra isso o valor unitário passou a ser o de TABELA — mostrar o já descontado e ainda subtrair o desconto ao lado não fecharia, e quem recebe ia achar que tem erro.',
+      'O FECHAMENTO virou Qtde total, Total desconto, Total bruto e Total líquido. Saíram valor seguro, outras despesas e as linhas zeradas: linha que vale zero só ocupa papel e faz o leitor procurar o que não existe. O frete só aparece quando existe.',
+      'E O CABEÇALHO ganhou CNPJ, inscrição estadual, endereço, município/UF, contato e VENDEDOR. Orçamento que vai pro financeiro de uma empresa sem CNPJ volta pra pedir o CNPJ. Campo vazio não vira rótulo órfão no papel.',
+      'Imposto e comissão continuam calculados sobre o que o cliente paga — nada mudou no dinheiro, só no que você consegue ver.'
+    ]
+  },
+  {
     id: '2026-11-12-d',
     data: '2026-11-12',
     titulo: 'NCM só da tabela, CNPJ com ou sem ponto, e cadastro repetido',
@@ -59125,7 +59207,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 09:40';
+const SISTEMA_VERSAO = '12/11/2026 11:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
