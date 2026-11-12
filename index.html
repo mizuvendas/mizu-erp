@@ -18151,18 +18151,53 @@ function cardParadasAvulsasLogistica(){
   garantirSelecaoAvulsas(ativas);
   const concluidas = paradasAvulsas().filter(p=>p.concluida);
 
-  const linhas = ativas.map(p=>{
+  /* AS PARADAS DA MESMA TAREFA FICAM JUNTAS, E COM CARA DE BLOCO.
+
+     Numa lista corrida, "coleta WBN" e "entrega FALCAO" parecem duas
+     coisas soltas — e numa lista de vinte paradas isso vira bagunça na
+     cabeça de quem lê. Elas são uma coisa só: pra resolver a tarefa,
+     tem que coletar e depois entregar. Então aparecem embaixo do nome
+     da tarefa, na ordem em que vão acontecer. */
+  const ordenadas = [];
+  const jaSaiu = new Set();
+  ativas.forEach(p=>{
+    if(jaSaiu.has(p.id)) return;
+    if(p.servicoId){
+      const irmas = paradasDoServico(p.servicoId).filter(x=>!x.concluida);
+      irmas.forEach((x,i)=>{
+        if(jaSaiu.has(x.id)) return;
+        jaSaiu.add(x.id);
+        ordenadas.push({ parada:x, cabecalhoTarefa: i===0 ? p.servicoId : null, quantasNaTarefa: irmas.length, posicao: i+1 });
+      });
+    }else{
+      jaSaiu.add(p.id);
+      ordenadas.push({ parada:p, cabecalhoTarefa:null });
+    }
+  });
+
+  const linhas = ordenadas.map(({parada: p, cabecalhoTarefa, quantasNaTarefa, posicao})=>{
     const marcada = logisticaAvulsasSelecionadas.has(p.id);
+    const cabecalho = cabecalhoTarefa ? (()=>{
+      const sv = servicoPorId(cabecalhoTarefa) || {};
+      const irmas = paradasDoServico(cabecalhoTarefa).filter(x=>!x.concluida);
+      return `<tr><td colspan="4" style="background:var(--primary-soft,#E8F3F6);padding:7px 10px;
+        border-top:2px solid var(--primary,#1B4B5A);">
+        <strong style="color:var(--primary-escuro,#1B4B5A);">🧩 ${escapeHtml(sv.descricao||'Tarefa')}</strong>
+        <span class="help-text" style="margin:0 0 0 8px;">
+          ${escapeHtml(irmas.map(x=>x.papel==='coleta'?'coletar':x.papel==='entrega'?'entregar':'passar').join(' → '))}
+          — as ${irmas.length} paradas entram e saem do roteiro juntas</span>
+      </td></tr>`;
+    })() : '';
     const cont = contarTarefasAvulsa(p);
     const local = dadosLocalDaParada(p);
-    return `
-      <tr>
-        <td><input type="checkbox" class="logistica-checkbox-avulsa" data-id="${p.id}" ${marcada?'checked':''}></td>
+    return cabecalho + `
+      <tr${cabecalhoTarefa || quantasNaTarefa ? ' style="background:#FAFCFD;"' : ''}>
+        <td>${quantasNaTarefa ? `<span class="help-text" style="margin:0 4px 0 0;">${posicao}º</span>` : ''}<input type="checkbox" class="logistica-checkbox-avulsa" data-id="${p.id}" ${marcada?'checked':''}></td>
         <td>
           <span class="badge" style="background:${papelDaParada(p).cor};color:#fff;font-size:10px;" title="Coleta vem antes de entrega no roteiro">${papelDaParada(p).icone} ${papelDaParada(p).rotulo}</span>
           <strong>${escapeHtml(p.nome)}</strong>
           ${local.vinculo ? `<div class="help-text" style="margin:2px 0 0;" title="O endereço vem do cadastro — corrigir lá vale aqui">🔗 ${escapeHtml(local.vinculo.registro.nome)} (${local.vinculo.oque})</div>` : ''}
-          ${p.servicoId ? `<div class="help-text" style="margin:2px 0 0;color:var(--primary-escuro,#1B4B5A);">
+          ${(p.servicoId && !quantasNaTarefa) ? `<div class="help-text" style="margin:2px 0 0;color:var(--primary-escuro,#1B4B5A);">
             🧩 tarefa: <strong>${escapeHtml((servicoPorId(p.servicoId)||{}).descricao || '(tarefa removida)')}</strong></div>` : ''}
           ${cont.total ? `<div class="help-text" style="margin:2px 0 0;">${cont.feitas} de ${cont.total} lembrete(s) feito(s)</div>` : ''}
         </td>
@@ -18227,6 +18262,20 @@ function cardRoteiroParadaAvulsa(p, idx){
     <div class="card" style="border-left:4px solid ${papel.cor};margin-bottom:10px;">
       <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · ${papel.rotulo}${p.papel==='outra'||!p.papel?' AVULSA':' (avulsa)'}</div>
       <h3 style="margin:2px 0 2px;">${papel.icone} ${escapeHtml(p.nome)}</h3>
+      ${p.servicoId ? (()=>{
+        /* QUEM ESTÁ FAZENDO A ROTA PRECISA VER QUE ISSO É UM PACOTE.
+           Com vinte paradas na lista, "coleta WBN" e "entrega FALCAO"
+           parecem duas coisas soltas. Dizer de que tarefa cada uma faz
+           parte, e qual é o próximo passo dela, é o que impede o
+           entregador de pular a coleta e chegar na entrega de mãos
+           vazias. */
+        const irmas = paradasDoServico(p.servicoId);
+        const feitas = irmas.filter(x=>x.concluida).length;
+        const desc = (servicoPorId(p.servicoId)||{}).descricao || 'tarefa';
+        return `<div class="help-text" style="margin:3px 0 0;color:var(--primary-escuro,#1B4B5A);">
+          🧩 Faz parte de <strong>${escapeHtml(desc)}</strong> — parada ${feitas+1} de ${irmas.length}:
+          ${escapeHtml(irmas.map(x=>(x.papel==='coleta'?'coletar':x.papel==='entrega'?'entregar':'passar') + ' em ' + x.nome).join(' → '))}</div>`;
+      })() : ''}
       <div class="help-text">${escapeHtml(p.endereco||'Endereço não informado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
       ${tarefas.length ? `
       <div style="margin-top:8px;">
@@ -18822,7 +18871,23 @@ function ativarCheckboxesAvulsas(){
   document.querySelectorAll('.logistica-checkbox-avulsa').forEach(cb=>{
     cb.addEventListener('change', ()=>{
       const id = cb.dataset.id;
-      if(cb.checked) logisticaAvulsasSelecionadas.add(id); else logisticaAvulsasSelecionadas.delete(id);
+      /* TAREFA É PACOTE: as paradas dela entram e saem juntas.
+
+         Deixar marcar só a entrega seria deixar montar uma rota que
+         chega na casa do cliente sem ter passado pra pegar a
+         mercadoria. E marcar só a coleta deixaria a mercadoria no
+         carro, sem a parada que resolve a tarefa. */
+      const p = paradasAvulsas().find(x=>x.id===id);
+      const irmas = (p && p.servicoId) ? paradasDoServico(p.servicoId) : [p];
+      irmas.filter(Boolean).forEach(x=>{
+        if(cb.checked) logisticaAvulsasSelecionadas.add(x.id);
+        else logisticaAvulsasSelecionadas.delete(x.id);
+      });
+      if(p && p.servicoId && irmas.length > 1){
+        showToast(cb.checked
+          ? `As ${irmas.length} paradas da tarefa entraram no roteiro — coleta e entrega andam juntas.`
+          : `As ${irmas.length} paradas da tarefa saíram do roteiro.`, 'success');
+      }
       renderLogistica();
     });
   });
@@ -47360,6 +47425,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-12-g',
+    data: '2026-11-12',
+    titulo: 'A tarefa virou um bloco só — coleta e entrega não se separam mais',
+    itens: [
+      'VOCÊ TINHA RAZÃO NA PREOCUPAÇÃO. O vínculo existia por dentro, mas na tela "coleta WBN" e "entrega FALCAO" apareciam como duas linhas soltas — e numa lista de vinte paradas isso vira bagunça na cabeça de quem lê. Agora as paradas da mesma tarefa aparecem embaixo do nome dela, na ordem em que vão acontecer (coletar → entregar), numeradas.',
+      'E ELAS ANDAM JUNTAS DE VERDADE: marcar ou desmarcar uma leva as outras da mesma tarefa. Antes dava pra marcar só a entrega e montar uma rota que chega na casa do cliente sem ter passado pra pegar a mercadoria.',
+      'NO ROTEIRO, cada parada de tarefa diz de qual faz parte e qual é o caminho completo dela — "parada 1 de 2: coletar em X → entregar em Y". É o que impede o entregador de pular a coleta e chegar na entrega de mãos vazias.'
+    ]
+  },
+  {
     id: '2026-11-12-f',
     data: '2026-11-12',
     titulo: 'Tarefa com coleta e entrega amarradas — e a rota deixa de dar voltas',
@@ -59367,7 +59442,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 13:15';
+const SISTEMA_VERSAO = '12/11/2026 14:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
