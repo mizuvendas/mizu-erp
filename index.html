@@ -46366,14 +46366,12 @@ function cpRenderPagina1(box){
                            onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
                          <button type="button" class="cp-mini" title="Separar de volta"
                            onclick="cpConfirmarDesjuntar('${escapeAttr(l.chave)}')">✂️</button>
-                         <button type="button" class="cp-mini" title="Esconder — não vou comprar esta"
-                           onclick="cpConfirmarEsconder('${escapeAttr(l.chave)}')">🚫</button>`
+                         ${cpCaixaMarcar(l)}`
                       : `${l.editavel?`<button type="button" class="cp-mini" title="Renomear aqui (não muda o cadastro)"
                            onclick="cpAbrirRenomear('${escapeAttr(l.chave)}')">✏️</button>
                          <button type="button" class="cp-mini" title="Juntar este item com outro igual"
                            onclick="cpAbrirJuntar('${escapeAttr(l.chave)}')">⊕</button>
-                         <button type="button" class="cp-mini" title="Esconder — não vou comprar este"
-                           onclick="cpConfirmarEsconder('${escapeAttr(l.chave)}')">🚫</button>`:''}
+                         ${cpCaixaMarcar(l)}`:''}
                          ${l.livre?`<button type="button" class="cp-mini" title="Tirar este item da compra"
                            onclick="cpConfirmarRemoverLivre('${escapeAttr(l.chave)}')">✕</button>`:''}`}
                   </div>
@@ -46424,6 +46422,79 @@ function cpRenderPagina1(box){
   liga('cp-percentual', e=>{ const c2 = cpCfg(); c2.percentual = Math.max(1, parseFloat(e.target.value)||70);
     saveState(); renderSugestaoCompra(); });
   liga('cp-ordem', e=>cpSetOrdem(e.target.value));
+  cpPintarBarraMarcados();
+}
+
+/* ---------- marcar vários e esconder de uma vez ----------
+
+   "permita eu selecionar por meio de caixa pra poder apagar o item vários de
+   uma vez" (13/11/2026). A caixinha fica no lugar do antigo 🚫 de cada linha;
+   marcou, aparece uma barra embaixo com "Esconder os N". Esconder continua
+   sendo o mesmo de sempre: tira da lista, não apaga nada, e volta pelo botão
+   "Escondidos". As marcas vivem só na tela (não vão pra nuvem). */
+let cpMarcadosEsconder = new Set();
+function cpCaixaMarcar(l){
+  return `<input type="checkbox" class="cp-marca" title="Marcar para esconder (não vou comprar)"
+    aria-label="Marcar ${escapeAttr(l.nome)} para esconder"
+    style="width:17px;height:17px;cursor:pointer;accent-color:var(--negative);margin:0 2px;flex:0 0 auto;"
+    data-chave="${escapeAttr(l.chave)}" ${cpMarcadosEsconder.has(l.chave)?'checked':''}
+    onchange="cpMarcar('${escapeAttr(l.chave)}', this.checked)">`;
+}
+function cpMarcar(chave, sim){
+  if(sim) cpMarcadosEsconder.add(chave); else cpMarcadosEsconder.delete(chave);
+  cpPintarBarraMarcados();
+}
+function cpDesmarcarTodos(){
+  cpMarcadosEsconder.clear();
+  document.querySelectorAll('.cp-marca').forEach(c=>{ c.checked = false; });
+  cpPintarBarraMarcados();
+}
+function cpPintarBarraMarcados(){
+  /* marca de item que saiu da lista (escondido, outro período) não conta */
+  const vivas = new Set(cpLinhas().map(l=>l.chave));
+  cpMarcadosEsconder.forEach(k=>{ if(!vivas.has(k)) cpMarcadosEsconder.delete(k); });
+  let barra = document.getElementById('cp-barra-marcados');
+  const box = document.getElementById('sugestao-compra-content');
+  const naTela = !!(box && box.querySelector('.cp-tabela'));
+  if(!cpMarcadosEsconder.size || !naTela){ if(barra) barra.remove(); return; }
+  if(!barra){
+    /* mora DENTRO da tela da Sugestão: trocou de menu, a tela some e a barra junto */
+    barra = document.createElement('div');
+    barra.id = 'cp-barra-marcados';
+    barra.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;'
+      + 'background:var(--ink,#1B2A30);color:#fff;border-radius:12px;padding:10px 14px;display:flex;'
+      + 'align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:13.5px;flex-wrap:wrap;max-width:94vw;';
+    box.appendChild(barra);
+  }
+  const n = cpMarcadosEsconder.size;
+  barra.innerHTML = `<strong>${n} marcado${n>1?'s':''}</strong>
+    <button type="button" class="btn btn-sm btn-danger" id="cp-btn-esconder-marcados" onclick="cpEsconderMarcados()">Esconder ${n>1?'os '+n:'este'}</button>
+    <button type="button" class="btn btn-sm" onclick="cpDesmarcarTodos()">Desmarcar</button>`;
+}
+function cpEsconderMarcados(){
+  const linhas = cpLinhas().filter(l=>cpMarcadosEsconder.has(l.chave));
+  if(!linhas.length) return;
+  const fazer = ()=>{
+    const c = cpCfg();
+    linhas.forEach(l=>{
+      cpEscondidos()[l.chave] = true;
+      if(l.chave in c.decisao) c.decisao[l.chave] = 0;
+    });
+    saveState();
+    cpMarcadosEsconder.clear();
+    renderSugestaoCompra();
+    showToast(`${linhas.length} ite${linhas.length>1?'ns escondidos':'m escondido'}. Pra trazer de volta, use "Escondidos" lá em cima.`, 'success');
+  };
+  const comQtd = linhas.filter(l=>l.comprar>0);
+  if(comQtd.length){
+    confirmAction(`Esconder ${linhas.length} ite${linhas.length>1?'ns':'m'}?`,
+      `${comQtd.length} dele${comQtd.length>1?'s estão':' está'} com quantidade na coluna "Vou comprar" `
+      + `(${comQtd.slice(0,5).map(l=>l.nome).join(', ')}${comQtd.length>5?'…':''}). Escondendo, essa quantidade é zerada. `
+      + 'O produto, as vendas e o estoque não mudam, e dá pra trazer de volta pelo botão "Escondidos".',
+      fazer, 'Esconder');
+    return;
+  }
+  fazer();
 }
 
 /* A tira da linha muda assim que ela digita a quantidade. Repintar só
@@ -47570,6 +47641,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-13-d',
+    data: '2026-11-13',
+    titulo: 'Sugestão de Compra: marcar vários itens e esconder de uma vez',
+    itens: [
+      'NO LUGAR DO 🚫 de cada linha agora tem uma CAIXINHA. Marque quantos quiser e aparece uma barra embaixo: "Esconder os N".',
+      'Se algum marcado já tem quantidade em "Vou comprar", o sistema pergunta uma vez só, mostrando quais são.',
+      'Esconder continua igual: tira da lista, não apaga nada, e volta pelo botão "Escondidos" lá em cima.'
+    ]
+  },
   {
     id: '2026-11-13-c',
     data: '2026-11-13',
@@ -60039,7 +60120,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '13/11/2026 18:30';
+const SISTEMA_VERSAO = '13/11/2026 19:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
