@@ -45553,13 +45553,22 @@ function cpApelidos(){
   if(!c.apelidos || typeof c.apelidos !== 'object') c.apelidos = {};
   return c.apelidos;
 }
+/* O "#" do começo dos nomes veio da importação e não quer dizer nada: a
+   tela mostra o nome SEM ele (só aqui; o cadastro continua igual). */
+function cpSemCerquilha(nome){
+  return String(nome||'').replace(/#/g,'').replace(/\s+/g,' ').trim();
+}
 function cpNome(chave, original){
   const a = cpApelidos()[chave];
-  return (a && String(a).trim()) ? String(a).trim() : (original || '');
+  return (a && String(a).trim()) ? String(a).trim() : cpSemCerquilha(original);
 }
-function cpTemApelido(chave){
+/* Renomeado de verdade: o apelido diz outra coisa além de tirar o "#".
+   Só aí vale mostrar o "de origem" embaixo. */
+function cpTemApelido(chave, original){
   const a = cpApelidos()[chave];
-  return !!(a && String(a).trim());
+  if(!(a && String(a).trim())) return false;
+  if(original != null && String(a).trim() === cpSemCerquilha(original)) return false;
+  return true;
 }
 function cpRenomear(chave, nome){
   const limpo = String(nome||'').trim();
@@ -45578,9 +45587,25 @@ function cpRenomear(chave, nome){
 
    A mescla vive só aqui: não apaga, não funde e não toca os cadastros. Desfez,
    os itens voltam inteiros. */
+/* SINCRONIZAÇÃO: o config.compra é um bloco só, e a nuvem JUNTA o de cada
+   aparelho (pra nunca perder trabalho). Duas consequências, as duas
+   consertadas em 13/11/2026:
+     - apagar uma chave não se espalhava: o outro aparelho devolvia. Por
+       isso zerar vira 0 / false (um valor, que viaja), e desjuntar fica
+       anotado em mesclasRemovidas;
+     - a lista de juntados era trocada inteira por quem salvasse por último
+       — foi assim que sumiram 23 juntados. Agora as listas se somam por id
+       (ver nuvemJuntarCompra). */
+function cpMesclasRemovidas(){
+  const c = cpCfg();
+  if(!c.mesclasRemovidas || typeof c.mesclasRemovidas !== 'object') c.mesclasRemovidas = {};
+  return c.mesclasRemovidas;
+}
 function cpMesclas(){
   const c = cpCfg();
   if(!Array.isArray(c.mesclas)) c.mesclas = [];
+  const rem = cpMesclasRemovidas();
+  if(c.mesclas.some(m=>m && rem[m.id])) c.mesclas = c.mesclas.filter(m=>m && !rem[m.id]);
   return c.mesclas;
 }
 function cpMesclaDe(chave){
@@ -45613,11 +45638,11 @@ function cpJuntar(chaves, nome){
     if(!grupoId){ const g = cpGrupoDe(k); if(g) grupoId = g.id; }
 
     /* limpa o que era da parte */
-    delete cpCfg().decisao[k];
+    if(k in cpCfg().decisao) cpCfg().decisao[k] = 0;
     delete cpApelidos()[k];
     cpDefinirGrupo(k, '');
     STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== k);
-    if(outra) cpCfg().mesclas = cpMesclas().filter(m=>m.id!==k);
+    if(outra){ cpMesclasRemovidas()[k] = true; cpCfg().mesclas = cpMesclas().filter(m=>m.id!==k); }
   });
 
   alvo.nome = String(nome||'').trim() || alvo.nome || 'Itens juntados';
@@ -45637,8 +45662,9 @@ function cpJuntar(chaves, nome){
    dividir 260 entre dois itens seria chutar por ela. */
 function cpDesjuntar(mesclaId){
   const c = cpCfg();
+  cpMesclasRemovidas()[mesclaId] = true;   /* viaja pros outros aparelhos */
   c.mesclas = cpMesclas().filter(m=>m.id!==mesclaId);
-  delete c.decisao[mesclaId];
+  if(mesclaId in c.decisao) c.decisao[mesclaId] = 0;
   delete cpApelidos()[mesclaId];
   cpDefinirGrupo(mesclaId, '');
   STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== mesclaId);
@@ -45671,25 +45697,29 @@ function cpEscondidos(){
   return c.escondidos;
 }
 function cpEstaEscondido(chave){ return cpEscondidos()[chave] === true; }
-function cpQuantosEscondidos(){ return Object.keys(cpEscondidos()).length; }
+function cpChavesEscondidas(){ const e = cpEscondidos(); return Object.keys(e).filter(k=>e[k] === true); }
+function cpQuantosEscondidos(){ return cpChavesEscondidas().length; }
 function cpEsconder(chave){
   cpEscondidos()[chave] = true;
-  delete cpCfg().decisao[chave];
+  if(chave in cpCfg().decisao) cpCfg().decisao[chave] = 0;
   saveState();
 }
+/* trazer de volta vira false (e não "apagar a chave"): apagar não chegava
+   nos outros aparelhos e o item voltava a se esconder sozinho */
 function cpMostrar(chave){
-  delete cpEscondidos()[chave];
+  if(chave in cpEscondidos()) cpEscondidos()[chave] = false;
   saveState();
 }
 function cpMostrarTodos(){
-  cpCfg().escondidos = {};
+  const e = cpEscondidos();
+  Object.keys(e).forEach(k=>{ e[k] = false; });
   saveState();
 }
 
 /* Um painel com os escondidos, pra ela trazer de volta quem quiser. Sem isso,
    esconder seria uma porta sem maçaneta do outro lado. */
 function cpAbrirEscondidos(){
-  const chaves = Object.keys(cpEscondidos());
+  const chaves = cpChavesEscondidas();
   /* o nome sai da linha quando ela ainda existe; se o produto saiu do
      cadastro ou o período mudou, mostra a chave pra ela poder soltar assim mesmo */
   const todas = cpLinhasBrutas();
@@ -45743,6 +45773,8 @@ function cpConfirmarEsconder(chave){
 function cpItensLivres(){
   const c = cpCfg();
   if(!Array.isArray(c.itensLivres)) c.itensLivres = [];
+  const rem = c.itensLivresRemovidos || {};
+  if(c.itensLivres.some(i=>i && rem[i.id])) c.itensLivres = c.itensLivres.filter(i=>i && !rem[i.id]);
   return c.itensLivres;
 }
 function cpCriarItemLivre(nome, unidade){
@@ -45756,8 +45788,10 @@ function cpCriarItemLivre(nome, unidade){
 }
 function cpRemoverItemLivre(id){
   const c = cpCfg();
+  if(!c.itensLivresRemovidos || typeof c.itensLivresRemovidos !== 'object') c.itensLivresRemovidos = {};
+  c.itensLivresRemovidos[id] = true;
   c.itensLivres = cpItensLivres().filter(i=>i.id!==id);
-  delete c.decisao[id];
+  if(id in c.decisao) c.decisao[id] = 0;
   delete cpApelidos()[id];
   cpDefinirGrupo(id, '');
   STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId!==id);
@@ -45801,8 +45835,52 @@ function cpQuanto(produtoId){
 function cpDecidir(produtoId, qtd){
   const c = cpCfg();
   const n = Math.max(0, Number(qtd) || 0);
-  if(n > 0) c.decisao[produtoId] = n; else delete c.decisao[produtoId];
+  /* zerar grava 0 (não apaga a chave): apagar não chegava nos outros
+     aparelhos e a quantidade velha voltava */
+  if(n > 0) c.decisao[produtoId] = n; else if(produtoId in c.decisao) c.decisao[produtoId] = 0;
   saveState();
+}
+
+/* ---------- recomeçar a compra ----------
+
+   "Volte o relatório como veio desde o início, como se tivesse acabado de
+   iniciar a sugestão — só permaneça os grupos" (13/11/2026).
+
+   Zera juntados, quantidades, nomes trocados, escondidos, custos e itens
+   avulsos. Os GRUPOS ficam: quem estava dentro de um juntado herda o grupo
+   dele; juntado sem grupo vira um grupo com o próprio nome, pra os itens
+   continuarem juntos na mesma prateleira.
+
+   O carimbo recomecoEm é o que faz o recomeço VALER nos outros aparelhos:
+   sem ele, a nuvem juntaria a lista zerada com a velha do outro aparelho e
+   devolveria tudo (ver nuvemJuntarCompra). */
+function cpRecomecar(){
+  const c = cpCfg();
+  const limpa = s=>cpSemCerquilha(s).replace(/'+\s*$/,'').trim();
+  const tirarDeTodos = k=>cpGrupos().forEach(g=>{ g.produtoIds = (g.produtoIds||[]).filter(x=>x!==k); });
+  cpMesclas().forEach(m=>{
+    let g = cpGrupoDe(m.id);
+    if(!g) g = cpCriarGrupo(limpa(m.nome) || 'Itens juntados');
+    if(!g) return;
+    (m.chaves||[]).forEach(k=>{ tirarDeTodos(k); g.produtoIds = (g.produtoIds||[]).concat([k]); });
+  });
+  const livres = new Set(cpItensLivres().map(i=>i.id));
+  cpGrupos().forEach(g=>{
+    g.produtoIds = [...new Set((g.produtoIds||[]).filter(k=>!String(k).startsWith('mc_') && !livres.has(k)))];
+  });
+  c.mesclas = []; c.mesclasRemovidas = {};
+  c.decisao = {}; c.escondidos = {}; c.apelidos = {}; c.custos = {};
+  c.itensLivres = []; c.itensLivresRemovidos = {};
+  c.recomecoEm = new Date().toISOString();
+  saveState();
+}
+function cpConfirmarRecomecar(){
+  confirmAction('Recomeçar a Sugestão de Compra?',
+    'Zera as quantidades, desfaz os itens juntados, traz de volta os escondidos e tira os nomes trocados — '
+    + 'como se fosse a primeira vez. Os GRUPOS ficam: quem estava num juntado continua no mesmo grupo. '
+    + 'As vendas, o estoque e o cadastro não mudam. Os outros aparelhos recebem o recomeço na próxima sincronização.',
+    ()=>{ cpRecomecar(); renderSugestaoCompra(); showToast('Sugestão recomeçada. Os grupos continuam.','success'); },
+    'Recomeçar');
 }
 
 /* ---------- os números ---------- */
@@ -45844,6 +45922,7 @@ function cpLinhasBrutas(){
   /* decidido sem ter vendido: ela mandou comprar, então tem que aparecer */
   Object.keys(c.decisao || {}).forEach(id=>{
     if(porProduto[id]) return;
+    if(!(Number(c.decisao[id]) > 0)) return;   // 0 = zerado, não é decisão
     const prod = (STATE.produtos||[]).find(x=>x.id===id);
     if(!prod) return;
     porProduto[id] = { produtoId: id, chave: id, livre: false,
@@ -45896,7 +45975,7 @@ function cpLinhasBrutas(){
     return Object.assign(p, {
       editavel,
       nome: cpNome(p.chave, p.nomeOriginal),
-      renomeado: cpTemApelido(p.chave),
+      renomeado: cpTemApelido(p.chave, p.nomeOriginal),
       unidade: prod ? (prod.unidade || 'UN') : (p.unidadeLivre || 'UN'),
       estoque: prod ? (prod.estoqueAtual || 0) : (p.mescla ? p.estoqueJunto : 0),
       custo: prod ? (Number(prod.custo) || 0) : (p.mescla ? p.custoJunto : 0),
@@ -46207,6 +46286,7 @@ function cpCabecalhoHtml(linhas, pagina){
         <button class="btn btn-sm" onclick="cpAbrirColunas()">Colunas</button>
         <button class="btn btn-sm" onclick="cpAbrirGrupos()">Grupos (${cpGrupos().length})</button>
         <button class="btn btn-sm" onclick="cpAbrirItemManual()">+ Acrescentar item</button>
+        <button class="btn btn-sm" id="cp-btn-recomecar" onclick="cpConfirmarRecomecar()" title="Zera tudo e começa uma compra nova — só os grupos ficam">↺ Recomeçar</button>
       </div>`:''}
     </div>`;
 }
@@ -47490,6 +47570,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-13-c',
+    data: '2026-11-13',
+    titulo: 'Sugestão de Compra: botão Recomeçar, e juntados que não somem mais',
+    itens: [
+      'NOVO BOTÃO "↺ RECOMEÇAR" na etapa 1: zera quantidades, desfaz os juntados, traz de volta os escondidos e tira os nomes trocados — como se fosse a primeira vez. Os GRUPOS ficam: quem estava num juntado continua no grupo dele.',
+      'POR QUE OS JUNTADOS SUMIAM: a lista de juntados ia pra nuvem num bloco só, e o aparelho que salvasse por último apagava os do outro. Foi assim que 23 sumiram. Agora a lista dos dois aparelhos SOMA.',
+      'E POR QUE ZERAR NÃO PEGAVA: apagar uma quantidade não chegava no outro aparelho — ele devolvia a velha. Agora zerar vira 0 de verdade, e o Recomeçar leva um carimbo de hora que todos os aparelhos respeitam.',
+      'O "#" SAIU DOS NOMES nesta tela (o cadastro continua igual), e a linha "de origem" só aparece quando você trocou o nome de verdade.'
+    ]
+  },
   {
     id: '2026-11-13-b',
     data: '2026-11-13',
@@ -59948,7 +60039,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '13/11/2026 13:00';
+const SISTEMA_VERSAO = '13/11/2026 18:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -60842,6 +60933,37 @@ function nuvemJuntarFundo(meu, deFora){
   return deFora;
 }
 
+/* A SUGESTÃO DE COMPRA NA NUVEM (13/11/2026).
+   O nuvemJuntarFundo junta tudo, e pra o config.compra isso tinha dois
+   furos:
+     1. LISTA trocada inteira: os juntados (mesclas) de um aparelho apagavam
+        os do outro. Agora soma por id, menos os desjuntados de propósito.
+     2. RECOMEÇAR não pegava: o aparelho com a lista velha devolvia tudo.
+        Agora quem tem o recomecoEm mais novo manda nesses campos inteiros. */
+const CP_CAMPOS_DA_RODADA = ['mesclas','mesclasRemovidas','decisao','escondidos','apelidos','custos','itensLivres','itensLivresRemovidos'];
+function nuvemUnirPorId(a, b){
+  const m = new Map();
+  (Array.isArray(a)?a:[]).forEach(x=>{ if(x && x.id != null) m.set(x.id, x); });
+  (Array.isArray(b)?b:[]).forEach(x=>{ if(x && x.id != null) m.set(x.id, x); });
+  return [...m.values()];
+}
+function nuvemJuntarCompra(meu, deFora, junto){
+  if(!nuvemEhMapa(meu) || !nuvemEhMapa(deFora) || !nuvemEhMapa(junto)) return junto;
+  const r = Object.assign({}, junto);
+  const tm = String(meu.recomecoEm || ''), tf = String(deFora.recomecoEm || '');
+  if(tm !== tf){
+    const vence = tf > tm ? deFora : meu;
+    CP_CAMPOS_DA_RODADA.forEach(k=>{ if(k in vence) r[k] = vence[k]; else delete r[k]; });
+    r.recomecoEm = vence.recomecoEm;
+    return r;
+  }
+  const rem = Object.assign({}, meu.mesclasRemovidas || {}, deFora.mesclasRemovidas || {});
+  r.mesclas = nuvemUnirPorId(meu.mesclas, deFora.mesclas).filter(m=>!rem[m.id]);
+  const remL = Object.assign({}, meu.itensLivresRemovidos || {}, deFora.itensLivresRemovidos || {});
+  r.itensLivres = nuvemUnirPorId(meu.itensLivres, deFora.itensLivres).filter(i=>!remL[i.id]);
+  return r;
+}
+
 function nuvemVersaoQueFica(colecao, meu, deFora){
   if(colecao !== 'licitacoes') return deFora;
   if(!meu || !deFora || typeof meu !== 'object' || typeof deFora !== 'object') return deFora;
@@ -60908,6 +61030,7 @@ function nuvemAplicar(linhas){
            config.compra inteiro — decisões e custos da Sugestão de
            Compra — era trocado pelo da outra máquina. */
         const juntos = nuvemJuntarFundo(STATE.config, deFora);
+        if(juntos && STATE.config) juntos.compra = nuvemJuntarCompra(STATE.config.compra, deFora.compra, juntos.compra);
         STATE.config = juntos;
 
         /* E aqui estava o resto do problema das certidões e do
