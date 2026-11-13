@@ -2809,6 +2809,8 @@ function navigateTo(page){
   try{ document.body.classList.toggle('bal-foco',
          page === 'balanco' && typeof balEhCelular === 'function' && balEhCelular()); }catch(e){}
   RENDERERS[page] && RENDERERS[page]();
+  /* trocar de tela nunca pode deixar a rolagem trancada atrás */
+  if(typeof orcSoltarRolagemSeFechou === 'function') orcSoltarRolagemSeFechou();
   if(typeof revisarTabelasDaTela === 'function') setTimeout(revisarTabelasDaTela, 60);
 }
 
@@ -9122,6 +9124,9 @@ function rerenderTelaAtual(){
   if(!ativa) return;
   const nome = ativa.id.replace(/^page-/, '');
   if(typeof RENDERERS!=='undefined' && RENDERERS[nome]) RENDERERS[nome]();
+  /* redesenhar a tela apaga a gaveta do orçamento; se a trava de
+     rolagem ficasse pra trás, o sistema inteiro parava de rolar */
+  if(typeof orcSoltarRolagemSeFechou === 'function') orcSoltarRolagemSeFechou();
 }
 
 /* ---------- substituições (item antigo -> produto real) ---------- */
@@ -14578,6 +14583,9 @@ function renderOrcamentos(){
   atualizarResumoOrcamento();
   renderListaOrcamentos();
   orcAplicarEsteira();
+  /* a gaveta acabou de ser reescrita, portanto fechada: a trava de
+     rolagem do body não pode sobreviver a isso */
+  orcSoltarRolagemSeFechou();
 }
 
 // Monta um objeto "venda-like" a partir do estado atual do formulário, pra
@@ -16652,6 +16660,31 @@ function orcAbaVazia(aba){
 function orcGavetaAberta(){
   const g = document.getElementById('orc-gaveta');
   return !!(g && g.classList.contains('aberta'));
+}
+
+/* A GAVETA TRANCAVA A ROLAGEM DO SISTEMA INTEIRO E ÀS VEZES NÃO SOLTAVA.
+
+   "de repente ele não deixa rolar mais para baixo, e isso acontece em
+    vários lugares do sistema"
+
+   Era um só defeito, não vários. Abrir a gaveta põe overflow:hidden no
+   body — correto, pra página de trás não rolar junto. Só que a gaveta
+   mora DENTRO do HTML que renderOrcamentos() reescreve: qualquer
+   redesenho da tela (a nuvem trazendo novidade, salvar, voltar) apagava
+   a gaveta e deixava a trava no body. A gaveta sumia da vista, a tela
+   parecia normal, e o sistema inteiro ficava sem rolar até recarregar.
+
+   Agora: se a gaveta não está aberta, a trava não existe. A conferência
+   é barata e roda em todo redesenho e em toda troca de tela. */
+function orcSoltarRolagemSeFechou(){
+  try{
+    /* trancada só vale com a gaveta aberta E a tela de Orçamentos na
+       frente. Sair pro menu deixava a gaveta aberta atrás, invisível,
+       segurando a rolagem de todas as outras telas. */
+    const pag = document.getElementById('page-orcamentos');
+    const valendo = orcGavetaAberta() && pag && pag.classList.contains('active');
+    if(!valendo) document.body.classList.remove('orc-gaveta-travada');
+  }catch(e){}
 }
 
 function orcAbrirGaveta(titulo, sub){
@@ -47455,6 +47488,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-13-a',
+    data: '2026-11-13',
+    titulo: 'O sistema travava e não rolava mais — era um defeito só',
+    itens: [
+      'PARECIAM VÁRIOS PROBLEMAS, ERA UM. Abrir a gaveta do orçamento trava a rolagem da página de trás, de propósito, pra ela não rolar junto. Só que a gaveta mora dentro do pedaço de tela que é reescrito a cada redesenho — e o redesenho apagava a gaveta deixando a trava para trás.',
+      'O QUE VOCÊ VIA: a gaveta sumia, a tela parecia normal, e o sistema inteiro parava de rolar. Em qualquer menu, porque a trava é no corpo da página toda. Só recarregando resolvia.',
+      'E REDESENHO ACONTECE SOZINHO: a sincronização com a nuvem redesenha a tela quando chega novidade do outro computador. Por isso travava "do nada", sem você fazer nada de diferente.',
+      'AGORA são duas garantias. A trava não sobrevive a nenhum redesenho nem a trocar de menu. E, com a gaveta aberta, a nuvem entende que você está trabalhando e não redesenha por cima — o que também evitava perder o que estava digitando.'
+    ]
+  },
+  {
     id: '2026-11-12-j',
     data: '2026-11-12',
     titulo: 'Por que só uma das duas fotos apareceu no celular',
@@ -59889,7 +59933,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '12/11/2026 20:15';
+const SISTEMA_VERSAO = '13/11/2026 09:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -60940,6 +60984,11 @@ function nuvemTrabalhoEmAndamento(){
     // licitação aberta pra trabalhar: precificar, montar proposta, analisar.
     // Se a nuvem trocar o registro aqui, o que ela está digitando se perde.
     if(typeof licAberta !== 'undefined' && licAberta) return true;
+    /* A GAVETA DO ORÇAMENTO ABERTA É TRABALHO EM ANDAMENTO.
+       Ela mora dentro do HTML que a tela reescreve: redesenhar com a
+       gaveta aberta apagava o formulário no meio da digitação — e era
+       também o que deixava a rolagem trancada pra trás. */
+    if(typeof orcGavetaAberta === 'function' && orcGavetaAberta()) return true;
     // cliente já escolhido num formulário aberto, mesmo sem item ainda
     const orcCli = document.getElementById('orc-cliente');
     if(orcCli && orcCli.value) return true;
@@ -60953,6 +61002,7 @@ function nuvemRedesenharTelaAtual(){
   const ativa = document.querySelector('.page.active');
   const pagina = ativa ? ativa.id.replace('page-', '') : '';
   if(pagina && RENDERERS[pagina]) RENDERERS[pagina]();
+  if(typeof orcSoltarRolagemSeFechou === 'function') orcSoltarRolagemSeFechou();
   atualizarBadgesMenu();
   const aviso = document.getElementById('nuvem-novidades');
   if(aviso) aviso.remove();
