@@ -29320,7 +29320,10 @@ function renderFechamentoMes(){
         </table>
       </div>
     </div>
+
+    ${htmlCardFechamentoAnual()}
   `;
+  ligarCardFechamentoAnual();
 
   const boxPendencias = document.getElementById('fm-pendencias');
   if(totalPendencias===0){
@@ -41368,6 +41371,7 @@ function arquivarAno(ano){
   saveState();
   showToast(`Ano ${ano} arquivado com sucesso.`, 'success');
   renderDashboard();
+  if(typeof renderFechamentoMes==='function' && document.getElementById('fechamento-mes-content')) renderFechamentoMes();
 }
 
 function verResumoArquivado(ano){
@@ -41397,6 +41401,58 @@ function verResumoArquivado(ano){
   container.scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
+/* Card do Fechamento Anual. Morava no Dashboard, mas é coisa de uma vez por
+   ano — agora fica no fim da tela Fechamento do Mês. Os ids continuam os
+   mesmos (gerarResumoAnual e verResumoArquivado dependem deles). */
+function htmlCardFechamentoAnual(){
+  return `
+    <div class="card" id="card-fechamento-anual">
+      <h3>📅 Fechamento Anual <span class="hint">consolide o ano e deixe o sistema mais leve</span></h3>
+      <p class="help-text" style="margin-bottom:12px;">
+        No fim do ano, gere um resumo consolidado com os 12 meses de vendas, despesas e lucro. Você pode arquivar o ano depois —
+        as vendas e despesas antigas saem da lista do dia a dia, mas o resumo anual fica guardado pra sempre, sem perder nada.
+      </p>
+      <div class="form-grid">
+        <div class="field">
+          <label>Ano</label>
+          <select id="arq-ano-selecionado">
+            ${Array.from({length:5}, (_,i)=>new Date().getFullYear()-i).map(a=>`<option value="${a}">${a}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <button class="btn btn-primary" id="dash-btn-fechamento-anual">📊 Gerar Resumo do Ano</button>
+      <div id="dash-fechamento-anual-conteudo"></div>
+      ${STATE.anosArquivados && STATE.anosArquivados.length>0 ? `
+        <div style="margin-top:16px;">
+          <h4 style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">Anos já arquivados:</h4>
+          <div class="table-wrap">
+            <table class="data-table">
+              <thead><tr><th>Ano</th><th class="num">Faturamento</th><th class="num">Lucro</th><th>Arquivado em</th><th></th></tr></thead>
+              <tbody>
+                ${STATE.anosArquivados.map(a=>`
+                  <tr>
+                    <td>${a.ano}</td>
+                    <td class="num">${fmtMoney(a.totalBruto)}</td>
+                    <td class="num" style="color:${a.totalLucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(a.totalLucro)}</td>
+                    <td>${new Date(a.arquivadoEm).toLocaleDateString('pt-BR')}</td>
+                    <td><button class="btn btn-sm" onclick="verResumoArquivado(${a.ano})">Ver Resumo</button></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ` : ''}
+    </div>`;
+}
+function ligarCardFechamentoAnual(){
+  const btn = document.getElementById('dash-btn-fechamento-anual');
+  if(btn) btn.addEventListener('click', ()=>{
+    const ano = parseInt(document.getElementById('arq-ano-selecionado').value);
+    gerarResumoAnual(ano);
+  });
+}
+
 function renderResumoBomDia(linhasMes, totalBrutoMes){
   const hoje = todayISO();
   const hora = new Date().getHours();
@@ -41422,11 +41478,18 @@ function renderResumoBomDia(linhasMes, totalBrutoMes){
     pontos.push(`<strong>${abaixoMin.length} produto${abaixoMin.length>1?'s':''}</strong> abaixo do estoque mínimo`);
   }
 
-  // atrasados (despesas)
-  if(getParcelasExpandidas().some(l=>!l.pago && l.vencimento<hoje)){
-    const atrasadas = getParcelasExpandidas().filter(l=>!l.pago && l.vencimento<hoje);
+  // atrasados — o que ela DEVE (a pagar) e o que DEVEM a ela (a receber).
+  // Antes só aparecia o a pagar; o a receber atrasado (normalmente bem maior)
+  // ficava escondido no fim da página, nos Alertas.
+  const atrasadas = getParcelasExpandidas().filter(l=>!l.pago && l.vencimento<hoje);
+  if(atrasadas.length>0){
     const total = atrasadas.reduce((s,l)=>s+l.valor,0);
-    pontos.push(`<strong style="color:var(--negative);">${atrasadas.length} conta${atrasadas.length>1?'s':''} atrasada${atrasadas.length>1?'s':''}</strong> (${fmtMoney(total)})`);
+    pontos.push(`<strong style="color:var(--negative);">${atrasadas.length} conta${atrasadas.length>1?'s':''} a pagar atrasada${atrasadas.length>1?'s':''}</strong> (${fmtMoney(total)})`);
+  }
+  const receberAtrasado = (typeof getLinhasReceber==='function' ? getLinhasReceber() : []).filter(l=>l.statusCalc==='atrasado');
+  if(receberAtrasado.length>0){
+    const total = receberAtrasado.reduce((s,l)=>s+l.valor,0);
+    pontos.push(`<strong style="color:var(--negative);">${fmtMoney(total)} a receber atrasado</strong> (${receberAtrasado.length} conta${receberAtrasado.length>1?'s':''})`);
   }
 
   const vendasHoje = getLinhasVenda().filter(l=>l.data===hoje);
@@ -41536,6 +41599,11 @@ function renderDashboard(){
   const varBruto = totalBrutoMesPassado>0 ? ((totalBrutoMes-totalBrutoMesPassado)/totalBrutoMesPassado*100) : null;
 
   const kpisDespesa = calcularKpisDespesas();
+  // Lucro REAL do mês = lucro das vendas − todas as despesas que vencem no mês
+  // (pagas ou não). É a mesma conta do DRE lá embaixo, pra os dois números
+  // nunca mais se contradizerem.
+  const despesasTotalMes = getParcelasExpandidas().filter(p=>p.vencimento && p.vencimento.slice(0,7)===mesAtual).reduce((s,p)=>s+p.valor,0);
+  const lucroRealMes = totalLucroMes - despesasTotalMes;
   const licitacoesAndamento = STATE.licitacoes.filter(l=>['Potencial','Participando','Aguardando Resultado'].includes(l.status)).length;
   // só mostra os gráficos de repasse se houver pelo menos uma venda com
   // pagador (terceiro) vinculado — sem isso, um gráfico de pizza vazio só
@@ -41553,14 +41621,15 @@ function renderDashboard(){
       </div>
       <div class="kpi-card ${totalLucroMes>=0?'acc-green':'acc-red'}">
         <div class="kpi-icon">📈</div>
-        <div class="kpi-label">Lucro Líquido do Mês</div>
-        <div class="kpi-value ${totalLucroMes>=0?'positive':'negative'}">${fmtMoney(totalLucroMes)}</div>
+        <div class="kpi-label">Lucro Bruto do Mês</div>
+        <div class="kpi-value ${totalLucroMes>=0?'positive':'negative'}" id="dash-kpi-lucro-bruto">${fmtMoney(totalLucroMes)}</div>
+        <div class="kpi-sub" id="dash-kpi-lucro-real" style="color:${lucroRealMes>=0?'var(--positive)':'var(--negative)'}">lucro real (após despesas): <strong>${fmtMoney(lucroRealMes)}</strong></div>
       </div>
       <div class="kpi-card acc-gold">
         <div class="kpi-icon">🧾</div>
-        <div class="kpi-label">Despesas do Mês</div>
-        <div class="kpi-value negative">${fmtMoney(kpisDespesa.mesAtualAberto)}</div>
-        <div class="kpi-sub">${kpisDespesa.atrasado>0 ? fmtMoney(kpisDespesa.atrasado)+' atrasado' : 'nenhuma atrasada'}</div>
+        <div class="kpi-label">Despesas em Aberto</div>
+        <div class="kpi-value negative" id="dash-kpi-despesas-aberto">${fmtMoney(kpisDespesa.mesAtualAberto)}</div>
+        <div class="kpi-sub" id="dash-kpi-despesas-total">total do mês: ${fmtMoney(despesasTotalMes)} · ${kpisDespesa.atrasado>0 ? fmtMoney(kpisDespesa.atrasado)+' atrasado' : 'nenhuma atrasada'}</div>
       </div>
       <div class="kpi-card acc-purple">
         <div class="kpi-icon">🏛️</div>
@@ -41569,18 +41638,17 @@ function renderDashboard(){
       </div>
     </div>
 
-    ${linhasRepasseDash.length>0 ? `
-    <div class="chart-row even">
-      <div class="card">
-        <h3>Repasse por Pagador <span class="hint">total de repasse, dividido por terceiro</span></h3>
-        <div class="chart-box"><canvas id="dash-chart-repasse-pagador"></canvas></div>
-      </div>
-      <div class="card">
-        <h3>Repasse: Recebido × A Receber <span class="hint">de tudo que já passou por repasse</span></h3>
-        <div class="chart-box"><canvas id="dash-chart-repasse-status"></canvas></div>
-      </div>
+    <!-- Alertas logo abaixo dos números: é o que pede ação hoje. Antes ficavam
+         no fim da página, embaixo de uns 10 gráficos. -->
+    <div class="card" id="dash-alertas-card">
+      <h3>Alertas e Pendências</h3>
+      <div id="dash-alertas"></div>
     </div>
-    ` : ''}
+
+    <div class="card" id="dash-divergencias-card" style="display:none;">
+      <h3>Divergências de Importação <span class="hint">itens de PDF que precisam de revisão</span></h3>
+      <div id="dash-divergencias"></div>
+    </div>
 
     <div class="chart-row">
       <div class="card">
@@ -41601,28 +41669,24 @@ function renderDashboard(){
       </div>
     </div>
 
+    ${renderRankingClientesMesHtml(mesAtual)}
+
+    <!-- O antigo "Fluxo de Caixa Previsto" (só despesas) saiu: o Fluxo de Caixa
+         Projetado, mais abaixo, mostra as mesmas despesas junto com o a receber. -->
     <div class="chart-row even">
       <div class="card">
         <h3>Top 5 Clientes (geral)</h3>
         <div class="chart-box"><canvas id="dash-chart-top-clientes"></canvas></div>
       </div>
       <div class="card">
-        <h3>Fluxo de Caixa Previsto <span class="hint">próximos 6 meses (despesas)</span></h3>
-        <div class="chart-box"><canvas id="dash-chart-fluxo"></canvas></div>
-      </div>
-    </div>
-
-    ${renderRankingClientesMesHtml(mesAtual)}
-
-    <div class="chart-row even">
-      <div class="card">
         <h3>Vendas por Dia da Semana <span class="hint">identifique seus dias de maior movimento</span></h3>
         <div class="chart-box"><canvas id="dash-chart-dia-semana"></canvas></div>
       </div>
-      <div class="card">
-        <h3>Margem de Lucro ao Longo do Tempo <span class="hint">% de lucro sobre o valor vendido, por mês</span></h3>
-        <div class="chart-box"><canvas id="dash-chart-margem-tempo"></canvas></div>
-      </div>
+    </div>
+
+    <div class="card">
+      <h3>Margem de Lucro ao Longo do Tempo <span class="hint">% de lucro bruto sobre o valor vendido, por mês</span></h3>
+      <div class="chart-box"><canvas id="dash-chart-margem-tempo"></canvas></div>
     </div>
 
     <div class="card">
@@ -41647,6 +41711,7 @@ function renderDashboard(){
 
     <div class="card">
       <h3>Fluxo de Caixa Projetado <span class="hint">barras para cima = a receber · barras para baixo = a pagar</span></h3>
+      <p class="help-text" id="dash-fluxo-aviso" style="margin:0 0 8px;">Considera só o que já está lançado (contas a receber e contas a pagar). Vendas que ainda vão acontecer não entram — por isso o saldo tende a cair nos meses mais distantes.</p>
       <div class="chart-box tall"><canvas id="dash-chart-fluxo-projetado"></canvas></div>
       <div class="table-wrap" style="margin-top:14px;">
         <table class="data-table">
@@ -41667,15 +41732,18 @@ function renderDashboard(){
       <div id="dre-conteudo"></div>
     </div>
 
-    <div class="card">
-      <h3>Alertas e Pendências</h3>
-      <div id="dash-alertas"></div>
+    ${linhasRepasseDash.length>0 ? `
+    <div class="chart-row even" id="dash-repasse-row">
+      <div class="card">
+        <h3>Repasse por Pagador <span class="hint">total de repasse, dividido por terceiro</span></h3>
+        <div class="chart-box"><canvas id="dash-chart-repasse-pagador"></canvas></div>
+      </div>
+      <div class="card">
+        <h3>Repasse: Recebido × A Receber <span class="hint">de tudo que já passou por repasse</span></h3>
+        <div class="chart-box"><canvas id="dash-chart-repasse-status"></canvas></div>
+      </div>
     </div>
-
-    <div class="card" id="dash-divergencias-card" style="display:none;">
-      <h3>Divergências de Importação <span class="hint">itens de PDF que precisam de revisão</span></h3>
-      <div id="dash-divergencias"></div>
-    </div>
+    ` : ''}
 
     <div class="card">
       <h3>🌙 Fechamento do Dia <span class="hint">resumo pronto pra copiar ou guardar</span></h3>
@@ -41684,51 +41752,12 @@ function renderDashboard(){
       <div id="dash-fechamento-conteudo"></div>
     </div>
 
-    <div class="card">
-      <h3>📅 Fechamento Anual <span class="hint">consolide o ano e deixe o sistema mais leve</span></h3>
-      <p class="help-text" style="margin-bottom:12px;">
-        No fim do ano, gere um resumo consolidado com os 12 meses de vendas, despesas e lucro. Você pode arquivar o ano depois —
-        as vendas e despesas antigas saem da lista do dia a dia, mas o resumo anual fica guardado pra sempre, sem perder nada.
-      </p>
-      <div class="form-grid">
-        <div class="field">
-          <label>Ano</label>
-          <select id="arq-ano-selecionado">
-            ${Array.from({length:5}, (_,i)=>new Date().getFullYear()-i).map(a=>`<option value="${a}">${a}</option>`).join('')}
-          </select>
-        </div>
-      </div>
-      <button class="btn btn-primary" id="dash-btn-fechamento-anual">📊 Gerar Resumo do Ano</button>
-      <div id="dash-fechamento-anual-conteudo"></div>
-      ${STATE.anosArquivados && STATE.anosArquivados.length>0 ? `
-        <div style="margin-top:16px;">
-          <h4 style="font-size:12.5px;color:var(--ink-soft);margin-bottom:8px;">Anos já arquivados:</h4>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead><tr><th>Ano</th><th class="num">Faturamento</th><th class="num">Lucro</th><th>Arquivado em</th><th></th></tr></thead>
-              <tbody>
-                ${STATE.anosArquivados.map(a=>`
-                  <tr>
-                    <td>${a.ano}</td>
-                    <td class="num">${fmtMoney(a.totalBruto)}</td>
-                    <td class="num" style="color:${a.totalLucro>=0?'var(--positive)':'var(--negative)'}">${fmtMoney(a.totalLucro)}</td>
-                    <td>${new Date(a.arquivadoEm).toLocaleDateString('pt-BR')}</td>
-                    <td><button class="btn btn-sm" onclick="verResumoArquivado(${a.ano})">Ver Resumo</button></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ` : ''}
-    </div>
-
-    <div class="card" style="border-left:4px solid var(--positive);">
+    <div class="card" style="border-left:4px solid var(--positive);" id="dash-card-backup">
       <h3>💾 Seus dados estão seguros?</h3>
       <p class="help-text" style="margin-bottom:12px;">
-        Todos os dados deste sistema ficam salvos apenas neste navegador. Se você limpar o histórico do navegador, trocar de computador, ou algo der errado,
-        os dados podem se perder — a menos que você tenha um backup. Recomendamos exportar um backup toda semana, ou sempre depois de um dia cheio de lançamentos.
-        ${STATE.ultimoBackup ? `<br><strong>Último backup exportado:</strong> ${new Date(STATE.ultimoBackup).toLocaleString('pt-BR')}` : '<br><strong style="color:var(--warning);">Você ainda não exportou nenhum backup nesta sessão.</strong>'}
+        Os dados ficam neste aparelho e são copiados para a nuvem sozinhos, a cada poucos segundos — é assim que o computador e o celular enxergam a mesma coisa.
+        O backup é uma <strong>cópia extra, fora da nuvem</strong>, para o caso de algo dar muito errado lá. Vale exportar um toda semana.
+        ${STATE.ultimoBackup ? `<br><strong>Último backup exportado:</strong> ${new Date(STATE.ultimoBackup).toLocaleString('pt-BR')}` : '<br><strong style="color:var(--warning);">Nenhum backup exportado ainda.</strong>'}
       </p>
       <button class="btn btn-primary" id="dash-btn-backup">⬇ Exportar backup agora</button>
     </div>
@@ -41742,12 +41771,6 @@ function renderDashboard(){
 
   const btnFechamento = document.getElementById('dash-btn-fechamento');
   if(btnFechamento) btnFechamento.addEventListener('click', gerarFechamentoDoDia);
-
-  const btnFechamentoAnual = document.getElementById('dash-btn-fechamento-anual');
-  if(btnFechamentoAnual) btnFechamentoAnual.addEventListener('click', ()=>{
-    const ano = parseInt(document.getElementById('arq-ano-selecionado').value);
-    gerarResumoAnual(ano);
-  });
 
   const btnBackupDash = document.getElementById('dash-btn-backup');
   if(btnBackupDash) btnBackupDash.addEventListener('click', exportarBackup);
@@ -41783,20 +41806,22 @@ function getPeriodoMeta(){
   const anoM = hoje.getFullYear(), mesM = hoje.getMonth();
   const fmt = (d)=>d.toISOString().slice(0,10);
 
+  // o label já vem com a preposição ("deste mês", "do mês passado"...), pra
+  // frase "as despesas ${label}" sair em português certo
   if(sel==='mes-atual'){
-    return { ini: fmt(new Date(anoM, mesM, 1)), fim: fmt(new Date(anoM, mesM+1, 0)), label: 'este mês' };
+    return { ini: fmt(new Date(anoM, mesM, 1)), fim: fmt(new Date(anoM, mesM+1, 0)), label: 'deste mês' };
   }
   if(sel==='mes-passado'){
-    return { ini: fmt(new Date(anoM, mesM-1, 1)), fim: fmt(new Date(anoM, mesM, 0)), label: 'mês passado' };
+    return { ini: fmt(new Date(anoM, mesM-1, 1)), fim: fmt(new Date(anoM, mesM, 0)), label: 'do mês passado' };
   }
   if(sel==='proximos-30'){
     const em30 = new Date(); em30.setDate(em30.getDate()+30);
-    return { ini: fmt(hoje), fim: fmt(em30), label: 'próximos 30 dias' };
+    return { ini: fmt(hoje), fim: fmt(em30), label: 'dos próximos 30 dias' };
   }
   // customizado
   const ini = document.getElementById('meta-data-ini').value || fmt(new Date(anoM, mesM, 1));
   const fim = document.getElementById('meta-data-fim').value || fmt(new Date(anoM, mesM+1, 0));
-  return { ini, fim, label: 'período selecionado' };
+  return { ini, fim, label: 'do período selecionado' };
 }
 
 let metaChartPizza = null;
@@ -41829,7 +41854,7 @@ function renderMetaLucroDespesas(){
       totalDespesas = parcelas.reduce((s,p)=>s+p.valor,0);
       projetadoParaFrente = true;
       mesProjetadoLabel = monthLabel(proximoMes);
-      periodoLabelExibido = `${mesProjetadoLabel} (projetado — sem dívidas este mês)`;
+      periodoLabelExibido = `de ${mesProjetadoLabel} (projetado — sem dívidas este mês)`;
     }
   }
 
@@ -41841,7 +41866,7 @@ function renderMetaLucroDespesas(){
   box.innerHTML = `
     <div class="kpi-row" style="margin-bottom:14px;">
       <div class="kpi-card"><div class="kpi-label">${projetadoParaFrente?'Despesas de '+mesProjetadoLabel:'Despesas do Período'}</div><div class="kpi-value negative">${fmtMoney(totalDespesas)}</div><div class="kpi-sub">${parcelas.length} conta(s) em aberto</div></div>
-      <div class="kpi-card"><div class="kpi-label">Lucro Líquido Gerado</div><div class="kpi-value ${totalLucro>=0?'positive':'negative'}">${fmtMoney(totalLucro)}</div></div>
+      <div class="kpi-card"><div class="kpi-label">Lucro Bruto Gerado</div><div class="kpi-value ${totalLucro>=0?'positive':'negative'}">${fmtMoney(totalLucro)}</div></div>
       <div class="kpi-card"><div class="kpi-label">${superavit>=0?'Sobra após despesas':'Falta para cobrir'}</div><div class="kpi-value ${superavit>=0?'positive':'negative'}">${fmtMoney(Math.abs(superavit))}</div></div>
     </div>
     ${projetadoParaFrente ? `<div class="tag-pill" style="background:var(--positive-soft);color:var(--positive);margin-bottom:10px;">✓ Você não tem dívidas em aberto este mês — o lucro gerado está sendo comparado com as despesas de ${mesProjetadoLabel}, o próximo mês com contas a pagar.</div>` : ''}
@@ -41857,8 +41882,8 @@ function renderMetaLucroDespesas(){
           ${totalDespesas===0
             ? 'Nenhuma despesa em aberto encontrada — nem neste período, nem em meses futuros.'
             : (falta>0
-                ? `Faltam <strong>${fmtMoney(falta)}</strong> de lucro para cobrir as despesas de ${periodoLabelExibido} (o lucro já considera custo, imposto e comissão quando houver).`
-                : `Lucro já cobre as despesas de ${periodoLabelExibido}, com <strong>${fmtMoney(superavit)}</strong> de sobra${superavit>0?' — esse excedente ajuda a cobrir o próximo mês':''}.`)
+                ? `Faltam <strong>${fmtMoney(falta)}</strong> de lucro para cobrir as despesas ${periodoLabelExibido} (o lucro já considera custo, imposto e comissão quando houver).`
+                : `Lucro já cobre as despesas ${periodoLabelExibido}, com <strong>${fmtMoney(superavit)}</strong> de sobra${superavit>0?' — esse excedente ajuda a cobrir o próximo mês':''}.`)
           }
         </p>
       </div>
@@ -41982,27 +42007,6 @@ function renderDashCharts(linhas){
     options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{position:'right', labels:{boxWidth:10,font:{size:11}}}} }
   });
 
-  // fluxo de caixa previsto (despesas próximos 6 meses)
-  const despLinhas = getParcelasExpandidas().filter(l=>!l.pago);
-  const porMesDesp = {};
-  const hoje = new Date();
-  for(let i=0;i<6;i++){
-    const d = new Date(hoje.getFullYear(), hoje.getMonth()+i, 1);
-    const key = d.toISOString().slice(0,7);
-    porMesDesp[key] = 0;
-  }
-  despLinhas.forEach(l=>{
-    if(porMesDesp.hasOwnProperty(l.vencimento.slice(0,7))){
-      porMesDesp[l.vencimento.slice(0,7)] += l.valor;
-    }
-  });
-  const mesesFluxo = Object.keys(porMesDesp);
-  dashCharts.fluxo = criarGraficoSeguro('dash-chart-fluxo', {
-    type:'bar',
-    data:{ labels: mesesFluxo.map(monthLabel), datasets:[{label:'Despesas previstas', data:mesesFluxo.map(m=>porMesDesp[m]), backgroundColor:'#C98A2C99', borderRadius:4}]},
-    options:{ responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{ticks:{callback:v=>fmtCompact(v)}}} }
-  });
-
   // Vendas por dia da semana — soma de valor bruto agrupado por dia (Dom-Sáb),
   // ajuda a identificar os dias de maior movimento de vendas
   const diasSemanaLabels = ['Domingo','Segunda','Terça','Quarta','Quinta','Sexta','Sábado'];
@@ -42033,7 +42037,7 @@ function renderDashCharts(linhas){
   });
   dashCharts.margemTempo = criarGraficoSeguro('dash-chart-margem-tempo', {
     type:'line',
-    data:{ labels: mesesMargemOrd.map(monthLabel), datasets:[{label:'Margem líquida (%)', data:margens, borderColor:'#2E7D5B', backgroundColor:'#2E7D5B22', fill:true, tension:.3, pointRadius:4}]},
+    data:{ labels: mesesMargemOrd.map(monthLabel), datasets:[{label:'Margem bruta (%)', data:margens, borderColor:'#2E7D5B', backgroundColor:'#2E7D5B22', fill:true, tension:.3, pointRadius:4}]},
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{legend:{display:false}, tooltip:{callbacks:{label:ctx=>ctx.parsed.y.toFixed(1)+'%'}}},
@@ -42155,7 +42159,9 @@ function renderDRE(){
 
   // detalhamento das despesas por TIPO (Fixa, Fixa Variável, Salário+Comissão, Variável, Parcelada),
   // e dentro de Salário+Comissão, a parte de salário separada da parte de comissão
-  const tipoLabel = {fixa:'Despesas Fixas', fixa_variavel:'Despesas Fixas Variáveis', salario_comissao:'Salário + Comissão de Funcionários', variavel:'Despesas Variáveis', parcelada:'Despesas Parceladas'};
+  // 'boleto' é o tipo "Boleto único ou parcelado" do cadastro de despesa —
+  // faltava aqui, e o DRE mostrava a palavra crua "boleto"
+  const tipoLabel = {fixa:'Despesas Fixas', fixa_variavel:'Despesas Fixas Variáveis', salario_comissao:'Salário + Comissão de Funcionários', variavel:'Despesas Variáveis', parcelada:'Despesas Parceladas', boleto:'Boletos (únicos ou parcelados)'};
   const porTipo = {};
   let totalSalarios=0, totalComissaoFuncionario=0;
   despesasMes.forEach(p=>{
@@ -42224,12 +42230,8 @@ function renderDashAlertas(){
     alertas.push({tipo:'warning', texto:`${fmtMoney(kpisDespesa.proximos30)} em vencimentos nos próximos 30 dias.`});
   }
 
-  // produtos abaixo do estoque mínimo baseado em vendas recentes não é possível sem controle de estoque de entrada;
-  // então avisamos sobre produtos cadastrados com estoqueMin definido, como lembrete de acompanhamento
-  const produtosComMinimo = STATE.produtos.filter(p=>p.estoqueMin!=null);
-  if(produtosComMinimo.length>0){
-    alertas.push({tipo:'neutral', texto:`${produtosComMinimo.length} produto(s) com estoque mínimo configurado — acompanhe o volume de saída em Análise de Vendas.`});
-  }
+  // (saiu o "N produto(s) com estoque mínimo configurado": não pedia nenhuma
+  // ação — o alerta útil é o "abaixo do estoque mínimo", mais abaixo)
 
   const licitacoesAguardando = STATE.licitacoes.filter(l=>l.status==='Aguardando Resultado');
   if(licitacoesAguardando.length>0){
@@ -42259,9 +42261,10 @@ function renderDashAlertas(){
   const enderecosFaltando = [...STATE.fornecedores, ...STATE.locaisCompra].filter(l=>!l.endereco).length;
   if(produtosIncompletos>0 || enderecosFaltando>0){
     const partes = [];
-    if(produtosIncompletos>0) partes.push(`${produtosIncompletos} produto(s)`);
+    // separado por "·" — com "e" no meio, lia-se "984 produtos ... sem endereço"
+    if(produtosIncompletos>0) partes.push(`${produtosIncompletos} produto(s) com dados faltando`);
     if(enderecosFaltando>0) partes.push(`${enderecosFaltando} fornecedor(es)/local(is) de compra sem endereço`);
-    alertas.push({tipo:'neutral', texto:`📋 Cadastro incompleto: ${partes.join(' e ')}.`});
+    alertas.push({tipo:'neutral', texto:`📋 Cadastro incompleto: ${partes.join(' · ')}.`, acao: produtosIncompletos>0 ? {label:'Ver Produtos', pagina:'produtos'} : null});
   }
 
   const entregasSemRota = calcularRoteiro().entregasBloqueadas.length;
@@ -47487,6 +47490,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-13-b',
+    data: '2026-11-13',
+    titulo: 'Dashboard revisado: números que não se contradizem e o urgente no topo',
+    itens: [
+      'O LUCRO DO CARD ENGANAVA. Ele se chamava "Lucro Líquido", mas só tirava custo, imposto e comissão — as despesas ficavam de fora. Agora se chama "Lucro Bruto" e mostra embaixo o lucro real, depois das despesas: o mesmo número do DRE.',
+      'DESPESAS: o card mostra o que está EM ABERTO, e embaixo o total do mês (pagas + em aberto). Antes eram três números diferentes sem dizer por quê.',
+      '"ATENÇÃO HOJE" passou a mostrar também o que está atrasado PARA RECEBER — antes só aparecia o atrasado para pagar.',
+      'NOVA ORDEM: os Alertas subiram para logo depois dos números. Os gráficos de repasse desceram para o fim. O "Fluxo de Caixa Previsto" saiu (o Projetado já mostra o mesmo, junto com o a receber). O Fechamento Anual foi para a tela Fechamento do Mês.',
+      'TEXTOS CORRIGIDOS: o quadro do backup dizia que os dados ficam "só neste navegador" — não é mais assim, eles vão para a nuvem. O aviso "nunca exportou backup" aparecia antes da nuvem trazer a data e contradizia o quadro. No DRE, "boleto" virou "Boletos (únicos ou parcelados)". O alerta de cadastro incompleto ficou legível. E saiu o alerta de "produtos com estoque mínimo configurado", que não pedia nada.'
+    ]
+  },
   {
     id: '2026-11-13-a',
     data: '2026-11-13',
@@ -59933,7 +59948,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '13/11/2026 09:10';
+const SISTEMA_VERSAO = '13/11/2026 13:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -61467,6 +61482,7 @@ async function nuvemDepoisDeEntrar(){
   const pagina = ativa ? ativa.id.replace('page-', '') : 'dashboard';
   if(RENDERERS[pagina]) RENDERERS[pagina]();
   atualizarBadgesMenu();
+  verificarBackupAoAbrirApp();   // agora com a data do último backup já vinda da nuvem
 
   if(nuvemTimer) clearInterval(nuvemTimer);
   nuvemTimer = setInterval(() => nuvemSincronizar(false), 20000);
@@ -61685,7 +61701,10 @@ async function iniciarSistema(){
   catch(e){ console.error('Falha ao carregar o estado — seguindo com o que havia', e); }
   renderDashboard();
   atualizarBadgesMenu();
-  verificarBackupAoAbrirApp();
+  // Com login na nuvem, a data do último backup só chega depois da primeira
+  // sincronização — conferir antes disso dizia "nunca exportou" pra quem tinha
+  // exportado ontem. Nesse caso quem confere é o nuvemDepoisDeEntrar.
+  if(!nuvemLerSessao() || !navigator.onLine) verificarBackupAoAbrirApp();
   verificarNovidadesAoAbrirApp();
   renderFaixaSimulacao();
   versaoIniciarVigia();
