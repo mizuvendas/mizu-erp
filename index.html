@@ -17974,6 +17974,8 @@ function orc2AbrirPedido(id){
         <div class="cell-actions" style="flex-wrap:wrap;">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
           ${!orc2Convertido(o) ? `<button class="btn btn-sm" onclick="orc2Editar('${o.id}')">✏️ Editar</button>` : ''}
+          ${['aprovado','separando','separado','rua'].includes(orc2Etapa(o)) ? `<button class="btn btn-sm" onclick="orc2Voltar('${o.id}')">↩️ Voltar etapa</button>` : ''}
+          <button class="btn btn-sm" style="color:var(--negative);" onclick="orc2Excluir('${o.id}')">🗑️ Excluir</button>
           ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button><button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>` : ''}
           ${['separado','rua'].includes(orc2Etapa(o)) ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>` : ''}
         </div>
@@ -18140,6 +18142,58 @@ function orc2SemNota(o, depois){
       if(depois) depois();
     }})));
 }
+/* VOLTAR ETAPA (16/11/2026): "quando eu precisasse que ele voltasse para
+   aprovação de novo, para mim alterar a cotação". Enquanto não virou venda,
+   voltar é só desfazer as marcas da esteira (separação, saída). Depois que
+   virou venda, a venda e o estoque já foram lançados: aí o caminho é
+   cancelar a nota/venda primeiro, e a tela diz isso em vez de esconder. */
+function orc2Voltar(id){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  if(orc2Convertido(o)){
+    const nota = nfeNotaDoOrcamento(o.id);
+    orc2Escolha('Esse pedido já virou venda', nota
+      ? `Já tem a nota nº ${nota.numero}. Pra voltar e editar, cancele a nota primeiro — aí a venda pode ser desfeita.`
+      : 'A venda e a baixa do estoque já foram lançadas. Pra voltar e editar, desfaça a venda pela tela de Orçamentos.',
+      nota ? [{ t:'🚫 Cancelar a nota nº '+nota.numero, d:'Abre o cancelamento de sempre (até 24 h depois da emissão).', f:()=>abrirCancelarNota(nota.chave) }] : []);
+    return;
+  }
+  const e = orc2Etapa(o);
+  const opcoes = [];
+  const reg = (txt)=>{ registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} voltou: ${txt} (Orçamento 2)`); saveState(); };
+  if(e==='rua') opcoes.push({ t:'↩️ Voltar pra "Pronto pra sair"', d:'Não saiu ainda (ou voltou com a mercadoria).', f:()=>{ o.statusEntrega='nenhum'; reg('pronto pra sair'); } });
+  if(['rua','separado'].includes(e)) opcoes.push({ t:'↩️ Voltar pra "Em separação"', d:'Mantém o que já foi marcado como em mãos.', f:()=>{ o.statusEntrega='nenhum'; if(o.conferencia) delete o.conferencia.concluidaEm; reg('em separação'); } });
+  opcoes.push({ t:'✏️ Voltar pra "Aprovado" e editar', d:'Apaga as marcas da separação e abre o orçamento pra alterar.', f:()=>{ o.statusEntrega='nenhum'; delete o.conferencia; reg('aprovado'); orc2Editar(o.id); } });
+  opcoes.push({ t:'↩️ Voltar pra "Cotação"', d:'O cliente ainda vai responder de novo.', f:()=>{ o.statusEntrega='nenhum'; delete o.conferencia; o.status='pendente'; reg('cotação'); } });
+  orc2Escolha(`Voltar o pedido #${o.numero}`, 'Nada é apagado do orçamento: só a etapa muda.', opcoes);
+}
+
+/* EXCLUIR, em qualquer etapa (16/11/2026). Pedido que ainda não virou venda
+   sai com a mesma confirmação da tela de Orçamentos. O que já virou venda
+   não some por aqui: a venda, o estoque e o financeiro já foram lançados,
+   e apagar só o orçamento deixaria tudo isso órfão. */
+function orc2Excluir(id){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  if(orc2Convertido(o)){
+    const nota = nfeNotaDoOrcamento(o.id);
+    orc2Escolha(`O pedido #${o.numero} já virou venda`, nota
+      ? `Tem a nota nº ${nota.numero}. Pra excluir, cancele a nota e desfaça a venda primeiro — senão estoque e financeiro ficam lançados sem pedido.`
+      : 'A venda, a baixa do estoque e o financeiro já foram lançados. Pra excluir, desfaça a venda primeiro.',
+      nota ? [{ t:'🚫 Cancelar a nota nº '+nota.numero, d:'Abre o cancelamento de sempre.', f:()=>abrirCancelarNota(nota.chave) }] : []);
+    return;
+  }
+  confirmAction(`Excluir o pedido #${o.numero}?`,
+    `${orc2NomeCliente(o)} · ${fmtMoney(calcularVenda(o).bruto)}. O orçamento é removido de vez, das duas telas (Orçamentos e Orçamento 2). Não tem como desfazer.`,
+    ()=>{
+      STATE.orcamentos = STATE.orcamentos.filter(x=>x.id!==id);
+      registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} excluído (Orçamento 2)`);
+      orc2FecharPedido();
+      saveState();
+      showToast(`Pedido #${o.numero} excluído.`, 'success');
+    }, 'Excluir');
+}
+
 function orc2Perdeu(o){
   orc2Escolha('Por que perdemos?', 'Com o motivo dá pra ver, no fim do mês, o que mais faz perder venda.',
     ['Preço','Prazo de entrega','Comprou de outro','Desistiu'].map(m=>({ t:m, f:()=>{
@@ -48272,6 +48326,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-16-c',
+    data: '2026-11-16',
+    titulo: 'Orçamento 2: voltar um pedido de etapa, e excluir',
+    itens: [
+      'NA GAVETA DO PEDIDO tem "↩️ Voltar etapa": pra Pronto pra sair, Em separação, Aprovado (já abre pra editar) ou Cotação. Nada do orçamento é apagado, só a etapa muda.',
+      'E TEM "🗑️ EXCLUIR", em qualquer etapa e na Lista completa. Pede confirmação e tira o pedido das duas telas.',
+      'SE O PEDIDO JÁ VIROU VENDA (nota emitida ou venda fechada), voltar ou excluir avisa que precisa cancelar a nota antes, e oferece o cancelamento — senão estoque e financeiro ficariam lançados sem pedido.'
+    ]
+  },
+  {
     id: '2026-11-16-b',
     data: '2026-11-16',
     titulo: 'Orçamento 2: coluna "Em separação", coleta por item e bem mais rápido',
@@ -60778,7 +60842,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 14:00';
+const SISTEMA_VERSAO = '16/11/2026 15:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
