@@ -46635,6 +46635,7 @@ function cpRecomecar(){
   c.itensLivres = []; c.itensLivresRemovidos = {};
   c.fornecedoresRodada = {};   // a lista de escolha de fornecedor começa vazia de novo
   c.fornecedoresItem = {};     // e nenhum item chega com fornecedor de compra passada
+  c.qtdForn = {};              // quanto comprar em cada fornecedor é desta compra (a caixa master fica)
   c.recomecoEm = new Date().toISOString();
   saveState();
 }
@@ -46792,6 +46793,60 @@ function cpSetCusto(chave, fornecedor, valor){
   else t[chave][fornecedor] = n;
   if(Object.keys(t[chave]).length === 0) delete t[chave];
   saveState();
+}
+
+/* ---------- caixa master e quanto comprar EM CADA fornecedor (16/11/2026) ----------
+   "o disco mesmo, a caixa master é 5, então tem que comprar de 5 em 5 ...
+    eu colocar quantos vem na caixa master, e na frente fazer a alteração
+    que eu quero".
+   caixaMaster[chave][FORNECEDOR] = quantos vêm na caixa. É um dado do
+   fornecedor, então FICA de uma compra pra outra (não zera no Recomeçar).
+
+   A QUANTIDADE É UMA SÓ POR ITEM — A MAIOR ESCOLHIDA: "se na Super Pro eu
+   escolhi 10, ele vai seguir a Goedert porque eu escolhi 40. A quantidade
+   sempre vai ser a maior dentro de todos os fornecedores." Então digitar
+   num fornecedor só SOBE a quantidade do item (a mesma da etapa 1); cada
+   fornecedor mostra essa quantidade arredondada pra fechar a caixa dele. */
+function cpMapa2(campo){
+  const c = cpCfg();
+  if(!c[campo] || typeof c[campo] !== 'object') c[campo] = {};
+  return c[campo];
+}
+function cpCaixa(chave, f){
+  const v = (cpMapa2('caixaMaster')[chave] || {})[f];
+  const n = Number(v);
+  return n > 0 ? n : null;
+}
+function cpSetCaixa(chave, f, valor){
+  const m = cpMapa2('caixaMaster');
+  const n = parseFloat(String(valor).replace(',', '.'));
+  if(!m[chave]) m[chave] = {};
+  m[chave][f] = (n > 0) ? n : 0;   // 0 = sem caixa (um valor, pra chegar nos outros aparelhos)
+  saveState();
+}
+function cpQtdSugeridaNoFornecedor(l, f){
+  const caixa = cpCaixa(l.chave, f);
+  return caixa ? Math.ceil((l.comprar || 0) / caixa) * caixa : (l.comprar || 0);
+}
+function cpQtdNoFornecedor(l, f){
+  return cpQtdSugeridaNoFornecedor(l, f);
+}
+function cpSetQtdNoFornecedor(chave, f, valor){
+  const n = parseFloat(String(valor).replace(',', '.'));
+  if(isNaN(n) || n <= 0) return;
+  const atual = cpQuanto(chave);
+  if(n > atual){
+    cpDecidir(chave, n);   // a maior escolhida vira a quantidade do item, em todos os fornecedores
+    showToast(`Quantidade do item agora é ${fmtNum(n)} em todos os fornecedores.`, 'success');
+  }else if(n < atual){
+    showToast(`Fica ${fmtNum(atual)}: vale sempre a maior quantidade escolhida. Pra diminuir, mude na etapa 1.`, 'info');
+  }
+}
+function cpNaoTemAqui(chave, f){
+  cpTirarFornecedor(chave, f);
+  saveState();
+  renderSugestaoCompra();
+  showToast(`Tirado de ${f}. Os outros fornecedores do item continuam.`, 'success');
 }
 
 /* Quem respondeu mais barato naquele item, entre os que ele já respondeu. */
@@ -47999,7 +48054,7 @@ function cpRenderPagina3(box){
   const atual = listas.find(l=>l.fornecedor===cpFornecedorAberto) || null;
   const respondidos = atual ? atual.itens.filter(i=>cpCusto(i.chave, atual.fornecedor)!==null).length : 0;
   const totalAtual = atual ? atual.itens.reduce((s,i)=>{
-    const p = cpCusto(i.chave, atual.fornecedor); return s + (p===null?0:p*i.comprar); }, 0) : 0;
+    const p = cpCusto(i.chave, atual.fornecedor); return s + (p===null?0:p*cpQtdNoFornecedor(i, atual.fornecedor)); }, 0) : 0;
 
   box.innerHTML = `
     ${cpEstiloHtml()}
@@ -48039,36 +48094,54 @@ function cpRenderPagina3(box){
       <div class="cp-wrap">
         <table class="data-table cp-tabela">
           <thead><tr>
-            <th style="min-width:260px;">Produto</th>
+            <th style="min-width:240px;">Produto</th>
             <th>Grupo</th>
-            <th class="num">Quantidade</th>
+            <th class="num" title="o que você decidiu na etapa 1">Precisa</th>
+            <th class="num" style="width:100px;" title="quantos vêm na caixa master deste fornecedor — fica guardado pras próximas compras">Caixa master</th>
+            <th class="num cp-th-decide" style="width:110px;" title="já arredondado pra fechar caixa; dá pra mudar">Vou comprar aqui</th>
             <th class="num">Última compra aqui</th>
-            <th class="num cp-th-decide" style="width:150px;">Custo por unidade</th>
+            <th class="num cp-th-decide" style="width:130px;">Custo por unidade</th>
             <th class="num">Total da linha</th>
+            <th style="width:44px;"></th>
           </tr></thead>
           <tbody>
             ${atual.itens.map(i=>{
-              const p = cpCusto(i.chave, atual.fornecedor);
-              const u = cpUltimaCompra(i.chave, atual.fornecedor);
+              const f = atual.fornecedor, fJs = escapeAttr(JSON.stringify(f)), kJs = escapeAttr(i.chave);
+              const p = cpCusto(i.chave, f);
+              const u = cpUltimaCompra(i.chave, f);
+              const caixa = cpCaixa(i.chave, f);
+              const qtd = cpQtdNoFornecedor(i, f);
+              const arredondou = qtd !== i.comprar;   // a caixa deste fornecedor fez subir
               return `<tr>
                 <td><strong>${escapeHtml(i.nome)}</strong>
                   <div class="cp-sub">${escapeHtml(i.unidade)}${i.marca?' · '+escapeHtml(i.marca):''}</div></td>
                 <td class="cp-sub">${i.grupoNome?escapeHtml(i.grupoNome):'—'}</td>
-                <td class="num" style="font-weight:700;">${fmtNum(i.comprar)}</td>
+                <td class="num cp-sub">${fmtNum(i.comprar)}</td>
+                <td class="num"><input class="cp-qtd cp-caixa" type="number" min="0" step="1" value="${caixa||''}" placeholder="—"
+                    aria-label="Caixa master de ${escapeAttr(i.nome)} em ${escapeAttr(f)}"
+                    onchange="cpSetCaixa('${kJs}', ${fJs}, this.value); renderSugestaoCompra();"></td>
+                <td class="num cp-td-decide"><input class="cp-qtd cp-qtd-forn" type="number" min="0" step="1" value="${qtd}"
+                    aria-label="Quanto comprar de ${escapeAttr(i.nome)} em ${escapeAttr(f)}" style="font-weight:700;"
+                    onchange="cpSetQtdNoFornecedor('${kJs}', ${fJs}, this.value); renderSugestaoCompra();">
+                  ${caixa?`<div class="cp-sub">${fmtNum(qtd/caixa)} cx de ${fmtNum(caixa)}${arredondou?' · fechou a caixa':''}</div>`:''}</td>
                 <td class="num cp-sub">${u?fmtMoney(u.custo)+'<br>'+escapeHtml(cpHaQuantoTempo(u.data)):'—'}</td>
                 <td class="num cp-td-decide">
                   <input class="cp-qtd cp-preco" type="text" inputmode="decimal"
                     value="${p===null?'':p.toFixed(2).replace('.',',')}" placeholder="—"
-                    aria-label="Custo de ${escapeAttr(i.nome)} em ${escapeAttr(atual.fornecedor)}"
-                    onchange="cpSetCusto('${escapeAttr(i.chave)}', ${escapeAttr(JSON.stringify(atual.fornecedor))}, this.value); renderSugestaoCompra();"></td>
+                    aria-label="Custo de ${escapeAttr(i.nome)} em ${escapeAttr(f)}"
+                    onchange="cpSetCusto('${kJs}', ${fJs}, this.value); renderSugestaoCompra();"></td>
                 <td class="num" style="font-family:var(--font-num);${p===null?'color:var(--ink-faint);':'font-weight:700;'}">
-                  ${p===null?'—':fmtMoney(p*i.comprar)}</td>
+                  ${p===null?'—':fmtMoney(p*qtd)}</td>
+                <td><button type="button" class="btn btn-sm cp-nao-tem" title="Este fornecedor não tem — tira o item só da lista dele"
+                    aria-label="${escapeAttr(f)} não tem ${escapeAttr(i.nome)}" style="color:var(--negative);"
+                    onclick="cpNaoTemAqui('${kJs}', ${fJs})">✕</button></td>
               </tr>`;
             }).join('')}
           </tbody>
           <tfoot><tr>
-            <td colspan="5" style="text-align:right;font-weight:600;">Total respondido</td>
+            <td colspan="7" style="text-align:right;font-weight:600;">Total respondido</td>
             <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(totalAtual)}</td>
+            <td></td>
           </tr></tfoot>
         </table>
       </div>
@@ -48093,7 +48166,7 @@ function cpAbrirListaFornecedor(nome){
 function cpTextoDaLista(lista){
   const linhas = [`*Pedido de cotação — Mizu Materiais de Limpeza*`, ''];
   lista.itens.forEach((i, k)=>{
-    linhas.push(`${k+1}. ${i.nome} — ${fmtNum(i.comprar)} ${i.unidade}`);
+    linhas.push(`${k+1}. ${i.nome} — ${fmtNum(cpQtdNoFornecedor(i, lista.fornecedor))} ${i.unidade}`);
   });
   linhas.push('', `Total: ${lista.itens.length} ${lista.itens.length===1?'item':'itens'}.`,
                   'Pode me passar o preço por unidade de cada um, por favor?');
@@ -48160,7 +48233,7 @@ async function cpExportarListas(){
     cab.eachCell(c=>{ c.fill = { type:'pattern', pattern:'solid', fgColor:{argb:'FF'+COR.escuro} }; });
     lista.itens.forEach(i=>{
       const p = cpCusto(i.chave, lista.fornecedor);
-      const r = ws.addRow([i.nome, i.unidade, i.comprar, p===null?null:p, null]);
+      const r = ws.addRow([i.nome, i.unidade, cpQtdNoFornecedor(i, lista.fornecedor), p===null?null:p, null]);
       r.getCell(3).numFmt = '#,##0';
       r.getCell(4).numFmt = 'R$ #,##0.00';
       r.getCell(5).numFmt = 'R$ #,##0.00';
@@ -48190,8 +48263,8 @@ function cpRenderPagina4(box){
   comPreco.forEach(l=>{
     const m = cpMaisBarato(l);
     if(!porFornecedor[m.fornecedor]) porFornecedor[m.fornecedor] = { fornecedor:m.fornecedor, itens:[], total:0 };
-    porFornecedor[m.fornecedor].itens.push({ linha:l, preco:m.preco });
-    porFornecedor[m.fornecedor].total += m.preco * l.comprar;
+    porFornecedor[m.fornecedor].itens.push({ linha:l, preco:m.preco, qtd: cpQtdNoFornecedor(l, m.fornecedor) });
+    porFornecedor[m.fornecedor].total += m.preco * cpQtdNoFornecedor(l, m.fornecedor);
   });
   const escolhidos = Object.values(porFornecedor).sort((a,b)=>b.total - a.total);
   const totalGeral = escolhidos.reduce((s,f)=>s+f.total, 0);
@@ -48199,9 +48272,9 @@ function cpRenderPagina4(box){
   /* quanto o preço mais caro custaria: é a conta que mostra pra que serviu cotar */
   let totalCaro = 0;
   comPreco.forEach(l=>{
-    let caro = 0;
-    (l.fornecedores||[]).forEach(f=>{ const p = cpCusto(l.chave, f); if(p!==null && p>caro) caro = p; });
-    totalCaro += caro * l.comprar;
+    let caro = 0, fCaro = null;
+    (l.fornecedores||[]).forEach(f=>{ const p = cpCusto(l.chave, f); if(p!==null && p>caro){ caro = p; fCaro = f; } });
+    totalCaro += caro * (fCaro ? cpQtdNoFornecedor(l, fCaro) : l.comprar);
   });
   const economia = totalCaro - totalGeral;
 
@@ -48244,7 +48317,7 @@ function cpRenderPagina4(box){
             ${escolhidos.map(f=>`<tr>
               <td><strong>${escapeHtml(f.fornecedor)}</strong></td>
               <td class="num">${f.itens.length}</td>
-              <td class="num">${fmtNum(f.itens.reduce((s,i)=>s+i.linha.comprar,0))}</td>
+              <td class="num">${fmtNum(f.itens.reduce((s,i)=>s+i.qtd,0))}</td>
               <td class="num" style="font-weight:700;font-family:var(--font-num);">${fmtMoney(f.total)}</td>
             </tr>`).join('')}
           </tbody>
@@ -48283,7 +48356,7 @@ function cpRenderPagina4(box){
                       }).join('')}
                   </td>
                   <td class="num">${m?`<b>${escapeHtml(m.fornecedor)}</b><div class="cp-sub">${fmtMoney(m.preco)} cada</div>`:'<span class="cp-vazio">—</span>'}</td>
-                  <td class="num" style="font-family:var(--font-num);${m?'font-weight:700;':'color:var(--ink-faint);'}">${m?fmtMoney(m.preco*i.comprar):'—'}</td>
+                  <td class="num" style="font-family:var(--font-num);${m?'font-weight:700;':'color:var(--ink-faint);'}">${m?fmtMoney(m.preco*cpQtdNoFornecedor(i, m.fornecedor)):'—'}${m && cpQtdNoFornecedor(i, m.fornecedor)!==i.comprar?`<div class="cp-sub">${fmtNum(cpQtdNoFornecedor(i, m.fornecedor))} un. lá</div>`:''}</td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -48332,7 +48405,7 @@ async function cpExportarRelatorio(){
         return p === null ? 'não respondeu' : p;
       }),
       m ? m.fornecedor : '—',
-      m ? m.preco * l.comprar : null ]);
+      m ? m.preco * cpQtdNoFornecedor(l, m.fornecedor) : null ]);
     r.getCell(4).numFmt = '#,##0';
     fornecedores.forEach((f,k)=>{
       const cel = r.getCell(5+k);
@@ -48512,6 +48585,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-16-i',
+    data: '2026-11-16',
+    titulo: 'Sugestão de Compra: caixa master por fornecedor e "não tem aqui"',
+    itens: [
+      'NA ETAPA "POR FORNECEDOR", cada item tem o campo CAIXA MASTER (quanto vem na caixa daquele fornecedor). A quantidade fecha a caixa sozinha: precisa 12, caixa de 5, compra 15. A caixa fica guardada pras próximas compras.',
+      'O "VOU COMPRAR AQUI" pode ser mudado ali mesmo. Vale sempre a MAIOR quantidade escolhida: pôs 40 na Goedert, o item vira 40 em todos os fornecedores (cada um fechando a sua caixa).',
+      'O ✕ NO FIM DA LINHA ("não tem aqui") tira o item só daquele fornecedor. Os outros fornecedores do item continuam.'
+    ]
+  },
   {
     id: '2026-11-16-h',
     data: '2026-11-16',
@@ -61077,7 +61160,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 18:00';
+const SISTEMA_VERSAO = '16/11/2026 20:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -61979,7 +62062,7 @@ function nuvemJuntarFundo(meu, deFora){
         os do outro. Agora soma por id, menos os desjuntados de propósito.
      2. RECOMEÇAR não pegava: o aparelho com a lista velha devolvia tudo.
         Agora quem tem o recomecoEm mais novo manda nesses campos inteiros. */
-const CP_CAMPOS_DA_RODADA = ['mesclas','mesclasRemovidas','decisao','escondidos','apelidos','custos','itensLivres','itensLivresRemovidos','fornecedoresRodada','fornecedoresItem'];
+const CP_CAMPOS_DA_RODADA = ['mesclas','mesclasRemovidas','decisao','escondidos','apelidos','custos','itensLivres','itensLivresRemovidos','fornecedoresRodada','fornecedoresItem','qtdForn'];
 function nuvemUnirPorId(a, b){
   const m = new Map();
   (Array.isArray(a)?a:[]).forEach(x=>{ if(x && x.id != null) m.set(x.id, x); });
