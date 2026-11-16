@@ -3831,28 +3831,37 @@ async function consultarCnpj(digitos){
   if(!cnpjDigitoConfere(digitos)){
     throw Object.assign(new Error('dígito verificador não confere'), { digitoErrado: true });
   }
+  /* UMA FONTE QUE NÃO ACHA NÃO DECIDE (16/11/2026).
+     "o cnpj está certo mas ele não está encontrando": era a FERRAGISTA
+     BRASFIO, CNPJ válido. A BrasilAPI (a primeira da fila) não tem esse
+     cadastro e devolveu 404; o sistema tomava isso como "não existe na
+     Receita" e nem perguntava às outras — a CNPJ.ws tinha tudo. Agora o
+     404/400 de uma fonte só é anotado, e a próxima é consultada. "Não
+     existe" só quando TODAS que responderam disserem que não acharam. */
   const motivos = [];
+  let naoAcharam = 0, recusaram = 0, outrosProblemas = 0;
   for(const fonte of CNPJ_FONTES){
     try{
       const r = await fetch(fonte.url(digitos), { headers: { 'Accept': 'application/json' } });
-      if(r.status === 404){ throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true }); }
-      if(r.status === 429){ motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
+      if(r.status === 404){ naoAcharam++; motivos.push(fonte.nome + ': não encontrou'); continue; }
+      if(r.status === 429){ outrosProblemas++; motivos.push(fonte.nome + ': limite de consultas atingido'); continue; }
       /* 400 é o serviço dizendo "esse número não serve", não "eu caí".
          Chamar isso de "fora do ar" fazia ela esperar passar um problema
          que estava no número. */
-      if(r.status === 400 || r.status === 422){
-        throw Object.assign(new Error('CNPJ recusado'), { recusado: true });
-      }
-      if(!r.ok){ motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
+      if(r.status === 400 || r.status === 422){ recusaram++; motivos.push(fonte.nome + ': recusou o número'); continue; }
+      if(!r.ok){ outrosProblemas++; motivos.push(fonte.nome + ': fora do ar (erro ' + r.status + ')'); continue; }
       const bruto = await r.json();
       const dados = fonte.traduz(bruto);
-      if(!dados || !dados.razaoSocial){ motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
+      if(!dados || !dados.razaoSocial){ outrosProblemas++; motivos.push(fonte.nome + ': resposta sem a razão social'); continue; }
       return { dados, fonte: fonte.nome };
     }catch(e){
-      if(e && (e.definitivo || e.recusado)) throw e;
+      outrosProblemas++;
       motivos.push(fonte.nome + ': ' + ((e && e.message) || 'não respondeu'));
     }
   }
+  /* todas responderam e nenhuma achou: aí sim é o número */
+  if(!outrosProblemas && naoAcharam) throw Object.assign(new Error('CNPJ não encontrado'), { definitivo: true, motivos });
+  if(!outrosProblemas && recusaram) throw Object.assign(new Error('CNPJ recusado'), { recusado: true, motivos });
   throw Object.assign(new Error('nenhuma fonte respondeu'), { motivos });
 }
 
@@ -46160,26 +46169,50 @@ function baixarArquivo(buffer, nome){
    Nada aqui toca o cadastro de produtos nem o estoque.
    ========================================================= */
 
-/* Quem vende o quê. Mora numa coleção própria (e não dentro do produto)
-   justamente pra não mexer no cadastro — e porque coleção sincroniza
-   registro a registro entre as máquinas, enquanto config vai inteira. */
+/* Quem vende o quê — SÓ NESTA COMPRA (16/11/2026).
+   "na verdade eu não quero que ele vincule o fornecedor ainda. Isso aqui é
+    mesmo só para a gente ter um parâmetro do que a gente vai comprar".
+   Antes ficava em STATE.fornecedoresProduto, que passava de uma compra pra
+   outra (na prática, um vínculo). Agora mora em config.compra.fornecedoresItem
+   = { chave: { NOME: true|false } } — é da rodada: o Recomeçar zera, e o
+   false (em vez de apagar) é o que deixa o "tirar" chegar nos outros
+   aparelhos. O que estava na coleção antiga entra uma vez só, na primeira
+   leitura, e a coleção antiga não é mais usada. */
+function cpFornItemMapa(){
+  const c = cpCfg();
+  if(!c.fornecedoresItem || typeof c.fornecedoresItem !== 'object'){
+    c.fornecedoresItem = {};
+    (STATE.fornecedoresProduto||[]).forEach(f=>{
+      if(!f || !f.produtoId || !f.fornecedor) return;
+      (c.fornecedoresItem[f.produtoId] = c.fornecedoresItem[f.produtoId] || {})[f.fornecedor] = true;
+    });
+  }
+  return c.fornecedoresItem;
+}
 function cpFornecedores(){
-  if(!Array.isArray(STATE.fornecedoresProduto)) STATE.fornecedoresProduto = [];
-  return STATE.fornecedoresProduto;
+  const m = cpFornItemMapa(), saida = [];
+  Object.keys(m).forEach(k=>{ const s = m[k] || {}; Object.keys(s).forEach(n=>{ if(s[n]) saida.push({ produtoId:k, fornecedor:n }); }); });
+  return saida;
 }
 function cpFornecedoresDe(produtoId){
-  return cpFornecedores().filter(f=>f.produtoId===produtoId).map(f=>f.fornecedor);
+  const s = cpFornItemMapa()[produtoId] || {};
+  return Object.keys(s).filter(n=>s[n]);
 }
 function cpPorFornecedor(produtoId, nome){
   const limpo = String(nome||'').trim();
   if(!limpo) return;
-  const lista = cpFornecedores();
-  if(lista.some(f=>f.produtoId===produtoId && f.fornecedor.toLowerCase()===limpo.toLowerCase())) return;
-  lista.push({ id: uid('fp'), produtoId, fornecedor: limpo, criadoEm: new Date().toISOString() });
+  const m = cpFornItemMapa();
+  const s = m[produtoId] = m[produtoId] || {};
+  const igual = Object.keys(s).find(n=>n.toLowerCase()===limpo.toLowerCase());
+  s[igual || limpo] = true;
 }
 function cpTirarFornecedor(produtoId, nome){
-  STATE.fornecedoresProduto = cpFornecedores()
-    .filter(f=>!(f.produtoId===produtoId && f.fornecedor===nome));
+  const s = cpFornItemMapa()[produtoId];
+  if(s && (nome in s)) s[nome] = false;
+}
+function cpTirarTodosFornecedoresDe(produtoId){
+  const s = cpFornItemMapa()[produtoId];
+  if(s) Object.keys(s).forEach(n=>{ s[n] = false; });
 }
 
 /* A lista de quem pode ser fornecedor: o cadastro, mais quem já apareceu
@@ -46370,7 +46403,7 @@ function cpJuntar(chaves, nome){
     if(k in cpCfg().decisao) cpCfg().decisao[k] = 0;
     delete cpApelidos()[k];
     cpDefinirGrupo(k, '');
-    STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== k);
+    cpTirarTodosFornecedoresDe(k);
     if(outra){ cpMesclasRemovidas()[k] = true; cpCfg().mesclas = cpMesclas().filter(m=>m.id!==k); }
   });
 
@@ -46396,7 +46429,7 @@ function cpDesjuntar(mesclaId){
   if(mesclaId in c.decisao) c.decisao[mesclaId] = 0;
   delete cpApelidos()[mesclaId];
   cpDefinirGrupo(mesclaId, '');
-  STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId !== mesclaId);
+  cpTirarTodosFornecedoresDe(mesclaId);
   saveState();
 }
 function cpRenomearMescla(mesclaId, nome){
@@ -46523,7 +46556,7 @@ function cpRemoverItemLivre(id){
   if(id in c.decisao) c.decisao[id] = 0;
   delete cpApelidos()[id];
   cpDefinirGrupo(id, '');
-  STATE.fornecedoresProduto = cpFornecedores().filter(f=>f.produtoId!==id);
+  cpTirarTodosFornecedoresDe(id);
   saveState();
 }
 
@@ -46600,6 +46633,8 @@ function cpRecomecar(){
   c.mesclas = []; c.mesclasRemovidas = {};
   c.decisao = {}; c.escondidos = {}; c.apelidos = {}; c.custos = {};
   c.itensLivres = []; c.itensLivresRemovidos = {};
+  c.fornecedoresRodada = {};   // a lista de escolha de fornecedor começa vazia de novo
+  c.fornecedoresItem = {};     // e nenhum item chega com fornecedor de compra passada
   c.recomecoEm = new Date().toISOString();
   saveState();
 }
@@ -47805,46 +47840,91 @@ function cpRenderPagina2(box){
     </p>`;
 }
 
+/* FORNECEDORES DESTA COMPRA (16/11/2026)
+   "zera ele e permita eu adicionar o fornecedor para aquele momento ali ...
+    poder selecionar vários por item ... pode vir zerado, a gente vai criando
+    decorrer do processo".
+   A lista de escolha não puxa mais os 66 nomes do sistema inteiro (cadastro,
+   notas, produtos): começa vazia e mostra só quem ELA criou nesta compra,
+   mais quem já está ligado a algum item. Fica em config.compra.fornecedoresRodada
+   (um mapa nome→true, que sincroniza sem perder nome) e zera no Recomeçar. */
+function cpFornecedoresDaRodada(){
+  const c = cpCfg();
+  if(!c.fornecedoresRodada || typeof c.fornecedoresRodada !== 'object') c.fornecedoresRodada = {};
+  const nomes = new Set(Object.keys(c.fornecedoresRodada).filter(n=>c.fornecedoresRodada[n]));
+  cpFornecedores().forEach(f=>{ if(f.fornecedor) nomes.add(f.fornecedor); });
+  return [...nomes].sort((a,b)=>a.localeCompare(b,'pt-BR'));
+}
+function cpCriarFornecedorDaRodada(nome){
+  const limpo = String(nome||'').trim().toUpperCase();
+  if(!limpo) return '';
+  const c = cpCfg();
+  if(!c.fornecedoresRodada || typeof c.fornecedoresRodada !== 'object') c.fornecedoresRodada = {};
+  c.fornecedoresRodada[limpo] = true;
+  return limpo;
+}
 function cpAbrirFornecedores(chave){
   const l = cpLinhas().find(x=>x.chave===chave);
   const jaTem = cpFornecedoresDe(chave);
-  const candidatos = cpTodosFornecedores().filter(n=>jaTem.indexOf(n) < 0);
+  const marcados = new Set();
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
-  m.innerHTML = `
+  const desenhar = ()=>{
+    const candidatos = cpFornecedoresDaRodada().filter(n=>jaTem.indexOf(n) < 0);
+    m.innerHTML = `
     <div class="modal-box" style="max-width:min(560px,94vw);max-height:88vh;overflow-y:auto;">
       <h3 style="margin-top:0;">Quem vende ${escapeHtml(l?l.nome:'este produto')}</h3>
-      <p class="help-text">Marque quantos quiser. Isso não mexe no fornecedor do cadastro do produto.</p>
+      <p class="help-text">Marque quantos quiser e clique em Acrescentar. A lista tem só os fornecedores desta compra — os que você for criando aqui embaixo. Isso não mexe no cadastro do produto.</p>
       ${candidatos.length?`<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
         ${candidatos.map(n=>{
           const u = cpUltimaCompra(chave, n);
-          return `<button type="button" class="btn" style="justify-content:space-between;text-align:left;"
-            onclick="cpPorFornecedor('${escapeAttr(chave)}', ${escapeAttr(JSON.stringify(n))}); saveState(); this.closest('.modal-overlay').remove(); renderSugestaoCompra();">
-            <span>${escapeHtml(n)}</span>
+          return `<label class="btn" style="justify-content:space-between;text-align:left;gap:10px;cursor:pointer;">
+            <span style="display:flex;align-items:center;gap:10px;"><input type="checkbox" class="cp-forn-marca" value="${escapeAttr(n)}" ${marcados.has(n)?'checked':''} style="width:18px;height:18px;"> ${escapeHtml(n)}</span>
             <span class="cp-sub">${u?`${fmtMoney(u.custo)} · ${escapeHtml(cpHaQuantoTempo(u.data))}`:'sem compra ainda'}</span>
-          </button>`;
+          </label>`;
         }).join('')}
-      </div>`:`<p class="help-text">Todos os fornecedores que conheço já estão nesse produto.</p>`}
+      </div>`:`<p class="help-text" style="margin:10px 0;">${jaTem.length?'Todos os fornecedores desta compra já estão nesse produto.':'Nenhum fornecedor nesta compra ainda. Crie o primeiro aqui embaixo.'}</p>`}
       <div class="field" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
-        <label>Ou escreva um fornecedor novo</label>
-        <input type="text" id="cp-forn-novo" placeholder="nome do fornecedor">
+        <label>Fornecedor novo</label>
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="cp-forn-novo" placeholder="nome do fornecedor" style="flex:1;">
+          <button type="button" class="btn" id="cp-forn-criar">+ Criar</button>
+        </div>
+        <div class="help-text" style="margin-top:4px;">Ele entra na lista já marcado, e fica disponível pros outros itens desta compra.</div>
       </div>
       <div class="modal-actions">
-        <button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button>
-        <button class="btn btn-primary" id="cp-forn-ok">Acrescentar</button>
+        <button class="btn" id="cp-forn-fechar">Fechar</button>
+        <button class="btn btn-primary" id="cp-forn-ok">Acrescentar${marcados.size?` (${marcados.size})`:''}</button>
       </div>
     </div>`;
-  document.body.appendChild(m);
-  const campo = m.querySelector('#cp-forn-novo');
-  const salvar = ()=>{
-    const nome = campo ? campo.value.trim() : '';
-    if(!nome){ showToast('Escreva o nome do fornecedor.','error'); return; }
-    cpPorFornecedor(chave, nome);
-    saveState(); m.remove(); renderSugestaoCompra();
-    showToast(`${nome} marcado como fornecedor deste produto.`,'success');
+    m.querySelectorAll('.cp-forn-marca').forEach(cb=>cb.addEventListener('change', ()=>{
+      if(cb.checked) marcados.add(cb.value); else marcados.delete(cb.value);
+      const ok = m.querySelector('#cp-forn-ok'); if(ok) ok.textContent = 'Acrescentar' + (marcados.size?` (${marcados.size})`:'');
+    }));
+    const campo = m.querySelector('#cp-forn-novo');
+    const criar = ()=>{
+      const nome = cpCriarFornecedorDaRodada(campo.value);
+      if(!nome){ showToast('Escreva o nome do fornecedor.','error'); return; }
+      marcados.add(nome);
+      saveState();
+      desenhar();
+      const novo = m.querySelector('#cp-forn-novo'); if(novo) novo.focus();
+    };
+    m.querySelector('#cp-forn-criar').onclick = criar;
+    campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); criar(); } });
+    m.querySelector('#cp-forn-fechar').onclick = ()=>m.remove();
+    m.querySelector('#cp-forn-ok').onclick = ()=>{
+      /* nome escrito e não criado também vale: ninguém precisa clicar duas vezes */
+      const escrito = cpCriarFornecedorDaRodada(campo.value);
+      if(escrito) marcados.add(escrito);
+      if(!marcados.size){ showToast('Marque pelo menos um fornecedor, ou crie um novo.','error'); return; }
+      marcados.forEach(n=>cpPorFornecedor(chave, n));
+      saveState(); m.remove(); renderSugestaoCompra();
+      showToast(`${marcados.size} fornecedor${marcados.size>1?'es':''} acrescentado${marcados.size>1?'s':''}.`,'success');
+    };
   };
-  m.querySelector('#cp-forn-ok').onclick = salvar;
-  if(campo) campo.addEventListener('keydown', e=>{ if(e.key==='Enter'){ e.preventDefault(); salvar(); } });
+  document.body.appendChild(m);
+  desenhar();
 }
 
 /* ===================== PÁGINA 3 ===================== */
@@ -48370,6 +48450,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-16-g',
+    data: '2026-11-16',
+    titulo: 'CNPJ que não era encontrado, e fornecedores da compra marcados de uma vez',
+    itens: [
+      'CNPJ CERTO DIZIA "NÃO EXISTE NA RECEITA": a primeira fonte consultada não tinha o cadastro e o sistema parava ali, sem perguntar às outras. Agora uma fonte que não acha passa a vez pra próxima; "não existe" só quando todas disserem que não acharam.',
+      'SUGESTÃO DE COMPRA — "+ FORNECEDOR": a lista de escolha começa VAZIA e mostra só os fornecedores desta compra, os que você for criando. Não puxa mais os nomes do sistema inteiro.',
+      'MARQUE VÁRIOS DE UMA VEZ: cada fornecedor tem uma caixinha; marque quantos quiser e clique em Acrescentar. Fornecedor criado entra já marcado e fica disponível pros outros itens.',
+      'NADA FICA VINCULADO: o fornecedor marcado num item é só referência DESTA compra. Não vai pro cadastro do produto e não passa pra próxima compra — o Recomeçar zera tudo.'
+    ]
+  },
   {
     id: '2026-11-16-f',
     data: '2026-11-16',
@@ -60914,7 +61005,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 16:20';
+const SISTEMA_VERSAO = '16/11/2026 17:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -61816,7 +61907,7 @@ function nuvemJuntarFundo(meu, deFora){
         os do outro. Agora soma por id, menos os desjuntados de propósito.
      2. RECOMEÇAR não pegava: o aparelho com a lista velha devolvia tudo.
         Agora quem tem o recomecoEm mais novo manda nesses campos inteiros. */
-const CP_CAMPOS_DA_RODADA = ['mesclas','mesclasRemovidas','decisao','escondidos','apelidos','custos','itensLivres','itensLivresRemovidos'];
+const CP_CAMPOS_DA_RODADA = ['mesclas','mesclasRemovidas','decisao','escondidos','apelidos','custos','itensLivres','itensLivresRemovidos','fornecedoresRodada','fornecedoresItem'];
 function nuvemUnirPorId(a, b){
   const m = new Map();
   (Array.isArray(a)?a:[]).forEach(x=>{ if(x && x.id != null) m.set(x.id, x); });
