@@ -17632,7 +17632,7 @@ const ORC2_INICIO = '2026-11-16';
 const ORC2_COLUNAS = [
   { id:'cotacao',   titulo:'Cotação',              sub:'esperando o cliente' },
   { id:'aprovado',  titulo:'Aprovado',             sub:'começar a separar' },
-  { id:'separando', titulo:'Em separação',         sub:'conferir e marcar a coleta' },
+  { id:'separando', titulo:'Em separação',         sub:'marcar a coleta · já na Logística' },
   { id:'separado',  titulo:'Pronto pra sair',      sub:'já está na Logística' },
   { id:'rua',       titulo:'Na rua',               sub:'saiu pra entrega' },
   { id:'pendente',  titulo:'Entregue, falta algo', sub:'nota ou pagamento' },
@@ -17967,7 +17967,9 @@ function orc2AbrirPedido(id){
       <div class="corpo">
         <div class="orc2-passo" id="orc2-passo"></div>
         <div class="orc2-trilhos">${tr('CLIENTE',orc2Cliente(o))}${tr('ENTREGA',orc2Entrega(o))}${tr('NOTA',orc2Nota(o))}${tr('PAGAMENTO',orc2Pagamento(o))}</div>
-        <div><div style="font-weight:700;margin-bottom:2px;">${conferindo?'Separação':'Itens'}</div>
+        <div><div style="font-weight:700;margin-bottom:2px;display:flex;justify-content:space-between;align-items:center;gap:8px;">${conferindo?'Separação':'Itens'}
+          ${conferindo ? (()=>{ const todos = (o.itens||[]).length && (o.itens||[]).every((_,i)=>conf.itens && conf.itens[i]);
+            return `<button type="button" class="btn btn-sm" id="orc2-marcar-todos" onclick="orc2MarcarTodos('${o.id}', ${todos?'false':'true'})">${todos?'Desmarcar todos':'✓ Marcar todos'}</button>`; })() : ''}</div>
           ${conferindo?`<div class="help-text" style="margin:0 0 6px;">Marque ✓ o que já está aqui. O que não está, escolha onde buscar: a Logística mostra só essas coletas.</div>`:''}
           <div class="orc2-itens" id="orc2-itens">${(o.itens||[]).map((it,i)=>{
             const qtd = `${escapeHtml(String(it.vendidoEmCaixa && it.descricaoLinha ? it.descricaoLinha : it.qtd))} ${escapeHtml(orc2Unidade(it))}`;
@@ -18024,6 +18026,17 @@ function orc2RedesenharLinhaItem(o, idx){
   if(fim) fim.replaceWith(el); else linha.appendChild(el);
   if(el.tagName==='SELECT') el.addEventListener('change', ()=>orc2TrocarOrigem(o.id, idx, el.value));
 }
+/* "opção para marcar todos" (16/11/2026): pedido que sai inteiro do
+   depósito não precisa de 8 cliques. Um clique marca (ou desmarca) tudo. */
+function orc2MarcarTodos(id, marcar){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o) return;
+  if(!o.conferencia) o.conferencia = { itens:[] };
+  (o.itens||[]).forEach((_,i)=>{ o.conferencia.itens[i] = !!marcar; });
+  orc2Silencio = true;
+  try{ saveState(); } finally { orc2Silencio = false; }
+  orc2AbrirPedido(id);
+}
 function orc2TrocarOrigem(id, idx, valor){
   const o = STATE.orcamentos.find(x=>x.id===id);
   const it = o && o.itens[idx];
@@ -18077,6 +18090,17 @@ function orc2MontarPasso(o){
       if(o.entregaPrevista==='aguardando_mercadoria') o.entregaPrevista=null;
       saveState(); showToast('Pronto pra sair — já aparece na Logística.', 'success');
     }, !faltam.length),
+      /* "no mesmo momento que ele vai sair para coletar o que falta, ele
+         também já vai fazer a entrega depois, sem voltar para a loja":
+         sai direto da separação, com as coletas pendentes na rota */
+      B(buscar ? '🚚 Já saiu (coleta no caminho)' : '🚚 Já saiu pra entrega', ()=>{
+        if(faltam.length){ showToast('Antes de sair, resolva: ' + faltam.slice(0,3).join(', ') + (faltam.length>3?'…':''), 'error'); return false; }
+        o.conferencia.concluidaEm = new Date().toISOString();
+        if(o.entregaPrevista==='aguardando_mercadoria') o.entregaPrevista=null;
+        const sair = ()=>{ o.statusEntrega='em_rota'; saveState(); showToast(buscar ? 'Na rua — a rota busca o que falta e entrega.' : 'Na rua.', 'success'); };
+        if(!orc2Nota(o).ok){ saveState(); orc2PerguntarNota(o, sair); return false; }
+        sair();
+      }),
       B('⏳ Falta mercadoria', ()=>{ o.entregaPrevista='aguardando_mercadoria'; saveState(); })];
   }else if(e==='separado'){
     if(!orc2Nota(o).ok){
@@ -19080,12 +19104,13 @@ function salvarLocalDoPontoRoteiro(p, lat, lng){
 // origemTipo+origemId, somando quantidade entre entregas diferentes —
 // "o que precisa buscar ali", sem duplicar por cliente).
 function getDadosLogistica(){
-  /* Entra na rota quem já saiu (em_rota) E quem está PRONTO PRA SAIR no
-     Orçamento 2 (separação concluída, ainda não saiu) — pra rota já incluir
-     as coletas do caminho antes do entregador sair (16/11/2026). */
-  const prontoPraSair = o => o.conferencia && o.conferencia.concluidaEm
+  /* Entra na rota quem já saiu (em_rota) E quem está EM SEPARAÇÃO ou PRONTO
+     PRA SAIR no Orçamento 2 — "a partir do momento onde a gente marcou onde
+     vai coletar, já tem que existir essa logística" (16/11/2026). Assim a
+     rota já inclui as coletas do caminho antes do entregador sair. */
+  const prontoPraSair = o => !!o.conferencia
     && (!o.statusEntrega || o.statusEntrega==='nenhum' || o.statusEntrega==='separacao')
-    && !['recusado'].includes(o.status);
+    && !['recusado','convertido'].includes(o.status) && !o.vendaGeradaId;
   const orcamentosEmRota = STATE.orcamentos.filter(o=>o.statusEntrega==='em_rota' || prontoPraSair(o));
 
   const entregas = orcamentosEmRota.map(o=>{
@@ -48340,6 +48365,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-16-e',
+    data: '2026-11-16',
+    titulo: 'Orçamento 2: marcar todos, Logística já na separação e sair direto',
+    itens: [
+      'NA SEPARAÇÃO, ao lado do título, tem "✓ Marcar todos": um clique marca todos os itens como "já está aqui". Clicando de novo ("Desmarcar todos"), desfaz.',
+      'A LOGÍSTICA JÁ MOSTRA O PEDIDO EM SEPARAÇÃO, com os lugares de coleta que você marcou — não precisa esperar ficar pronto pra sair.',
+      'NOVO "🚚 JÁ SAIU (COLETA NO CAMINHO)": direto da separação, pra quando o entregador sai buscando o que falta e já entrega, sem voltar pra loja. Se a nota não estiver decidida, pergunta antes.'
+    ]
+  },
+  {
     id: '2026-11-16-d',
     data: '2026-11-16',
     titulo: 'Orçamento 2: a lista de "onde buscar" não fecha mais sozinha',
@@ -60865,7 +60900,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 15:40';
+const SISTEMA_VERSAO = '16/11/2026 16:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
