@@ -47798,6 +47798,9 @@ function cpRenderPagina2(box){
         <div class="cp-wrap">
           <table class="data-table cp-tabela">
             <thead><tr>
+              <th style="width:34px;"><input type="checkbox" class="cp2-grupo" title="Marcar todos deste grupo" aria-label="Marcar todos de ${escapeAttr(b.nome)}"
+                data-chaves="${escapeAttr(JSON.stringify(b.itens.map(i=>i.chave)))}" ${b.itens.every(i=>cp2Marcados.has(i.chave))?'checked':''}
+                onchange="cp2MarcarVarios(JSON.parse(this.dataset.chaves), this.checked)" style="width:17px;height:17px;"></th>
               <th style="min-width:240px;">Produto</th>
               <th class="num" style="width:110px;">Vou comprar</th>
               <th class="num" style="width:120px;">Vendeu / estoque</th>
@@ -47806,6 +47809,8 @@ function cpRenderPagina2(box){
             <tbody>
               ${b.itens.map(i=>`
                 <tr>
+                  <td><input type="checkbox" class="cp2-marca" data-chave="${escapeAttr(i.chave)}" ${cp2Marcados.has(i.chave)?'checked':''}
+                    aria-label="Marcar ${escapeAttr(i.nome)}" onchange="cp2MarcarVarios(['${escapeAttr(i.chave)}'], this.checked)" style="width:17px;height:17px;"></td>
                   <td><strong>${escapeHtml(i.nome)}</strong>
                     <div class="cp-sub">${escapeHtml(i.unidade)}${i.marca?' · '+escapeHtml(i.marca):''}${i.livre?' · <b>item novo</b>':''}</div></td>
                   <td class="num cp-td-decide">
@@ -47838,6 +47843,39 @@ function cpRenderPagina2(box){
       O preço do lado do fornecedor é o da sua última compra — ele aparece sozinho, você não digita.
       Fornecedor que você ainda não comprou entra sem preço.
     </p>`;
+  cp2PintarBarra();
+}
+
+/* MARCAR VÁRIOS ITENS E DAR FORNECEDOR PRA TODOS (16/11/2026)
+   "vou marcar água sanitária de 1 litro, 2 litros, 5 litros, e nele eu poder
+    preencher todos de uma vez só". As marcas vivem só na tela. */
+let cp2Marcados = new Set();
+function cp2MarcarVarios(chaves, sim){
+  (chaves||[]).forEach(k=>{ if(sim) cp2Marcados.add(k); else cp2Marcados.delete(k); });
+  document.querySelectorAll('.cp2-marca').forEach(cb=>{ cb.checked = cp2Marcados.has(cb.dataset.chave); });
+  document.querySelectorAll('.cp2-grupo').forEach(cb=>{ try{ cb.checked = JSON.parse(cb.dataset.chaves).every(k=>cp2Marcados.has(k)); }catch(e){} });
+  cp2PintarBarra();
+}
+function cp2PintarBarra(){
+  const box = document.getElementById('sugestao-compra-content');
+  let barra = document.getElementById('cp2-barra');
+  const naTela = !!(box && box.querySelector('.cp2-marca'));
+  if(naTela){
+    const vivas = new Set([...box.querySelectorAll('.cp2-marca')].map(cb=>cb.dataset.chave));
+    cp2Marcados.forEach(k=>{ if(!vivas.has(k)) cp2Marcados.delete(k); });
+  }
+  if(!naTela || !cp2Marcados.size){ if(barra) barra.remove(); return; }
+  if(!barra){
+    barra = document.createElement('div');
+    barra.id = 'cp2-barra';
+    barra.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:60;background:var(--ink,#1B2A30);color:#fff;'
+      + 'border-radius:12px;padding:10px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 8px 24px rgba(0,0,0,.25);font-size:13.5px;flex-wrap:wrap;max-width:94vw;';
+    box.appendChild(barra);
+  }
+  const n = cp2Marcados.size;
+  barra.innerHTML = `<strong>${n} ite${n>1?'ns marcados':'m marcado'}</strong>
+    <button type="button" class="btn btn-sm btn-primary" id="cp2-btn-forn" onclick="cpAbrirFornecedores([...cp2Marcados])">+ fornecedor pra ${n>1?'todos':'este'}</button>
+    <button type="button" class="btn btn-sm" onclick="cp2MarcarVarios([...cp2Marcados], false)">Desmarcar</button>`;
 }
 
 /* FORNECEDORES DESTA COMPRA (16/11/2026)
@@ -47863,9 +47901,21 @@ function cpCriarFornecedorDaRodada(nome){
   c.fornecedoresRodada[limpo] = true;
   return limpo;
 }
-function cpAbrirFornecedores(chave){
-  const l = cpLinhas().find(x=>x.chave===chave);
-  const jaTem = cpFornecedoresDe(chave);
+/* Apagar um fornecedor da lista DESTA compra: some do menu de escolha e
+   sai de todos os itens que o tinham. Nada fora da compra é tocado. */
+function cpApagarFornecedorDaRodada(nome){
+  const c = cpCfg();
+  if(c.fornecedoresRodada && (nome in c.fornecedoresRodada)) c.fornecedoresRodada[nome] = false;
+  const m = cpFornItemMapa();
+  Object.keys(m).forEach(k=>{ if(m[k] && (nome in m[k])) m[k][nome] = false; });
+}
+function cpAbrirFornecedores(chaveOuLista){
+  /* um item, ou vários marcados de uma vez (cp2Marcados) */
+  const chaves = Array.isArray(chaveOuLista) ? chaveOuLista.slice() : [chaveOuLista];
+  const varios = chaves.length > 1;
+  const chave = chaves[0];
+  const l = varios ? null : cpLinhas().find(x=>x.chave===chave);
+  const jaTem = varios ? [] : cpFornecedoresDe(chave);
   const marcados = new Set();
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
@@ -47873,15 +47923,18 @@ function cpAbrirFornecedores(chave){
     const candidatos = cpFornecedoresDaRodada().filter(n=>jaTem.indexOf(n) < 0);
     m.innerHTML = `
     <div class="modal-box" style="max-width:min(560px,94vw);max-height:88vh;overflow-y:auto;">
-      <h3 style="margin-top:0;">Quem vende ${escapeHtml(l?l.nome:'este produto')}</h3>
-      <p class="help-text">Marque quantos quiser e clique em Acrescentar. A lista tem só os fornecedores desta compra — os que você for criando aqui embaixo. Isso não mexe no cadastro do produto.</p>
+      <h3 style="margin-top:0;">${varios ? `Fornecedor pra ${chaves.length} itens de uma vez` : 'Quem vende '+escapeHtml(l?l.nome:'este produto')}</h3>
+      <p class="help-text">Marque quantos quiser e clique em Acrescentar${varios?' — vale pra todos os itens marcados':''}. A lista tem só os fornecedores desta compra; a 🗑 tira o fornecedor da lista e de todos os itens.</p>
       ${candidatos.length?`<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
         ${candidatos.map(n=>{
-          const u = cpUltimaCompra(chave, n);
-          return `<label class="btn" style="justify-content:space-between;text-align:left;gap:10px;cursor:pointer;">
-            <span style="display:flex;align-items:center;gap:10px;"><input type="checkbox" class="cp-forn-marca" value="${escapeAttr(n)}" ${marcados.has(n)?'checked':''} style="width:18px;height:18px;"> ${escapeHtml(n)}</span>
-            <span class="cp-sub">${u?`${fmtMoney(u.custo)} · ${escapeHtml(cpHaQuantoTempo(u.data))}`:'sem compra ainda'}</span>
-          </label>`;
+          const u = varios ? null : cpUltimaCompra(chave, n);
+          return `<div style="display:flex;gap:6px;align-items:stretch;">
+            <label class="btn" style="flex:1;justify-content:space-between;text-align:left;gap:10px;cursor:pointer;">
+              <span style="display:flex;align-items:center;gap:10px;"><input type="checkbox" class="cp-forn-marca" value="${escapeAttr(n)}" ${marcados.has(n)?'checked':''} style="width:18px;height:18px;"> ${escapeHtml(n)}</span>
+              <span class="cp-sub">${varios?'':(u?`${fmtMoney(u.custo)} · ${escapeHtml(cpHaQuantoTempo(u.data))}`:'sem compra ainda')}</span>
+            </label>
+            <button type="button" class="btn cp-forn-apagar" data-nome="${escapeAttr(n)}" title="Apagar ${escapeAttr(n)} desta compra" aria-label="Apagar ${escapeAttr(n)} desta compra" style="color:var(--negative);">🗑</button>
+          </div>`;
         }).join('')}
       </div>`:`<p class="help-text" style="margin:10px 0;">${jaTem.length?'Todos os fornecedores desta compra já estão nesse produto.':'Nenhum fornecedor nesta compra ainda. Crie o primeiro aqui embaixo.'}</p>`}
       <div class="field" style="margin-top:12px;border-top:1px solid var(--border);padding-top:12px;">
@@ -47901,6 +47954,14 @@ function cpAbrirFornecedores(chave){
       if(cb.checked) marcados.add(cb.value); else marcados.delete(cb.value);
       const ok = m.querySelector('#cp-forn-ok'); if(ok) ok.textContent = 'Acrescentar' + (marcados.size?` (${marcados.size})`:'');
     }));
+    m.querySelectorAll('.cp-forn-apagar').forEach(bt=>bt.addEventListener('click', ()=>{
+      const nome = bt.dataset.nome;
+      const usando = cpFornecedores().filter(f=>f.fornecedor===nome).length;
+      confirmAction(`Apagar ${nome} desta compra?`,
+        `Some da lista de escolha${usando?` e sai de ${usando} ite${usando>1?'ns':'m'} que tinha${usando>1?'m':''} ele`:''}. Não mexe em nada fora desta compra.`,
+        ()=>{ cpApagarFornecedorDaRodada(nome); marcados.delete(nome); saveState(); desenhar(); renderSugestaoCompra(); },
+        'Apagar');
+    }));
     const campo = m.querySelector('#cp-forn-novo');
     const criar = ()=>{
       const nome = cpCriarFornecedorDaRodada(campo.value);
@@ -47918,9 +47979,10 @@ function cpAbrirFornecedores(chave){
       const escrito = cpCriarFornecedorDaRodada(campo.value);
       if(escrito) marcados.add(escrito);
       if(!marcados.size){ showToast('Marque pelo menos um fornecedor, ou crie um novo.','error'); return; }
-      marcados.forEach(n=>cpPorFornecedor(chave, n));
+      chaves.forEach(k=>marcados.forEach(n=>cpPorFornecedor(k, n)));
+      if(varios) cp2Marcados.clear();
       saveState(); m.remove(); renderSugestaoCompra();
-      showToast(`${marcados.size} fornecedor${marcados.size>1?'es':''} acrescentado${marcados.size>1?'s':''}.`,'success');
+      showToast(`${marcados.size} fornecedor${marcados.size>1?'es':''} acrescentado${marcados.size>1?'s':''}${varios?` em ${chaves.length} itens`:''}.`,'success');
     };
   };
   document.body.appendChild(m);
@@ -48450,6 +48512,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-16-h',
+    data: '2026-11-16',
+    titulo: 'Sugestão de Compra: fornecedor pra vários itens de uma vez, e apagar fornecedor',
+    itens: [
+      'NA ETAPA "COMO FICOU", cada item tem uma caixinha (e cada grupo, uma caixinha que marca o grupo inteiro). Marque — por exemplo água sanitária 1 L, 2 L e 5 L — e clique em "+ fornecedor pra todos" na barra de baixo.',
+      'NA JANELA DE FORNECEDOR, a 🗑 do lado de cada nome apaga o fornecedor desta compra: some da lista de escolha e sai de todos os itens que tinham ele. Nada fora da compra é tocado.',
+      'PRA TIRAR SÓ DE UM ITEM, continua o ✕ no nome do fornecedor, no próprio item.'
+    ]
+  },
   {
     id: '2026-11-16-g',
     data: '2026-11-16',
@@ -61005,7 +61077,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 17:30';
+const SISTEMA_VERSAO = '16/11/2026 18:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
