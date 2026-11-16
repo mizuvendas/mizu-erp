@@ -17841,8 +17841,21 @@ function renderOrcamentos2(){
   const busca = document.getElementById('orc2-busca');
   busca.addEventListener('input', ()=>{ orc2Filtro.busca = busca.value; orc2DesenharCorpo(); });
   orc2DesenharCorpo();
-  if(orc2Aberto) orc2AbrirPedido(orc2Aberto);
+  /* A GAVETA SÓ SE REFAZ POR AÇÃO DELA ("às vezes eu abro ele de novo e ele
+     fecha sozinho"). O quadro de trás redesenha à vontade; a gaveta mora
+     fora dele e fica como está — a sincronização da nuvem refazia a gaveta
+     inteira e fechava a lista de "onde buscar" no meio da escolha. */
+  const gaveta = document.getElementById('orc2-gaveta-camada');
+  const mexendo = gaveta && gaveta.contains(document.activeElement) && ['SELECT','INPUT'].includes(document.activeElement.tagName);
+  if(orc2Aberto && (!gaveta || (Date.now() < orc2RefazerAte && !mexendo))){
+    orc2RefazerAte = 0;
+    orc2AbrirPedido(orc2Aberto);
+  }
 }
+/* um botão da gaveta (ou de uma janelinha aberta por ela) foi apertado:
+   o próximo redesenho, dentro de 2 minutos, refaz a gaveta com o estado novo */
+let orc2RefazerAte = 0;
+function orc2PedirRefazerGaveta(){ orc2RefazerAte = Date.now() + 120000; }
 
 function orc2Filtrados(lista){
   const b = normalizarBusca(orc2Filtro.busca || '');
@@ -18108,6 +18121,7 @@ function orc2MontarPasso(o){
   box.querySelectorAll('[data-i]').forEach(btn=>btn.addEventListener('click', ()=>{
     /* quem salva já redesenha a tela (e reabre esta gaveta) pelo saveState —
        reabrir aqui também fazia tudo duas vezes por clique */
+    orc2PedirRefazerGaveta();
     bs[+btn.dataset.i].fn();
   }));
 }
@@ -18126,7 +18140,7 @@ function orc2Escolha(titulo, texto, opcoes){
     </div></div>`;
   document.body.appendChild(m);
   m.querySelector('[data-x]').onclick = ()=>m.remove();
-  m.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{ m.remove(); opcoes[+b.dataset.o].f(); });
+  m.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{ m.remove(); orc2PedirRefazerGaveta(); opcoes[+b.dataset.o].f(); });
 }
 function orc2PerguntarNota(o, depois){
   orc2Escolha(`O pedido #${o.numero} ainda não tem nota`, 'Antes o "Entregue" fechava a venda sem perguntar. Decida aqui:', [
@@ -48326,6 +48340,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-16-d',
+    data: '2026-11-16',
+    titulo: 'Orçamento 2: a lista de "onde buscar" não fecha mais sozinha',
+    itens: [
+      'ERA A SINCRONIZAÇÃO: a cada 20 segundos a nuvem salva, e esse salvamento refazia a gaveta do pedido inteira — se a lista de "onde buscar" estivesse aberta, ela fechava no meio da escolha.',
+      'AGORA a gaveta só se refaz quando você aperta um botão nela. E a nuvem entende que gaveta aberta é trabalho em andamento, igual já fazia com a gaveta da tela de Orçamentos.'
+    ]
+  },
+  {
     id: '2026-11-16-c',
     data: '2026-11-16',
     titulo: 'Orçamento 2: voltar um pedido de etapa, e excluir',
@@ -60842,7 +60865,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 15:00';
+const SISTEMA_VERSAO = '16/11/2026 15:40';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -61931,6 +61954,9 @@ function nuvemTrabalhoEmAndamento(){
        gaveta aberta apagava o formulário no meio da digitação — e era
        também o que deixava a rolagem trancada pra trás. */
     if(typeof orcGavetaAberta === 'function' && orcGavetaAberta()) return true;
+    /* a gaveta do pedido no Orçamento 2 também: redesenhar com ela aberta
+       fechava a lista de "onde buscar" no meio da escolha (16/11/2026) */
+    if(document.getElementById('orc2-gaveta-camada')) return true;
     // cliente já escolhido num formulário aberto, mesmo sem item ainda
     const orcCli = document.getElementById('orc-cliente');
     if(orcCli && orcCli.value) return true;
