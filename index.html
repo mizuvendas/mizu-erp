@@ -17831,7 +17831,7 @@ function renderOrcamentos2(){
       </div>
     </div>
     <div class="orc2-barra">
-      <input type="text" id="orc2-busca" placeholder="Buscar por número, cliente ou produto…" value="${escapeAttr(orc2Filtro.busca)}">
+      <input type="text" id="orc2-busca" placeholder="Buscar por número do pedido, nº da nota fiscal, cliente ou produto…" value="${escapeAttr(orc2Filtro.busca)}">
       <div class="orc2-vistas">Ver como:
         <button type="button" class="${orc2Vista==='esteira'?'on':''}" onclick="orc2TrocarVista('esteira')">Esteira</button>
         <button type="button" class="${orc2Vista==='lista'?'on':''}" onclick="orc2TrocarVista('lista')">Lista completa</button>
@@ -17857,10 +17857,16 @@ function renderOrcamentos2(){
 let orc2RefazerAte = 0;
 function orc2PedirRefazerGaveta(){ orc2RefazerAte = Date.now() + 120000; }
 
+/* "permitir procurar pelo número da nota fiscal também" (16/11/2026):
+   o número de toda nota ligada ao pedido entra na busca — inclusive as
+   canceladas, pra achar o pedido pela nota que o cliente tem na mão. */
+function orc2NumerosDeNota(o){
+  return (STATE.notasFiscais||[]).filter(n=>n.orcamentoId===o.id && n.numero!=null).map(n=>'nota '+n.numero+' nf '+n.numero+' '+n.numero);
+}
 function orc2Filtrados(lista){
   const b = normalizarBusca(orc2Filtro.busca || '');
   if(!b) return lista;
-  return lista.filter(o=>normalizarBusca(['#'+(o.numero||''), orc2NomeCliente(o), o.vendedor||'', (o.itens||[]).map(i=>i.nome).join(' ')].join(' ')).indexOf(b) >= 0);
+  return lista.filter(o=>normalizarBusca(['#'+(o.numero||''), orc2NomeCliente(o), o.vendedor||'', (o.itens||[]).map(i=>i.nome).join(' '), ...orc2NumerosDeNota(o)].join(' ')).indexOf(b) >= 0);
 }
 
 function orc2DesenharCorpo(){
@@ -48365,6 +48371,14 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-16-f',
+    data: '2026-11-16',
+    titulo: 'Orçamento 2: buscar pelo número da nota fiscal',
+    itens: [
+      'A BUSCA DO ORÇAMENTO 2 (esteira e lista completa) agora acha o pedido pelo número da nota fiscal também — é só digitar o número. Vale até pra nota cancelada.'
+    ]
+  },
+  {
     id: '2026-11-16-e',
     data: '2026-11-16',
     titulo: 'Orçamento 2: marcar todos, Logística já na separação e sair direto',
@@ -60900,7 +60914,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 16:00';
+const SISTEMA_VERSAO = '16/11/2026 16:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
