@@ -1144,6 +1144,11 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="orcamentos" href="#">
       <span class="ic ic-operacao">📋</span> Orçamentos <span class="nav-badge" id="nav-badge-orcamentos" style="display:none;"></span>
     </a>
+    <!-- MODELO EM TESTE (16/11/2026): mesma informação de Orçamentos, vista
+         como esteira. Os dois convivem até ela decidir qual fica. -->
+    <a class="nav-item" data-page="orcamentos2" href="#">
+      <span class="ic ic-operacao">🧭</span> Orçamento 2 <span style="font-size:10px;font-weight:700;opacity:.7;margin-left:4px;">TESTE</span>
+    </a>
     <!-- Licitação subiu de Relatórios pra cá: participar de dispensa é
          trabalho do dia, não relatório. E a proposta de licitação saiu de
          dentro da tela de Orçamentos — misturada lá, ela aparecia no meio
@@ -1429,6 +1434,10 @@ body.orc-gaveta-travada{ overflow:hidden; }
         </div>
       </div>
       <div id="orcamentos-content"></div>
+    </section>
+
+    <section class="page" id="page-orcamentos2">
+      <div id="orc2-content"></div>
     </section>
 
     <section class="page" id="page-proposta-licitacao">
@@ -2482,6 +2491,9 @@ function saveState(){
   atualizarBadgesMenu();
   if(typeof armazVigiar === 'function') armazVigiar();
   if(typeof nuvemAoSalvar === 'function') nuvemAoSalvar();
+  /* Orçamento 2 redesenha sozinho quando algo muda — entregar, emitir nota
+     e fechar venda são funções antigas que não sabem que ela existe */
+  if(typeof orc2SeAtivoRedesenhar === 'function') orc2SeAtivoRedesenhar();
 }
 
 /* =========================================================
@@ -17580,6 +17592,444 @@ function editarOrigemItemOrcamentoSalvo(orcamentoId, idx, novoValor){
 }
 
 RENDERERS['orcamentos'] = renderOrcamentos;
+
+/* =========================================================
+   ORÇAMENTO 2 — MODELO EM TESTE (16/11/2026)
+
+   "quero que tenha os dois por enquanto, para depois a gente decidir
+    qual que a gente vai continuar"
+
+   A mesma lista de orçamentos, vista como ESTEIRA: Cotação → Aprovado →
+   Separado → Na rua → Entregue, falta algo → Concluído. Cada pedido tem
+   4 selos independentes (cliente · entrega · nota · pagamento) — o selo
+   único da tela antiga tentava contar as quatro histórias e uma apagava a
+   outra (nota emitida virava "venda concluída" com a mercadoria na rua).
+
+   NÃO cria dado paralelo: lê STATE.orcamentos, e as ações chamam as
+   funções de sempre (fechar venda, emitir nota, entregue, retirado).
+   Campos novos, que a tela antiga simplesmente ignora:
+     o.conferencia  = { itens:[true,false,…], concluidaEm }
+     o.semNota      = { motivo, em }      (sem nota de propósito)
+     o.motivoPerda  = 'Preço' | …         (junto com status 'recusado')
+   Repasse: só aparece marcado; nota e pagamento dele continuam no menu
+   Repasses, como ela trabalha. Vendas fechadas ANTES deste modelo não
+   cobram nota retroativa (seria a lista inteira de 121 "faltando nota").
+   ========================================================= */
+const ORC2_INICIO = '2026-11-16';
+const ORC2_COLUNAS = [
+  { id:'cotacao',   titulo:'Cotação',              sub:'esperando o cliente' },
+  { id:'aprovado',  titulo:'Aprovado',             sub:'conferir e separar' },
+  { id:'separado',  titulo:'Separado',             sub:'pronto pra sair' },
+  { id:'rua',       titulo:'Na rua',               sub:'saiu pra entrega' },
+  { id:'pendente',  titulo:'Entregue, falta algo', sub:'nota ou pagamento' },
+  { id:'concluido', titulo:'Concluído',            sub:'últimos 7 dias' }
+];
+let orc2Vista = 'esteira';           // 'esteira' | 'lista'
+let orc2Aberto = null;               // id do pedido com a gaveta aberta
+let orc2Filtro = { busca:'', situacao:'', de:'', ate:'' };
+let orc2Agendado = false;
+let orc2Silencio = false;            // marcar item da conferência salva sem redesenhar a gaveta
+
+function orc2Venda(o){ return o.vendaGeradaId ? (STATE.vendas||[]).find(v=>v.id===o.vendaGeradaId) : null; }
+function orc2Convertido(o){ return o.status==='convertido' || !!o.vendaGeradaId; }
+function orc2Repasse(o){ return !!o.pagadorId; }
+function orc2DataFim(o){ const v = orc2Venda(o); return (v && v.data) || o.data || ''; }
+
+/* --- os 4 selos --- */
+function orc2Nota(o){
+  if(nfeNotaDoOrcamento(o.id)) return { k:'ok', t:'🧾 emitida', ok:true };
+  if(orc2Repasse(o)) return { k:'ok', t:'🧾 no repasse', ok:true };
+  if(o.semNota) return { k:'ok', t:'🧾 sem nota', ok:true, dica:o.semNota.motivo };
+  if(orc2Convertido(o) && orc2DataFim(o) < ORC2_INICIO) return { k:'off', t:'🧾 sem nota', ok:true, dica:'venda antiga' };
+  /* direto pelo status (e não por orc2Etapa, que pergunta à nota — daria voltas sem fim) */
+  if(['pendente','enviado','expirado','rascunho','pre_venda','recusado'].includes(o.status)) return { k:'off', t:'🧾 –', ok:false };
+  return { k:'wait', t:'🧾 falta', ok:false };
+}
+function orc2Pagamento(o){
+  if(orc2Repasse(o)) return { k:'ok', t:'💰 no repasse', ok:true };
+  if(!orc2Convertido(o)) return { k:'off', t:'💰 –', ok:false };
+  const linhas = (typeof getLinhasReceber==='function' ? getLinhasReceber() : []).filter(l=>l.vendaId===o.vendaGeradaId);
+  if(!linhas.length) return { k:'ok', t:'💰 recebido', ok:true };          // à vista: entrou no caixa ao fechar
+  if(linhas.some(l=>l.statusCalc==='atrasado')) return { k:'bad', t:'💰 atrasado', ok:false };
+  if(linhas.every(l=>l.recebido)) return { k:'ok', t:'💰 recebido', ok:true };
+  return { k:'wait', t:'💰 a receber', ok:false };
+}
+function orc2Cliente(o){
+  if(o.status==='recusado') return { k:'bad', t:'👤 perdido', ok:false };
+  if(['pendente','enviado','expirado','rascunho','pre_venda'].includes(o.status)){
+    const dias = Math.round((new Date(todayISO()) - new Date(o.data||todayISO()))/864e5);
+    if(o.status==='rascunho' || o.status==='pre_venda') return { k:'off', t:'👤 rascunho', ok:false };
+    return dias > 7 ? { k:'bad', t:`👤 ${dias} dias`, ok:false } : { k:'wait', t:'👤 aguardando', ok:false };
+  }
+  return { k:'ok', t:'👤 aprovado', ok:true };
+}
+function orc2Entrega(o){
+  const se = o.statusEntrega || 'nenhum';
+  if(se==='entregue') return { k:'ok', t:'📦 entregue' };
+  if(se==='retirado') return { k:'ok', t:'📦 retirado' };
+  if(se==='em_rota')  return { k:'wait', t:'📦 na rua' };
+  if(o.conferencia && o.conferencia.concluidaEm) return { k:'wait', t:'📦 separado' };
+  if(o.conferencia || se==='separacao') return { k:'wait', t:'📦 separando' };
+  if(o.entregaPrevista==='aguardando_mercadoria') return { k:'bad', t:'📦 falta mercadoria' };
+  return { k:'off', t:'📦 –' };
+}
+
+/* --- em que coluna o pedido está: consequência dos campos de sempre --- */
+function orc2Etapa(o){
+  if(o.status==='recusado') return 'perdido';
+  if(['pendente','enviado','expirado','rascunho','pre_venda'].includes(o.status)) return 'cotacao';
+  const se = o.statusEntrega || 'nenhum';
+  if(se==='em_rota') return 'rua';
+  if(se==='entregue' || se==='retirado' || (orc2Convertido(o) && se==='nenhum')){
+    return (orc2Nota(o).ok && orc2Pagamento(o).ok) ? 'concluido' : 'pendente';
+  }
+  if(o.conferencia && o.conferencia.concluidaEm) return 'separado';
+  return 'aprovado';
+}
+function orc2Proximo(o){
+  const e = orc2Etapa(o);
+  if(e==='cotacao'){ const c = orc2Cliente(o); return c.k==='bad' ? 'Cobrar resposta' : (c.t.includes('rascunho') ? 'Terminar o orçamento' : 'Aguardando o cliente'); }
+  if(e==='aprovado') return o.conferencia ? 'Terminar a conferência' : 'Separar e conferir';
+  if(e==='separado') return orc2Nota(o).ok ? 'Saiu pra entrega' : 'Decidir a nota e sair';
+  if(e==='rua') return 'Confirmar a entrega';
+  if(e==='pendente'){ if(!orc2Nota(o).ok) return 'Resolver a nota'; return orc2Pagamento(o).k==='bad' ? 'Cobrar pagamento' : 'Receber pagamento'; }
+  if(e==='perdido') return 'Perdido' + (o.motivoPerda ? ': '+o.motivoPerda : '');
+  return 'Nada a fazer';
+}
+const ORC2_COR = { ok:'background:#E7F4EE;color:#2E7D5B;', wait:'background:#FBF0DC;color:#8A5A10;', bad:'background:#FBEAE8;color:#C4483D;', off:'background:#EEF1F4;color:#8A93A0;' };
+function orc2SelosHtml(o){
+  return [orc2Cliente(o), orc2Entrega(o), orc2Nota(o), orc2Pagamento(o)]
+    .map(s=>`<span class="orc2-selo" style="${ORC2_COR[s.k]}" ${s.dica?`title="${escapeAttr(s.dica)}"`:''}>${escapeHtml(s.t)}</span>`).join('');
+}
+function orc2Pedidos(){ return (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao); }
+function orc2NomeCliente(o){ const c = STATE.clientes.find(x=>x.id===o.clienteId); return c ? c.nome : '(cliente removido)'; }
+
+function orc2Estilo(){
+  if(document.getElementById('orc2-estilo')) return;
+  const s = document.createElement('style'); s.id = 'orc2-estilo';
+  s.textContent = `
+    .orc2-topo{display:flex;justify-content:space-between;align-items:flex-end;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+    .orc2-topo h2{margin:0}
+    .orc2-acoes{display:flex;gap:8px;flex-wrap:wrap}
+    .orc2-barra{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#fff;border:1px solid var(--border);border-radius:10px;padding:8px 12px;margin-bottom:12px}
+    .orc2-barra input[type=text]{flex:1;min-width:200px;border:0;outline:none;font-size:13px;background:transparent}
+    .orc2-vistas button{border:0;background:transparent;font-weight:600;color:var(--ink-faint);cursor:pointer;padding:4px 6px;border-radius:6px}
+    .orc2-vistas button.on{color:var(--primary);background:var(--primary-soft)}
+    .orc2-esteira-wrap{overflow-x:auto;padding-bottom:6px}
+    .orc2-esteira{display:grid;grid-template-columns:repeat(6,minmax(200px,1fr));gap:10px;min-width:1240px}
+    .orc2-col{background:#EEF1F4;border-radius:10px;display:flex;flex-direction:column;min-width:0}
+    .orc2-col header{padding:10px 12px 8px}
+    .orc2-col header .t{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13.5px}
+    .orc2-col header .n{background:#fff;color:var(--primary);border-radius:999px;padding:0 8px;font-size:12px}
+    .orc2-col header small{color:var(--ink-soft);font-size:11.5px}
+    .orc2-cards{padding:0 8px 8px;display:flex;flex-direction:column;gap:8px}
+    .orc2-card{background:#fff;border:1px solid var(--border);border-radius:8px;padding:9px 10px;display:flex;flex-direction:column;gap:6px;text-align:left;cursor:pointer;width:100%;font:inherit;color:inherit}
+    .orc2-card:hover{border-color:var(--primary)}
+    .orc2-card .l1{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-soft)}
+    .orc2-card .cli{font-weight:600;font-size:13px;line-height:1.3}
+    .orc2-card .prox{font-size:11.5px;font-weight:700;color:var(--primary)}
+    .orc2-selos{display:flex;flex-wrap:wrap;gap:4px}
+    .orc2-selo{font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:999px;white-space:nowrap}
+    .orc2-rep{font-size:10px;font-weight:800;letter-spacing:.04em;color:var(--primary)}
+    .orc2-vazio{color:var(--ink-faint);font-size:12px;text-align:center;padding:12px 4px}
+    .orc2-mais{border:0;background:transparent;color:var(--primary);font-weight:600;font-size:12px;cursor:pointer;padding:6px}
+    .orc2-fundo{position:fixed;inset:0;background:rgba(18,35,43,.45);z-index:900}
+    .orc2-gaveta{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);background:#fff;z-index:901;display:flex;flex-direction:column;border-left:1px solid var(--border)}
+    .orc2-gaveta .cab{padding:16px 18px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;gap:10px}
+    .orc2-gaveta .corpo{padding:16px 18px;overflow-y:auto;display:flex;flex-direction:column;gap:14px}
+    .orc2-passo{background:var(--primary-soft);border-radius:10px;padding:12px;display:flex;flex-direction:column;gap:8px}
+    .orc2-passo .bts{display:flex;gap:8px;flex-wrap:wrap}
+    .orc2-trilhos{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .orc2-trilho{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+    .orc2-trilho .rot{font-size:10.5px;letter-spacing:.08em;color:var(--ink-soft);font-weight:700}
+    .orc2-itens{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+    .orc2-item{display:flex;align-items:center;gap:10px;padding:8px 10px;border-bottom:1px solid var(--border);font-size:13px}
+    .orc2-item:last-child{border-bottom:0}
+    .orc2-item input{width:18px;height:18px;accent-color:var(--positive)}
+    .orc2-item .q{margin-left:auto;color:var(--ink-soft)}
+    .orc2-tabela td,.orc2-tabela th{vertical-align:middle}
+  `;
+  document.head.appendChild(s);
+}
+
+function orc2SeAtivoRedesenhar(){
+  const pag = document.getElementById('page-orcamentos2');
+  if(!pag || !pag.classList.contains('active') || orc2Agendado || orc2Silencio) return;
+  orc2Agendado = true;
+  setTimeout(()=>{ orc2Agendado = false; try{ renderOrcamentos2(); }catch(e){ console.error(e); } }, 0);
+}
+
+function renderOrcamentos2(){
+  const box = document.getElementById('orc2-content');
+  if(!box) return;
+  orc2Estilo();
+  const todos = orc2Pedidos();
+  const perdidos = todos.filter(o=>orc2Etapa(o)==='perdido').length;
+  const atrasCot = todos.filter(o=>orc2Etapa(o)==='cotacao' && orc2Cliente(o).k==='bad').length;
+  const resumo = [`${todos.filter(o=>!['concluido','perdido'].includes(orc2Etapa(o))).length} pedidos andando`];
+  if(atrasCot) resumo.push(`${atrasCot} cotaç${atrasCot>1?'ões':'ão'} sem resposta há mais de 7 dias`);
+  if(perdidos) resumo.push(`${perdidos} perdido${perdidos>1?'s':''}`);
+
+  box.innerHTML = `
+    <div class="orc2-topo">
+      <div>
+        <h2>Orçamento 2 <span class="badge" style="background:#FBF0DC;color:#8A5A10;font-size:11px;vertical-align:middle;">modelo em teste</span></h2>
+        <p class="subtitle" style="margin:4px 0 0;">${escapeHtml(resumo.join(' · '))}. Os mesmos orçamentos da tela Orçamentos, vistos em etapas.</p>
+      </div>
+      <div class="orc2-acoes">
+        <button class="btn btn-primary" onclick="orc2NovaCotacao()">+ Nova cotação</button>
+      </div>
+    </div>
+    <div class="orc2-barra">
+      <input type="text" id="orc2-busca" placeholder="Buscar por número, cliente ou produto…" value="${escapeAttr(orc2Filtro.busca)}">
+      <div class="orc2-vistas">Ver como:
+        <button type="button" class="${orc2Vista==='esteira'?'on':''}" onclick="orc2TrocarVista('esteira')">Esteira</button>
+        <button type="button" class="${orc2Vista==='lista'?'on':''}" onclick="orc2TrocarVista('lista')">Lista completa</button>
+      </div>
+    </div>
+    <div id="orc2-corpo"></div>`;
+  const busca = document.getElementById('orc2-busca');
+  busca.addEventListener('input', ()=>{ orc2Filtro.busca = busca.value; orc2DesenharCorpo(); });
+  orc2DesenharCorpo();
+  if(orc2Aberto) orc2AbrirPedido(orc2Aberto);
+}
+
+function orc2Filtrados(lista){
+  const b = normalizarBusca(orc2Filtro.busca || '');
+  if(!b) return lista;
+  return lista.filter(o=>normalizarBusca(['#'+(o.numero||''), orc2NomeCliente(o), o.vendedor||'', (o.itens||[]).map(i=>i.nome).join(' ')].join(' ')).indexOf(b) >= 0);
+}
+
+function orc2DesenharCorpo(){
+  const corpo = document.getElementById('orc2-corpo');
+  if(!corpo) return;
+  const lista = orc2Filtrados(orc2Pedidos());
+  if(orc2Vista==='lista'){ corpo.innerHTML = orc2ListaHtml(lista); orc2LigarLista(); return; }
+
+  const seteDias = addDays(todayISO(), -7);
+  corpo.innerHTML = `<div class="orc2-esteira-wrap"><div class="orc2-esteira">${ORC2_COLUNAS.map(col=>{
+    let doCol = lista.filter(o=>orc2Etapa(o)===col.id).sort((a,b)=>(b.numero||0)-(a.numero||0));
+    let rodape = '';
+    if(col.id==='concluido'){
+      /* concluído não enche a tela: só os da última semana aqui;
+         o resto fica na Lista completa, com filtro de data e os downloads */
+      const total = doCol.length;
+      doCol = doCol.filter(o=>orc2DataFim(o) >= seteDias);
+      rodape = `<button type="button" class="orc2-mais" onclick="orc2VerConcluidos()">Ver todos os concluídos (${total}) →</button>`;
+    }
+    return `<section class="orc2-col"><header><div class="t">${col.titulo}<span class="n">${doCol.length}</span></div><small>${col.sub}</small></header>
+      <div class="orc2-cards">${doCol.length ? doCol.map(o=>`
+        <button type="button" class="orc2-card" onclick="orc2AbrirPedido('${o.id}')">
+          <div class="l1"><span>#${escapeHtml(String(o.numero||'—'))} ${orc2Repasse(o)?'<span class="orc2-rep">REPASSE</span>':''}</span><b style="color:var(--ink);">${fmtMoney(calcularVenda(o).bruto)}</b></div>
+          <div class="cli">${escapeHtml(orc2NomeCliente(o))}</div>
+          <div class="orc2-selos">${orc2SelosHtml(o)}</div>
+          <div class="prox">→ ${escapeHtml(orc2Proximo(o))}</div>
+        </button>`).join('') : '<div class="orc2-vazio">nada aqui</div>'}${rodape}</div></section>`;
+  }).join('')}</div></div>`;
+}
+
+const ORC2_SITUACOES = [['','Todas'],['cotacao','Cotação'],['aprovado','Aprovado'],['separado','Separado'],['rua','Na rua'],['pendente','Entregue, falta algo'],['concluido','Concluído'],['perdido','Perdido']];
+function orc2ListaHtml(lista){
+  const f = orc2Filtro;
+  let l = lista.slice();
+  if(f.situacao) l = l.filter(o=>orc2Etapa(o)===f.situacao);
+  if(f.de)  l = l.filter(o=>(o.data||'') >= f.de);
+  if(f.ate) l = l.filter(o=>(o.data||'') <= f.ate);
+  l.sort((a,b)=>(b.data||'').localeCompare(a.data||'') || (b.numero||0)-(a.numero||0));
+  const total = l.reduce((s,o)=>s+calcularVenda(o).bruto,0);
+  const rotulo = Object.fromEntries(ORC2_SITUACOES);
+  return `
+    <div class="card">
+      <div class="filters-bar" style="box-shadow:none;border:none;padding:0 0 12px 0;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+        <div class="field"><label>Situação</label><select id="orc2-f-sit">${ORC2_SITUACOES.map(([v,t])=>`<option value="${v}" ${f.situacao===v?'selected':''}>${t}</option>`).join('')}</select></div>
+        <div class="field"><label>De</label><input type="date" id="orc2-f-de" value="${escapeAttr(f.de)}"></div>
+        <div class="field"><label>Até</label><input type="date" id="orc2-f-ate" value="${escapeAttr(f.ate)}"></div>
+        <div style="margin-left:auto;font-size:13px;"><b>${l.length}</b> pedido${l.length===1?'':'s'} · <b>${fmtMoney(total)}</b></div>
+      </div>
+      <div class="table-wrap"><table class="data-table orc2-tabela">
+        <thead><tr><th>Nº</th><th>Data</th><th>Cliente</th><th class="num">Valor</th><th>Etapa</th><th>Selos</th><th>Nota</th></tr></thead>
+        <tbody>${l.length ? l.map(o=>{
+          const nota = nfeNotaDoOrcamento(o.id);
+          return `<tr style="cursor:pointer;" onclick="if(event.target.closest('button'))return; orc2AbrirPedido('${o.id}')">
+            <td>#${escapeHtml(String(o.numero||'—'))}</td><td>${fmtDate(o.data)}</td>
+            <td>${escapeHtml(orc2NomeCliente(o))}${orc2Repasse(o)?' <span class="orc2-rep">REPASSE</span>':''}</td>
+            <td class="num">${fmtMoney(calcularVenda(o).bruto)}</td>
+            <td>${escapeHtml(rotulo[orc2Etapa(o)]||'')}</td>
+            <td><div class="orc2-selos">${orc2SelosHtml(o)}</div></td>
+            <td>${nota ? `<div class="cell-actions"><button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nº ${nota.numero}</button><button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">XML</button></div>` : '<span style="color:var(--ink-faint);">—</span>'}</td>
+          </tr>`; }).join('') : `<tr><td colspan="7" style="text-align:center;color:var(--ink-faint);padding:20px;">Nada com esses filtros.</td></tr>`}</tbody>
+      </table></div>
+    </div>`;
+}
+function orc2LigarLista(){
+  const liga = (id, campo)=>{ const e = document.getElementById(id); if(e) e.addEventListener('change', ()=>{ orc2Filtro[campo] = e.value; orc2DesenharCorpo(); }); };
+  liga('orc2-f-sit','situacao'); liga('orc2-f-de','de'); liga('orc2-f-ate','ate');
+}
+function orc2TrocarVista(v){ orc2Vista = v; renderOrcamentos2(); }
+function orc2VerConcluidos(){ orc2Vista = 'lista'; orc2Filtro.situacao = 'concluido'; renderOrcamentos2(); }
+function orc2NovaCotacao(){
+  /* a montagem do orçamento continua sendo a de sempre */
+  navigateTo('orcamentos');
+  setTimeout(()=>{ try{ orcAbrirGaveta('Novo orçamento'); }catch(e){} }, 150);
+}
+function orc2Editar(id){
+  orc2FecharPedido();
+  navigateTo('orcamentos');
+  setTimeout(()=>{ try{ editarOrcamento(id); }catch(e){} }, 150);
+}
+
+/* ---------- a gaveta do pedido ---------- */
+function orc2FecharPedido(){
+  orc2Aberto = null;
+  document.getElementById('orc2-gaveta-camada')?.remove();
+}
+function orc2AbrirPedido(id){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  if(!o){ orc2FecharPedido(); return; }
+  orc2Aberto = id;
+  document.getElementById('orc2-gaveta-camada')?.remove();
+  const nota = nfeNotaDoOrcamento(o.id);
+  const conf = o.conferencia;
+  const conferindo = orc2Etapa(o)==='aprovado' && conf && !conf.concluidaEm;
+  const c = document.createElement('div');
+  c.id = 'orc2-gaveta-camada';
+  const tr = (rot, s)=>`<div class="orc2-trilho"><span class="rot">${rot}</span><span class="orc2-selo" style="${ORC2_COR[s.k]};align-self:flex-start;">${escapeHtml(s.t)}</span>${s.dica?`<small style="color:var(--ink-soft);">${escapeHtml(s.dica)}</small>`:''}</div>`;
+  c.innerHTML = `<div class="orc2-fundo" onclick="orc2FecharPedido()"></div>
+    <aside class="orc2-gaveta" role="dialog" aria-label="Pedido ${escapeAttr(String(o.numero||''))}">
+      <div class="cab"><div>
+        <div style="font-size:12px;color:var(--ink-soft);">Pedido #${escapeHtml(String(o.numero||'—'))} · ${fmtDate(o.data)}${orc2Repasse(o)?' · <b style="color:var(--primary);">REPASSE</b>':''}${o.vendedor?' · '+escapeHtml(o.vendedor):''}</div>
+        <h3 style="margin:2px 0;font-size:19px;">${escapeHtml(orc2NomeCliente(o))}</h3>
+        <b>${fmtMoney(calcularVenda(o).bruto)}</b>
+      </div><button class="modal-rapido-fechar-x" onclick="orc2FecharPedido()" aria-label="Fechar">✕</button></div>
+      <div class="corpo">
+        <div class="orc2-passo" id="orc2-passo"></div>
+        <div class="orc2-trilhos">${tr('CLIENTE',orc2Cliente(o))}${tr('ENTREGA',orc2Entrega(o))}${tr('NOTA',orc2Nota(o))}${tr('PAGAMENTO',orc2Pagamento(o))}</div>
+        <div><div style="font-weight:700;margin-bottom:6px;">${conferindo?'Conferência — marque cada item':'Itens'}</div>
+          <div class="orc2-itens">${(o.itens||[]).map((it,i)=>`<label class="orc2-item">${conferindo?`<input type="checkbox" class="orc2-conf" data-i="${i}" ${conf.itens && conf.itens[i]?'checked':''}>`:''}<span>${escapeHtml(it.nome)}</span><span class="q">${escapeHtml(String(it.vendidoEmCaixa && it.descricaoLinha ? it.descricaoLinha : it.qtd))} ${escapeHtml(it.unidade||'')}</span></label>`).join('')}</div>
+        </div>
+        <div class="cell-actions" style="flex-wrap:wrap;">
+          <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
+          ${!orc2Convertido(o) ? `<button class="btn btn-sm" onclick="orc2Editar('${o.id}')">✏️ Editar</button>` : ''}
+          ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button><button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>` : ''}
+          ${['separado','rua'].includes(orc2Etapa(o)) ? `<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>` : ''}
+        </div>
+      </div>
+    </aside>`;
+  document.body.appendChild(c);
+  c.querySelectorAll('.orc2-conf').forEach(cb=>cb.addEventListener('change', ()=>{
+    const p = STATE.orcamentos.find(x=>x.id===id);
+    if(!p.conferencia) p.conferencia = { itens:[] };
+    p.conferencia.itens[+cb.dataset.i] = cb.checked;
+    orc2Silencio = true;
+    try{ saveState(); } finally { orc2Silencio = false; }
+    orc2MontarPasso(p);
+  }));
+  orc2MontarPasso(o);
+}
+
+function orc2MontarPasso(o){
+  const box = document.getElementById('orc2-passo');
+  if(!box) return;
+  const e = orc2Etapa(o);
+  const B = (txt, fn, prim)=>({ txt, fn, prim });
+  let q = '', bs = [];
+  if(e==='cotacao'){
+    const c = orc2Cliente(o);
+    q = c.t.includes('rascunho') ? 'Este orçamento ainda é rascunho.' : (c.k==='bad' ? `Sem resposta do cliente. Ele aprovou?` : 'O cliente aprovou?');
+    bs = c.t.includes('rascunho')
+      ? [B('✏️ Terminar o orçamento', ()=>orc2Editar(o.id), true)]
+      : [B('✅ Cliente aprovou', ()=>{ o.status='aprovado'; registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} aprovado (Orçamento 2)`); saveState(); }, true),
+         B('Perdemos', ()=>orc2Perdeu(o))];
+  }else if(e==='aprovado'){
+    if(!o.conferencia){
+      q = 'Separar a mercadoria e conferir item por item.';
+      bs = [B('📋 Começar a conferência', ()=>{ o.conferencia = { itens:[] }; saveState(); }, true),
+            B('⏳ Falta mercadoria', ()=>{ o.entregaPrevista='aguardando_mercadoria'; saveState(); })];
+    }else{
+      const n = (o.itens||[]).length, marcados = (o.conferencia.itens||[]).filter(Boolean).length;
+      q = `Conferidos ${marcados} de ${n}. O botão libera quando todos estiverem marcados.`;
+      bs = [B(`✅ Tudo conferido`, ()=>{ if(marcados < n){ showToast('Ainda tem item sem marcar.','error'); return false; } o.conferencia.concluidaEm = new Date().toISOString(); if(o.entregaPrevista==='aguardando_mercadoria') o.entregaPrevista=null; saveState(); }, marcados===n)];
+    }
+  }else if(e==='separado'){
+    if(!orc2Nota(o).ok){
+      q = 'Antes de sair: qual nota acompanha a mercadoria?';
+      bs = [B('🧾 Emitir nota', ()=>{ abrirOpcoesFecharVenda(o.id); return false; }, true),
+            B('Sem nota', ()=>{ orc2SemNota(o); return false; })];
+    }else{
+      q = 'Pronto pra sair.';
+      bs = [B('🚚 Saiu pra entrega', ()=>{ o.statusEntrega='em_rota'; saveState(); }, true),
+            B('🏪 Cliente retirou', ()=>{ marcarRetiradaOrcamento(o.id); return false; })];
+    }
+  }else if(e==='rua'){
+    q = 'A mercadoria chegou no cliente?';
+    bs = [B('✅ Entregue', ()=>{
+      if(!orc2Nota(o).ok){ orc2PerguntarNota(o, ()=>marcarEntregaConcluida(o.id)); return false; }
+      marcarEntregaConcluida(o.id); return false; }, true)];
+  }else if(e==='pendente'){
+    if(!orc2Nota(o).ok){
+      q = 'Foi entregue e a nota ainda não foi resolvida.';
+      bs = [B('🧾 Emitir nota', ()=>{ orc2Convertido(o) ? abrirOpcoesEmitirDepois(o.id) : abrirOpcoesFecharVenda(o.id); return false; }, true),
+            B('Sem nota', ()=>{ orc2SemNota(o); return false; })];
+    }else{
+      const pg = orc2Pagamento(o);
+      q = pg.k==='bad' ? 'Pagamento atrasado.' : 'Falta receber o pagamento.';
+      bs = [B('💰 Abrir Contas a Receber', ()=>{ orc2FecharPedido(); navigateTo('receber'); return false; }, true)];
+    }
+  }else if(e==='perdido'){
+    q = 'Pedido perdido' + (o.motivoPerda ? ': ' + o.motivoPerda : '') + '.';
+    bs = [B('↩️ Voltar pra cotação', ()=>{ o.status='pendente'; delete o.motivoPerda; saveState(); })];
+  }else{
+    q = 'Concluído: aprovado, entregue, nota resolvida e pago.';
+  }
+  box.innerHTML = `<div style="font-weight:700;">${escapeHtml(q)}</div>${bs.length?`<div class="bts">${bs.map((b,i)=>`<button class="btn btn-sm ${b.prim?'btn-primary':''}" data-i="${i}">${escapeHtml(b.txt)}</button>`).join('')}</div>`:''}`;
+  box.querySelectorAll('[data-i]').forEach(btn=>btn.addEventListener('click', ()=>{
+    const r = bs[+btn.dataset.i].fn();
+    if(r === false) return;
+    const atual = STATE.orcamentos.find(x=>x.id===o.id);
+    if(atual) orc2AbrirPedido(atual.id);
+  }));
+}
+
+/* janelinha de escolha com botões grandes, no padrão das outras do sistema */
+function orc2Escolha(titulo, texto, opcoes){
+  document.getElementById('orc2-escolha')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open'; m.id = 'orc2-escolha';
+  m.style.zIndex = 950;
+  m.innerHTML = `<div class="modal-box modal-box-rapido" style="max-width:min(460px,94vw);">
+    <div class="modal-rapido-cabecalho"><div class="ic-rapido">🧾</div><div><h3>${escapeHtml(titulo)}</h3>${texto?`<div class="sub">${escapeHtml(texto)}</div>`:''}</div></div>
+    <div class="modal-rapido-corpo" style="display:flex;flex-direction:column;gap:8px;">
+      ${opcoes.map((op,i)=>`<button class="btn ${i===0?'btn-primary':''}" data-o="${i}" style="justify-content:flex-start;text-align:left;padding:11px 13px;"><b>${escapeHtml(op.t)}</b>${op.d?`<span class="hint" style="display:block;font-weight:normal;margin-top:2px;">${escapeHtml(op.d)}</span>`:''}</button>`).join('')}
+      <div class="modal-actions"><button class="btn" data-x>Cancelar</button></div>
+    </div></div>`;
+  document.body.appendChild(m);
+  m.querySelector('[data-x]').onclick = ()=>m.remove();
+  m.querySelectorAll('[data-o]').forEach(b=>b.onclick=()=>{ m.remove(); opcoes[+b.dataset.o].f(); });
+}
+function orc2PerguntarNota(o, depois){
+  orc2Escolha(`O pedido #${o.numero} ainda não tem nota`, 'Antes o "Entregue" fechava a venda sem perguntar. Decida aqui:', [
+    { t:'🧾 Emitir nota agora', d:'Abre a emissão de sempre. Depois é só confirmar a entrega.', f:()=>abrirOpcoesFecharVenda(o.id) },
+    { t:'Sem nota', d:'Pede o motivo e segue pra entrega.', f:()=>orc2SemNota(o, depois) }
+  ]);
+}
+function orc2SemNota(o, depois){
+  orc2Escolha('Por que sem nota?', 'Fica gravado no pedido, pra ninguém achar que foi esquecimento.',
+    ['Cliente não pediu','Vai sair junto com outra nota','Venda pequena de balcão'].map(m=>({ t:m, f:()=>{
+      o.semNota = { motivo:m, em:new Date().toISOString() };
+      saveState();
+      if(depois) depois();
+    }})));
+}
+function orc2Perdeu(o){
+  orc2Escolha('Por que perdemos?', 'Com o motivo dá pra ver, no fim do mês, o que mais faz perder venda.',
+    ['Preço','Prazo de entrega','Comprou de outro','Desistiu'].map(m=>({ t:m, f:()=>{
+      o.status = 'recusado'; o.statusEntrega = 'nenhum'; o.motivoPerda = m;
+      registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} perdido: ${m}`);
+      saveState(); orc2FecharPedido();
+    }})));
+  return false;
+}
+RENDERERS['orcamentos2'] = renderOrcamentos2;
 RENDERERS['proposta-licitacao'] = renderPropostaLicitacao;
 
 /* =========================================================
@@ -47642,6 +48092,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-16-a',
+    data: '2026-11-16',
+    titulo: 'Menu novo em teste: "Orçamento 2", os pedidos em esteira',
+    itens: [
+      'O MENU ORÇAMENTOS CONTINUA IGUAL. O "Orçamento 2" é uma segunda forma de ver os MESMOS orçamentos, pra você comparar e decidir qual fica.',
+      'ESTEIRA EM 6 ETAPAS: Cotação → Aprovado → Separado → Na rua → Entregue, falta algo → Concluído. Clique num pedido pra ver o próximo passo.',
+      'CADA PEDIDO TEM 4 SELOS: cliente, entrega, nota e pagamento. Nota emitida não vira mais "venda concluída" com a mercadoria ainda na rua.',
+      'CONFERÊNCIA: no Aprovado, você marca item por item; só passa pra Separado quando tudo estiver conferido.',
+      'A NOTA É DECIDIDA ANTES DE ENTREGAR: emitir, ou "sem nota" com o motivo. Repasse só aparece marcado — nota e pagamento dele continuam no menu Repasses.',
+      'CONCLUÍDOS NÃO ENCHEM A TELA: a coluna mostra só a última semana. "Ver todos os concluídos" abre a Lista completa, com filtro de data, total e os botões de baixar nota e XML.'
+    ]
+  },
+  {
     id: '2026-11-13-d',
     data: '2026-11-13',
     titulo: 'Sugestão de Compra: marcar vários itens e esconder de uma vez',
@@ -60120,7 +60583,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '13/11/2026 19:00';
+const SISTEMA_VERSAO = '16/11/2026 11:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -60504,6 +60967,7 @@ function nuvemMenus(){
 }
 
 function temAcesso(pagina){
+  if(pagina === 'orcamentos2') pagina = 'orcamentos';   // o modelo em teste segue a permissão de Orçamentos
   if(!nuvemUsuario) return true;          // sistema sem nuvem ligada
   if(nuvemUsuario.dono) return true;
   const p = nuvemUsuario.permissoes || {};
