@@ -15196,12 +15196,16 @@ function salvarEdicaoItemCarrinhoOrcamento(idx, modal){
 // (com endereço), nunca mais texto livre — o Planejador de Rotas depende
 // desse endereço ser real (item 3 da especificação: a troca vale só para
 // este orçamento, sem alterar o cadastro do produto).
+function origemDeposito(item){
+  item.origemTipo = 'dep'; item.origemId = 'mizu'; item.origem = 'Depósito'; item.origemEndereco = STATE.config.lojaEndereco || '';
+}
 function editarOrigemItemOrcamento(idx, novoValor){
   const item = carrinhoOrcamentoAtual[idx];
   if(!novoValor){
     item.origemTipo = null; item.origemId = null; item.origem = '(a definir)'; item.origemEndereco = '';
     return;
   }
+  if(novoValor==='dep:mizu'){ origemDeposito(item); return; }
   const [tipo, id] = novoValor.split(':');
   const lista = tipo==='forn' ? STATE.fornecedores : STATE.locaisCompra;
   const encontrado = lista.find(x=>x.id===id);
@@ -15900,8 +15904,12 @@ function locaisCompraComEndereco(){
 // (ainda não salvo) quanto no detalhe de um orçamento JÁ salvo (edição da
 // origem a partir do aviso de "entregas sem rota definida" em Logística).
 function renderOpcoesOrigemSelect(selecionadoTipo, selecionadoId){
+  /* "se é depósito, se é nos outros que a gente cadastrou" (16/11/2026):
+     o depósito da Mizu é uma origem também — o item já está aqui e sai
+     junto da loja, sem parada de coleta no roteiro */
   return `
     <option value="">(a definir)</option>
+    <option value="dep:mizu" ${selecionadoTipo==='dep'?'selected':''}>🏠 Depósito (já está com a gente)</option>
     ${fornecedoresComEndereco().length ? `<optgroup label="Fornecedores">${fornecedoresComEndereco().map(f=>`<option value="forn:${f.id}" ${selecionadoTipo==='forn'&&selecionadoId===f.id?'selected':''}>${escapeHtml(f.nome)}</option>`).join('')}</optgroup>` : ''}
     ${locaisCompraComEndereco().length ? `<optgroup label="Locais de Compra">${locaisCompraComEndereco().map(l=>`<option value="loc:${l.id}" ${selecionadoTipo==='loc'&&selecionadoId===l.id?'selected':''}>${escapeHtml(l.nome)}</option>`).join('')}</optgroup>` : ''}
     <option value="novo">➕ Cadastrar novo local de coleta...</option>
@@ -16937,6 +16945,9 @@ function executarConversaoOrcamentoEmVenda(orcamento){
   STATE.vendas.push(venda);
   orcamento.status = 'convertido';
   orcamento.vendaGeradaId = venda.id;
+  /* boleto antecipado pela ANAPE (marcado na janela de fechar a venda):
+     já nasce recebido — vale pra qualquer caminho que converte */
+  if(orcamento.antecipacaoAnape && typeof receberVendaInteira==='function') receberVendaInteira(venda, 'ANAPE');
   return venda;
 }
 
@@ -17577,6 +17588,8 @@ function editarOrigemItemOrcamentoSalvo(orcamentoId, idx, novoValor){
   }
   if(!novoValor){
     item.origemTipo = null; item.origemId = null; item.origem = '(a definir)'; item.origemEndereco = '';
+  }else if(novoValor==='dep:mizu'){
+    origemDeposito(item);
   }else{
     const [tipo, id] = novoValor.split(':');
     const lista = tipo==='forn' ? STATE.fornecedores : STATE.locaisCompra;
@@ -17618,8 +17631,9 @@ RENDERERS['orcamentos'] = renderOrcamentos;
 const ORC2_INICIO = '2026-11-16';
 const ORC2_COLUNAS = [
   { id:'cotacao',   titulo:'Cotação',              sub:'esperando o cliente' },
-  { id:'aprovado',  titulo:'Aprovado',             sub:'conferir e separar' },
-  { id:'separado',  titulo:'Separado',             sub:'pronto pra sair' },
+  { id:'aprovado',  titulo:'Aprovado',             sub:'começar a separar' },
+  { id:'separando', titulo:'Em separação',         sub:'conferir e marcar a coleta' },
+  { id:'separado',  titulo:'Pronto pra sair',      sub:'já está na Logística' },
   { id:'rua',       titulo:'Na rua',               sub:'saiu pra entrega' },
   { id:'pendente',  titulo:'Entregue, falta algo', sub:'nota ou pagamento' },
   { id:'concluido', titulo:'Concluído',            sub:'últimos 7 dias' }
@@ -17630,6 +17644,22 @@ let orc2Filtro = { busca:'', situacao:'', de:'', ate:'' };
 let orc2Agendado = false;
 let orc2Silencio = false;            // marcar item da conferência salva sem redesenhar a gaveta
 
+/* ERA ISTO QUE DEIXAVA LENTO: cada pedido recalculava as contas a receber
+   do sistema inteiro (150 pedidos × todas as vendas, a cada clique). Agora
+   calcula uma vez e guarda por meio segundo — dura um redesenho. */
+let orc2Memo = null;
+function orc2Receber(){
+  if(!orc2Memo || Date.now() - orc2Memo.t > 500){
+    const m = new Map();
+    (typeof getLinhasReceber==='function' ? getLinhasReceber() : []).forEach(l=>{
+      if(!l.vendaId) return;
+      if(!m.has(l.vendaId)) m.set(l.vendaId, []);
+      m.get(l.vendaId).push(l);
+    });
+    orc2Memo = { t: Date.now(), receber: m };
+  }
+  return orc2Memo.receber;
+}
 function orc2Venda(o){ return o.vendaGeradaId ? (STATE.vendas||[]).find(v=>v.id===o.vendaGeradaId) : null; }
 function orc2Convertido(o){ return o.status==='convertido' || !!o.vendaGeradaId; }
 function orc2Repasse(o){ return !!o.pagadorId; }
@@ -17648,7 +17678,9 @@ function orc2Nota(o){
 function orc2Pagamento(o){
   if(orc2Repasse(o)) return { k:'ok', t:'💰 no repasse', ok:true };
   if(!orc2Convertido(o)) return { k:'off', t:'💰 –', ok:false };
-  const linhas = (typeof getLinhasReceber==='function' ? getLinhasReceber() : []).filter(l=>l.vendaId===o.vendaGeradaId);
+  const linhas = orc2Receber().get(o.vendaGeradaId) || [];
+  const venda = orc2Venda(o);
+  if(venda && venda.antecipacao) return { k:'ok', t:'💰 ANAPE', ok:true, dica:'Boleto antecipado pela ANAPE' };
   if(!linhas.length) return { k:'ok', t:'💰 recebido', ok:true };          // à vista: entrou no caixa ao fechar
   if(linhas.some(l=>l.statusCalc==='atrasado')) return { k:'bad', t:'💰 atrasado', ok:false };
   if(linhas.every(l=>l.recebido)) return { k:'ok', t:'💰 recebido', ok:true };
@@ -17668,7 +17700,7 @@ function orc2Entrega(o){
   if(se==='entregue') return { k:'ok', t:'📦 entregue' };
   if(se==='retirado') return { k:'ok', t:'📦 retirado' };
   if(se==='em_rota')  return { k:'wait', t:'📦 na rua' };
-  if(o.conferencia && o.conferencia.concluidaEm) return { k:'wait', t:'📦 separado' };
+  if(o.conferencia && o.conferencia.concluidaEm) return { k:'wait', t:'📦 pronto pra sair' };
   if(o.conferencia || se==='separacao') return { k:'wait', t:'📦 separando' };
   if(o.entregaPrevista==='aguardando_mercadoria') return { k:'bad', t:'📦 falta mercadoria' };
   return { k:'off', t:'📦 –' };
@@ -17684,12 +17716,26 @@ function orc2Etapa(o){
     return (orc2Nota(o).ok && orc2Pagamento(o).ok) ? 'concluido' : 'pendente';
   }
   if(o.conferencia && o.conferencia.concluidaEm) return 'separado';
+  if(o.conferencia) return 'separando';
   return 'aprovado';
+}
+/* Na separação cada item fica resolvido de um jeito: JÁ ESTÁ AQUI (marcado)
+   ou com uma origem de fora pra buscar no caminho. Depósito sem marcar não
+   resolve: se é do depósito, é só pegar e marcar. */
+function orc2ItemResolvido(o, idx){
+  const it = (o.itens||[])[idx]; if(!it) return true;
+  if(o.conferencia && o.conferencia.itens && o.conferencia.itens[idx]) return true;
+  return !!(it.origemTipo && it.origemId && it.origemTipo!=='dep');
+}
+function orc2Unidade(it){
+  const p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id===it.produtoId) : null;
+  return it.unidade || (p && p.unidade) || 'UN';
 }
 function orc2Proximo(o){
   const e = orc2Etapa(o);
   if(e==='cotacao'){ const c = orc2Cliente(o); return c.k==='bad' ? 'Cobrar resposta' : (c.t.includes('rascunho') ? 'Terminar o orçamento' : 'Aguardando o cliente'); }
-  if(e==='aprovado') return o.conferencia ? 'Terminar a conferência' : 'Separar e conferir';
+  if(e==='aprovado') return 'Começar a separação';
+  if(e==='separando'){ const n=(o.itens||[]).length, r=(o.itens||[]).filter((_,i)=>orc2ItemResolvido(o,i)).length; return `Separar: ${r} de ${n} resolvidos`; }
   if(e==='separado') return orc2Nota(o).ok ? 'Saiu pra entrega' : 'Decidir a nota e sair';
   if(e==='rua') return 'Confirmar a entrega';
   if(e==='pendente'){ if(!orc2Nota(o).ok) return 'Resolver a nota'; return orc2Pagamento(o).k==='bad' ? 'Cobrar pagamento' : 'Receber pagamento'; }
@@ -17716,7 +17762,10 @@ function orc2Estilo(){
     .orc2-vistas button{border:0;background:transparent;font-weight:600;color:var(--ink-faint);cursor:pointer;padding:4px 6px;border-radius:6px}
     .orc2-vistas button.on{color:var(--primary);background:var(--primary-soft)}
     .orc2-esteira-wrap{overflow-x:auto;padding-bottom:6px}
-    .orc2-esteira{display:grid;grid-template-columns:repeat(6,minmax(200px,1fr));gap:10px;min-width:1240px}
+    .orc2-esteira{display:grid;grid-template-columns:repeat(7,minmax(190px,1fr));gap:10px;min-width:1380px}
+    .orc2-item .org{font-size:12px;padding:3px 5px;max-width:190px}
+    .orc2-item.feito{background:#F3FAF6}
+    .orc2-item .nm{flex:1;min-width:0}
     .orc2-col{background:#EEF1F4;border-radius:10px;display:flex;flex-direction:column;min-width:0}
     .orc2-col header{padding:10px 12px 8px}
     .orc2-col header .t{display:flex;justify-content:space-between;align-items:center;font-weight:700;font-size:13.5px}
@@ -17762,6 +17811,7 @@ function orc2SeAtivoRedesenhar(){
 function renderOrcamentos2(){
   const box = document.getElementById('orc2-content');
   if(!box) return;
+  orc2Memo = null;   // redesenho começa com as contas frescas
   orc2Estilo();
   const todos = orc2Pedidos();
   const perdidos = todos.filter(o=>orc2Etapa(o)==='perdido').length;
@@ -17828,7 +17878,7 @@ function orc2DesenharCorpo(){
   }).join('')}</div></div>`;
 }
 
-const ORC2_SITUACOES = [['','Todas'],['cotacao','Cotação'],['aprovado','Aprovado'],['separado','Separado'],['rua','Na rua'],['pendente','Entregue, falta algo'],['concluido','Concluído'],['perdido','Perdido']];
+const ORC2_SITUACOES = [['','Todas'],['cotacao','Cotação'],['aprovado','Aprovado'],['separando','Em separação'],['separado','Pronto pra sair'],['rua','Na rua'],['pendente','Entregue, falta algo'],['concluido','Concluído'],['perdido','Perdido']];
 function orc2ListaHtml(lista){
   const f = orc2Filtro;
   let l = lista.slice();
@@ -17890,7 +17940,7 @@ function orc2AbrirPedido(id){
   document.getElementById('orc2-gaveta-camada')?.remove();
   const nota = nfeNotaDoOrcamento(o.id);
   const conf = o.conferencia;
-  const conferindo = orc2Etapa(o)==='aprovado' && conf && !conf.concluidaEm;
+  const conferindo = orc2Etapa(o)==='separando';
   const c = document.createElement('div');
   c.id = 'orc2-gaveta-camada';
   const tr = (rot, s)=>`<div class="orc2-trilho"><span class="rot">${rot}</span><span class="orc2-selo" style="${ORC2_COR[s.k]};align-self:flex-start;">${escapeHtml(s.t)}</span>${s.dica?`<small style="color:var(--ink-soft);">${escapeHtml(s.dica)}</small>`:''}</div>`;
@@ -17904,8 +17954,22 @@ function orc2AbrirPedido(id){
       <div class="corpo">
         <div class="orc2-passo" id="orc2-passo"></div>
         <div class="orc2-trilhos">${tr('CLIENTE',orc2Cliente(o))}${tr('ENTREGA',orc2Entrega(o))}${tr('NOTA',orc2Nota(o))}${tr('PAGAMENTO',orc2Pagamento(o))}</div>
-        <div><div style="font-weight:700;margin-bottom:6px;">${conferindo?'Conferência — marque cada item':'Itens'}</div>
-          <div class="orc2-itens">${(o.itens||[]).map((it,i)=>`<label class="orc2-item">${conferindo?`<input type="checkbox" class="orc2-conf" data-i="${i}" ${conf.itens && conf.itens[i]?'checked':''}>`:''}<span>${escapeHtml(it.nome)}</span><span class="q">${escapeHtml(String(it.vendidoEmCaixa && it.descricaoLinha ? it.descricaoLinha : it.qtd))} ${escapeHtml(it.unidade||'')}</span></label>`).join('')}</div>
+        <div><div style="font-weight:700;margin-bottom:2px;">${conferindo?'Separação':'Itens'}</div>
+          ${conferindo?`<div class="help-text" style="margin:0 0 6px;">Marque ✓ o que já está aqui. O que não está, escolha onde buscar: a Logística mostra só essas coletas.</div>`:''}
+          <div class="orc2-itens" id="orc2-itens">${(o.itens||[]).map((it,i)=>{
+            const qtd = `${escapeHtml(String(it.vendidoEmCaixa && it.descricaoLinha ? it.descricaoLinha : it.qtd))} ${escapeHtml(orc2Unidade(it))}`;
+            if(!conferindo){
+              const origem = it.origemTipo ? (it.origemTipo==='dep' ? '🏠 Depósito' : (it.origem||'')) : '';
+              return `<div class="orc2-item"><span class="nm">${escapeHtml(it.nome)}${origem?`<div class="help-text" style="margin:0;">${escapeHtml(origem)}</div>`:''}</span><span class="q">${qtd}</span></div>`;
+            }
+            const aqui = !!(conf.itens && conf.itens[i]);
+            return `<div class="orc2-item ${aqui?'feito':''}" data-linha="${i}">
+              <input type="checkbox" class="orc2-conf" data-i="${i}" ${aqui?'checked':''} aria-label="${escapeAttr(it.nome)} já está aqui">
+              <span class="nm">${escapeHtml(it.nome)}<div class="help-text" style="margin:0;">${qtd}</div></span>
+              ${aqui ? `<span class="q" style="color:var(--positive);font-weight:600;">✓ já está aqui</span>`
+                     : `<select class="org orc2-org" data-i="${i}" aria-label="Onde buscar ${escapeAttr(it.nome)}">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select>`}
+            </div>`;
+          }).join('')}</div>
         </div>
         <div class="cell-actions" style="flex-wrap:wrap;">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
@@ -17922,8 +17986,49 @@ function orc2AbrirPedido(id){
     p.conferencia.itens[+cb.dataset.i] = cb.checked;
     orc2Silencio = true;
     try{ saveState(); } finally { orc2Silencio = false; }
+    orc2RedesenharLinhaItem(p, +cb.dataset.i);
     orc2MontarPasso(p);
   }));
+  c.querySelectorAll('.orc2-org').forEach(sel=>sel.addEventListener('change', ()=>orc2TrocarOrigem(id, +sel.dataset.i, sel.value)));
+  orc2MontarPasso(o);
+}
+
+/* trocar a marca ou a origem de um item redesenha só a linha dele:
+   redesenhar a gaveta inteira a cada clique era o que deixava lento */
+function orc2RedesenharLinhaItem(o, idx){
+  const linha = document.querySelector(`#orc2-itens [data-linha="${idx}"]`);
+  if(!linha) return;
+  const aqui = !!(o.conferencia && o.conferencia.itens && o.conferencia.itens[idx]);
+  const it = o.itens[idx];
+  linha.classList.toggle('feito', aqui);
+  const fim = linha.querySelector('.q, .orc2-org');
+  const novo = document.createElement('span');
+  novo.innerHTML = aqui ? `<span class="q" style="color:var(--positive);font-weight:600;">✓ já está aqui</span>`
+                        : `<select class="org orc2-org" data-i="${idx}" aria-label="Onde buscar">${renderOpcoesOrigemSelect(it.origemTipo, it.origemId)}</select>`;
+  const el = novo.firstElementChild;
+  if(fim) fim.replaceWith(el); else linha.appendChild(el);
+  if(el.tagName==='SELECT') el.addEventListener('change', ()=>orc2TrocarOrigem(o.id, idx, el.value));
+}
+function orc2TrocarOrigem(id, idx, valor){
+  const o = STATE.orcamentos.find(x=>x.id===id);
+  const it = o && o.itens[idx];
+  if(!it) return;
+  if(valor==='novo'){
+    abrirFormLocalCompraRapido(null, (novoLocal)=>{
+      it.origemTipo='loc'; it.origemId=novoLocal.id; it.origem=novoLocal.nome; it.origemEndereco=novoLocal.endereco||'';
+      saveState(); orc2AbrirPedido(id);
+    });
+    return;
+  }
+  if(!valor){ it.origemTipo=null; it.origemId=null; it.origem='(a definir)'; it.origemEndereco=''; }
+  else if(valor==='dep:mizu'){ origemDeposito(it); }
+  else{
+    const [tipo, oid] = valor.split(':');
+    const achado = (tipo==='forn' ? STATE.fornecedores : STATE.locaisCompra).find(x=>x.id===oid);
+    if(achado){ it.origemTipo=tipo; it.origemId=oid; it.origem=achado.nome; it.origemEndereco=achado.endereco||''; }
+  }
+  orc2Silencio = true;
+  try{ saveState(); } finally { orc2Silencio = false; }
   orc2MontarPasso(o);
 }
 
@@ -17941,15 +18046,23 @@ function orc2MontarPasso(o){
       : [B('✅ Cliente aprovou', ()=>{ o.status='aprovado'; registrarAuditoria && registrarAuditoria('orcamento', `#${o.numero} aprovado (Orçamento 2)`); saveState(); }, true),
          B('Perdemos', ()=>orc2Perdeu(o))];
   }else if(e==='aprovado'){
-    if(!o.conferencia){
-      q = 'Separar a mercadoria e conferir item por item.';
-      bs = [B('📋 Começar a conferência', ()=>{ o.conferencia = { itens:[] }; saveState(); }, true),
-            B('⏳ Falta mercadoria', ()=>{ o.entregaPrevista='aguardando_mercadoria'; saveState(); })];
-    }else{
-      const n = (o.itens||[]).length, marcados = (o.conferencia.itens||[]).filter(Boolean).length;
-      q = `Conferidos ${marcados} de ${n}. O botão libera quando todos estiverem marcados.`;
-      bs = [B(`✅ Tudo conferido`, ()=>{ if(marcados < n){ showToast('Ainda tem item sem marcar.','error'); return false; } o.conferencia.concluidaEm = new Date().toISOString(); if(o.entregaPrevista==='aguardando_mercadoria') o.entregaPrevista=null; saveState(); }, marcados===n)];
-    }
+    q = 'Aprovado. Quando for separar, comece por aqui: o pedido vai pra "Em separação".';
+    bs = [B('📋 Começar a separação', ()=>{ o.conferencia = { itens:[] }; saveState(); }, true),
+          B('⏳ Falta mercadoria', ()=>{ o.entregaPrevista='aguardando_mercadoria'; saveState(); })];
+  }else if(e==='separando'){
+    const n = (o.itens||[]).length;
+    const faltam = (o.itens||[]).map((it,i)=>orc2ItemResolvido(o,i)?null:it.nome).filter(Boolean);
+    const buscar = (o.itens||[]).filter((it,i)=>!(o.conferencia.itens||[])[i] && it.origemTipo && it.origemTipo!=='dep').length;
+    q = faltam.length
+      ? `Falta resolver ${faltam.length} de ${n}: marque ✓ se já está aqui, ou escolha onde buscar.`
+      : (buscar ? `Tudo resolvido. ${buscar} item(ns) vão ser buscados no caminho — a Logística monta a rota.` : 'Tudo separado e conferido.');
+    bs = [B('✅ Pronto pra sair', ()=>{
+      if(faltam.length){ showToast('Ainda falta: ' + faltam.slice(0,3).join(', ') + (faltam.length>3?'…':''), 'error'); return false; }
+      o.conferencia.concluidaEm = new Date().toISOString();
+      if(o.entregaPrevista==='aguardando_mercadoria') o.entregaPrevista=null;
+      saveState(); showToast('Pronto pra sair — já aparece na Logística.', 'success');
+    }, !faltam.length),
+      B('⏳ Falta mercadoria', ()=>{ o.entregaPrevista='aguardando_mercadoria'; saveState(); })];
   }else if(e==='separado'){
     if(!orc2Nota(o).ok){
       q = 'Antes de sair: qual nota acompanha a mercadoria?';
@@ -17966,14 +18079,22 @@ function orc2MontarPasso(o){
       if(!orc2Nota(o).ok){ orc2PerguntarNota(o, ()=>marcarEntregaConcluida(o.id)); return false; }
       marcarEntregaConcluida(o.id); return false; }, true)];
   }else if(e==='pendente'){
-    if(!orc2Nota(o).ok){
-      q = 'Foi entregue e a nota ainda não foi resolvida.';
-      bs = [B('🧾 Emitir nota', ()=>{ orc2Convertido(o) ? abrirOpcoesEmitirDepois(o.id) : abrirOpcoesFecharVenda(o.id); return false; }, true),
-            B('Sem nota', ()=>{ orc2SemNota(o); return false; })];
-    }else{
-      const pg = orc2Pagamento(o);
-      q = pg.k==='bad' ? 'Pagamento atrasado.' : 'Falta receber o pagamento.';
-      bs = [B('💰 Abrir Contas a Receber', ()=>{ orc2FecharPedido(); navigateTo('receber'); return false; }, true)];
+    /* "na parte do Kanban, eu poder marcar se já recebi, se realmente vai
+       ser sem nota": nota e pagamento resolvidos aqui mesmo, os dois juntos */
+    const faltaNota = !orc2Nota(o).ok, pg = orc2Pagamento(o), faltaPag = !pg.ok;
+    const partes = [];
+    if(faltaNota) partes.push('a nota');
+    if(faltaPag) partes.push(pg.k==='bad' ? 'o pagamento (atrasado)' : 'o pagamento');
+    q = 'Entregue. Falta resolver ' + partes.join(' e ') + '.';
+    if(faltaNota){
+      bs.push(B('🧾 Emitir nota', ()=>{ orc2Convertido(o) ? abrirOpcoesEmitirDepois(o.id) : abrirOpcoesFecharVenda(o.id); return false; }, true));
+      bs.push(B('Foi entregue sem nota', ()=>{ orc2SemNota(o); return false; }));
+    }
+    if(faltaPag){
+      const venda = orc2Venda(o);
+      bs.push(B('💰 Já recebi', ()=>{ if(!receberVendaInteira(venda,'direto')){ showToast('Não achei conta a receber dessa venda.','error'); return false; } saveState(); showToast('Recebimento registrado.','success'); }, !faltaNota));
+      bs.push(B('🏦 Antecipado ANAPE', ()=>{ if(!receberVendaInteira(venda,'ANAPE')){ showToast('Não achei conta a receber dessa venda.','error'); return false; } saveState(); showToast('Marcado como antecipado pela ANAPE.','success'); }));
+      bs.push(B('Ver no Contas a Receber', ()=>{ orc2FecharPedido(); navigateTo('receber'); return false; }));
     }
   }else if(e==='perdido'){
     q = 'Pedido perdido' + (o.motivoPerda ? ': ' + o.motivoPerda : '') + '.';
@@ -17983,10 +18104,9 @@ function orc2MontarPasso(o){
   }
   box.innerHTML = `<div style="font-weight:700;">${escapeHtml(q)}</div>${bs.length?`<div class="bts">${bs.map((b,i)=>`<button class="btn btn-sm ${b.prim?'btn-primary':''}" data-i="${i}">${escapeHtml(b.txt)}</button>`).join('')}</div>`:''}`;
   box.querySelectorAll('[data-i]').forEach(btn=>btn.addEventListener('click', ()=>{
-    const r = bs[+btn.dataset.i].fn();
-    if(r === false) return;
-    const atual = STATE.orcamentos.find(x=>x.id===o.id);
-    if(atual) orc2AbrirPedido(atual.id);
+    /* quem salva já redesenha a tela (e reabre esta gaveta) pelo saveState —
+       reabrir aqui também fazia tudo duas vezes por clique */
+    bs[+btn.dataset.i].fn();
   }));
 }
 
@@ -18892,7 +19012,13 @@ function salvarLocalDoPontoRoteiro(p, lat, lng){
 // origemTipo+origemId, somando quantidade entre entregas diferentes —
 // "o que precisa buscar ali", sem duplicar por cliente).
 function getDadosLogistica(){
-  const orcamentosEmRota = STATE.orcamentos.filter(o=>o.statusEntrega==='em_rota');
+  /* Entra na rota quem já saiu (em_rota) E quem está PRONTO PRA SAIR no
+     Orçamento 2 (separação concluída, ainda não saiu) — pra rota já incluir
+     as coletas do caminho antes do entregador sair (16/11/2026). */
+  const prontoPraSair = o => o.conferencia && o.conferencia.concluidaEm
+    && (!o.statusEntrega || o.statusEntrega==='nenhum' || o.statusEntrega==='separacao')
+    && !['recusado'].includes(o.status);
+  const orcamentosEmRota = STATE.orcamentos.filter(o=>o.statusEntrega==='em_rota' || prontoPraSair(o));
 
   const entregas = orcamentosEmRota.map(o=>{
     const cliente = STATE.clientes.find(c=>c.id===o.clienteId);
@@ -18907,10 +19033,17 @@ function getDadosLogistica(){
       lng: cliente ? cliente.lng : null,
       data: o.data,
       valor: c.bruto,
-      itens: o.itens.map(it=>({
-        nome: it.nome, qtd: it.qtd,
-        origemTipo: it.origemTipo, origemId: it.origemId, origemNome: it.origem
-      }))
+      prontoNaoSaiu: o.statusEntrega!=='em_rota',
+      /* item marcado "já está aqui" na separação não vira parada de coleta:
+         a rota mostra só o que ainda precisa buscar */
+      itens: o.itens.map((it,idx)=>{
+        const emMaos = !!(o.conferencia && o.conferencia.itens && o.conferencia.itens[idx]);
+        return {
+          nome: it.nome, qtd: it.qtd,
+          origemTipo: emMaos ? 'dep' : it.origemTipo, origemId: emMaos ? 'mizu' : it.origemId,
+          origemNome: emMaos ? 'Já separado' : it.origem
+        };
+      })
     };
   });
 
@@ -18925,6 +19058,7 @@ function computarPontosColeta(entregas){
   entregas.forEach(entrega=>{
     entrega.itens.forEach(it=>{
       if(!it.origemTipo || !it.origemId) return; // item sem origem definida não entra no roteiro de coleta
+      if(it.origemTipo === 'dep') return;        // já está no depósito da Mizu: sai junto da loja, sem parada
       const chave = `${it.origemTipo}:${it.origemId}`;
       if(!pontosMap.has(chave)){
         const lista = it.origemTipo==='forn' ? STATE.fornecedores : STATE.locaisCompra;
@@ -18986,7 +19120,9 @@ function calcularRoteiro(entregasParaRoteiro){
   // cada entrega rastreia quantos itens dela ainda faltam coletar
   const entregasPendentes = entregas.map(e=>({
     ...e, tipo:'entrega',
-    itensRestantes: new Set(e.itens.map((it,idx)=>idx)) // índices dos itens desta entrega ainda não coletados
+    // índices dos itens desta entrega ainda não coletados — o que é do depósito
+    // da Mizu (origemTipo 'dep') já sai da loja, não espera coleta nenhuma
+    itensRestantes: new Set(e.itens.map((it,idx)=>it.origemTipo==='dep' ? -1 : idx).filter(i=>i>=0))
   }));
 
   const roteiro = [];
@@ -28547,6 +28683,42 @@ function crApagarPagamento(id, origem, vendaId, parcelaIdx, pagamentoId){
   document.getElementById('modal-receber-parcial')?.remove();
   renderContasReceber();
   abrirReceberParcial(id, origem, vendaId, parcelaIdx);
+}
+
+/* =========================================================
+   ANTECIPAÇÃO ANAPE (16/11/2026)
+
+   "gerei o boleto pelo sistema desse amigo meu, ele faz a antecipação ...
+    fica considerado como se tivesse pago já para mim"
+
+   O boleto existe e tem vencimento (fica guardado), mas pra Mizu o dinheiro
+   já entrou: quem espera o prazo é a ANAPE. Sem taxa — entra o valor cheio.
+   Marca cada conta a receber da venda como recebida HOJE, com o mesmo
+   registro que o "Marcar recebido" do Contas a Receber deixa, mais a marca
+   venda.antecipacao. Não aparece mais como a receber nem como atrasada.
+   ========================================================= */
+function receberVendaInteira(venda, comoFoi){
+  if(!venda) return 0;
+  const linhas = getLinhasReceber().filter(l=>l.vendaId===venda.id && !l.recebido);
+  let total = 0;
+  linhas.forEach(l=>{
+    const alvoParcela = (l.parcelaIdx!=null && venda.parcelasReceber) ? venda.parcelasReceber[l.parcelaIdx] : null;
+    const alvoUnico = !alvoParcela && venda.receber ? venda.receber : null;
+    const alvo = alvoParcela || alvoUnico;
+    if(!alvo) return;
+    alvo.recebido = true;
+    alvo.dataRecebimento = todayISO();
+    const valor = Number(l.valor)||0;
+    const falta = Math.round((valor - crTotalPago(alvo))*100)/100;
+    if(falta > 0.005) crPagamentos(alvo).push({ id: uid('rec'), valor: falta, data: todayISO(), obs: comoFoi==='ANAPE' ? 'Antecipação ANAPE' : 'recebido integral' });
+    total += valor;
+  });
+  if(comoFoi==='ANAPE') venda.antecipacao = { via:'ANAPE', em: todayISO() };
+  if(linhas.length){
+    const cliente = STATE.clientes.find(c=>c.id===venda.clienteId);
+    registrarAuditoria('conta_recebida', `${comoFoi==='ANAPE'?'Antecipação ANAPE':'Venda recebida'} — ${cliente?cliente.nome:'(cliente removido)'}`, total);
+  }
+  return linhas.length;
 }
 
 function marcarContaRecebida(id, origem, vendaId, parcelaIdx){
@@ -45130,6 +45302,14 @@ function abrirOpcoesFecharVenda(orcamentoId){
           A diferença é só o documento fiscal.
         </p>
 
+        ${(['boleto','crediario'].includes(orcamento.condicaoPagamento) && !orcamento.pagadorId) ? `
+        <label style="display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);margin-bottom:12px;cursor:pointer;">
+          <input type="checkbox" id="fechar-venda-anape" style="width:18px;height:18px;margin-top:2px;" ${orcamento.antecipacaoAnape?'checked':''}
+                 onchange="(function(c){ const o=STATE.orcamentos.find(x=>x.id==='${orcamento.id}'); if(o){ o.antecipacaoAnape=c.checked; saveState(); } })(this)">
+          <span><strong>🏦 Boleto antecipado pela ANAPE</strong>
+            <span class="hint" style="display:block;font-weight:normal;margin-top:2px;">Já conta como recebido hoje, valor cheio. O vencimento do boleto fica guardado, mas não aparece como a receber nem atrasado.</span></span>
+        </label>` : ''}
+
         ${!configurado ? `<div class="help-text" style="padding:10px;border-radius:var(--radius-sm);background:var(--surface-2);margin-bottom:12px;">
           ⚠️ O servidor de nota fiscal ainda não está configurado, então só dá pra fechar sem nota.
           <div style="margin-top:8px;"><button class="btn btn-sm" onclick="document.getElementById('modal-fechar-venda').remove(); abrirConfigNfe();">Configurar agora</button></div>
@@ -48091,6 +48271,21 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-16-b',
+    data: '2026-11-16',
+    titulo: 'Orçamento 2: coluna "Em separação", coleta por item e bem mais rápido',
+    itens: [
+      'COMEÇAR A SEPARAÇÃO leva o pedido pra coluna nova "Em separação". Quando termina, ele vai pra "Pronto pra sair".',
+      'EM CADA ITEM: marque ✓ "já está aqui", ou escolha onde buscar — o Depósito, um fornecedor ou um local cadastrado. Dá pra ajustar a origem que veio do orçamento.',
+      'A LOGÍSTICA RECEBE O PEDIDO QUANDO ELE FICA PRONTO PRA SAIR, antes de sair, e mostra só o que ainda precisa buscar no caminho. O que já está em mãos não vira parada.',
+      'NOVA ORIGEM "🏠 Depósito" também na tela de Orçamentos: item que já está com vocês sai junto da loja, sem parada de coleta.',
+      'TODO ITEM MOSTRA A UNIDADE — quando o orçamento não guardou, vem do cadastro do produto.',
+      'MAIS RÁPIDO: a tela recalculava as contas a receber do sistema inteiro pra cada pedido, a cada clique. Com 300 pedidos, desenhar caiu de 0,7 s pra menos de 0,1 s.',
+      'BOLETO ANTECIPADO PELA ANAPE: na janela de fechar a venda, marque "🏦 Boleto antecipado pela ANAPE". A venda já nasce recebida (valor cheio); o vencimento fica guardado, mas não aparece como a receber nem atrasado.',
+      'NA COLUNA "ENTREGUE, FALTA ALGO" dá pra resolver tudo na gaveta: emitir a nota, "Foi entregue sem nota", "💰 Já recebi" ou "🏦 Antecipado ANAPE".'
+    ]
+  },
   {
     id: '2026-11-16-a',
     data: '2026-11-16',
@@ -60583,7 +60778,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 11:30';
+const SISTEMA_VERSAO = '16/11/2026 14:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
