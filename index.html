@@ -16642,6 +16642,7 @@ function orcAcoesDaLinha(o, sit){
         <summary></summary>
         <div class="acoes-ver-mais-lista">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
+          <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
           <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
           ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
           <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
@@ -17369,6 +17370,327 @@ function gerarPdfOrcamento(id){
   janela.document.close();
 }
 
+/* =========================================================
+   ORÇAMENTO ASSINADO COM O CERTIFICADO DIGITAL (17/11/2026)
+
+   "tenho certificado digital, e a maioria dos meus orçamentos eu preciso
+   assinar digital, e ainda coloco uma escrita por cima ... consigo assinar
+   pelo sistema com a mesma validade?" — e só nos que ela escolher.
+
+   O certificado A1 não vem pro navegador. O sistema monta o MESMO
+   orçamento do botão de PDF, manda o HTML pro servidor das notas
+   (mizu-nfe), e lá ele vira PDF e é assinado em PAdES — o padrão do
+   Adobe, que o validar.iti.gov.br reconhece. A escrita dela vai em cima
+   da linha; o carimbo "Assinado de forma digital por..." logo abaixo.
+   ========================================================= */
+
+/* A escrita por cima da linha. Até ela mandar a foto da assinatura, sai
+   uma provisória desenhada aqui mesmo. */
+function assinaturaEscritaImagem(){
+  if(STATE.config && STATE.config.assinaturaImagem) return STATE.config.assinaturaImagem;
+  try{
+    const texto = 'Julia Rodrigues Martins Bessa';
+    const fonte = 'italic 62px "Segoe Script", "Brush Script MT", "Lucida Handwriting", cursive';
+    const c = document.createElement('canvas');
+    const g0 = c.getContext('2d');
+    g0.font = fonte;
+    /* do tamanho do nome, senão o fim sai cortado */
+    c.width = Math.ceil(g0.measureText(texto).width) + 40;
+    c.height = Math.round(c.width * 46 / 240);
+    const g = c.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = '#1d2b6b';
+    g.font = fonte;
+    g.textBaseline = 'middle';
+    g.fillText(texto, 20, c.height / 2);
+    return c.toDataURL('image/png');
+  }catch(e){ return ''; }
+}
+
+/* A FOTO DA ASSINATURA DELA.
+
+   Foto de celular de uma folha: fundo cinza-azulado, luz desigual, às vezes
+   de lado. Aqui ela vira só a tinta: o fundo é comparado com a VIZINHANÇA
+   (uma versão borrada da própria foto), então a sombra de um canto não vira
+   mancha. O que é tinta fica azul-escuro sobre branco, recortado justo.
+
+   Fica no estado dela (sincronizado, privado) — nunca dentro do código do
+   sistema, que é público na internet. */
+function assinaturaLimparFoto(img, giro){
+  const MAX = 1400;
+  const esc = Math.min(1, MAX / Math.max(img.naturalWidth || img.width, img.naturalHeight || img.height));
+  const W0 = Math.round((img.naturalWidth || img.width) * esc), H0 = Math.round((img.naturalHeight || img.height) * esc);
+  const deitado = (giro % 180) !== 0;
+  const W = deitado ? H0 : W0, H = deitado ? W0 : H0;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.fillStyle = '#fff'; g.fillRect(0, 0, W, H);
+  g.translate(W/2, H/2); g.rotate(giro * Math.PI / 180);
+  g.drawImage(img, -W0/2, -H0/2, W0, H0);
+  g.setTransform(1, 0, 0, 1, 0, 0);
+
+  /* o fundo de cada ponto: a foto encolhida 24x e esticada de volta */
+  const p = document.createElement('canvas');
+  p.width = Math.max(1, Math.round(W/24)); p.height = Math.max(1, Math.round(H/24));
+  const gp = p.getContext('2d'); gp.imageSmoothingEnabled = true;
+  gp.drawImage(c, 0, 0, p.width, p.height);
+  /* tinta é fina: encolhendo, ela some e sobra o papel */
+  const fundo = document.createElement('canvas'); fundo.width = W; fundo.height = H;
+  const gf = fundo.getContext('2d', { willReadFrequently: true }); gf.imageSmoothingEnabled = true;
+  gf.drawImage(p, 0, 0, W, H);
+
+  const d = g.getImageData(0, 0, W, H), f = gf.getImageData(0, 0, W, H).data, px = d.data;
+  let x1 = W, y1 = H, x2 = -1, y2 = -1;
+  for(let i = 0, n = 0; i < px.length; i += 4, n++){
+    const v = (px[i] + px[i+1] + px[i+2]) / 3;
+    const b = Math.max(40, (f[i] + f[i+1] + f[i+2]) / 3);
+    const escuro = (b - v) / b;                 /* 0 = papel, 1 = preto */
+    let a = (escuro - 0.12) / 0.2;              /* corte suave pra borda não serrilhar */
+    a = a < 0 ? 0 : (a > 1 ? 1 : a);
+    /* azul-escuro de caneta sobre branco */
+    px[i]   = Math.round(255 - a * (255 - 29));
+    px[i+1] = Math.round(255 - a * (255 - 43));
+    px[i+2] = Math.round(255 - a * (255 - 107));
+    px[i+3] = 255;
+    if(a > 0.5){ const x = n % W, y = (n / W) | 0; if(x<x1)x1=x; if(x>x2)x2=x; if(y<y1)y1=y; if(y>y2)y2=y; }
+  }
+  if(x2 < 0) return null;
+  g.putImageData(d, 0, 0);
+  const m = Math.round(Math.max(x2-x1, y2-y1) * 0.03) + 4;
+  x1 = Math.max(0, x1-m); y1 = Math.max(0, y1-m); x2 = Math.min(W-1, x2+m); y2 = Math.min(H-1, y2+m);
+  const out = document.createElement('canvas');
+  const larg = x2 - x1 + 1, alt = y2 - y1 + 1;
+  const red = Math.min(1, 900 / larg);
+  out.width = Math.round(larg * red); out.height = Math.round(alt * red);
+  const go = out.getContext('2d'); go.fillStyle = '#fff'; go.fillRect(0, 0, out.width, out.height);
+  go.drawImage(c, x1, y1, larg, alt, 0, 0, out.width, out.height);
+  return { url: out.toDataURL('image/png'), largura: out.width, altura: out.height };
+}
+
+function assinaturaAbrirConfig(depois){
+  document.getElementById('modal-assinatura-escrita')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-assinatura-escrita';
+  const atual = STATE.config && STATE.config.assinaturaImagem;
+  modal.innerHTML = `
+    <div class="modal-box modal-box-rapido" style="max-width:min(560px, 94vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">✍️</div>
+        <div><h3>Assinatura escrita</h3>
+          <div class="sub">A que vai em cima da linha, nos orçamentos assinados</div></div>
+      </div>
+      <div class="modal-rapido-corpo">
+        <p class="help-text" style="margin-top:0;">Escolha a foto da assinatura numa folha branca. O sistema tira o fundo e recorta sozinho.
+          Ela fica guardada nos seus dados — não vai pro código do sistema.</p>
+        <input type="file" id="ae-arquivo" accept="image/*">
+        <div id="ae-previa" style="margin:12px 0;min-height:70px;border:1px dashed var(--border);border-radius:8px;
+             display:flex;align-items:center;justify-content:center;background:#fff;padding:10px;">
+          ${atual ? `<img src="${atual}" style="max-width:100%;max-height:110px;">` : '<span class="help-text">sem foto ainda — sai a provisória</span>'}
+        </div>
+        <div id="ae-girar" style="display:none;gap:6px;margin-bottom:6px;">
+          <button type="button" class="btn btn-sm" id="ae-esq">⟲ Girar</button>
+          <button type="button" class="btn btn-sm" id="ae-dir">⟳ Girar</button>
+        </div>
+        <div class="form-actions">
+          ${atual ? '<button type="button" class="btn" id="ae-remover" style="margin-right:auto;">Voltar pra provisória</button>' : ''}
+          <button type="button" class="btn" id="ae-cancelar">${depois ? 'Usar a provisória agora' : 'Cancelar'}</button>
+          <button type="button" class="btn btn-primary" id="ae-salvar" disabled>Salvar assinatura</button>
+        </div>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  let img = null, giro = 0, pronta = null;
+  const prev = modal.querySelector('#ae-previa');
+  const desenhar = ()=>{
+    pronta = img ? assinaturaLimparFoto(img, giro) : null;
+    prev.innerHTML = pronta ? `<img src="${pronta.url}" style="max-width:100%;max-height:110px;">`
+                            : '<span class="help-text">não achei a assinatura nessa foto</span>';
+    modal.querySelector('#ae-salvar').disabled = !pronta;
+  };
+  modal.querySelector('#ae-arquivo').addEventListener('change', (e)=>{
+    const arq = e.target.files && e.target.files[0];
+    if(!arq) return;
+    const leitor = new FileReader();
+    leitor.onload = ()=>{
+      const i = new Image();
+      i.onload = ()=>{
+        img = i; giro = 0;
+        /* deitada de lado (mais alta que larga depois de recortar): gira */
+        const teste = assinaturaLimparFoto(img, 0);
+        if(teste && teste.altura > teste.largura * 1.3) giro = 270;
+        modal.querySelector('#ae-girar').style.display = 'flex';
+        desenhar();
+      };
+      i.src = leitor.result;
+    };
+    leitor.readAsDataURL(arq);
+  });
+  modal.querySelector('#ae-esq').addEventListener('click', ()=>{ giro = (giro + 270) % 360; desenhar(); });
+  modal.querySelector('#ae-dir').addEventListener('click', ()=>{ giro = (giro + 90) % 360; desenhar(); });
+  modal.querySelector('#ae-cancelar').addEventListener('click', ()=>{ modal.remove(); if(depois) depois(); });
+  modal.querySelector('#ae-remover')?.addEventListener('click', ()=>{
+    delete STATE.config.assinaturaImagem; saveState(); modal.remove();
+    showToast('Voltou pra assinatura provisória.', 'success');
+  });
+  modal.querySelector('#ae-salvar').addEventListener('click', ()=>{
+    if(!pronta) return;
+    STATE.config.assinaturaImagem = pronta.url;
+    STATE.config.assinaturaProporcao = pronta.largura / pronta.altura;
+    saveState(); modal.remove();
+    showToast('Assinatura salva. Vale pros próximos orçamentos assinados.', 'success');
+    if(depois) depois();
+  });
+}
+
+/* Pega o HTML que o botão de PDF escreveria na janela, sem abrir janela. */
+function orcHtmlDoPdf(id){
+  let html = '';
+  const abrirOriginal = window.open;
+  window.open = function(){
+    return { document: { write(s){ html += s; }, close(){} }, close(){}, focus(){} };
+  };
+  try{ gerarPdfOrcamento(id); }
+  finally{ window.open = abrirOriginal; }
+  return html;
+}
+
+/* Ajusta o HTML pro gerador de PDF do servidor, que não entende flexbox:
+   o cabeçalho vira tabela, a linha de assinatura ganha a escrita por cima
+   e, logo abaixo, o lugar marcado pro carimbo digital. */
+function orcHtmlParaAssinar(html, imagemAssinatura){
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  doc.querySelectorAll('script').forEach(s=>s.remove());
+
+  const cab = doc.querySelector('.cabecalho, .topo');
+  if(cab){
+    const img = cab.querySelector('img');
+    const resto = [...cab.children].filter(el=>el !== img);
+    const t = doc.createElement('table');
+    t.setAttribute('width', '100%');
+    t.className = cab.className;
+    t.innerHTML = `<tr>${img ? `<td width="78" valign="middle"><img src="${img.getAttribute('src')}" width="64" height="64"></td>` : ''}<td valign="middle"></td></tr>`;
+    const alvo = t.querySelector('td:last-child');
+    resto.forEach(el=>alvo.appendChild(el));
+    cab.replaceWith(t);
+  }
+
+  /* o gerador do servidor some com o bloco inteiro que tem display:flex */
+  doc.querySelectorAll('style').forEach(st=>{
+    st.textContent = st.textContent.replace(/display\s*:\s*flex/g, 'display:block');
+  });
+
+  /* tabela de itens: sem largura nas colunas, o gerador divide igual e o
+     nome do produto fica espremido em três linhas */
+  doc.querySelectorAll('table').forEach(t=>{
+    const ths = [...t.querySelectorAll('thead th')];
+    const iProd = ths.findIndex(th=>/produto/i.test(th.textContent));
+    if(iProd >= 0 && !ths[iProd].getAttribute('width') && !/width/.test(ths[iProd].getAttribute('style')||'')){
+      ths[iProd].setAttribute('width', '42%');
+    }
+  });
+
+  const linha = doc.querySelector('.rodape-assinatura .linha, .assin .risco');
+  const bloco = linha ? linha.parentElement : null;
+  /* três colunas: a do meio é a linha. Tabela com largura fixa o gerador
+     ignora e estica na página toda */
+  const semBorda = 'border:0;padding:0;background:none;';
+  const novaLinha = doc.createElement('table');
+  novaLinha.setAttribute('width', '100%');
+  novaLinha.setAttribute('style', 'margin:0 0 4px 0;');
+  novaLinha.innerHTML = `<tr><td width="28%" style="${semBorda}font-size:1px;">&nbsp;</td>`
+    + `<td width="44%" style="${semBorda}border-top:1px solid #000;font-size:1px;line-height:1px;">&nbsp;</td>`
+    + `<td width="28%" style="${semBorda}font-size:1px;">&nbsp;</td></tr>`;
+  const escrita = doc.createElement('div');
+  escrita.setAttribute('style', 'text-align:center;margin:0;padding:0;');
+  /* do tamanho da assinatura: larga até 240, alta até 58 */
+  const prop = Number(STATE.config && STATE.config.assinaturaImagem && STATE.config.assinaturaProporcao) || (240/46);
+  let lw = 240, lh = Math.round(240 / prop);
+  if(lh > 58){ lh = 58; lw = Math.round(58 * prop); }
+  escrita.innerHTML = imagemAssinatura ? `<img src="${imagemAssinatura}" width="${lw}" height="${lh}">` : '';
+  if(linha){
+    linha.replaceWith(novaLinha);
+    novaLinha.parentElement.insertBefore(escrita, novaLinha);
+  }
+  /* o marcador é invisível (branco, minúsculo): o servidor acha ele no
+     PDF e põe o carimbo ali */
+  const marca = doc.createElement('div');
+  marca.innerHTML = '<div style="color:#ffffff;font-size:2px;text-align:center;">MIZUASSINATURADIGITAL</div><div style="height:75px;">&nbsp;</div>';
+  (bloco || doc.body).appendChild(marca);
+
+  /* ASSINATURA NÃO SE PARTE NA VIRADA DA PÁGINA: a escrita, a linha, o
+     nome e o carimbo andam juntos. Uma tabela de uma célula só o gerador
+     não corta — se não couber, vai inteira pra próxima folha. */
+  if(bloco){
+    const caixa = doc.createElement('table');
+    caixa.setAttribute('width', '100%');
+    caixa.innerHTML = '<tr><td style="border:0;padding:0;background:none;"></td></tr>';
+    bloco.replaceWith(caixa);
+    caixa.querySelector('td').appendChild(bloco);
+  }
+
+  const estilo = doc.createElement('style');
+  estilo.textContent = '@page{ size:a4; margin:1.3cm 1.4cm; } body{ padding:0 !important; }'
+    + ' .rodape-assinatura{ margin-top:22px; } .assin{ margin-top:14px; }';
+  (doc.head || doc.documentElement).appendChild(estilo);
+  return '<!DOCTYPE html>' + doc.documentElement.outerHTML;
+}
+
+let ORC_ASSINANDO = false;
+let ASSINATURA_JA_PERGUNTOU = false;
+async function gerarPdfOrcamentoAssinado(id){
+  if(ORC_ASSINANDO) return;
+  const orcamento = STATE.orcamentos.find(o=>o.id===id);
+  if(!orcamento) return;
+  if(!nfeConfigurado()){
+    showToast('Configure o servidor de nota fiscal antes: é ele que guarda o certificado.', 'error');
+    abrirConfigNfe();
+    return;
+  }
+  /* primeira vez sem a foto da assinatura: oferece escolher agora */
+  if(!(STATE.config && STATE.config.assinaturaImagem) && !ASSINATURA_JA_PERGUNTOU){
+    ASSINATURA_JA_PERGUNTOU = true;
+    assinaturaAbrirConfig(()=>gerarPdfOrcamentoAssinado(id));
+    return;
+  }
+  const cliente = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+  const html = orcHtmlParaAssinar(orcHtmlDoPdf(id), assinaturaEscritaImagem());
+  ORC_ASSINANDO = true;
+  showToast('Assinando com o certificado digital... (a primeira vez do dia pode levar até 1 minuto)', 'info');
+  try{
+    const r = await nfeChamar('/assinar-orcamento', { html });
+    if(!r || !r.pdf) throw new Error('O servidor não devolveu o PDF.');
+    const nome = `Orcamento${orcamento.numero!=null ? ' N ' + orcamento.numero : ''} - ${(cliente ? cliente.nome : '').replace(/[\\/:*?"<>|]/g, '')} - assinado`.trim();
+    nfeMostrarArquivos({
+      titulo: 'Orçamento assinado',
+      subtitulo: 'Assinado com o certificado digital da empresa (ICP-Brasil)',
+      sucesso: true,
+      pdfBlob: r.pdf,
+      nomeArquivo: nome,
+      linhas: [
+        ['Orçamento', orcamento.numero != null ? 'Nº ' + orcamento.numero : '—'],
+        ['Cliente', cliente ? cliente.nome : '—'],
+        ['Conferir a assinatura', 'validar.iti.gov.br']
+      ]
+    });
+    const caixa = document.querySelector('#modal-nfe-arquivos .modal-rapido-corpo');
+    if(caixa){
+      const b = document.createElement('button');
+      b.className = 'btn btn-sm'; b.style.marginTop = '12px';
+      b.textContent = '✍️ Trocar a assinatura escrita';
+      b.addEventListener('click', ()=>{ nfeFecharArquivos(); assinaturaAbrirConfig(); });
+      caixa.appendChild(b);
+    }
+  }catch(e){
+    const msg = String(e && e.message || e);
+    showToast(/Rota nao encontrada/i.test(msg)
+      ? 'O servidor das notas ainda não tem a assinatura de orçamento (falta atualizar o servidor).'
+      : 'Não consegui assinar: ' + msg, 'error');
+  }finally{
+    ORC_ASSINANDO = false;
+  }
+}
+
 // Gera o "controle de entrega" — o documento que o entregador leva fisicamente
 // pra cada cliente (um por orçamento aprovado). Mostra pra quem é, o endereço
 // de destino, os itens e quantidades, e um espaço de assinatura pra quem
@@ -18003,6 +18325,7 @@ function orc2AbrirPedido(id){
         </div>
         <div class="cell-actions" style="flex-wrap:wrap;">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
+          <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
           ${!orc2Convertido(o) ? `<button class="btn btn-sm" onclick="orc2Editar('${o.id}')">✏️ Editar</button>` : ''}
           ${['aprovado','separando','separado','rua'].includes(orc2Etapa(o)) ? `<button class="btn btn-sm" onclick="orc2Voltar('${o.id}')">↩️ Voltar etapa</button>` : ''}
           <button class="btn btn-sm" style="color:var(--negative);" onclick="orc2Excluir('${o.id}')">🗑️ Excluir</button>
@@ -48692,6 +49015,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-b',
+    data: '2026-11-17',
+    titulo: 'Orçamento assinado com o certificado digital',
+    itens: [
+      'NO ORÇAMENTO, ao lado do "📄 PDF do orçamento", agora tem "✍️ PDF assinado". Só assina quando você clicar: o PDF de sempre continua igual.',
+      'A ASSINATURA É A MESMA DO ADOBE: o certificado digital da empresa (ICP-Brasil) assina o PDF no servidor das notas. O certificado não sai de lá. Dá pra conferir em validar.iti.gov.br.',
+      'A SUA ESCRITA VAI POR CIMA DA LINHA, e logo abaixo sai o carimbo "Assinado de forma digital por...". Na primeira vez o sistema pede a foto da assinatura numa folha branca: ele gira, tira o fundo e recorta sozinho. A foto fica guardada só nos seus dados.',
+      'A PRIMEIRA ASSINATURA DO DIA pode levar até 1 minuto, porque o servidor gratuito "acorda".'
+    ]
+  },
+  {
     id: '2026-11-17-a',
     data: '2026-11-17',
     titulo: 'Relatório do haver, e Balanço: comodato com "#", rolagem e fotos do celular',
@@ -61411,7 +61745,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 10:00';
+const SISTEMA_VERSAO = '17/11/2026 11:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
