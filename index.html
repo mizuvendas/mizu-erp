@@ -49956,6 +49956,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-g',
+    data: '2026-11-17',
+    titulo: 'Balanço: os 10 itens contados no celular voltam pro computador',
+    itens: [
+      '"PRODUTOS CONTADOS 365" E "JÁ CONTEI 375": dez itens da planilha que você vinculou a um produto do seu cadastro (mopinhos, cestos, escovas…) foram contados no celular antes do vínculo chegar lá, e a contagem ficou na linha da planilha. No computador eles aparecem pelo produto, e a contagem ficava de fora da soma e da busca.',
+      'AGORA, ao abrir o Balanço, a contagem vai pro produto vinculado. A quantidade não muda e nada é apagado — e os dois números passam a ser iguais.',
+      'NCM NA CONFERÊNCIA: ao bipar um item que está no TOTVS, o NCM dele já vai pra linha da planilha na Conferência, pra você analisar antes de fechar. Os que você já contou recebem ao abrir o Balanço. Só preenche onde está vazio — o NCM que você digitou não muda.'
+    ]
+  },
+  {
     id: '2026-11-17-f',
     data: '2026-11-17',
     titulo: 'Câmera: as barras leem a foto do iPhone com luz forte',
@@ -59535,6 +59545,58 @@ function balRecarregarCatalogo(){
   BAL_CAT = balCatalogo();
   BAL_IX = balIndice(BAL_CAT);
   balResgatarContagemDoTotvs();
+  balResgatarContagemDaPlanilha();
+  balPuxarNcmDoTotvs();
+}
+
+/* "a partir do momento que eu bipei e ele identifica o vínculo, quero que
+   ele já puxe essas informações pra conferência, pra eu analisar"
+   (17/11/2026). Por enquanto só o NCM. Só preenche o que está VAZIO na
+   linha da planilha: o que ela digitou ou corrigiu na Conferência manda.
+   Sem 'chaves', faz em tudo que já foi contado neste balanço. */
+function balPuxarNcmDoTotvs(chaves){
+  const b = balAberto();
+  if(!b || !(CONF_LINHAS||[]).length || !totvsCatalogo().length) return 0;
+  const alvo = chaves ? new Set(chaves) : new Set(balContados(b.id).keys());
+  const guardadas = {};
+  confLinhasDoEstado().forEach(l=>{ guardadas[l.id] = l; });
+  let feitos = 0;
+  CONF_LINHAS.forEach(l=>{
+    const minha = l.produtoId && alvo.has('p:' + l.produtoId);
+    if(!minha && !alvo.has(confChaveLinha(l))) return;
+    if(String(l.ncm||'').trim()) return;
+    const t = totvsAchaPorCodigos([l.barras]);
+    const ncm = t ? ncmSo8(t.ncm || '') : '';
+    if(!ncm) return;
+    l.ncm = ncm;
+    const g = guardadas[l.id];
+    if(g && !String(g.ncm||'').trim()) g.ncm = ncm;
+    feitos++;
+  });
+  if(feitos) saveState();
+  return feitos;
+}
+
+/* "lá em cima mostra 365 e embaixo já contei 375" (17/11/2026).
+   Dez linhas da planilha que ela VINCULOU a um produto do cadastro: aqui
+   elas viram o produto ('p:'), mas o celular, na hora de contar, ainda não
+   tinha o vínculo e gravou o bipe na linha ('c:'). A contagem ficava
+   pendurada — fora dos totais e da busca. Leva pro produto vinculado; a
+   quantidade não muda e nada é apagado. */
+function balResgatarContagemDaPlanilha(){
+  if(!BAL_CAT || !(STATE.balancoBipes||[]).length || !(CONF_LINHAS||[]).length) return;
+  const orfas = new Set();
+  STATE.balancoBipes.forEach(x=>{
+    if(String(x.chave||'').startsWith('c:') && !BAL_CAT.has(x.chave)) orfas.add(x.chave);
+  });
+  if(!orfas.size) return;
+  let mexeu = 0;
+  orfas.forEach(chave=>{
+    const l = CONF_LINHAS.find(z=>confChaveLinha(z) === chave);
+    const destino = l && l.produtoId ? 'p:' + l.produtoId : null;
+    if(destino && BAL_CAT.has(destino)) mexeu += vincMigrarContagem(chave, destino);
+  });
+  if(mexeu) saveState();
 }
 
 /* O dispenser que ela contou como Mizu (17/11/2026): antes da correção
@@ -59634,6 +59696,7 @@ function balConfirmar(){
     em: new Date().toISOString()
   });
   saveState();
+  try{ balPuxarNcmDoTotvs([it.chave]); }catch(e){ console.warn(e); }
 
   const total = balContadoDe(b.id, it.chave);
   balMsg = `${it.nome} — contei ${fmtNum(qtd)}${total !== qtd ? `, total ${fmtNum(total)}` : ''}.`;
@@ -62803,7 +62866,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 18:20';
+const SISTEMA_VERSAO = '17/11/2026 21:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
