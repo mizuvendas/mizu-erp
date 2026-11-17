@@ -990,6 +990,10 @@ body.bal-foco .bal-voltar-menu{ display:inline-block; }
   background:rgba(255,255,255,0.18); color:#fff; font-size:16px; cursor:pointer; line-height:1; }
 .orc-gaveta-x:hover{ background:rgba(255,255,255,0.32); }
 .orc-gaveta-corpo{ flex:1 1 auto; overflow-y:auto; padding:16px 26px 40px; }
+/* orçamento escolar: o formulário clássico fica escondido (não apagado) */
+.orc-gaveta-corpo.orc-modo-escolar > *:not(#orc-seletor-modelo):not(#orc-escolar){ display:none !important; }
+#orc-escolar .data-table td{ padding:5px 6px; }
+#orc-escolar .data-table input{ padding:6px 7px; }
 body.orc-gaveta-travada{ overflow:hidden; }
 @media (max-width: 1100px){
   .orc-gaveta{ width:97vw; }
@@ -2050,6 +2054,7 @@ function defaultState(){
     // estoque, na comissão nem nos relatórios de produto.
     // { id, pagadorId, data, vencimento, descricao, valor, repasse:{abatimentos:[]}, criadoEm }
     cobrancasRepasse: [],
+    produtosOrcamento: [], // { id, descricao, unidade, custo, atualizadoEm } — só pro orçamento escolar, separado dos produtos da loja
     /* BALANÇO DE ESTOQUE
        balancos: a contagem em si { id, criadoEm, aberto, fechadoEm, fornecedorFinal, excedenteAceito }
        balancoBipes: UM REGISTRO POR BIPE { id, balancoId, chave, qtd, de, em } — de propósito:
@@ -5082,18 +5087,32 @@ function abrirLeitorCodigoBarras(onCodigoLido){
               justify-content:center;color:#fff;font-size:13.5px;padding:16px;text-align:center;">Iniciando câmera…</div>
         </div>
 
+        <div id="leitor-codigo-zoom-caixa" style="display:none;align-items:center;gap:8px;margin-top:9px;">
+          <span class="help-text" style="margin:0;">🔍 Zoom</span>
+          <input type="range" id="leitor-codigo-zoom" style="flex:1;">
+        </div>
+        <div class="help-text" style="margin:7px 0 0;">Dica: se ficar borrado, <strong>afaste um pouco</strong> (uns 15 a 20 cm) — de muito perto a câmera não foca.</div>
+
         <div id="leitor-codigo-acoes" style="display:none;gap:8px;margin-top:11px;flex-wrap:wrap;">
           <button type="button" class="btn btn-primary" id="leitor-codigo-foto-btn"
             style="flex:1;min-width:150px;padding:13px;font-size:15px;font-weight:700;">📸 Tirar foto e ler</button>
           <button type="button" class="btn" id="leitor-codigo-flash" style="display:none;padding:13px 16px;font-size:15px;">🔦 Flash</button>
         </div>
 
+        <!-- a foto não leu: ela fica parada, e dá pra ler os NÚMEROS impressos -->
+        <div id="leitor-codigo-falhou" style="display:none;gap:8px;margin-top:11px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-primary" id="leitor-codigo-ocr" style="flex:1;min-width:170px;padding:12px;font-weight:700;">🔢 Ler os números da foto</button>
+          <button type="button" class="btn" id="leitor-codigo-de-novo" style="padding:12px 16px;">↺ Tentar de novo</button>
+        </div>
+
         <div class="field" style="margin-top:14px;">
           <label>Ou digite o código</label>
           <div style="display:flex;gap:8px;">
             <input type="text" id="leitor-codigo-manual" inputmode="numeric" style="flex:1;font-size:16px;" placeholder="Código de barras…">
+            <button type="button" class="btn" id="leitor-codigo-copiar" title="Copiar o número" style="display:none;">📋 Copiar</button>
             <button type="button" class="btn btn-primary" id="leitor-codigo-manual-btn">OK</button>
           </div>
+          <div class="help-text" id="leitor-codigo-ocr-msg" style="display:none;"></div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn" id="leitor-codigo-fechar">Fechar</button>
@@ -5169,22 +5188,67 @@ function abrirLeitorCodigoBarras(onCodigoLido){
     return leitorLerImagem(img.data, canvas.width, canvas.height, { linhas: 40 });
   }
 
+  /* "fala que tem que aproximar, e se aproxima ele não lê" (17/11/2026).
+     O leitor encolhia o quadro INTEIRO pra 900 de largura: o código, que
+     ocupa um pedaço da imagem, ficava com poucos pontos por barra e não
+     fechava a conta. Agora ele lê o MIOLO (onde fica a mira) na resolução
+     cheia — o mesmo código com três vezes mais detalhe — e também de pé,
+     pra quem segura o produto virado. */
   const canvasTrabalho = document.createElement('canvas');
+  function recorte(fonte, fx, fy, fw, fh, maxLarg, girar){
+    const W = fonte.videoWidth || fonte.width, H = fonte.videoHeight || fonte.height;
+    const sx = Math.round(W * fx), sy = Math.round(H * fy), sw = Math.round(W * fw), sh = Math.round(H * fh);
+    const esc = Math.min(1, (maxLarg || sw) / (girar ? sh : sw));
+    const c = canvasTrabalho;
+    const dw = Math.round(sw * esc), dh = Math.round(sh * esc);
+    c.width = girar ? dh : dw; c.height = girar ? dw : dh;
+    const g = c.getContext('2d', { willReadFrequently: true });
+    g.save();
+    if(girar){ g.translate(c.width, 0); g.rotate(Math.PI / 2); }
+    g.drawImage(fonte, sx, sy, sw, sh, 0, 0, dw, dh);
+    g.restore();
+    return c;
+  }
+  /* miolo deitado, miolo de pé, e por último a imagem toda */
+  async function lerVariacoes(fonte, maxLarg){
+    const tentativas = [
+      [0.06, 0.28, 0.88, 0.44, false],
+      [0.28, 0.06, 0.44, 0.88, true],
+      [0, 0, 1, 1, false]
+    ];
+    for(const t of tentativas){
+      if(parar) return null;
+      try{
+        const r = await lerDoCanvas(recorte(fonte, t[0], t[1], t[2], t[3], maxLarg, t[4]));
+        if(r) return r;
+      }catch(e){}
+    }
+    return null;
+  }
 
+  let voltaAoVivo = 0;
   async function tentarAoVivo(){
     if(parar || lendoFoto) { if(!parar) setTimeout(tentarAoVivo, 260); return; }
     try{
       if(detector){
         const achados = await detector.detect(videoEl);
         if(achados && achados.length){ confirmarCodigo(achados[0].rawValue); return; }
+        /* o detector do navegador às vezes não pega o código pequeno no
+           quadro todo: de vez em quando tenta o miolo ampliado */
+        if((voltaAoVivo++ % 3) === 2){
+          const r = await lerDoCanvas(recorte(videoEl, 0.06, 0.28, 0.88, 0.44, 1400, false));
+          if(r){ confirmarCodigo(r); return; }
+        }
       }else{
-        /* sem BarcodeDetector (iPhone): lê do próprio quadro, reduzido
-           pra não travar o aparelho */
-        const r = await lerDoCanvas(paraCanvas(canvasTrabalho, 900));
+        /* sem BarcodeDetector (iPhone): o miolo em resolução cheia,
+           alternando deitado e de pé */
+        const deP = (voltaAoVivo++ % 2) === 1;
+        const r = await lerDoCanvas(deP ? recorte(videoEl, 0.28, 0.06, 0.44, 0.88, 1300, true)
+                                         : recorte(videoEl, 0.06, 0.28, 0.88, 0.44, 1300, false));
         if(r){ confirmarCodigo(r); return; }
       }
     }catch(e){ /* quadro ilegível: tenta o próximo */ }
-    if(!parar) setTimeout(tentarAoVivo, detector ? 300 : 420);
+    if(!parar) setTimeout(tentarAoVivo, detector ? 300 : 380);
   }
 
   /* A FOTO. Resolução cheia, sensor parado — é o caminho pro código
@@ -5198,17 +5262,17 @@ function abrirLeitorCodigoBarras(onCodigoLido){
       const canvas = paraCanvas(fotoEl, 0);          /* sem reduzir */
       fotoEl.style.display = '';
       videoEl.style.display = 'none';
-      const r = await lerDoCanvas(canvas);
+      const r = await lerVariacoes(canvas, 2000);
       if(r){ confirmarCodigo(r); return; }
+      /* NÃO volta sozinha pro vídeo: a foto fica parada na tela, pra ela
+         ler os números (ou o sistema ler por ela) e digitar */
+      fotoParada = true;
       statusEl.style.display = 'flex';
-      statusEl.textContent = 'Não consegui ler nessa foto. Chegue mais perto, deixe o código reto e tente de novo — ou ligue o flash.';
-      statusEl.style.background = 'rgba(0,0,0,.72)';
-      setTimeout(()=>{
-        if(parar) return;
-        fotoEl.style.display = 'none';
-        videoEl.style.display = '';
-        statusEl.style.display = 'none';
-      }, 2600);
+      statusEl.style.alignItems = 'flex-end';
+      statusEl.style.background = 'transparent';
+      statusEl.innerHTML = '<span style="background:rgba(0,0,0,.72);padding:7px 10px;border-radius:7px;">As barras não leram. Use "Ler os números" ou digite os números de baixo do código.</span>';
+      acoesEl.style.display = 'none';
+      document.getElementById('leitor-codigo-falhou').style.display = 'flex';
     }catch(e){
       console.warn(e);
     }finally{
@@ -5217,6 +5281,63 @@ function abrirLeitorCodigoBarras(onCodigoLido){
     }
   }
   document.getElementById('leitor-codigo-foto-btn').addEventListener('click', tirarFoto);
+
+  let fotoParada = false;
+  function voltarPraCamera(){
+    fotoParada = false;
+    fotoEl.style.display = 'none';
+    videoEl.style.display = '';
+    statusEl.style.display = 'none';
+    statusEl.style.alignItems = 'center';
+    acoesEl.style.display = 'flex';
+    document.getElementById('leitor-codigo-falhou').style.display = 'none';
+  }
+  document.getElementById('leitor-codigo-de-novo').addEventListener('click', voltarPraCamera);
+
+  /* "🔢 Ler os números da foto": lê os dígitos impressos debaixo das
+     barras (OCR) e põe no campo, pra usar ou copiar. A leitura de texto
+     vem de fora na primeira vez (precisa de internet); as barras não. */
+  const campoManual = document.getElementById('leitor-codigo-manual');
+  const btnCopiar = document.getElementById('leitor-codigo-copiar');
+  const msgOcr = document.getElementById('leitor-codigo-ocr-msg');
+  const mostrarCopiar = ()=>{ btnCopiar.style.display = campoManual.value.trim() ? '' : 'none'; };
+  campoManual.addEventListener('input', mostrarCopiar);
+  btnCopiar.addEventListener('click', async ()=>{
+    const v = campoManual.value.trim();
+    if(!v) return;
+    try{ await navigator.clipboard.writeText(v); showToast('Número copiado: ' + v, 'success'); }
+    catch(e){ campoManual.select(); try{ document.execCommand('copy'); showToast('Número copiado: ' + v, 'success'); }catch(e2){ showToast('Não deu pra copiar — segure o dedo no número.', 'info'); } }
+  });
+  document.getElementById('leitor-codigo-ocr').addEventListener('click', async ()=>{
+    const btn = document.getElementById('leitor-codigo-ocr');
+    btn.disabled = true; btn.textContent = 'Lendo os números…';
+    msgOcr.style.display = ''; msgOcr.textContent = 'Lendo… (na primeira vez demora um pouco)';
+    try{
+      const numero = await leitorOcrNumeros(fotoEl);
+      if(numero){
+        campoManual.value = numero.codigo;
+        mostrarCopiar();
+        msgOcr.innerHTML = numero.confere
+          ? `Li <strong>${escapeHtml(numero.codigo)}</strong> — o dígito verificador confere. Toque em OK pra usar, ou 📋 pra copiar.`
+          : `Li <strong>${escapeHtml(numero.codigo)}</strong>, mas o dígito verificador <strong>não confere</strong>: confira com o número da embalagem antes de usar.`;
+      }else{
+        msgOcr.textContent = 'Não consegui ler os números nessa foto. Digite os números que estão embaixo das barras.';
+      }
+    }catch(e){
+      msgOcr.textContent = 'A leitura dos números precisa de internet na primeira vez. Digite os números que estão embaixo das barras.';
+    }finally{
+      btn.disabled = false; btn.textContent = '🔢 Ler os números da foto';
+    }
+  });
+
+  /* zoom pela própria câmera, onde o aparelho deixa: ela segura de longe
+     (no foco) e aproxima a imagem */
+  const zoomCaixa = document.getElementById('leitor-codigo-zoom-caixa');
+  const zoomEl = document.getElementById('leitor-codigo-zoom');
+  zoomEl.addEventListener('input', async ()=>{
+    if(!trilha) return;
+    try{ await trilha.applyConstraints({ advanced: [{ zoom: Number(zoomEl.value) }] }); }catch(e){}
+  });
 
   let flashLigado = false;
   flashBtn.addEventListener('click', async ()=>{
@@ -5251,6 +5372,17 @@ function abrirLeitorCodigoBarras(onCodigoLido){
       try{
         const cap = trilha && trilha.getCapabilities ? trilha.getCapabilities() : null;
         if(cap && 'torch' in cap) flashBtn.style.display = '';
+        /* foco contínuo: a câmera reajusta sozinha quando ela aproxima */
+        if(cap && Array.isArray(cap.focusMode) && cap.focusMode.includes('continuous')){
+          trilha.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(()=>{});
+        }
+        if(cap && cap.zoom && cap.zoom.max > (cap.zoom.min || 1)){
+          zoomEl.min = cap.zoom.min || 1; zoomEl.max = cap.zoom.max;
+          zoomEl.step = cap.zoom.step || 0.1;
+          const s = trilha.getSettings ? trilha.getSettings() : {};
+          zoomEl.value = s.zoom || zoomEl.min;
+          zoomCaixa.style.display = 'flex';
+        }
       }catch(e){}
 
       tentarAoVivo();
@@ -5259,6 +5391,77 @@ function abrirLeitorCodigoBarras(onCodigoLido){
       statusEl.style.display = 'flex';
       statusEl.textContent = 'Não consegui abrir a câmera (permissão negada ou indisponível). Digite o código abaixo.';
     });
+}
+
+/* O dígito verificador de qualquer código GTIN (EAN-8, UPC-A, EAN-13,
+   GTIN-14): pesos 3 e 1 alternando, da direita pra esquerda. */
+function gtinConfere(codigo){
+  const d = String(codigo || '').replace(/\D/g, '');
+  if(![8, 12, 13, 14].includes(d.length)) return false;
+  let soma = 0;
+  for(let i = d.length - 2, peso = 3; i >= 0; i--, peso = (peso === 3 ? 1 : 3)) soma += Number(d[i]) * peso;
+  return ((10 - (soma % 10)) % 10) === Number(d[d.length - 1]);
+}
+
+/* Do texto lido na foto, o número do código de barras. Os números vêm
+   em grupos ("7 899682 730649"): junta a linha e procura, nela, um trecho
+   que feche o dígito verificador. Prefere EAN-13, que é o dos produtos. */
+function leitorNumeroDoTexto(texto){
+  const linhas = String(texto || '').split(/\n+/).map(l=>l.replace(/\D/g, '')).filter(l=>l.length >= 8);
+  const tudo = linhas.concat([String(texto || '').replace(/\D/g, '')]);
+  for(const tam of [13, 14, 12, 8]){
+    for(const l of tudo){
+      /* linha comprida é EAN-13/GTIN: um pedaço de 8 dela fecharia a conta
+         por acaso uma vez em dez, e viraria um código inventado */
+      if(tam === 8 && l.length > 9) continue;
+      if(tam !== 8 && l.length < 12) continue;
+      for(let i = 0; i + tam <= l.length; i++){
+        const pedaco = l.slice(i, i + tam);
+        if(gtinConfere(pedaco)) return { codigo: pedaco, confere: true };
+      }
+    }
+  }
+  const maior = tudo.slice().sort((a,b)=>b.length - a.length)[0] || '';
+  if(maior.length >= 8) return { codigo: maior.slice(0, 14), confere: false };
+  return null;
+}
+
+/* OCR dos números da foto (tesseract.js, livre). Carrega só quando ela
+   aperta o botão — o resto do leitor continua funcionando sem internet. */
+let LEITOR_OCR = null;
+async function leitorOcrNumeros(canvas){
+  if(!LEITOR_OCR){
+    LEITOR_OCR = (async ()=>{
+      if(typeof Tesseract === 'undefined'){
+        await new Promise((ok, falha)=>{
+          const s = document.createElement('script');
+          s.src = 'https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js';
+          s.onload = ok; s.onerror = falha;
+          document.head.appendChild(s);
+        });
+      }
+      const w = await Tesseract.createWorker('eng');
+      await w.setParameters({ tessedit_char_whitelist: '0123456789 ' });
+      return w;
+    })().catch(e=>{ LEITOR_OCR = null; throw e; });
+  }
+  const w = await LEITOR_OCR;
+  /* a foto inteira e, se não achar, a metade de baixo ampliada (é onde os
+     números costumam estar) */
+  const r1 = await w.recognize(canvas);
+  let achado = leitorNumeroDoTexto(r1 && r1.data && r1.data.text);
+  if(achado && achado.confere) return achado;
+  try{
+    const c = document.createElement('canvas');
+    const W = canvas.width, H = canvas.height;
+    c.width = W * 1.6; c.height = H * 0.6 * 1.6;
+    const g = c.getContext('2d'); g.imageSmoothingEnabled = true;
+    g.drawImage(canvas, 0, H * 0.4, W, H * 0.6, 0, 0, c.width, c.height);
+    const r2 = await w.recognize(c);
+    const outro = leitorNumeroDoTexto(r2 && r2.data && r2.data.text);
+    if(outro && (outro.confere || !achado)) achado = outro;
+  }catch(e){}
+  return achado;
 }
 
 // Liga um botão "📍 Localizar no mapa" a um par de campos de input já
@@ -12558,7 +12761,11 @@ function proximoNumeroOrcamento(){
    Os dois convivem até você escolher com qual ficar.
    ========================================================= */
 
-const ORC_MODELOS = ['classico', 'esteira', 'balcao'];
+/* "pode apagar o esteira, pode apagar o balcão, por enquanto ... no lugar
+   você vai criar um orçamento escolar" (17/11/2026). O código da esteira
+   e do balcão continua aqui (o balcão volta depois, pro caixa); só não é
+   mais oferecido. Quem estava num dos dois cai no clássico. */
+const ORC_MODELOS = ['classico', 'escolar'];
 function orcModelo(){
   const m = STATE.config && STATE.config.orcamentoModelo;
   return ORC_MODELOS.includes(m) ? m : 'classico';
@@ -12569,10 +12776,11 @@ function orcTrocarModelo(valor){
   orcBalcaoDadosAbertos = false;
   saveState();
   renderOrcamentos();
+  /* trocar o modelo acontece DENTRO da gaveta: ela continua aberta */
+  orcAbrirGaveta(orcModelo() === 'escolar' ? (ORC_ESC && ORC_ESC.id ? 'Editar orçamento escolar' : 'Novo orçamento escolar') : 'Novo orçamento');
   const recado = {
     classico: 'Modelo clássico ligado — tudo numa tela só.',
-    esteira:  'Modelo em esteira ligado — monte o orçamento em três paradas.',
-    balcao:   'Modelo de balcão ligado — bipe o produto e feche na barra de baixo.'
+    escolar:  'Orçamento escolar — custo + percentual em cada item, fretes e o lucro no fim.'
   };
   showToast(recado[orcModelo()], 'success');
 }
@@ -12629,10 +12837,491 @@ function orcHtmlSeletorModelo(){
     <div class="card" style="padding:12px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
       <span class="help-text" style="margin:0;">Como você quer vender:</span>
       ${botao('classico', 'Clássico', 'tudo numa tela só')}
-      ${botao('esteira', 'Em esteira', 'três paradas, uma pergunta por vez')}
-      ${botao('balcao', 'Balcão', 'bipa o produto e fecha na hora')}
-      <span class="help-text" style="margin:0 0 0 auto;">Os três fazem a mesma coisa — muda o caminho.</span>
+      ${botao('escolar', '🏫 Orçamento escolar', 'custo + %, fretes e o lucro')}
+      <span class="help-text" style="margin:0 0 0 auto;">Os dois salvam nos orçamentos lançados.</span>
     </div>`;
+}
+
+/* =========================================================
+   ORÇAMENTO ESCOLAR (17/11/2026)
+
+   "vou colocar os dados do cliente, cadastrado como escola, ele segue o
+   padrão de orçamento de escola. Em todos os itens a gente coloca o preço
+   de custo, a descrição do item, e na frente a porcentagem ... 100 de
+   custo, acrescenta 50%, vai pra 150 ... item por item. No final:
+   comissão, frete e imposto, e mostra o lucro. Frete do fornecedor até a
+   gente e da gente até o cliente."
+
+   Fretes, comissão (2%) e imposto (4%) SÓ diminuem o lucro — não entram
+   no preço que vai pra escola.
+
+   Os itens não são produtos da loja: vêm de uma lista própria, os
+   PRODUTOS DE ORÇAMENTO (STATE.produtosOrcamento: descrição, unidade e
+   custo), que vai se formando sozinha conforme ela orça. Assim, com o
+   tempo, ela não digita de novo.
+
+   Salva como um orçamento comum (mesmo formato dos itens: nome, qtd,
+   preço, custo), então aparece em Orçamentos lançados, no Orçamento 2,
+   no PDF de escola e no PDF assinado. Os percentuais e os fretes ficam em
+   o.escolar, pra reabrir e editar. Virar venda: combinado pra depois.
+   ========================================================= */
+const ORC_ESC_COMISSAO_PADRAO = 2;
+const ORC_ESC_IMPOSTO_PADRAO = 4;
+let ORC_ESC = null;
+
+function orcEscNovo(){
+  return {
+    id: null, numero: proximoNumeroOrcamento(), clienteId: '', data: todayISO(), validadeDias: 7,
+    vendedor: '', prazoEntrega: prazoEntregaPadrao(), responsavel: '', cargo: '', numeroPesquisa: '',
+    observacoes: '', itens: [], pctTodos: '',
+    freteFornecedor: 0, freteCliente: 0,
+    comissaoPct: ORC_ESC_COMISSAO_PADRAO, impostoPct: ORC_ESC_IMPOSTO_PADRAO
+  };
+}
+function orcEsc(){ if(!ORC_ESC) ORC_ESC = orcEscNovo(); return ORC_ESC; }
+
+const orcEscNum = (v)=>{ const n = parseFloat(String(v == null ? '' : v).replace(',', '.')); return isNaN(n) ? 0 : n; };
+const orcEscArred = (v)=>Math.round(v * 100) / 100;
+function orcEscVenda(it){ return orcEscArred(orcEscNum(it.custo) * (1 + orcEscNum(it.pct) / 100)); }
+
+function orcEscContas(e){
+  e = e || orcEsc();
+  let custo = 0, venda = 0;
+  e.itens.forEach(it=>{
+    custo += orcEscNum(it.custo) * orcEscNum(it.qtd);
+    venda += orcEscVenda(it) * orcEscNum(it.qtd);
+  });
+  const comissao = venda * orcEscNum(e.comissaoPct) / 100;
+  const imposto = venda * orcEscNum(e.impostoPct) / 100;
+  const fretes = orcEscNum(e.freteFornecedor) + orcEscNum(e.freteCliente);
+  const lucro = venda - custo - fretes - comissao - imposto;
+  return { custo, venda, comissao, imposto, fretes, lucro, margem: venda > 0 ? lucro / venda * 100 : 0 };
+}
+
+/* ---------- produtos de orçamento ---------- */
+function prodOrcLista(){ if(!Array.isArray(STATE.produtosOrcamento)) STATE.produtosOrcamento = []; return STATE.produtosOrcamento; }
+function prodOrcNorm(s){ return String(s || '').trim().replace(/\s+/g, ' ').toUpperCase(); }
+function prodOrcAchar(descricao){
+  const alvo = prodOrcNorm(descricao);
+  return alvo ? prodOrcLista().find(p=>prodOrcNorm(p.descricao) === alvo) || null : null;
+}
+/* guarda (ou atualiza o custo) — chamado ao salvar o orçamento */
+function prodOrcGuardar(descricao, unidade, custo){
+  const d = String(descricao || '').trim();
+  if(!d) return null;
+  let p = prodOrcAchar(d);
+  if(!p){
+    p = { id: uid('pord'), descricao: d, unidade: unidade || 'UN', custo: orcEscNum(custo), atualizadoEm: new Date().toISOString() };
+    prodOrcLista().push(p);
+  }else{
+    if(orcEscNum(custo) > 0) p.custo = orcEscNum(custo);
+    if(unidade) p.unidade = unidade;
+    p.atualizadoEm = new Date().toISOString();
+  }
+  return p;
+}
+
+/* ---------- a tela ---------- */
+function orcEscolarMontar(){
+  const corpo = document.querySelector('#orc-gaveta .orc-gaveta-corpo');
+  if(!corpo) return;
+  corpo.classList.add('orc-modo-escolar');
+  let alvo = document.getElementById('orc-escolar');
+  if(!alvo){
+    alvo = document.createElement('div');
+    alvo.id = 'orc-escolar';
+    const sel = document.getElementById('orc-seletor-modelo');
+    corpo.insertBefore(alvo, sel ? sel.nextSibling : corpo.firstChild);
+  }
+  orcEscDesenhar();
+}
+
+function orcEscDesenhar(){
+  const alvo = document.getElementById('orc-escolar');
+  if(!alvo) return;
+  preservandoRolagem(()=>{ alvo.innerHTML = orcEscHtml(); });
+}
+
+function orcEscHtml(){
+  const e = orcEsc();
+  const escolas = (STATE.clientes || []).filter(c=>tipoClienteDe(c) === 'Escola');
+  const lista = escolas.length ? escolas : (STATE.clientes || []);
+  const ordenados = [...lista].sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''), 'pt-BR'));
+  const c = orcEscContas(e);
+  const campo = (rotulo, html, extra) => `<div class="field" ${extra||''}><label>${rotulo}</label>${html}</div>`;
+  const att = (v)=>escapeAttr(v == null ? '' : String(v));
+
+  const linhas = e.itens.map((it, i)=>{
+    const venda = orcEscVenda(it);
+    return `<tr>
+      <td><input id="esc-d-${i}" type="text" value="${att(it.descricao)}" list="esc-produtos-lista" style="min-width:220px;width:100%;"
+            onchange="orcEscMudarItem(${i},'descricao',this.value)"></td>
+      <td><input id="esc-u-${i}" type="text" value="${att(it.unidade)}" style="width:56px;" onchange="orcEscMudarItem(${i},'unidade',this.value)"></td>
+      <td><input id="esc-q-${i}" type="number" min="0" step="1" value="${att(it.qtd)}" style="width:70px;" onchange="orcEscMudarItem(${i},'qtd',this.value)"></td>
+      <td><input id="esc-c-${i}" type="number" min="0" step="0.01" value="${att(it.custo)}" style="width:96px;" onchange="orcEscMudarItem(${i},'custo',this.value)"></td>
+      <td><input id="esc-p-${i}" type="number" step="0.1" value="${att(it.pct)}" style="width:72px;" onchange="orcEscMudarItem(${i},'pct',this.value)"></td>
+      <td><input id="esc-v-${i}" type="number" min="0" step="0.01" value="${venda ? venda.toFixed(2) : ''}" style="width:96px;"
+            title="Mudar a venda acerta o percentual" onchange="orcEscMudarVenda(${i},this.value)"></td>
+      <td class="num" style="white-space:nowrap;font-weight:600;">${fmtMoney(venda * orcEscNum(it.qtd))}</td>
+      <td><button type="button" class="btn btn-sm" title="Tirar o item" onclick="orcEscTirarItem(${i})">✕</button></td>
+    </tr>`;
+  }).join('');
+
+  const linhaFech = (rotulo, valorHtml, resultado, destaque) => `
+    <tr${destaque ? ' style="font-weight:700;font-size:15px;"' : ''}>
+      <td style="padding:6px 10px;">${rotulo}</td><td style="padding:6px 10px;">${valorHtml || ''}</td>
+      <td class="num" style="padding:6px 10px;white-space:nowrap;">${resultado}</td></tr>`;
+
+  return `
+    <datalist id="esc-produtos-lista">
+      ${prodOrcLista().slice().sort((a,b)=>String(a.descricao).localeCompare(String(b.descricao),'pt-BR'))
+        .map(p=>`<option value="${att(p.descricao)}">${fmtMoney(p.custo)}</option>`).join('')}
+    </datalist>
+
+    <div class="card">
+      <h3>🏫 1. Dados do orçamento escolar</h3>
+      <div class="form-grid">
+        ${campo('Nº do Orçamento <span class="req">*</span>', `<input type="number" id="esc-numero" min="1" step="1" value="${att(e.numero)}" onchange="orcEscCampo('numero',this.value)">`)}
+        ${campo('Escola <span class="req">*</span>', `<div style="display:flex;gap:6px;">
+            <select id="esc-cliente" style="flex:1;min-width:140px;" onchange="orcEscCampo('clienteId',this.value)">
+              <option value="">Selecione...</option>
+              ${ordenados.map(cl=>`<option value="${cl.id}" ${cl.id===e.clienteId?'selected':''}>${escapeHtml(cl.nome)}</option>`).join('')}
+            </select>
+            <button type="button" class="btn btn-sm" onclick="orcEscNovoCliente()" style="white-space:nowrap;">+ Nova</button></div>
+            ${escolas.length ? '' : '<div class="help-text">Nenhum cliente cadastrado como Escola ainda — mostrando todos.</div>'}`)}
+        ${campo('Data <span class="req">*</span>', `<input type="date" id="esc-data" value="${att(e.data)}" onchange="orcEscCampo('data',this.value)">`)}
+        ${campo('Validade (dias)', `<input type="number" id="esc-validade" min="1" step="1" value="${att(e.validadeDias)}" onchange="orcEscCampo('validadeDias',this.value)">`)}
+        ${campo('Vendedor / Comissionado <span class="req">*</span>', `<select id="esc-vendedor" onchange="orcEscCampo('vendedor',this.value)">${opcoesVendedorHtml(e.vendedor)}</select>`)}
+        ${campo('Responsável', `<input type="text" id="esc-responsavel" value="${att(e.responsavel)}" onchange="orcEscCampo('responsavel',this.value)">`)}
+        ${campo('Cargo', `<input type="text" id="esc-cargo" value="${att(e.cargo)}" onchange="orcEscCampo('cargo',this.value)">`)}
+        ${campo('Nº de pesquisa', `<input type="text" id="esc-pesquisa" value="${att(e.numeroPesquisa)}" onchange="orcEscCampo('numeroPesquisa',this.value)">`)}
+        ${campo('Prazo de entrega', `<input type="text" id="esc-prazo" value="${att(e.prazoEntrega)}" onchange="orcEscCampo('prazoEntrega',this.value)">`)}
+      </div>
+      <div class="field" style="margin-top:8px;"><label>Observações</label>
+        <textarea id="esc-obs" rows="2" onchange="orcEscCampo('observacoes',this.value)">${escapeHtml(e.observacoes||'')}</textarea></div>
+    </div>
+
+    <div class="card">
+      <h3>2. Itens <span class="hint">custo + percentual = preço de venda, item por item</span></h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+        <div class="field" style="margin:0;flex:3 1 260px;"><label>Descrição</label>
+          <input type="text" id="esc-novo-desc" list="esc-produtos-lista" placeholder="Digite — os já usados aparecem pra escolher"
+                 oninput="orcEscSugerirCusto()" onkeydown="if(event.key==='Enter'){event.preventDefault();orcEscAdicionar();}"></div>
+        <div class="field" style="margin:0;width:70px;"><label>Und.</label><input type="text" id="esc-novo-und" value="UN"></div>
+        <div class="field" style="margin:0;width:80px;"><label>Qtd</label><input type="number" id="esc-novo-qtd" min="0" step="1" value="1"></div>
+        <div class="field" style="margin:0;width:110px;"><label>Custo un. (R$)</label><input type="number" id="esc-novo-custo" min="0" step="0.01"></div>
+        <div class="field" style="margin:0;width:80px;"><label>%</label><input type="number" id="esc-novo-pct" step="0.1" value="${att(e.pctTodos)}"></div>
+        <button type="button" class="btn btn-primary" onclick="orcEscAdicionar()">+ Adicionar item</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        <span class="help-text" style="margin:0;">Aplicar</span>
+        <input type="number" id="esc-pct-todos" step="0.1" value="${att(e.pctTodos)}" style="width:80px;">
+        <span class="help-text" style="margin:0;">% em todos os itens</span>
+        <button type="button" class="btn btn-sm" onclick="orcEscAplicarTodos()">Aplicar</button>
+        <button type="button" class="btn btn-sm" style="margin-left:auto;" onclick="prodOrcAbrir()">📚 Produtos de orçamento (${prodOrcLista().length})</button>
+      </div>
+      ${e.itens.length === 0 ? '<p class="help-text" style="text-align:center;padding:14px 0;">Nenhum item ainda.</p>' : `
+      <div class="table-wrap"><table class="data-table">
+        <thead><tr><th>Descrição</th><th>Und.</th><th>Qtd</th><th>Custo un.</th><th>%</th><th>Venda un.</th><th class="num">Total</th><th></th></tr></thead>
+        <tbody>${linhas}</tbody>
+      </table></div>`}
+    </div>
+
+    <div class="card">
+      <h3>3. Fechamento <span class="hint">fretes, comissão e imposto só diminuem o lucro</span></h3>
+      <table style="width:100%;max-width:640px;border-collapse:collapse;font-size:14px;">
+        ${linhaFech('Total de venda (vai pra escola)', '', `<strong>${fmtMoney(c.venda)}</strong>`)}
+        ${linhaFech('Custo dos itens', '', '− ' + fmtMoney(c.custo))}
+        ${linhaFech('Frete do fornecedor até nós', `<input type="number" id="esc-frete-forn" min="0" step="0.01" value="${att(e.freteFornecedor || '')}" placeholder="0,00" style="width:110px;" onchange="orcEscCampo('freteFornecedor',this.value)">`, '− ' + fmtMoney(orcEscNum(e.freteFornecedor)))}
+        ${linhaFech('Frete de nós até o cliente', `<input type="number" id="esc-frete-cli" min="0" step="0.01" value="${att(e.freteCliente || '')}" placeholder="0,00" style="width:110px;" onchange="orcEscCampo('freteCliente',this.value)">`, '− ' + fmtMoney(orcEscNum(e.freteCliente)))}
+        ${linhaFech('Comissão', `<input type="number" id="esc-comissao" min="0" step="0.1" value="${att(e.comissaoPct)}" style="width:70px;" onchange="orcEscCampo('comissaoPct',this.value)"> %`, '− ' + fmtMoney(c.comissao))}
+        ${linhaFech('Imposto', `<input type="number" id="esc-imposto" min="0" step="0.1" value="${att(e.impostoPct)}" style="width:70px;" onchange="orcEscCampo('impostoPct',this.value)"> %`, '− ' + fmtMoney(c.imposto))}
+        <tr><td colspan="3" style="border-top:2px solid var(--primary);"></td></tr>
+        ${linhaFech('Lucro da venda', `<span class="help-text" style="margin:0;">margem ${fmtNum(orcEscArred(c.margem))}%</span>`,
+            `<span id="esc-lucro" style="color:${c.lucro < 0 ? 'var(--negative)' : 'var(--positive)'};">${fmtMoney(c.lucro)}</span>`, true)}
+      </table>
+      <div class="form-actions" style="margin-top:14px;">
+        ${e.id ? '<button type="button" class="btn" onclick="orcEscDescartar()">Cancelar edição</button>' : '<button type="button" class="btn" onclick="orcEscDescartar()">Limpar</button>'}
+        <button type="button" class="btn btn-primary" id="esc-salvar" onclick="orcEscSalvar()">${e.id ? 'Salvar alterações' : 'Salvar orçamento'}</button>
+      </div>
+    </div>`;
+}
+
+function orcEscCampo(campo, valor){
+  const e = orcEsc();
+  e[campo] = ['numero','validadeDias'].includes(campo) ? parseInt(valor, 10) || '' : valor;
+  /* escolheu a escola: traz o responsável que já tinha sido usado com ela */
+  if(campo === 'clienteId' && valor && !e.responsavel){
+    const ult = (STATE.orcamentos||[]).filter(o=>o.clienteId===valor && o.responsavel)
+      .sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')))[0];
+    if(ult){ e.responsavel = ult.responsavel; e.cargo = e.cargo || ult.cargoResponsavel || ''; }
+  }
+  if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId'].includes(campo)) orcEscDesenhar();
+}
+
+function orcEscSugerirCusto(){
+  const d = document.getElementById('esc-novo-desc');
+  const p = d ? prodOrcAchar(d.value) : null;
+  if(!p) return;
+  const c = document.getElementById('esc-novo-custo');
+  const u = document.getElementById('esc-novo-und');
+  if(c && !c.value) c.value = p.custo || '';
+  if(u && p.unidade) u.value = p.unidade;
+}
+
+function orcEscAdicionar(){
+  const e = orcEsc();
+  const desc = (document.getElementById('esc-novo-desc').value || '').trim();
+  if(!desc){ showToast('Escreva a descrição do item.', 'error'); return; }
+  const p = prodOrcAchar(desc);
+  const custoTxt = document.getElementById('esc-novo-custo').value;
+  const custo = custoTxt !== '' ? orcEscNum(custoTxt) : (p ? orcEscNum(p.custo) : 0);
+  if(!(custo > 0)){ showToast('Informe o custo do item.', 'error'); return; }
+  const pctTxt = document.getElementById('esc-novo-pct').value;
+  e.itens.push({
+    prodOrcId: p ? p.id : null,
+    descricao: p ? p.descricao : desc,
+    unidade: (document.getElementById('esc-novo-und').value || (p && p.unidade) || 'UN').trim().toUpperCase(),
+    qtd: orcEscNum(document.getElementById('esc-novo-qtd').value) || 1,
+    custo,
+    pct: pctTxt !== '' ? orcEscNum(pctTxt) : orcEscNum(e.pctTodos)
+  });
+  orcEscDesenhar();
+  setTimeout(()=>{ const d = document.getElementById('esc-novo-desc'); if(d) d.focus(); }, 30);
+}
+
+function orcEscMudarItem(i, campo, valor){
+  const it = orcEsc().itens[i];
+  if(!it) return;
+  if(campo === 'descricao'){
+    it.descricao = String(valor || '').trim();
+    const p = prodOrcAchar(it.descricao);
+    it.prodOrcId = p ? p.id : null;
+  }else if(campo === 'unidade'){
+    it.unidade = String(valor || '').trim().toUpperCase();
+  }else{
+    it[campo] = orcEscNum(valor);
+  }
+  orcEscDesenhar();
+}
+
+/* mudou a venda direto: acerta o percentual (pra ela poder arredondar o preço) */
+function orcEscMudarVenda(i, valor){
+  const it = orcEsc().itens[i];
+  if(!it) return;
+  const v = orcEscNum(valor), c = orcEscNum(it.custo);
+  if(c > 0 && v > 0) it.pct = Math.round(((v / c) - 1) * 100 * 10000) / 10000;
+  orcEscDesenhar();
+}
+
+function orcEscTirarItem(i){
+  orcEsc().itens.splice(i, 1);
+  orcEscDesenhar();
+}
+
+function orcEscAplicarTodos(){
+  const e = orcEsc();
+  const v = document.getElementById('esc-pct-todos').value;
+  if(v === ''){ showToast('Escreva o percentual.', 'error'); return; }
+  e.pctTodos = orcEscNum(v);
+  e.itens.forEach(it=>{ it.pct = e.pctTodos; });
+  orcEscDesenhar();
+  showToast(`${fmtNum(e.pctTodos)}% em todos os itens. Dá pra mudar item por item depois.`, 'success');
+}
+
+function orcEscNovoCliente(){
+  abrirFormCliente(null, (novo)=>{
+    if(novo){ orcEsc().clienteId = novo.id; }
+    orcEscDesenhar();
+  });
+}
+
+function orcEscDescartar(){
+  const editando = !!(ORC_ESC && ORC_ESC.id);
+  ORC_ESC = null;
+  if(editando){ orcFecharGaveta(); return; }
+  orcEscDesenhar();
+}
+
+function orcEscSalvar(){
+  const e = orcEsc();
+  const numero = parseInt(e.numero, 10);
+  if(isNaN(numero) || numero <= 0){ showToast('Informe o número do orçamento.', 'error'); return; }
+  if((STATE.orcamentos||[]).some(o=>o.numero === numero && o.id !== e.id)){
+    showToast(`Já existe um orçamento com o número ${numero} — escolha outro.`, 'error'); return;
+  }
+  if(!e.clienteId){ showToast('Escolha a escola.', 'error'); return; }
+  if(!e.vendedor){ showToast('Escolha o vendedor — todo orçamento precisa de um.', 'error'); return; }
+  if(!e.data){ showToast('Informe a data.', 'error'); return; }
+  if(!e.itens.length){ showToast('Adicione ao menos um item.', 'error'); return; }
+  const semCusto = e.itens.findIndex(it=>!(orcEscNum(it.custo) > 0) || !(orcEscNum(it.qtd) > 0) || !String(it.descricao||'').trim());
+  if(semCusto >= 0){ showToast(`O item ${semCusto + 1} está sem descrição, quantidade ou custo.`, 'error'); return; }
+
+  /* a lista de produtos de orçamento se forma sozinha */
+  e.itens.forEach(it=>{
+    const p = prodOrcGuardar(it.descricao, it.unidade, it.custo);
+    if(p) it.prodOrcId = p.id;
+  });
+
+  const itens = e.itens.map(it=>({
+    produtoId: null,
+    produtoOrcamentoId: it.prodOrcId || null,
+    nome: String(it.descricao).trim(),
+    unidade: it.unidade || 'UN',
+    qtd: orcEscNum(it.qtd),
+    precoUnit: orcEscVenda(it),
+    custoUnit: orcEscNum(it.custo)
+  }));
+  const escolar = {
+    itens: e.itens.map(it=>({ prodOrcId: it.prodOrcId || null, descricao: it.descricao, unidade: it.unidade, qtd: orcEscNum(it.qtd), custo: orcEscNum(it.custo), pct: orcEscNum(it.pct) })),
+    pctTodos: e.pctTodos,
+    freteFornecedor: orcEscNum(e.freteFornecedor), freteCliente: orcEscNum(e.freteCliente),
+    comissaoPct: orcEscNum(e.comissaoPct), impostoPct: orcEscNum(e.impostoPct),
+    lucro: orcEscArred(orcEscContas(e).lucro)
+  };
+  const dados = {
+    numero, clienteId: e.clienteId, data: e.data, validadeDias: parseInt(e.validadeDias, 10) || 7,
+    observacoes: String(e.observacoes || '').trim(), vendedor: e.vendedor,
+    prazoEntrega: String(e.prazoEntrega || '').trim(), numeroPesquisa: String(e.numeroPesquisa || '').trim(),
+    responsavel: String(e.responsavel || '').trim(), cargoResponsavel: String(e.cargo || '').trim(),
+    temComissao: orcEscNum(e.comissaoPct) > 0,
+    itens, escolar
+  };
+
+  if(e.id){
+    const o = STATE.orcamentos.find(x=>x.id === e.id);
+    if(!o){ showToast('Orçamento não encontrado.', 'error'); ORC_ESC = null; return; }
+    Object.assign(o, dados);
+    if(o.status === 'pre_venda' || o.status === 'rascunho') o.status = 'pendente';
+    showToast('Orçamento escolar atualizado.', 'success');
+  }else{
+    STATE.orcamentos.push(Object.assign({
+      id: uid('orc'), pagadorId: null, repassePct: null,
+      condicaoPagamento: 'vista', formaPagamento: 'vista',
+      status: 'pendente', criadoEm: new Date().toISOString()
+    }, dados));
+    showToast('Orçamento escolar salvo.', 'success');
+  }
+  saveState();
+  ORC_ESC = null;
+  renderOrcamentos();
+}
+
+/* reabrir um orçamento escolar pra editar */
+function orcEscEditar(id){
+  const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+  if(!o || !o.escolar) return false;
+  const s = o.escolar;
+  ORC_ESC = {
+    id: o.id, numero: o.numero, clienteId: o.clienteId, data: o.data, validadeDias: o.validadeDias || 7,
+    vendedor: o.vendedor || '', prazoEntrega: o.prazoEntrega || '', responsavel: o.responsavel || '',
+    cargo: o.cargoResponsavel || '', numeroPesquisa: o.numeroPesquisa || '', observacoes: o.observacoes || '',
+    itens: (s.itens || []).map(it=>({ ...it })), pctTodos: s.pctTodos != null ? s.pctTodos : '',
+    freteFornecedor: s.freteFornecedor || 0, freteCliente: s.freteCliente || 0,
+    comissaoPct: s.comissaoPct != null ? s.comissaoPct : ORC_ESC_COMISSAO_PADRAO,
+    impostoPct: s.impostoPct != null ? s.impostoPct : ORC_ESC_IMPOSTO_PADRAO
+  };
+  STATE.config.orcamentoModelo = 'escolar';
+  saveState();
+  renderOrcamentos();
+  orcAbrirGaveta('Editar orçamento escolar', 'Nº ' + o.numero);
+  return true;
+}
+
+/* ---------- a lista dos produtos de orçamento ---------- */
+let PROD_ORC_BUSCA = '';
+function prodOrcAbrir(){
+  document.getElementById('modal-prod-orc')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'modal-overlay open';
+  modal.id = 'modal-prod-orc';
+  modal.innerHTML = `<div class="modal-box modal-box-rapido" style="max-width:min(760px, 96vw);max-height:90vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho">
+        <div class="ic-rapido">📚</div>
+        <div><h3>Produtos de orçamento</h3>
+          <div class="sub">Só pro orçamento escolar — separado dos produtos da loja</div></div>
+        <button class="modal-rapido-fechar-x" onclick="prodOrcFechar()">✕</button>
+      </div>
+      <div class="modal-rapido-corpo" id="prod-orc-corpo"></div>
+    </div>`;
+  document.body.appendChild(modal);
+  prodOrcDesenhar();
+}
+function prodOrcFechar(){
+  document.getElementById('modal-prod-orc')?.remove();
+  if(document.getElementById('orc-escolar')) orcEscDesenhar();
+}
+function prodOrcDesenhar(){
+  const corpo = document.getElementById('prod-orc-corpo');
+  if(!corpo) return;
+  const t = prodOrcNorm(PROD_ORC_BUSCA);
+  const lista = prodOrcLista().filter(p=>!t || prodOrcNorm(p.descricao).includes(t))
+    .sort((a,b)=>String(a.descricao).localeCompare(String(b.descricao),'pt-BR'));
+  const att = (v)=>escapeAttr(v == null ? '' : String(v));
+  corpo.innerHTML = `
+    <p class="help-text" style="margin-top:0;">Os itens entram aqui sozinhos quando você salva um orçamento escolar, e o custo fica o último usado.
+      Também dá pra cadastrar e corrigir direto aqui.</p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px;">
+      <div class="field" style="margin:0;flex:3 1 240px;"><label>Descrição</label><input type="text" id="po-desc"></div>
+      <div class="field" style="margin:0;width:70px;"><label>Und.</label><input type="text" id="po-und" value="UN"></div>
+      <div class="field" style="margin:0;width:110px;"><label>Custo (R$)</label><input type="number" id="po-custo" min="0" step="0.01"></div>
+      <button type="button" class="btn btn-primary" onclick="prodOrcNovo()">+ Cadastrar</button>
+    </div>
+    <input type="text" id="po-busca" placeholder="🔍 Procurar" value="${att(PROD_ORC_BUSCA)}"
+      oninput="PROD_ORC_BUSCA=this.value; prodOrcDesenhar(); const b=document.getElementById('po-busca'); if(b){ b.focus(); b.setSelectionRange(b.value.length,b.value.length); }"
+      style="width:100%;margin-bottom:8px;">
+    ${lista.length === 0 ? `<p class="help-text" style="text-align:center;padding:12px 0;">${prodOrcLista().length ? 'Nada com esse nome.' : 'Nenhum produto ainda.'}</p>` : `
+    <div class="table-wrap" style="max-height:52vh;overflow:auto;"><table class="data-table">
+      <thead><tr><th>Descrição</th><th>Und.</th><th>Custo</th><th></th></tr></thead>
+      <tbody>${lista.map(p=>`<tr>
+        <td><input type="text" value="${att(p.descricao)}" style="width:100%;min-width:220px;" onchange="prodOrcEditar('${p.id}','descricao',this.value)"></td>
+        <td><input type="text" value="${att(p.unidade)}" style="width:56px;" onchange="prodOrcEditar('${p.id}','unidade',this.value)"></td>
+        <td><input type="number" min="0" step="0.01" value="${att(p.custo)}" style="width:100px;" onchange="prodOrcEditar('${p.id}','custo',this.value)"></td>
+        <td style="white-space:nowrap;">
+          ${document.getElementById('orc-escolar') ? `<button type="button" class="btn btn-sm" onclick="prodOrcUsar('${p.id}')">+ no orçamento</button>` : ''}
+          <button type="button" class="btn btn-sm btn-danger" title="Apagar da lista" onclick="prodOrcApagar('${p.id}')">🗑</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`}`;
+}
+function prodOrcNovo(){
+  const d = (document.getElementById('po-desc').value || '').trim();
+  if(!d){ showToast('Escreva a descrição.', 'error'); return; }
+  if(prodOrcAchar(d)){ showToast('Esse produto já está na lista.', 'error'); return; }
+  prodOrcGuardar(d, (document.getElementById('po-und').value || 'UN').trim().toUpperCase(), document.getElementById('po-custo').value);
+  saveState();
+  prodOrcDesenhar();
+}
+function prodOrcEditar(id, campo, valor){
+  const p = prodOrcLista().find(x=>x.id === id);
+  if(!p) return;
+  if(campo === 'custo') p.custo = orcEscNum(valor);
+  else if(campo === 'unidade') p.unidade = String(valor || '').trim().toUpperCase();
+  else{
+    const d = String(valor || '').trim();
+    if(!d){ showToast('A descrição não pode ficar vazia.', 'error'); prodOrcDesenhar(); return; }
+    const outro = prodOrcAchar(d);
+    if(outro && outro.id !== id){ showToast('Já existe outro produto com essa descrição.', 'error'); prodOrcDesenhar(); return; }
+    p.descricao = d;
+  }
+  p.atualizadoEm = new Date().toISOString();
+  saveState();
+}
+function prodOrcApagar(id){
+  const p = prodOrcLista().find(x=>x.id === id);
+  if(!p) return;
+  confirmAction('Apagar da lista?', `"${p.descricao}" sai da lista de produtos de orçamento. Os orçamentos já feitos não mudam.`, ()=>{
+    STATE.produtosOrcamento = prodOrcLista().filter(x=>x.id !== id);
+    saveState();
+    prodOrcDesenhar();
+  }, 'Apagar');
+}
+function prodOrcUsar(id){
+  const p = prodOrcLista().find(x=>x.id === id);
+  if(!p) return;
+  const e = orcEsc();
+  e.itens.push({ prodOrcId: p.id, descricao: p.descricao, unidade: p.unidade || 'UN', qtd: 1, custo: orcEscNum(p.custo), pct: orcEscNum(e.pctTodos) });
+  showToast(`"${p.descricao}" entrou no orçamento.`, 'success');
+  if(document.getElementById('orc-escolar')) orcEscDesenhar();
 }
 
 /* Os quatro números do dia, acima da lista de lançados. */
@@ -13920,6 +14609,7 @@ function orcAplicarEsteira(){
      aprovados, em entrega, vendas concluídas) contam a mesma coisa, e em
      cima da lista, que é onde ela olha. */
 
+  if(orcModelo() === 'escolar'){ orcEscolarMontar(); return; }
   if(orcModelo() === 'balcao'){ orcAplicarBalcao(box); return; }
   if(orcModelo() !== 'esteira') return;
 
@@ -15771,6 +16461,10 @@ function salvarOrcamento(){
 function editarOrcamento(id){
   const orcamento = STATE.orcamentos.find(o=>o.id===id);
   if(!orcamento) return;
+  /* orçamento escolar reabre na tela dele, com os percentuais e os fretes */
+  if(orcamento.escolar && orcEscEditar(id)) return;
+  /* clássico: se a gaveta estava no escolar, volta pro clássico */
+  if(orcModelo() === 'escolar'){ STATE.config.orcamentoModelo = 'classico'; saveState(); renderOrcamentos(); }
   orcamentoEmEdicaoId = id;
   carrinhoOrcamentoAtual = orcamento.itens.map(it=>({...it}));
 
@@ -49036,6 +49730,20 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-c',
+    data: '2026-11-17',
+    titulo: 'Orçamento escolar, e a câmera do Balanço lendo melhor',
+    itens: [
+      'NOVO ORÇAMENTO → "🏫 ORÇAMENTO ESCOLAR" (no lugar de Esteira e Balcão). Escolha a escola, e em cada item ponha a descrição, a quantidade, o CUSTO e o PERCENTUAL: custo 100 com 50% vira 150. Dá pra aplicar o mesmo % em todos e depois mudar item por item — ou mudar o preço de venda direto, que o % se acerta.',
+      'NO FECHAMENTO: frete do fornecedor até nós, frete de nós até a escola, comissão (2%) e imposto (4%). Eles só diminuem o LUCRO, que aparece no fim — o preço que vai pra escola não muda.',
+      'SALVA NOS ORÇAMENTOS LANÇADOS, com o PDF de escola (e o PDF assinado). Pra editar, é o mesmo ✏️ de sempre: ele reabre na tela escolar.',
+      '📚 PRODUTOS DE ORÇAMENTO: os itens que você usa ficam guardados com o último custo, numa lista separada dos produtos da loja. Na próxima vez, é só começar a digitar que ele aparece com o custo.',
+      'BALANÇO — A QUANTIDADE NÃO VOLTA MAIS PRA 1 depois de tirar a foto do produto.',
+      'BALANÇO — A CÂMERA LÊ MELHOR: lê o miolo da imagem com mais detalhe, também com o código de pé, e tem zoom e foco automático onde o celular deixa. Dica: de muito perto a câmera não foca — afaste uns 15 a 20 cm.',
+      'QUANDO A FOTO NÃO LER: ela fica parada na tela e aparece "🔢 Ler os números da foto" — o sistema lê os números impressos embaixo das barras, confere o dígito verificador e põe no campo, pra usar (OK) ou copiar (📋). Essa leitura precisa de internet na primeira vez.'
+    ]
+  },
+  {
     id: '2026-11-17-b',
     data: '2026-11-17',
     titulo: 'Orçamento assinado com o certificado digital',
@@ -61524,6 +62232,14 @@ function balLigarEventos(){
   }
 
   const qtd = document.getElementById('bal-qtd');
+  /* "bipei, coloquei 5, tirei a foto, e voltou pra 1" (17/11/2026): o que
+     ela digita ficava só no campo, e a tela redesenhada depois da foto
+     (ou do sincronismo) remontava o campo com o valor guardado, que era 1.
+     Agora cada número digitado já fica guardado. */
+  if(qtd) qtd.addEventListener('input', ()=>{
+    const n = Math.round(Number(qtd.value));
+    if(n > 0) balQtd = n;
+  });
   if(qtd) qtd.addEventListener('keydown', (e)=>{
     if(e.key === 'Enter'){ e.preventDefault(); balConfirmar(); }
     else if(e.key === 'Escape'){ balAtualChave = null; renderBalanco(); }
@@ -61657,6 +62373,7 @@ const ARMAZ_NOMES = {
   lembretes:'Lembretes', caixa:'Caixa', contasReceber:'Contas a receber',
   marcas:'Marcas', pagadores:'Pagadores de repasse', pagamentosRepasse:'Pagamentos de repasse',
   cobrancasRepasse:'Cobranças de repasse', anosArquivados:'Anos arquivados',
+  produtosOrcamento:'Produtos de orçamento (escolar)',
   valeFuncionarios:'Vales de funcionário', haveres:'Haver de clientes',
   haverClientes:'Haver de clientes',
   contasReceberManuais:'Contas a receber lançadas à mão',
@@ -61767,7 +62484,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 11:30';
+const SISTEMA_VERSAO = '17/11/2026 14:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
