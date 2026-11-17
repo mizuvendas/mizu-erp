@@ -29249,6 +29249,7 @@ function renderCardHaverCliente(l){
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
         <div style="font-size:12.5px;color:var(--ink-soft);">Total creditado: ${fmtMoney(totalCredito)} · Total abatido: ${fmtMoney(totalAbatido)}</div>
         <div style="display:flex;gap:6px;flex-wrap:wrap;">
+          <button class="btn btn-sm" title="Relatório pra mandar pro cliente: o que tinha de haver, o que já usou e quanto sobra" onclick="gerarRelatorioHaver('${haver.id}')">📄 Relatório</button>
           <button class="btn btn-sm" onclick="abrirModalLancamentoHaver('${haver.id}','credito')">+ Adicionar Crédito</button>
           <button class="btn btn-sm btn-primary" onclick="abrirModalLancamentoHaver('${haver.id}','abatimento')">− Abater (usar haver)</button>
           <button class="btn btn-sm btn-danger" title="Excluir haver deste cliente" onclick="excluirHaver('${haver.id}')">🗑️</button>
@@ -29267,6 +29268,111 @@ function renderCardHaverCliente(l){
       </div>`}
     </div>
   `;
+}
+
+/* "permita gerar relatório pra cada haver de cada cliente, onde ele
+   mostra o que tem de haver e o que já gastou" (17/11/2026)
+
+   É o extrato que vai pro cliente (o conselho escolar confere por ele):
+   o resumo no alto, e embaixo cada movimento em ordem de data, com o
+   saldo depois de cada um — assim ele bate linha por linha. */
+function relatorioHaverDados(haverId){
+  const haver = (STATE.haveres||[]).find(h=>h.id===haverId);
+  if(!haver) return null;
+  const cliente = (STATE.clientes||[]).find(c=>c.id===haver.clienteId);
+  const ordem = [...(haver.historico||[])].sort((a,b)=>
+    (a.data||'').localeCompare(b.data||'') || (a.criadoEm||'').localeCompare(b.criadoEm||''));
+  let saldo = 0;
+  const linhas = ordem.map(le=>{
+    const valor = Number(le.valor)||0;
+    const credito = le.tipo === 'credito';
+    saldo += credito ? valor : -valor;
+    return { data: le.data, credito, valor, obs: le.obs || '', saldo };
+  });
+  return { haver, cliente, linhas, ...calcularSaldoHaver(haver) };
+}
+
+function gerarRelatorioHaver(haverId){
+  const d = relatorioHaverDados(haverId);
+  if(!d){ showToast('Haver não encontrado.', 'error'); return; }
+  if(!d.linhas.length){ showToast('Este haver ainda não tem lançamentos.', 'error'); return; }
+  const nome = d.cliente ? d.cliente.nome : '(cliente removido)';
+  const doc = d.cliente ? (d.cliente.cnpj || d.cliente.cpf || d.cliente.documento || '') : '';
+
+  const linhasHtml = d.linhas.map(l=>`
+    <tr>
+      <td>${fmtDate(l.data)}</td>
+      <td>${l.credito ? '<span class="cr">Crédito</span>' : '<span class="us">Usado</span>'}</td>
+      <td>${escapeHtml(l.obs || '—')}</td>
+      <td class="n cr">${l.credito ? fmtMoney(l.valor) : ''}</td>
+      <td class="n us">${l.credito ? '' : fmtMoney(l.valor)}</td>
+      <td class="n"><strong>${fmtMoney(l.saldo)}</strong></td>
+    </tr>`).join('');
+
+  const janela = window.open('', '_blank');
+  if(!janela){ showToast('O navegador bloqueou a janela do relatório. Libere pop-ups pra este site.', 'error'); return; }
+  janela.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>Haver - ${escapeHtml(nome)}</title>
+      <style>
+        body{ font-family: Arial, sans-serif; color:#1a1a1a; padding:30px; }
+        .cabecalho{ display:flex; align-items:center; gap:16px; border-bottom:3px solid #6B3FA0; padding-bottom:14px; margin-bottom:16px; }
+        .cabecalho img{ width:64px; height:64px; object-fit:contain; border-radius:8px; }
+        .cabecalho h1{ font-size:18px; margin:0; color:#6B3FA0; }
+        .selo{ display:inline-block; background:#EDE4FA; color:#6B3FA0; font-size:11px; font-weight:bold; padding:3px 10px; border-radius:12px; margin-top:4px; }
+        .meta{ font-size:13px; color:#333; margin-bottom:14px; line-height:1.6; }
+        .resumo{ display:flex; gap:12px; margin-bottom:18px; }
+        .caixa{ flex:1; border:1px solid #ddd; border-radius:8px; padding:10px 12px; }
+        .caixa .r{ font-size:11px; color:#666; text-transform:uppercase; letter-spacing:.4px; }
+        .caixa .v{ font-size:19px; font-weight:bold; margin-top:3px; }
+        .caixa.saldo{ border-color:#6B3FA0; background:#F6F1FC; }
+        table{ width:100%; border-collapse:collapse; font-size:12px; }
+        th{ background:#6B3FA0; color:#fff; text-align:left; padding:8px; }
+        th.n, td.n{ text-align:right; white-space:nowrap; }
+        td{ padding:7px 8px; border-bottom:1px solid #ddd; }
+        .cr{ color:#1F7A4D; } .us{ color:#B3261E; }
+        tfoot td{ font-weight:bold; border-bottom:none; border-top:2px solid #6B3FA0; padding-top:9px; }
+        .rodape{ margin-top:16px; font-size:11px; color:#666; }
+        @media print{ body{ padding:12px; } }
+      </style>
+    </head>
+    <body>
+      <div class="cabecalho">
+        <img src="${getLogoMizuBase64()}" alt="Logo">
+        <div>
+          <h1>${DADOS_EMPRESA.nomeFantasia}</h1>
+          <div class="selo">💵 Extrato de Haver</div>
+        </div>
+      </div>
+
+      <div class="meta">
+        <strong>Cliente:</strong> ${escapeHtml(nome)}${doc ? ` · ${escapeHtml(doc)}` : ''}<br>
+        <strong>Emitido em:</strong> ${fmtDate(todayISO())}
+      </div>
+
+      <div class="resumo">
+        <div class="caixa"><div class="r">Total de haver</div><div class="v cr">${fmtMoney(d.totalCredito)}</div></div>
+        <div class="caixa"><div class="r">Já usado</div><div class="v us">${fmtMoney(d.totalAbatido)}</div></div>
+        <div class="caixa saldo"><div class="r">Saldo disponível</div><div class="v">${fmtMoney(d.saldo)}</div></div>
+      </div>
+
+      <table>
+        <thead><tr><th>Data</th><th>Movimento</th><th>Descrição</th><th class="n">Crédito</th><th class="n">Usado</th><th class="n">Saldo</th></tr></thead>
+        <tbody>${linhasHtml}</tbody>
+        <tfoot><tr><td colspan="3" style="text-align:right;">Totais</td>
+          <td class="n cr">${fmtMoney(d.totalCredito)}</td><td class="n us">${fmtMoney(d.totalAbatido)}</td>
+          <td class="n">${fmtMoney(d.saldo)}</td></tr></tfoot>
+      </table>
+
+      <div class="rodape">Saldo disponível para uso em novas compras: <strong>${fmtMoney(d.saldo)}</strong>.</div>
+      <scr` + `ipt>window.onload = () => window.print();</scr` + `ipt>
+    </body>
+    </html>
+  `);
+  janela.document.close();
 }
 
 function renderLinhaHistoricoHaver(haverId, le){
@@ -48586,6 +48692,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-a',
+    data: '2026-11-17',
+    titulo: 'Relatório do haver, e Balanço: comodato com "#", rolagem e fotos do celular',
+    itens: [
+      'HAVER: cada cliente tem agora o botão 📄 RELATÓRIO. Ele abre o extrato pra imprimir ou salvar em PDF e mandar pro cliente: quanto tinha de haver, quanto já usou e o saldo disponível, e embaixo cada movimento em ordem de data com o saldo depois de cada um.',
+      'COMODATO QUE ENTRAVA COMO MIZU: 23 itens da planilha da ECOVILLE vêm com "#" no lugar do código, e o balanço tratava os 23 como um item só. Só o primeiro ficava como comodato e os outros caíam como Mizu (o dispenser STREET da Nobre era um deles). Agora os 23 entram como comodato, e o que já foi contado neles como Mizu passa sozinho pro comodato.',
+      'ROLAGEM: cada foto que chegava da nuvem redesenhava a tela inteira, e a lista pulava pro topo enquanto você rolava. Agora a foto entra só no quadradinho dela e a lista fica parada.',
+      'FOTOS DO CELULAR: o computador só procurava a foto de cada item uma vez. Foto tirada depois no celular não aparecia sem recarregar a página. Agora ela desce sozinha assim que o sincronismo avisa, e foto trocada também se atualiza.'
+    ]
+  },
+  {
     id: '2026-11-16-i',
     data: '2026-11-16',
     titulo: 'Sugestão de Compra: caixa master por fornecedor e "não tem aqui"',
@@ -55656,7 +55773,7 @@ function vincVincular(linhaId, produtoId){
     return;
   }
 
-  const chaveAntiga = 'c:' + String(l.codigo || l.barras || '');
+  const chaveAntiga = confChaveLinha(l);
   l.produtoId = p.id;
   l.produtoIdEscolhido = p.id;
   l.produto = p;
@@ -55686,7 +55803,7 @@ function vincDesvincular(linhaId){
   l.produto = null;
   /* desfazendo, a contagem volta pra chave da planilha — só se a linha
      continuar fora do cadastro, senão ela ficaria órfã */
-  if(antiga) vincMigrarContagem(antiga, 'c:' + String(l.codigo || l.barras || ''));
+  if(antiga) vincMigrarContagem(antiga, confChaveLinha(l));
   confGuardarLinhas();
   saveState();
   balRecarregarCatalogo();
@@ -57045,8 +57162,65 @@ function confBalancoPraContagem(){
   return (typeof confBalancoDoRelatorio === 'function') ? confBalancoDoRelatorio() : null;
 }
 
+/* A CHAVE DE UMA LINHA DA PLANILHA.
+
+   "esse item tem na planilha com mesmo nome e mesmo código de barra, só
+   que ele não puxou como comodato" (17/11/2026)
+
+   A chave era o código da ECOVILLE. Só que 23 linhas da planilha vêm com
+   "#" no lugar do código, e as 23 viravam a MESMA chave ('c:#'): a
+   primeira ficava, as outras 22 sumiam do comodato. O código de barras
+   delas sobrava solto, o TOTVS pegava e o item entrava como Mizu.
+
+   Código que não tem nem letra nem número não é código: aí a chave é o
+   id da linha, que é só dela e é o mesmo em todos os aparelhos. */
+function confCodigoDeVerdade(c){ return /[A-Za-z0-9]/.test(String(c || '')); }
+function confChaveLinha(l){
+  if(!l) return 'c:';
+  if(confCodigoDeVerdade(l.codigo)) return 'c:' + String(l.codigo);
+  /* sem código nenhum: como sempre foi, pelo código de barras */
+  if(!l.codigo || !l.id) return 'c:' + String(l.barras || '');
+  return 'c:' + String(l.id);
+}
+
+/* O que já tinha sido contado, marcado ou fotografado na chave velha
+   ('c:#') era da PRIMEIRA linha com "#" — era ela que aparecia. Passa
+   pra chave nova dela, uma vez, sem perder nada. */
+let CONF_CHAVES_MIGRADAS = false;
+function confMigrarChavesSemCodigo(){
+  if(CONF_CHAVES_MIGRADAS || !CONF_LINHAS || !CONF_LINHAS.length) return;
+  CONF_CHAVES_MIGRADAS = true;
+  const primeira = {};
+  CONF_LINHAS.forEach(l=>{
+    if(confCodigoDeVerdade(l.codigo)) return;
+    const velha = 'c:' + String(l.codigo || l.barras || '');
+    if(!(velha in primeira)) primeira[velha] = l;
+  });
+  let mexeu = 0;
+  Object.keys(primeira).forEach(velha=>{
+    const l = primeira[velha];
+    const nova = confChaveLinha(l);
+    if(nova === velha) return;
+    mexeu += vincMigrarContagem(velha, nova);
+    const ap = STATE.codigosApelido || {};
+    Object.keys(ap).forEach(c=>{ if(ap[c] === velha){ ap[c] = nova; mexeu++; } });
+    /* a foto que ela tirou desse item */
+    try{
+      fotoIdb('get', velha).then(g=>{
+        if(!g) return;
+        return fotoIdb('put', nova, g).then(()=>fotoIdb('del', velha)).then(()=>{
+          FOTO_CACHE[nova] = g.recortada || g.original || null; delete FOTO_CACHE[velha];
+          fotoVersaoLocalGravar(nova, l.fotoV || Date.now()); fotoVersaoLocalGravar(velha, null);
+          fotoTirarDaFila(velha); fotoEnfileirar(nova);
+        });
+      }).catch(e=>console.warn('[fotos]', e));
+    }catch(e){}
+  });
+  if(mexeu) saveState();
+}
+
 function confChaveNoBalanco(l){
-  return l.produtoId ? ('p:' + l.produtoId) : ('c:' + String(l.codigo || l.barras || ''));
+  return l.produtoId ? ('p:' + l.produtoId) : confChaveLinha(l);
 }
 
 /* a contagem é a mesma pras 524 linhas — montar o mapa uma vez por
@@ -57866,14 +58040,15 @@ function balCatalogo(){
        código DELA, não o código de barras: a ECOVILLE repetiu o mesmo
        código de barras em dois produtos diferentes, e pela barra os
        dois virariam um só. */
-    const chave = 'c:' + String(l.codigo || l.barras || '');
+    const chave = confChaveLinha(l);
     if(itens.has(chave)) return;
     itens.set(chave, {
       chave,
       produtoId: null,
       linhaCodigo: String(l.codigo||''),
       nome: String(l.nomeEscolhido || l.nome || ''),
-      sku: String(l.codigo||''),
+      /* "#" não é código: não vira SKU quando o balanço fecha */
+      sku: confCodigoDeVerdade(l.codigo) ? String(l.codigo) : '',
       unidade: String(l.unidade||''),
       ncm: String(l.ncm||''),
       custo: Number(l.custo||0),
@@ -58034,8 +58209,33 @@ let balMsg = '';
 function balRecarregarCatalogo(){
   TOTVS_IX = null;   /* o índice do TOTVS é refeito junto, senão fica velho */
   TOTVS_IX_FORN = null;
+  confMigrarChavesSemCodigo();
   BAL_CAT = balCatalogo();
   BAL_IX = balIndice(BAL_CAT);
+  balResgatarContagemDoTotvs();
+}
+
+/* O dispenser que ela contou como Mizu (17/11/2026): antes da correção
+   do "#", a linha da planilha não existia pro balanço e o bipe caiu no
+   item do TOTVS ('t:57'). Agora a planilha toma esse código de barras e
+   o item do TOTVS some — e o que ela contou ficaria pendurado. Leva pra
+   onde o código de barras aponta hoje. */
+function balResgatarContagemDoTotvs(){
+  if(!BAL_CAT || !BAL_IX || !(STATE.balancoBipes||[]).length) return;
+  const orfas = new Set();
+  STATE.balancoBipes.forEach(x=>{
+    if(String(x.chave||'').startsWith('t:') && !BAL_CAT.has(x.chave)) orfas.add(x.chave);
+  });
+  if(!orfas.size) return;
+  let mexeu = 0;
+  orfas.forEach(chave=>{
+    const t = (typeof totvsCatalogo === 'function' ? totvsCatalogo() : [])
+      .find(z=>('t:' + z.idTotvs) === chave);
+    const d = t && String(t.barras||'').replace(/\D/g,'');
+    const destino = d ? (BAL_IX.get(d) || []) : [];
+    if(destino.length === 1) mexeu += vincMigrarContagem(chave, destino[0]);
+  });
+  if(mexeu) saveState();
 }
 
 function balItem(chave){
@@ -59550,8 +59750,38 @@ const FOTO_CACHE = {};
    É isto que ela pediu: bipar no celular e a foto aparecer. O aparelho
    não precisa ter baixado tudo antes — basta o cadastro dizer que a
    foto existe. Ela desce sozinha, uma só, e fica guardada aqui. */
-async function fotoCarregar(produtoId){
-  if(FOTO_CACHE[produtoId] !== undefined) return FOTO_CACHE[produtoId];
+/* "as fotos que tirei pelo celular não vieram pra cá" (17/11/2026)
+
+   O computador perguntava uma vez só por sessão. Se o item ainda não
+   tinha foto quando a tela abriu, a resposta "não tem" ficava guardada,
+   e a foto tirada depois no celular não aparecia nunca, nem com a marca
+   nova chegando pelo sincronismo. Agora a versão manda: se o cadastro diz
+   que existe uma foto mais nova do que a daqui, busca de novo. E pra não
+   bater na nuvem a cada desenho quando ela ainda não subiu do celular,
+   espera 30 segundos entre uma tentativa e outra. */
+const FOTO_TENTOU = {};
+function fotoDesatualizada(chave){
+  const vDono = fotoVersaoDoDono(chave);
+  if(vDono == null) return false;
+  const vAqui = fotoVersaoLocal(chave);
+  if(FOTO_CACHE[chave] && vAqui && vAqui >= vDono) return false;
+  if(FOTO_CACHE[chave] === undefined) return true;
+  const t = FOTO_TENTOU[chave];
+  /* versão nova chegou depois da última tentativa: busca na hora */
+  return !t || t.v !== vDono || (Date.now() - t.em) > 30000;
+}
+
+/* a mesma foto pedida por dois desenhos seguidos: um pedido só */
+const FOTO_CARREGANDO = {};
+function fotoCarregar(produtoId){
+  if(FOTO_CACHE[produtoId] !== undefined && !fotoDesatualizada(produtoId)) return Promise.resolve(FOTO_CACHE[produtoId]);
+  if(FOTO_CARREGANDO[produtoId]) return FOTO_CARREGANDO[produtoId];
+  const p = fotoCarregarAgora(produtoId).finally(()=>{ delete FOTO_CARREGANDO[produtoId]; });
+  FOTO_CARREGANDO[produtoId] = p;
+  return p;
+}
+
+async function fotoCarregarAgora(produtoId){
   let local = null;
   try{
     const g = await fotoIdb('get', produtoId);
@@ -59566,6 +59796,7 @@ async function fotoCarregar(produtoId){
 
   if(faltaOuVelha && fotoPodeNuvem() && !FOTO_BUSCANDO[produtoId]){
     FOTO_BUSCANDO[produtoId] = true;
+    FOTO_TENTOU[produtoId] = { em: Date.now(), v: vDono };
     try{
       const vinda = await fotoBaixarUma(produtoId);
       if(vinda) return (FOTO_CACHE[produtoId] = vinda);
@@ -59600,11 +59831,11 @@ function fotoDonoDaLinha(chave){
      sessão. No celular ela entra direto no Balanço — e aí a linha "não
      existia", a foto dela não era encontrada e o quadradinho ficava
      vazio. O estado guardado serve igual e está sempre lá. */
-  const naTela = (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave);
+  const naTela = (CONF_LINHAS||[]).find(l=>(confChaveLinha(l)) === chave);
   if(naTela) return naTela;
   try{
     return (typeof confLinhasDoEstado === 'function' ? confLinhasDoEstado() : [])
-      .find(l=>('c:' + String(l.codigo || l.barras || '')) === chave) || null;
+      .find(l=>(confChaveLinha(l)) === chave) || null;
   }catch(e){ return null; }
 }
 
@@ -59815,7 +60046,7 @@ function fotoFaltandoAqui(){
      que não faltava nada quando faltava tudo. */
   try{
     (typeof confLinhasDoEstado === 'function' ? confLinhasDoEstado() : []).forEach(l=>{
-      olhar('c:' + String(l.codigo || l.barras || ''));
+      olhar(confChaveLinha(l));
     });
   }catch(e){}
   /* produto que ainda só existe no TOTVS: a foto é do registro de lá,
@@ -60274,13 +60505,33 @@ function fotoMiniHtml(produtoId, lado, aoTerminar){
              font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);background:#fff;">📷</div>`;
   }
   const pronta = FOTO_CACHE[produtoId];
-  if(pronta){
+  const marca = `data-foto-mini="${escapeAttr(produtoId)}"`;
+  /* tem uma versão mais nova em outro aparelho? mostra a daqui e busca a nova */
+  const velha = fotoDesatualizada(produtoId);
+  if(pronta && !velha){
     return `<img src="${pronta}" alt="" ${abrir} title="Tocar pra trocar a foto"
       style="${comum}object-fit:contain;border:1px solid var(--border);background:#fff;">`;
   }
-  /* ainda não carregou do disco: pede e redesenha quando chegar */
-  fotoCarregar(produtoId).then(d=>{ if(d) rerenderTelaAtual(); });
-  return `<div ${abrir} style="${comum}border:1px dashed var(--border);display:flex;align-items:center;
+  /* "rolo pra baixo e ele volta pro topo" (17/11/2026)
+
+     Antes, cada foto que chegava redesenhava a TELA INTEIRA. No balanço,
+     com dezenas de fotos descendo da nuvem uma a uma, eram vários
+     redesenhos por segundo bem na hora que ela rolava. Agora a foto
+     entra só no quadradinho dela, e o resto da tela nem se mexe. */
+  fotoCarregar(produtoId).then(d=>{
+    if(!d || d === pronta) return;
+    document.querySelectorAll('[data-foto-mini]').forEach(el=>{
+      if(el.getAttribute('data-foto-mini') !== String(produtoId)) return;
+      const novo = document.createElement('div');
+      novo.innerHTML = fotoMiniHtml(produtoId, L, aoTerminar).trim();
+      if(novo.firstElementChild) el.replaceWith(novo.firstElementChild);
+    });
+  });
+  if(pronta){
+    return `<img src="${pronta}" alt="" ${abrir} ${marca} title="Tocar pra trocar a foto"
+      style="${comum}object-fit:contain;border:1px solid var(--border);background:#fff;">`;
+  }
+  return `<div ${abrir} ${marca} style="${comum}border:1px dashed var(--border);display:flex;align-items:center;
       justify-content:center;font-size:${Math.round(L*0.42)}px;color:var(--ink-faint);background:#fff;">📷</div>`;
 }
 
@@ -60376,7 +60627,7 @@ function balJuntarComProduto(chave, produtoId){
   const it = balItem(chave);
   const p = (STATE.produtos||[]).find(x=>x.id === produtoId);
   if(!it || !p) return;
-  const linha = (CONF_LINHAS||[]).find(l=>('c:' + String(l.codigo || l.barras || '')) === chave);
+  const linha = (CONF_LINHAS||[]).find(l=>(confChaveLinha(l)) === chave);
   if(!linha) return;
 
   confirmAction('É o mesmo produto?',
@@ -60490,7 +60741,7 @@ function balFornecedorAutomatico(chave){
   if(!s || !s.sozinho) return false;
   it.fornecedorEscolhido = s.nome;
   it.fornecedorSugerido = true;
-  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>(confChaveLinha(x)) === chave);
   if(l){ l.fornecedorEscolhido = s.nome; l.fornecedorSugerido = true; confGuardarLinhas(); }
   else if(it.produtoId){
     const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
@@ -60511,7 +60762,7 @@ function balTrocarFornecedor(chave){
   if(!it) return;
   it.fornecedorEscolhido = '';
   it.fornecedorSugerido = false;
-  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>(confChaveLinha(x)) === chave);
   if(l){ l.fornecedorEscolhido = null; l.fornecedorSugerido = false; confGuardarLinhas(); }
   if(it.produtoId){
     const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
@@ -60533,7 +60784,7 @@ function balAplicarFornecedor(chave, nome){
     saveState();
   }else{
     /* linha da planilha: guarda a escolha pra quando o produto nascer */
-    const l = (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === chave);
+    const l = (CONF_LINHAS||[]).find(x=>(confChaveLinha(x)) === chave);
     if(l){ l.fornecedorEscolhido = nome; confGuardarLinhas(); }
   }
   balRecarregarCatalogo();
@@ -60543,7 +60794,7 @@ function balAplicarFornecedor(chave, nome){
 
 function balFornecedorHtml(it){
   const s = balFornecedorSugerido(it);
-  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>('c:' + String(x.codigo || x.barras || '')) === it.chave);
+  const l = it.produtoId ? null : (CONF_LINHAS||[]).find(x=>(confChaveLinha(x)) === it.chave);
   const escolhido = String(it.fornecedorEscolhido||'').trim() || (l ? String(l.fornecedorEscolhido||'').trim() : '');
   if(escolhido){
     const sugerido = it.fornecedorSugerido || (l && l.fornecedorSugerido);
@@ -60573,7 +60824,7 @@ function balJuntarHtml(chave){
       <div class="help-text" style="margin:2px 0 7px;">Se for o mesmo, junte: o saldo da planilha vira comodato
         e o que passar dele é da Mizu.</div>
       ${daPlanilha.map(x=>`<button class="btn btn-sm" style="display:block;width:100%;text-align:left;margin-bottom:5px;"
-          onclick="balJuntarLinhaNoProduto('${escapeAttr('c:' + String(x.linha.codigo || x.linha.barras || ''))}','${escapeAttr(chave.slice(2))}')">
+          onclick="balJuntarLinhaNoProduto('${escapeAttr(confChaveLinha(x.linha))}','${escapeAttr(chave.slice(2))}')">
           é o mesmo: <strong>${escapeHtml(x.nome)}</strong>
           <span class="help-text">saldo ${fmtNum(x.linha.saldo)}${x.linha.barras ? ' · ' + escapeHtml(x.linha.barras) : ''}</span>
         </button>`).join('')}
@@ -61160,7 +61411,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '16/11/2026 20:00';
+const SISTEMA_VERSAO = '17/11/2026 10:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
