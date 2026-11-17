@@ -5406,24 +5406,91 @@ function gtinConfere(codigo){
 /* Do texto lido na foto, o número do código de barras. Os números vêm
    em grupos ("7 899682 730649"): junta a linha e procura, nela, um trecho
    que feche o dígito verificador. Prefere EAN-13, que é o dos produtos. */
+/* "está lendo números aleatórios, não o do código de barra" (17/11/2026).
+   Antes ele procurava QUALQUER trecho de 13 números que fechasse a conta,
+   inclusive juntando validade + preço + SAC: um em dez fecha por acaso, e
+   saía um código inventado. Agora só vale o número no DESENHO do código
+   de barras — 1+6+6 (7 896090 701230), os 13 juntos, 4+4 do código curto,
+   1+5+5+1 do UPC — e que feche o dígito verificador. Sem isso: nada. */
+/* Só o 1+6+6 vale no meio de outros números da linha (o desenho é
+   inconfundível). Os outros só valem sozinhos na linha: "1290 0800" do
+   preço com o SAC fecharia como código curto. 14 e 12 soltos ficaram de
+   fora — o CNPJ tem 14 e telefone com DDD chega a 12. */
+const LEITOR_FORMATOS = [
+  [13], [1, 6, 6], [1, 12], [7, 6], [1, 5, 5, 1], [1, 10, 1], [8], [4, 4]
+];
 function leitorNumeroDoTexto(texto){
-  const linhas = String(texto || '').split(/\n+/).map(l=>l.replace(/\D/g, '')).filter(l=>l.length >= 8);
-  const tudo = linhas.concat([String(texto || '').replace(/\D/g, '')]);
-  for(const tam of [13, 14, 12, 8]){
-    for(const l of tudo){
-      /* linha comprida é EAN-13/GTIN: um pedaço de 8 dela fecharia a conta
-         por acaso uma vez em dez, e viraria um código inventado */
-      if(tam === 8 && l.length > 9) continue;
-      if(tam !== 8 && l.length < 12) continue;
-      for(let i = 0; i + tam <= l.length; i++){
-        const pedaco = l.slice(i, i + tam);
-        if(gtinConfere(pedaco)) return { codigo: pedaco, confere: true };
+  const achados = [];
+  let quase = null;     /* no desenho 1+6+6, mas com um dígito mal lido */
+  for(const linha of String(texto || '').split(/\n+/)){
+    const grupos = linha.split(/[^0-9]+/).filter(Boolean);
+    for(const f of LEITOR_FORMATOS){
+      for(let i = 0; i + f.length <= grupos.length; i++){
+        if(!f.every((tam, k)=>grupos[i + k].length === tam)) continue;
+        const forte = f.length === 3 && f[1] === 6;
+        if(!forte && grupos.length !== f.length) continue;
+        const codigo = grupos.slice(i, i + f.length).join('');
+        if(gtinConfere(codigo)) achados.push(codigo);
+        else if(!quase && f.length === 3 && f[1] === 6) quase = codigo;
       }
     }
   }
-  const maior = tudo.slice().sort((a,b)=>b.length - a.length)[0] || '';
-  if(maior.length >= 8) return { codigo: maior.slice(0, 14), confere: false };
-  return null;
+  if(!achados.length) return quase ? { codigo: quase, confere: false } : null;
+  /* prefere o EAN-13, que é o dos produtos */
+  const ordem = c => ({13:0, 14:1, 12:2, 8:3})[c.length];
+  achados.sort((a, b)=>ordem(a) - ordem(b));
+  return { codigo: achados[0], confere: true };
+}
+
+/* Onde estão as barras na foto: a faixa com mais "liga-desliga" de claro
+   e escuro na horizontal. Os números do código ficam logo embaixo dela. */
+function leitorAcharBarras(canvas){
+  const W0 = canvas.width, H0 = canvas.height;
+  if(!W0 || !H0) return null;
+  const esc = Math.min(1, 900 / W0);
+  const w = Math.max(1, Math.round(W0 * esc)), h = Math.max(1, Math.round(H0 * esc));
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const g = c.getContext('2d', { willReadFrequently: true });
+  g.drawImage(canvas, 0, 0, w, h);
+  const d = g.getImageData(0, 0, w, h).data;
+  const cinza = new Uint8Array(w * h);
+  for(let i = 0; i < w * h; i++) cinza[i] = (d[i*4] * 77 + d[i*4+1] * 151 + d[i*4+2] * 28) >> 8;
+  /* borda vertical em (x,y): troca forte de claro pra escuro na linha */
+  const borda = new Uint8Array(w * h);
+  for(let y = 0; y < h; y++) for(let x = 1; x < w; x++){
+    if(Math.abs(cinza[y*w + x] - cinza[y*w + x - 1]) > 45) borda[y*w + x] = 1;
+  }
+  const temBorda = (x, y)=> y < h && (borda[y*w + x] || borda[y*w + x - 1] || (x + 1 < w && borda[y*w + x + 1]));
+  /* letra também tem muita troca, mas é baixinha. A barra é COMPRIDA:
+     a mesma borda continua um bom pedaço pra baixo. */
+  const s = Math.max(2, Math.round(h * 0.02));
+  const trocas = new Array(h).fill(0), xs = [];
+  for(let y = 0; y < h; y++){
+    const lx = [];
+    for(let x = 1; x < w; x++){
+      if(borda[y*w + x] && temBorda(x, y + s) && temBorda(x, y + 2 * s)){ trocas[y]++; lx.push(x); }
+    }
+    xs.push(lx);
+  }
+  const max = Math.max(...trocas);
+  if(max < 20) return null;
+  /* a faixa contínua com mais troca SOMADA: as barras são altas, uma
+     linha de letras é fina */
+  let melhor = null, ini = -1, soma = 0, melhorSoma = 0;
+  for(let y = 0; y <= h; y++){
+    const forte = y < h && trocas[y] >= max * 0.35;
+    if(forte){ if(ini < 0){ ini = y; soma = 0; } soma += trocas[y]; }
+    if(!forte && ini >= 0){
+      if(soma > melhorSoma){ melhorSoma = soma; melhor = [ini, y]; }
+      ini = -1;
+    }
+  }
+  if(!melhor || melhor[1] - melhor[0] < 3) return null;
+  const todos = [];
+  for(let y = melhor[0]; y < melhor[1]; y++) todos.push(...xs[y]);
+  todos.sort((a, b)=>a - b);
+  const x1 = todos[Math.floor(todos.length * 0.03)], x2 = todos[Math.floor(todos.length * 0.97)];
+  return { x: x1 / esc, y: melhor[0] / esc, w: (x2 - x1) / esc, h: (melhor[1] - melhor[0] + 2 * s) / esc };   /* + o pedaço que a conta olhou pra baixo */
 }
 
 /* OCR dos números da foto (tesseract.js, livre). Carrega só quando ela
@@ -5446,22 +5513,40 @@ async function leitorOcrNumeros(canvas){
     })().catch(e=>{ LEITOR_OCR = null; throw e; });
   }
   const w = await LEITOR_OCR;
-  /* a foto inteira e, se não achar, a metade de baixo ampliada (é onde os
-     números costumam estar) */
-  const r1 = await w.recognize(canvas);
-  let achado = leitorNumeroDoTexto(r1 && r1.data && r1.data.text);
-  if(achado && achado.confere) return achado;
-  try{
-    const c = document.createElement('canvas');
+  const ler = async (fonte, umaLinha)=>{
+    try{
+      await w.setParameters({ tessedit_pageseg_mode: umaLinha ? '7' : '3' });
+      const r = await w.recognize(fonte);
+      return leitorNumeroDoTexto(r && r.data && r.data.text);
+    }catch(e){ return null; }
+  };
+  const pedaco = (sx, sy, sw, sh, largura)=>{
     const W = canvas.width, H = canvas.height;
-    c.width = W * 1.6; c.height = H * 0.6 * 1.6;
+    sx = Math.max(0, sx); sy = Math.max(0, sy);
+    sw = Math.min(W - sx, sw); sh = Math.min(H - sy, sh);
+    if(sw < 10 || sh < 5) return null;
+    const esc = Math.min(4, largura / sw);
+    const c = document.createElement('canvas');
+    c.width = Math.round(sw * esc); c.height = Math.round(sh * esc);
     const g = c.getContext('2d'); g.imageSmoothingEnabled = true;
-    g.drawImage(canvas, 0, H * 0.4, W, H * 0.6, 0, 0, c.width, c.height);
-    const r2 = await w.recognize(c);
-    const outro = leitorNumeroDoTexto(r2 && r2.data && r2.data.text);
-    if(outro && (outro.confere || !achado)) achado = outro;
-  }catch(e){}
-  return achado;
+    g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height);
+    g.drawImage(canvas, sx, sy, sw, sh, 0, 0, c.width, c.height);
+    return c;
+  };
+  /* 1º: a faixa logo embaixo das barras, que é onde fica o número */
+  const b = leitorAcharBarras(canvas);
+  if(b){
+    const faixa = pedaco(b.x - b.w * 0.16, b.y + b.h * 0.7, b.w * 1.24, b.h * 0.75, 1100);
+    if(faixa){ const a = await ler(faixa, true); if(a) return a; }
+    const bloco = pedaco(b.x - b.w * 0.2, b.y - b.h * 0.1, b.w * 1.4, b.h * 1.9, 1100);
+    if(bloco){ const a = await ler(bloco, false); if(a) return a; }
+  }
+  /* 2º: a foto inteira, e a metade de baixo ampliada */
+  let a = await ler(canvas, false);
+  if(a) return a;
+  const baixo = pedaco(0, canvas.height * 0.4, canvas.width, canvas.height * 0.6, canvas.width * 1.6);
+  if(baixo) a = await ler(baixo, false);
+  return a;
 }
 
 // Liga um botão "📍 Localizar no mapa" a um par de campos de input já
@@ -49763,6 +49848,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-e',
+    data: '2026-11-17',
+    titulo: 'Câmera: "Ler os números da foto" pega só o número do código',
+    itens: [
+      'O "🔢 LER OS NÚMEROS DA FOTO" juntava números de qualquer lugar da embalagem (validade, preço, SAC, CNPJ) e às vezes eles formavam um código por acaso — saía um número que não era o do produto.',
+      'AGORA ele procura as barras na foto e lê a faixa logo embaixo delas, e só aceita o número no desenho do código de barras (ex.: 7 896090 701230) com o dígito verificador conferindo.',
+      'SE NÃO ACHAR, ele avisa que não conseguiu, em vez de inventar um número. Aí é só digitar os números de baixo das barras.'
+    ]
+  },
+  {
     id: '2026-11-17-d',
     data: '2026-11-17',
     titulo: 'Logística: o roteiro sai da loja · Balanço: as fotos aparecem no ícone',
@@ -62590,7 +62685,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 15:30';
+const SISTEMA_VERSAO = '17/11/2026 17:10';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
