@@ -13007,10 +13007,13 @@ function orcEscHtml(){
         <div class="field" style="margin:0;flex:3 1 260px;"><label>Descrição</label>
           <input type="text" id="esc-novo-desc" list="esc-produtos-lista" placeholder="Digite — os já usados aparecem pra escolher"
                  oninput="orcEscSugerirCusto()" onkeydown="if(event.key==='Enter'){event.preventDefault();orcEscAdicionar();}"></div>
-        <div class="field" style="margin:0;width:70px;"><label>Und.</label><input type="text" id="esc-novo-und" value="UN"></div>
-        <div class="field" style="margin:0;width:80px;"><label>Qtd</label><input type="number" id="esc-novo-qtd" min="0" step="1" value="1"></div>
-        <div class="field" style="margin:0;width:110px;"><label>Custo un. (R$)</label><input type="number" id="esc-novo-custo" min="0" step="0.01"></div>
-        <div class="field" style="margin:0;width:80px;"><label>%</label><input type="number" id="esc-novo-pct" step="0.1" value="${att(e.pctTodos)}"></div>
+        <!-- "digitei, dei tab, quantidade, tab, custo, e quando aperto Enter
+             ele já vai pra baixo" (17/11/2026): Enter em qualquer campo
+             adiciona. O % pode ficar vazio e ser posto no fim. -->
+        <div class="field" style="margin:0;width:70px;"><label>Und.</label><input type="text" id="esc-novo-und" value="UN" onkeydown="orcEscEnter(event)"></div>
+        <div class="field" style="margin:0;width:80px;"><label>Qtd</label><input type="number" id="esc-novo-qtd" min="0" step="1" value="1" onkeydown="orcEscEnter(event)"></div>
+        <div class="field" style="margin:0;width:110px;"><label>Custo un. (R$)</label><input type="number" id="esc-novo-custo" min="0" step="0.01" onkeydown="orcEscEnter(event)"></div>
+        <div class="field" style="margin:0;width:80px;"><label>% <span style="font-weight:400;color:var(--ink-faint);">(depois)</span></label><input type="number" id="esc-novo-pct" step="0.1" value="${att(e.pctTodos)}" placeholder="—" onkeydown="orcEscEnter(event)"></div>
         <button type="button" class="btn btn-primary" onclick="orcEscAdicionar()">+ Adicionar item</button>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
@@ -13057,6 +13060,10 @@ function orcEscCampo(campo, valor){
     if(ult){ e.responsavel = ult.responsavel; e.cargo = e.cargo || ult.cargoResponsavel || ''; }
   }
   if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId'].includes(campo)) orcEscDesenhar();
+}
+
+function orcEscEnter(ev){
+  if(ev && ev.key === 'Enter'){ ev.preventDefault(); orcEscAdicionar(); }
 }
 
 function orcEscSugerirCusto(){
@@ -20989,6 +20996,20 @@ function copiarRoteiroWhatsApp(){
   });
 }
 
+/* Os km do trajeto. Com a loja no começo e no fim, a última perna é a
+   volta: mostra a ida (loja até a última parada) e o total com a volta. */
+function roteiroTextoKm(rota, comLoja){
+  const total = (Number(rota && rota.distance) || 0) / 1000;
+  const pernas = (rota && rota.legs) || [];
+  if(!comLoja){
+    return `Trajeto seguindo as ruas — aproximadamente ${total.toFixed(1)} km. `
+      + '(Marque o endereço da loja em "Ponto de partida" pra contar a saída e a volta.)';
+  }
+  const volta = pernas.length ? (Number(pernas[pernas.length - 1].distance) || 0) / 1000 : 0;
+  const ida = total - volta;
+  return `Saindo da loja até a última parada: ~${ida.toFixed(1)} km · com a volta pra loja: ~${total.toFixed(1)} km no total.`;
+}
+
 function abrirMapaRoteiro(){
   const { roteiro } = calcularRoteiro();
   const comCoordenada = roteiro.filter(p=>p.lat!=null && p.lng!=null);
@@ -21046,7 +21067,20 @@ function abrirMapaRoteiro(){
       L.control.layers({ 'Mapa': camadaRuas, 'Satélite': camadaSatelite }).addTo(mapa);
 
       const pontosLatLng = comCoordenada.map(p=>[p.lat, p.lng]);
-      mapa.fitBounds(pontosLatLng, { padding: [30,30] });
+      /* "não está fazendo a conta contando com o nosso endereço de saída"
+         (17/11/2026). A ordem das paradas já partia da loja, mas o mapa
+         desenhava (e somava os km) só entre as paradas. Agora o trajeto
+         sai da loja, passa pelas paradas e volta pra ela. */
+      const temLoja = STATE.config && STATE.config.lojaLat != null && STATE.config.lojaLng != null;
+      const loja = temLoja ? [Number(STATE.config.lojaLat), Number(STATE.config.lojaLng)] : null;
+      const trajeto = loja ? [loja].concat(pontosLatLng, [loja]) : pontosLatLng;
+      mapa.fitBounds(loja ? pontosLatLng.concat([loja]) : pontosLatLng, { padding: [30,30] });
+      if(loja){
+        L.marker(loja, { icon: L.divIcon({ className: '',
+          html: '<div style="background:#1B4B5A;color:#fff;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:17px;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">🏠</div>',
+          iconSize: [32,32], iconAnchor: [16,16] }) })
+          .addTo(mapa).bindPopup('<strong>Loja — ponto de partida</strong><br>' + escapeHtml(STATE.config.lojaEndereco || ''));
+      }
 
       // um pino numerado por parada, na ordem real do roteiro (o número no
       // pino é a posição na lista COMPLETA do roteiro, coleta e entrega
@@ -21121,16 +21155,16 @@ function abrirMapaRoteiro(){
       // linha reta entre as paradas — desenhada IMEDIATAMENTE, pra sempre
       // ter alguma linha visível mesmo se a busca de rota real (abaixo)
       // falhar ou demorar (sem internet, serviço fora do ar, etc.)
-      const linhaReta = L.polyline(pontosLatLng, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
+      const linhaReta = L.polyline(trajeto, { color:'#1B4B5A', weight:3, opacity:0.7, dashArray:'6,6' }).addTo(mapa);
 
       // tenta buscar uma rota seguindo ruas de verdade (OSRM, serviço
       // público gratuito) — se conseguir, troca a linha reta por essa;
       // se falhar por qualquer motivo, a linha reta tracejada continua
       // valendo, então o roteiro nunca fica sem uma linha visual.
-      if(pontosLatLng.length>=2){
+      if(trajeto.length>=2){
         const statusEl = document.getElementById('mapa-roteiro-status');
         statusEl.textContent = 'Calculando trajeto seguindo as ruas...';
-        const coordsOsrm = pontosLatLng.map(([lat,lng])=>`${lng},${lat}`).join(';');
+        const coordsOsrm = trajeto.map(([lat,lng])=>`${lng},${lat}`).join(';');
         fetch(`https://router.project-osrm.org/route/v1/driving/${coordsOsrm}?overview=full&geometries=geojson`)
           .then(r=>r.ok?r.json():Promise.reject(new Error('Falha na busca de rota')))
           .then(dados=>{
@@ -21138,8 +21172,7 @@ function abrirMapaRoteiro(){
             const coordsRota = dados.routes[0].geometry.coordinates.map(([lng,lat])=>[lat,lng]);
             mapa.removeLayer(linhaReta);
             L.polyline(coordsRota, { color:'#1B4B5A', weight:4, opacity:0.8 }).addTo(mapa);
-            const km = (dados.routes[0].distance/1000).toFixed(1);
-            statusEl.textContent = `Trajeto seguindo as ruas — aproximadamente ${km} km.`;
+            statusEl.textContent = roteiroTextoKm(dados.routes[0], !!loja);
           })
           .catch(()=>{
             statusEl.textContent = 'Não foi possível calcular o trajeto seguindo as ruas agora — mostrando linha reta entre as paradas.';
@@ -49730,12 +49763,24 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-d',
+    data: '2026-11-17',
+    titulo: 'Logística: o roteiro sai da loja · Balanço: as fotos aparecem no ícone',
+    itens: [
+      'BALANÇO — FOTO QUE NÃO APARECIA NO ÍCONE PEQUENO (como o Spartan): a foto estava no aparelho, mas a marca "tem foto" tinha se perdido no sincronismo. Agora, ao abrir o Balanço, o aparelho que tem a foto refaz a marca sozinho e sobe a foto de novo.',
+      'FOTO TIRADA NO CELULAR: abra o Balanço NO CELULAR uma vez (com internet) — é ele que tem as fotos e vai avisar o computador. Depois, no computador, elas aparecem sem precisar recarregar. Item que só existe no TOTVS também passa a ter a foto guardada.',
+      'NO "ROTEIRO NO MAPA", o trajeto agora começa na LOJA (🏠, o endereço do Ponto de partida), passa pelas paradas e volta pra loja. Antes ele ligava só as paradas e os km ficavam faltando.',
+      'OS KM aparecem em dois números: saindo da loja até a última parada, e o total com a volta pra loja.'
+    ]
+  },
+  {
     id: '2026-11-17-c',
     data: '2026-11-17',
     titulo: 'Orçamento escolar, e a câmera do Balanço lendo melhor',
     itens: [
       'NOVO ORÇAMENTO → "🏫 ORÇAMENTO ESCOLAR" (no lugar de Esteira e Balcão). Escolha a escola, e em cada item ponha a descrição, a quantidade, o CUSTO e o PERCENTUAL: custo 100 com 50% vira 150. Dá pra aplicar o mesmo % em todos e depois mudar item por item — ou mudar o preço de venda direto, que o % se acerta.',
       'NO FECHAMENTO: frete do fornecedor até nós, frete de nós até a escola, comissão (2%) e imposto (4%). Eles só diminuem o LUCRO, que aparece no fim — o preço que vai pra escola não muda.',
+      'DIGITAÇÃO RÁPIDA: descrição, Tab, unidade, Tab, quantidade, Tab, custo e ENTER — o item já desce pra tabela e o cursor volta pra descrição do próximo. O % pode ficar vazio e ser posto no fim.',
       'SALVA NOS ORÇAMENTOS LANÇADOS, com o PDF de escola (e o PDF assinado). Pra editar, é o mesmo ✏️ de sempre: ele reabre na tela escolar.',
       '📚 PRODUTOS DE ORÇAMENTO: os itens que você usa ficam guardados com o último custo, numa lista separada dos produtos da loja. Na próxima vez, é só começar a digitar que ele aparece com o custo.',
       'BALANÇO — A QUANTIDADE NÃO VOLTA MAIS PRA 1 depois de tirar a foto do produto.',
@@ -60916,45 +60961,104 @@ function fotoDonoDaLinha(chave){
    na gaveta. Versão de fora diferente da daqui = tem foto nova lá, vou
    buscar. É o que faz a foto tirada no celular aparecer no computador,
    e a do computador aparecer no celular. */
+/* "o Spartan tem a foto, só que não mostra no ícone pequeno; e outros
+   itens eu tirei a foto pelo celular e não aparece aqui" (17/11/2026)
+
+   QUEM GUARDA A MARCA "TEM FOTO". Eram três buracos:
+   - a linha da planilha tem DUAS cópias: a da tela (CONF_LINHAS) e a
+     guardada (STATE.conferenciaLinhas), que é a que viaja. A marca que
+     chegava pelo sincronismo ia só pra guardada, e a tela, que lia a
+     outra, só via depois de recarregar a página;
+   - item que só existe no TOTVS ('t:...') não tinha onde guardar a marca:
+     a foto ficava no aparelho e nenhum outro sabia dela;
+   - a marca podia ser sobrescrita por uma cópia antiga vinda de outro
+     aparelho — a foto continuava aqui, mas sem marca o ícone ficava vazio
+     e o outro aparelho nem ia buscar (ver fotoCurarMarcas).
+   Agora a marca vale se estiver em QUALQUER cópia, e é gravada em todas. */
+function fotoDonos(chave){
+  const p = (STATE.produtos||[]).find(x=>x.id === chave);
+  if(p) return [p];
+  const out = [];
+  const l = fotoDonoDaLinha(chave);
+  if(l) out.push(l);
+  if(String(chave).startsWith('c:')){
+    try{
+      const g = confLinhasDoEstado().find(x=>confChaveLinha(x) === chave);
+      if(g && out.indexOf(g) < 0) out.push(g);
+    }catch(e){}
+  }
+  if(String(chave).startsWith('t:')){
+    try{
+      const t = totvsCatalogo().find(x=>x && ('t:' + String(x.idTotvs != null ? x.idTotvs : String(x.id||'').slice(1))) === chave);
+      if(t) out.push(t);
+    }catch(e){}
+  }
+  return out;
+}
+
 function fotoMarcarDono(chave, tem, versao){
   const v = tem ? (versao || Date.now()) : null;
-  const p = (STATE.produtos||[]).find(x=>x.id === chave);
-  if(p){
-    if(tem){ p.temFoto = true; p.fotoV = v; if(p.mostrarFoto === undefined) p.mostrarFoto = true; }
-    else { delete p.temFoto; delete p.mostrarFoto; delete p.fotoV; }
-    saveState();
-    return v;
-  }
-  const l = fotoDonoDaLinha(chave);
-  if(l){
-    if(tem){ l.temFoto = true; l.fotoV = v; } else { delete l.temFoto; delete l.fotoV; }
-    if(typeof confGuardarLinhas === 'function') confGuardarLinhas();
-    saveState();
-  }
+  const donos = fotoDonos(chave);
+  donos.forEach(d=>{
+    if(tem){
+      d.temFoto = true; d.fotoV = v;
+      if(d === (STATE.produtos||[]).find(x=>x.id === chave) && d.mostrarFoto === undefined) d.mostrarFoto = true;
+    }else{ delete d.temFoto; delete d.fotoV; if('mostrarFoto' in d) delete d.mostrarFoto; }
+  });
+  if(donos.length) saveState();
   return v;
 }
 
-/* a versão que o cadastro (que viaja) diz existir */
+/* a versão que o cadastro (que viaja) diz existir — a mais nova das cópias */
 function fotoVersaoDoDono(chave){
-  const p = (STATE.produtos||[]).find(x=>x.id === chave);
-  if(p) return p.temFoto ? (p.fotoV || 0) : null;
-  const l = fotoDonoDaLinha(chave);
-  if(l && l.temFoto) return l.fotoV || 0;
-  return null;
+  let v = null;
+  fotoDonos(chave).forEach(d=>{ if(d.temFoto){ const n = Number(d.fotoV) || 0; if(v === null || n > v) v = n; } });
+  return v;
 }
 
 function fotoTemDono(chave){
-  const p = (STATE.produtos||[]).find(x=>x.id === chave);
-  if(p) return !!p.temFoto;
-  const l = fotoDonoDaLinha(chave);
-  return !!(l && l.temFoto);
+  return fotoDonos(chave).some(d=>d.temFoto);
+}
+
+/* A FOTO ESTÁ AQUI, MAS A MARCA SUMIU: refaz a marca e sobe de novo.
+   Roda quando o Balanço abre. Assim o aparelho que tirou a foto
+   (o celular) avisa os outros de novo, sozinho. */
+let FOTO_CURADO = false;
+async function fotoCurarMarcas(){
+  if(FOTO_CURADO) return 0;
+  FOTO_CURADO = true;
+  let feitos = 0;
+  try{
+    const chaves = await fotoIdb('chaves');
+    (chaves || []).forEach(ch=>{
+      const k = String(ch);
+      if(fotoTemDono(k) || !fotoDonos(k).length) return;
+      const v = fotoVersaoLocal(k) || Date.now();
+      fotoMarcarDono(k, true, v);
+      fotoVersaoLocalGravar(k, v);
+      fotoEnfileirar(k);
+      delete FOTO_CACHE[k];
+      feitos++;
+    });
+  }catch(e){ console.warn('[fotos]', e); }
+  if(feitos){
+    saveState();
+    try{ fotoSincronizar(); }catch(e){}
+    try{ const pag = document.getElementById('page-balanco'); if(pag && pag.classList.contains('active')) renderBalanco(); }catch(e){}
+  }
+  return feitos;
 }
 
 function fotoNomeDoDono(chave){
   const p = (STATE.produtos||[]).find(x=>x.id === chave);
   if(p) return p.nome;
   const l = fotoDonoDaLinha(chave);
-  return l ? (l.nomeEscolhido || l.nome) : '';
+  if(l) return l.nomeEscolhido || l.nome || '';
+  /* item que só existe no TOTVS */
+  const t = fotoDonos(chave).find(d=>d && d.idTotvs != null);
+  if(t) return t.nome || '';
+  try{ const it = (typeof balItem === 'function') ? balItem(chave) : null; if(it) return it.nome || ''; }catch(e){}
+  return '';
 }
 
 async function fotoGuardar(produtoId, dados){
@@ -62265,6 +62369,8 @@ function balLigarEventos(){
 
 RENDERERS['balanco'] = function(){
   balVigiarTamanhoDaTela();
+  /* foto que está no aparelho mas perdeu a marca: refaz e sobe de novo */
+  setTimeout(()=>{ try{ fotoCurarMarcas(); }catch(e){} }, 600);
   /* a planilha do comodato vive no IndexedDB: sem ela o catálogo sai
      só com os produtos da loja, e a conta do comodato não existiria */
   if(!CONF_LINHAS){
@@ -62484,7 +62590,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 14:00';
+const SISTEMA_VERSAO = '17/11/2026 15:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
