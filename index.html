@@ -17615,7 +17615,8 @@ function orcHtmlParaAssinar(html, imagemAssinatura){
   /* o marcador é invisível (branco, minúsculo): o servidor acha ele no
      PDF e põe o carimbo ali */
   const marca = doc.createElement('div');
-  marca.innerHTML = '<div style="color:#ffffff;font-size:2px;text-align:center;">MIZUASSINATURADIGITAL</div><div style="height:75px;">&nbsp;</div>';
+  /* o espaço do carimbo, em pontos (o carimbo tem 78pt de altura) */
+  marca.innerHTML = '<div style="color:#ffffff;font-size:2pt;text-align:center;">MIZUASSINATURADIGITAL</div><div style="height:74pt;">&nbsp;</div>';
   (bloco || doc.body).appendChild(marca);
 
   /* ASSINATURA NÃO SE PARTE NA VIRADA DA PÁGINA: a escrita, a linha, o
@@ -17629,9 +17630,29 @@ function orcHtmlParaAssinar(html, imagemAssinatura){
     caixa.querySelector('td').appendChild(bloco);
   }
 
+  /* "sem assinar cabe tudo numa folha; assinado ocupa mais espaço"
+     (17/11/2026). O gerador do servidor deixa linhas e espaços uns 30%
+     mais altos que o navegador, e a assinatura pulava sozinha pra outra
+     folha. Converter as medidas pra pontos, na proporção do navegador,
+     deixa o assinado do mesmo tamanho do PDF de sempre. */
+  const ESCALA = 0.68;
+  /* letter-spacing em pontos derruba o gerador: sai (não faz falta no papel) */
+  const paraPt = (txt)=>String(txt)
+    .replace(/letter-spacing\s*:[^;}"]*;?/g, '')
+    .replace(/(\d+(?:\.\d+)?)px/g, (m, n)=>(Number(n) * ESCALA).toFixed(2) + 'pt');
+  doc.querySelectorAll('style').forEach(st=>{ st.textContent = paraPt(st.textContent); });
+  doc.querySelectorAll('[style]').forEach(el=>{ el.setAttribute('style', paraPt(el.getAttribute('style'))); });
+
+  /* depois da conversão: estas já estão em pontos */
   const estilo = doc.createElement('style');
-  estilo.textContent = '@page{ size:a4; margin:1.3cm 1.4cm; } body{ padding:0 !important; }'
-    + ' .rodape-assinatura{ margin-top:22px; } .assin{ margin-top:14px; }';
+  /* margem e entrelinha do navegador: o gerador, por conta própria, usa
+     mais das duas, e uma página do navegador virava duas aqui */
+  estilo.textContent = '@page{ size:a4; margin:0.9cm 1.1cm; } body{ padding:0; margin:0; line-height:1.18; }'
+    + ' td, th{ line-height:1.15; } p{ margin-top:4pt; margin-bottom:4pt; }'
+    + ' .rodape-assinatura{ margin-top:14pt; } .assin{ margin-top:8pt; }';
+  doc.querySelectorAll('body').forEach(bd=>{
+    bd.setAttribute('style', (bd.getAttribute('style')||'') + ';padding:0;margin:0;');
+  });
   (doc.head || doc.documentElement).appendChild(estilo);
   return '<!DOCTYPE html>' + doc.documentElement.outerHTML;
 }
@@ -49022,7 +49043,8 @@ const NOVIDADES = [
       'NO ORÇAMENTO, ao lado do "📄 PDF do orçamento", agora tem "✍️ PDF assinado". Só assina quando você clicar: o PDF de sempre continua igual.',
       'A ASSINATURA É A MESMA DO ADOBE: o certificado digital da empresa (ICP-Brasil) assina o PDF no servidor das notas. O certificado não sai de lá. Dá pra conferir em validar.iti.gov.br.',
       'A SUA ESCRITA VAI POR CIMA DA LINHA, e logo abaixo sai o carimbo "Assinado de forma digital por...". Na primeira vez o sistema pede a foto da assinatura numa folha branca: ele gira, tira o fundo e recorta sozinho. A foto fica guardada só nos seus dados.',
-      'A PRIMEIRA ASSINATURA DO DIA pode levar até 1 minuto, porque o servidor gratuito "acorda".'
+      'A PRIMEIRA ASSINATURA DO DIA pode levar até 1 minuto, porque o servidor gratuito "acorda".',
+      'O ASSINADO TEM O MESMO TAMANHO DO PDF DE SEMPRE: o que cabe numa folha sem assinar cabe numa folha assinado, com a assinatura e o carimbo no fim (antes a assinatura pulava sozinha pra uma segunda folha).'
     ]
   },
   {
@@ -61745,7 +61767,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 11:00';
+const SISTEMA_VERSAO = '17/11/2026 11:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
