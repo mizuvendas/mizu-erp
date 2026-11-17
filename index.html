@@ -4865,7 +4865,39 @@ function leitorLarguraOk(corridas, inicio, quantas, modulos, modulo, folga){
   return Math.abs(soma - esperado) <= esperado * (folga || 0.22);
 }
 
+/* BARRA QUE "EMAGRECE" NA FOTO (17/11/2026, foto do iPhone dela).
+   Com luz forte e a nitidez do celular, o branco "vaza" pra cima da barra
+   preta: a barra fina de 1 módulo saía com 1 pixel e o espaço com 5. As
+   larguras ficavam fora da medida e o código, nítido, era descartado.
+   As guardas (começo, meio e fim) são TODAS de 1 módulo: a diferença entre
+   o preto e o branco delas mostra quanto vazou. Desconta isso de todas as
+   corridas e lê de novo — o dígito verificador continua sendo o juiz. */
+function leitorCompensarVazamento(corridas, escuros, i, n, guardas, ler){
+  if(!escuros || i + n > corridas.length) return null;
+  let sd = 0, nd = 0, sl = 0, nl = 0;
+  for(const g of guardas){
+    const k = i + g;
+    if(escuros[k]){ sd += corridas[k]; nd++; } else { sl += corridas[k]; nl++; }
+  }
+  if(!nd || !nl) return null;
+  const vazou = (sl / nl - sd / nd) / 2, modulo = (sl / nl + sd / nd) / 2;
+  if(Math.abs(vazou) < modulo * 0.12) return null;     /* já estava certo */
+  const cc = corridas.slice();
+  for(let k = i; k < i + n; k++) cc[k] = corridas[k] + (escuros[k] ? vazou : -vazou);
+  return ler(cc, i, escuros);
+}
+const LEITOR_GUARDAS13 = [0, 1, 2, 27, 28, 29, 30, 31, 56, 57, 58];
+const LEITOR_GUARDAS8 = [0, 1, 2, 19, 20, 21, 22, 23, 40, 41, 42];
 function leitorLerEan13(corridas, i, escuros){
+  return leitorLerEan13Bruto(corridas, i, escuros)
+      || leitorCompensarVazamento(corridas, escuros, i, 59, LEITOR_GUARDAS13, leitorLerEan13Bruto);
+}
+function leitorLerEan8(corridas, i, escuros){
+  return leitorLerEan8Bruto(corridas, i, escuros)
+      || leitorCompensarVazamento(corridas, escuros, i, 43, LEITOR_GUARDAS8, leitorLerEan8Bruto);
+}
+
+function leitorLerEan13Bruto(corridas, i, escuros){
   /* 3 + 24 + 5 + 24 + 3 = 59 corridas */
   if(i + 59 > corridas.length) return null;
   const modulo = leitorGuardaOk(corridas, i, 3);
@@ -4907,7 +4939,7 @@ function leitorLerEan13(corridas, i, escuros){
   return margemLarga ? codigo : (codigo + '?');   /* o ? pede confirmação */
 }
 
-function leitorLerEan8(corridas, i, escuros){
+function leitorLerEan8Bruto(corridas, i, escuros){
   /* 3 + 16 + 5 + 16 + 3 = 43 corridas */
   if(i + 43 > corridas.length) return null;
   const modulo8 = leitorGuardaOk(corridas, i, 3);
@@ -49924,6 +49956,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-f',
+    data: '2026-11-17',
+    titulo: 'Câmera: as barras leem a foto do iPhone com luz forte',
+    itens: [
+      'NA FOTO DO IPHONE as barras pretas saíam mais finas do que são (a luz e a nitidez "comem" a borda delas) e o leitor descartava o código, mesmo nítido.',
+      'AGORA ele mede o quanto elas emagreceram nas barras fixas do começo, do meio e do fim, corrige e lê de novo. O dígito verificador continua conferindo: ou sai o número certo, ou nada.'
+    ]
+  },
+  {
     id: '2026-11-17-e',
     data: '2026-11-17',
     titulo: 'Câmera: "Ler os números da foto" pega só o número do código',
@@ -62762,7 +62803,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 17:50';
+const SISTEMA_VERSAO = '17/11/2026 18:20';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
