@@ -49956,6 +49956,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-i',
+    data: '2026-11-17',
+    titulo: 'Balanço mais calmo: busca sem travar, aviso pequeno, etiqueta só na caixinha, foto sempre aparece',
+    itens: [
+      'NA TELA "NÃO ACHEI ESSE CÓDIGO", digitar o nome não trava nem apaga mais: a lista de sugestões atualiza quando você para de digitar, e o campo fica quieto.',
+      'O AVISO "CHEGOU COISA NOVA DO OUTRO COMPUTADOR" virou uma bolinha pequena "☁️ Atualizar" no alto, à direita — não cobre mais os botões do balanço. Toque nela quando quiser.',
+      '🏷️ PRECISA DE ETIQUETA: só marca tocando na caixinha. Tocar no texto não marca mais.',
+      'FOTO: saiu a opção "Mostrar essa foto no sistema e no PDV". Toda foto aparece sempre — e as que tinham ficado desmarcadas voltaram a aparecer.'
+    ]
+  },
+  {
     id: '2026-11-17-h',
     data: '2026-11-17',
     titulo: 'Balanço: o código de barras manda · código certo · linha que faltou',
@@ -59967,20 +59978,38 @@ function balDesfazerUltimo(){
    "eu vou poder pesquisar a descrição e, se ele encontrar, ele vai
     entender que aquele código de barras é daquele produto"
    --------------------------------------------------------------- */
+/* "quando eu vou digitando, começa a travar demais e fica apagando"
+   (17/11/2026). Cada letra redesenhava a tela inteira do balanço, e o
+   campo onde ela digitava era recriado — no celular, letra perdida e
+   cursor pulando. Agora espera ela parar de digitar um instante e troca
+   SÓ a lista de sugestões; o campo fica quieto. */
+let BAL_PROCURA_TIMER = null;
 function balProcurar(termo){
   if(!balNaoAchei) return;
   balNaoAchei.termo = termo;
-  const t = ncmNormalizar(termo);
-  if(t.length < 2){ balNaoAchei.sugestoes = []; renderBalanco(); return; }
-  const palavras = t.split(' ').filter(Boolean);
-  if(!BAL_CAT) balRecarregarCatalogo();
-  const achados = [];
-  BAL_CAT.forEach(it=>{
-    const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
-    if(palavras.every(p=>txt.includes(p))) achados.push(it);
-  });
-  balNaoAchei.sugestoes = achados.slice(0, 12);
-  renderBalanco();
+  clearTimeout(BAL_PROCURA_TIMER);
+  BAL_PROCURA_TIMER = setTimeout(()=>balProcurarAgora(), 250);
+}
+function balProcurarAgora(){
+  if(!balNaoAchei) return;
+  const t = ncmNormalizar(balNaoAchei.termo || '');
+  if(t.length < 2) balNaoAchei.sugestoes = [];
+  else{
+    const palavras = t.split(' ').filter(Boolean);
+    if(!BAL_CAT) balRecarregarCatalogo();
+    const achados = [];
+    BAL_CAT.forEach(it=>{
+      const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
+      if(palavras.every(p=>txt.includes(p))) achados.push(it);
+    });
+    balNaoAchei.sugestoes = achados.slice(0, 12);
+  }
+  const caixa = document.getElementById('bal-procura-sugestoes');
+  if(!caixa){ renderBalanco(); return; }
+  caixa.innerHTML = balNaoAcheiSugestoesHtml();
+  /* o "cadastrar agora" acompanha o que ela digitou, se ela não mexeu nele */
+  const novo = document.getElementById('bal-novo-nome');
+  if(novo && document.activeElement !== novo) novo.value = balNaoAchei.termo || '';
 }
 
 /* Ela aponta o produto: o código bipado passa a ser dele pra sempre. */
@@ -60750,15 +60779,7 @@ function balNaoAcheiHtml(){
       <input type="text" id="bal-procura" value="${escapeAttr(balNaoAchei.termo||'')}"
         placeholder="🔍 Nome do produto que você tem na mão...">
     </div>
-    ${s.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
-      ${s.map(it=>`<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;
-            border:1px solid var(--border);border-radius:9px;padding:9px 11px;">
-          ${balFichaItemHtml(it)}
-          <button class="btn btn-sm btn-primary" style="white-space:nowrap;"
-            onclick="balEscolherItem('${escapeAttr(it.chave)}')">é este</button>
-        </div>`).join('')}
-    </div>` : (String(balNaoAchei.termo||'').length >= 2
-        ? `<p class="help-text">Nenhum produto com esse nome na contagem.</p>` : '')}
+    <div id="bal-procura-sugestoes">${balNaoAcheiSugestoesHtml()}</div>
     <p class="help-text" style="margin-top:12px;">Ou cadastre agora — só o nome, o resto depois:</p>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
       <input type="text" id="bal-novo-nome" value="${escapeAttr(balNaoAchei.termo||'')}"
@@ -60767,6 +60788,20 @@ function balNaoAcheiHtml(){
       <button class="btn" onclick="balLimparNaoAchei()">Deixa pra depois</button>
     </div>
   </div>`;
+}
+
+function balNaoAcheiSugestoesHtml(){
+  if(!balNaoAchei) return '';
+  const s = balNaoAchei.sugestoes || [];
+  return s.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
+      ${s.map(it=>`<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;
+            border:1px solid var(--border);border-radius:9px;padding:9px 11px;">
+          ${balFichaItemHtml(it)}
+          <button class="btn btn-sm btn-primary" style="white-space:nowrap;"
+            onclick="balEscolherItem('${escapeAttr(it.chave)}')">é este</button>
+        </div>`).join('')}
+    </div>` : (String(balNaoAchei.termo||'').length >= 2
+        ? `<p class="help-text">Nenhum produto com esse nome na contagem.</p>` : '');
 }
 
 function balLimparNaoAchei(){
@@ -60826,12 +60861,16 @@ function balItemHtml(grande){
       </div>`; })()}
     ${balFornecedorHtml(it)}
     ${balJuntarHtml(it.chave)}
-    <label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-size:13px;color:var(--ink-soft);cursor:pointer;">
+    <!-- "só marcar se eu clicar em cima da caixinha, não na linha toda"
+         (17/11/2026): era um <label> — tocar no texto, na pressa depois da
+         foto, marcava sem querer. Agora o texto não marca nada. -->
+    <div style="display:flex;gap:9px;align-items:center;margin-top:10px;font-size:13px;color:var(--ink-soft);">
       <input type="checkbox" id="bal-etiqueta" ${balQuerEtiqueta(it.chave)?'checked':''}
+        style="width:20px;height:20px;flex:0 0 auto;margin:0;cursor:pointer;"
         onchange="balMarcarEtiqueta('${escapeAttr(it.chave)}', this.checked)">
-      🏷️ Precisa de etiqueta — imprimir <strong>uma por unidade contada</strong> no fim do balanço
-      ${it.codigos.length ? '' : '<span style="color:var(--warning);">(gero o código de barras ao marcar)</span>'}
-    </label>
+      <span>🏷️ Precisa de etiqueta — imprimir <strong>uma por unidade contada</strong> no fim do balanço
+      ${it.codigos.length ? '' : '<span style="color:var(--warning);">(gero o código de barras ao marcar)</span>'}</span>
+    </div>
   </div>`;
 }
 
@@ -61496,9 +61535,17 @@ function fotoTemDono(chave){
    Roda quando o Balanço abre. Assim o aparelho que tirou a foto
    (o celular) avisa os outros de novo, sozinho. */
 let FOTO_CURADO = false;
+/* foto desmarcada sem querer volta a aparecer: o padrão é sempre mostrar */
+function fotoMostrarTodas(){
+  let n = 0;
+  (STATE.produtos||[]).forEach(p=>{ if(p && p.mostrarFoto === false){ p.mostrarFoto = true; n++; } });
+  if(n) saveState();
+  return n;
+}
 async function fotoCurarMarcas(){
   if(FOTO_CURADO) return 0;
   FOTO_CURADO = true;
+  try{ fotoMostrarTodas(); }catch(e){}
   let feitos = 0;
   try{
     const chaves = await fotoIdb('chaves');
@@ -61932,9 +61979,10 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
           <button type="button" class="btn" id="foto-fundo" style="flex:1;min-width:150px;">🪄 Tirar o fundo</button>
           <button type="button" class="btn" id="foto-comfundo" style="flex:1;min-width:150px;display:none;">↩ Deixar o fundo</button>
         </div>
-        <label id="foto-mostrar-linha" style="display:none;gap:8px;align-items:center;margin-top:11px;font-size:13.5px;cursor:pointer;">
-          <input type="checkbox" id="foto-mostrar" checked> Mostrar essa foto no sistema e no PDV
-        </label>
+        <!-- "toda foto tem que aparecer — isso é padrão do sistema" (17/11/2026):
+             a opção "Mostrar essa foto no sistema e no PDV" saiu (ela desmarcava
+             sem querer). Fica só o elemento escondido, sempre marcado. -->
+        <span id="foto-mostrar-linha" style="display:none;"><input type="checkbox" id="foto-mostrar" checked></span>
         <div class="form-actions" style="gap:8px;">
           <button type="button" class="btn btn-primary" id="foto-salvar" style="display:none;font-weight:700;">Salvar foto</button>
           <button type="button" class="btn" id="foto-apagar" style="display:none;">Apagar foto</button>
@@ -61973,7 +62021,6 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
     canvasEl.style.display = 'none';
     avisoEl.style.display = 'none';
     depoisEl.style.display = 'flex';
-    mostrarLinha.style.display = 'flex';
     salvarBtn.style.display = '';
   }
 
@@ -61982,8 +62029,7 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
     if(d){
       mostrarPronta(d);
       apagarBtn.style.display = '';
-      const pp = (STATE.produtos||[]).find(x=>x.id === produtoId);
-      document.getElementById('foto-mostrar').checked = !pp || pp.mostrarFoto !== false;
+      document.getElementById('foto-mostrar').checked = true;
     }else{
       ligarCamera();
     }
@@ -62106,7 +62152,7 @@ function abrirFotoDoProduto(produtoId, aoTerminar){
       await fotoGuardar(produtoId, { original: original || atual, recortada: semFundo ? atual : null,
                                      em: new Date().toISOString() });
       const pp = (STATE.produtos||[]).find(x=>x.id === produtoId);
-      if(pp){ pp.mostrarFoto = document.getElementById('foto-mostrar').checked; saveState(); }
+      if(pp){ pp.mostrarFoto = true; saveState(); }   /* toda foto aparece, sempre */
       showToast('Foto salva.', 'success');
       fechar();
     }catch(e){
@@ -63062,7 +63108,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 22:30';
+const SISTEMA_VERSAO = '17/11/2026 23:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64179,19 +64225,21 @@ function nuvemRedesenharTelaAtual(){
 function nuvemAvisarNovidades(){
   atualizarBadgesMenu();
   if(document.getElementById('nuvem-novidades')) return;
-  const barra = document.createElement('div');
+  /* "toda hora aparece e me atrapalha — pode aparecer, mas num lugar que
+     não me atrapalhe" (17/11/2026). No balanço o campo está sempre com o
+     cursor, então o aviso vinha a cada sincronismo, e a tarja grande no
+     rodapé cobria o "Contar e ler o próximo". Agora é uma bolinha pequena
+     no alto, à direita, por cima do cabeçalho: toca quando quiser. */
+  const barra = document.createElement('button');
+  barra.type = 'button';
   barra.id = 'nuvem-novidades';
-  barra.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:9000;background:var(--primary-escuro,#1B4B5A);'
-    + 'color:#fff;padding:10px 14px;border-radius:8px;font-size:12.5px;box-shadow:0 4px 16px rgba(0,0,0,.25);'
-    + 'display:flex;align-items:center;gap:10px;max-width:min(420px,88vw);';
-  barra.innerHTML = '<span>☁️ Chegou coisa nova do outro computador. Não atualizei a tela pra não atrapalhar o que você está fazendo.</span>'
-    + '<button type="button" id="nuvem-novidades-ok" style="background:#fff;color:#1B4B5A;border:0;border-radius:6px;'
-    + 'padding:6px 10px;font-weight:600;cursor:pointer;white-space:nowrap;">Atualizar</button>'
-    + '<button type="button" id="nuvem-novidades-x" title="Fechar" style="background:transparent;color:#fff;border:0;'
-    + 'font-size:16px;cursor:pointer;line-height:1;">×</button>';
+  barra.title = 'Chegou coisa nova do outro aparelho. Toque pra atualizar a tela.';
+  barra.style.cssText = 'position:fixed;right:10px;top:10px;z-index:9000;background:var(--primary-escuro,#1B4B5A);'
+    + 'color:#fff;border:0;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:600;line-height:1.2;'
+    + 'box-shadow:0 2px 8px rgba(0,0,0,.2);cursor:pointer;opacity:.9;';
+  barra.innerHTML = '☁️ <span id="nuvem-novidades-ok">Atualizar</span>';
   document.body.appendChild(barra);
-  document.getElementById('nuvem-novidades-ok').addEventListener('click', nuvemRedesenharTelaAtual);
-  document.getElementById('nuvem-novidades-x').addEventListener('click', ()=>barra.remove());
+  barra.addEventListener('click', nuvemRedesenharTelaAtual);
 }
 
 /* ---------------------------------------------------------
