@@ -49964,6 +49964,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-b',
+    data: '2026-11-18',
+    titulo: 'Balanço: a foto aparece na busca',
+    itens: [
+      'DIGITANDO O NOME no campo do Balanço (ex.: "rodo"), cada produto da lista aparece com a FOTO pequena que você tirou — inclusive os de cadastro rápido. Quem ainda não tem foto mostra o quadradinho 📷.',
+      'Vale também na lista do "Não achei esse código" e na de "vários produtos com esse nome". Tocar na foto escolhe o produto (não abre a câmera).',
+      'No celular, pra digitar o nome, toque em "ABC" ao lado de "teclado:".'
+    ]
+  },
+  {
     id: '2026-11-18-a',
     data: '2026-11-18',
     titulo: 'Balanço: os repetidos do cadastro foram juntados ao comodato · filtro "Cadastrados no balanço"',
@@ -60773,6 +60783,19 @@ function balEtiquetaDono(it){
   return `<span class="badge" style="background:#EDE9F6;color:#4B3B80;">Mizu</span>`;
 }
 
+/* "quando eu digitar rodo, ele mostrar as fotos do item que já tem
+   cadastrado" (18/11/2026). A ficha das listas de busca ganha a foto
+   pequena à esquerda. Nas listas, tocar na foto escolhe o item (não abre
+   a câmera): por isso o quadradinho não recebe o toque. A foto que ainda
+   está chegando entra sozinha no lugar, sem redesenhar a lista. */
+function balFichaComFotoHtml(it){
+  const dono = it.produtoId || it.chave;
+  return `<div style="display:flex;gap:10px;align-items:center;min-width:0;">
+    <div style="pointer-events:none;flex-shrink:0;">${fotoMiniHtml(dono, 46, 'renderBalanco()')}</div>
+    ${balFichaItemHtml(it)}
+  </div>`;
+}
+
 function balFichaItemHtml(it){
   const b = balAberto();
   const ja = b ? balContadoDe(b.id, it.chave) : 0;
@@ -60829,7 +60852,7 @@ function balEscolhasHtml(){
         const it = balItem(ch);
         if(!it) return '';
         return `<button class="btn" style="text-align:left;padding:10px 12px;display:block;width:100%;"
-          onclick="balEscolherItem('${escapeAttr(ch)}')">${balFichaItemHtml(it)}</button>`;
+          onclick="balEscolherItem('${escapeAttr(ch)}')">${balFichaComFotoHtml(it)}</button>`;
       }).join('')}
     </div>
   </div>`;
@@ -60868,7 +60891,7 @@ function balNaoAcheiSugestoesHtml(){
   return s.length ? `<div style="display:flex;flex-direction:column;gap:6px;margin:10px 0;">
       ${s.map(it=>`<div style="display:flex;gap:9px;align-items:center;justify-content:space-between;
             border:1px solid var(--border);border-radius:9px;padding:9px 11px;">
-          ${balFichaItemHtml(it)}
+          ${balFichaComFotoHtml(it)}
           <button class="btn btn-sm btn-primary" style="white-space:nowrap;"
             onclick="balEscolherItem('${escapeAttr(it.chave)}')">é este</button>
         </div>`).join('')}
@@ -61205,8 +61228,8 @@ function balSugerirDoCampo(){
   const contados = b ? balContados(b.id) : new Map();
   caixa.innerHTML = achados.map(it=>`
     <div class="bal-sug" data-chave="${escapeAttr(it.chave)}"
-      style="padding:10px 13px;border-bottom:1px solid var(--border);cursor:pointer;">
-      ${balFichaItemHtml(it)}
+      style="padding:8px 13px;border-bottom:1px solid var(--border);cursor:pointer;">
+      ${balFichaComFotoHtml(it)}
     </div>`).join('');
   caixa.style.display = '';
   caixa.querySelectorAll('.bal-sug').forEach(el=>{
@@ -63202,7 +63225,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 00:30';
+const SISTEMA_VERSAO = '18/11/2026 08:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
