@@ -50634,6 +50634,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-k',
+    data: '2026-11-18',
+    titulo: 'Celular: o sincronismo não fica mais preso nas fotos',
+    itens: [
+      'O CELULAR mostrava coisa velha (a DALA, já vendida) e o botão respondia "já está sincronizando": as fotos do balanço subiam DENTRO do sincronismo e, com internet móvel, seguravam tudo. Agora as fotos sobem por fora, e os dados chegam na hora.',
+      'LIMITE DE TEMPO: conexão que trava não prende mais o sincronismo — desiste e tenta de novo na próxima rodada. Se ficar preso mais de 2 minutos, ele se solta sozinho.',
+      '"ATUALIZAR TUDO DA NUVEM" espera o sincronismo terminar, em vez de recusar.',
+      'OS "7 A ENVIAR" QUE NUNCA ZERAVAM: eram configurações iguais, só com os campos em ordem diferente — os dois aparelhos ficavam se reenviando. Agora param.'
+    ]
+  },
+  {
     id: '2026-11-18-j',
     data: '2026-11-18',
     titulo: 'Nuvem: alteração esperando pra subir nunca é desfeita · ver o que está "a enviar"',
@@ -62634,9 +62645,13 @@ async function fotoEnfileirarAntigas(){
 
 /* Sobe algumas por rodada. Não é pressa: é pra não ocupar a linha toda
    com foto enquanto ela está trabalhando. */
+let FOTO_SUBINDO_DESDE = 0;
 async function fotoSincronizar(limite){
+  /* subida de foto que travou (internet móvel) não segura as próximas pra sempre */
+  if(FOTO_SUBINDO && FOTO_SUBINDO_DESDE && Date.now() - FOTO_SUBINDO_DESDE > 180000) FOTO_SUBINDO = false;
   if(FOTO_SUBINDO || !fotoPodeNuvem()) return 0;
   FOTO_SUBINDO = true;
+  FOTO_SUBINDO_DESDE = Date.now();
   let feitas = 0;
   try{
     const toda = fotoFilaLer();
@@ -63995,7 +64010,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 19:15';
+const SISTEMA_VERSAO = '18/11/2026 20:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64277,7 +64292,17 @@ async function nuvemFetch(caminho, opcoes, semToken){
   if(!semToken && nuvemSessao && nuvemSessao.access_token){
     cab['Authorization'] = 'Bearer ' + nuvemSessao.access_token;
   }
-  const r = await fetch(NUVEM.url + caminho, Object.assign({}, opcoes, { headers: cab }));
+  /* limite de tempo: conexão que trava (celular, internet móvel) não pode
+     segurar o sincronismo pra sempre (18/11/2026) */
+  const ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  const relogio = ctl ? setTimeout(()=>ctl.abort(), 45000) : null;
+  let r;
+  try{
+    r = await fetch(NUVEM.url + caminho, Object.assign({}, opcoes, { headers: cab }, ctl ? { signal: ctl.signal } : {}));
+  }catch(e){
+    if(e && e.name === 'AbortError') throw new Error('a nuvem demorou demais pra responder (internet lenta) — tento de novo na próxima rodada');
+    throw e;
+  }finally{ if(relogio) clearTimeout(relogio); }
   if(r.status === 401 && !semToken && nuvemSessao && nuvemSessao.refresh_token){
     const renovou = await nuvemRenovar();
     if(renovou) return nuvemFetch(caminho, opcoes, semToken);
@@ -64891,7 +64916,17 @@ async function nuvemBaseSemear(){
   localStorage.setItem('mizu_base_semeada_v1', new Date().toISOString());
 }
 
-function nuvemIgual(a, b){ try{ return JSON.stringify(a) === JSON.stringify(b); }catch(e){ return false; } }
+/* JSON com as chaves em ordem: o mesmo conteúdo dá o mesmo texto, venha
+   de qual aparelho vier */
+function nuvemJsonEstavel(v){
+  const ord = x=>{
+    if(Array.isArray(x)) return x.map(ord);
+    if(x && typeof x === 'object'){ const o = {}; Object.keys(x).sort().forEach(k=>{ o[k] = ord(x[k]); }); return o; }
+    return x;
+  };
+  try{ return JSON.stringify(ord(v)); }catch(e){ return ''; }
+}
+function nuvemIgual(a, b){ try{ return nuvemJsonEstavel(a) === nuvemJsonEstavel(b); }catch(e){ return false; } }
 function nuvemMapaSimples(v){ return v && typeof v === 'object' && !Array.isArray(v); }
 /* junção de três: base (o que os dois tinham), meu (daqui), deles (nuvem).
    semBase: este aparelho não sabe o que os dois tinham em comum (cópia
@@ -65025,8 +65060,15 @@ function nuvemAtualizarTudo(){
 }
 
 async function nuvemAtualizarTudoMesmo(){
-  if(nuvemSincronizando){ showToast('Já está sincronizando — tente de novo em alguns segundos.', 'info'); return; }
+  /* sincronismo normal no meio: espera ele terminar (até 1 minuto) em vez de recusar */
+  if(nuvemSincronizando){
+    showToast('Esperando o sincronismo terminar…', 'info');
+    for(let i = 0; i < 60 && nuvemSincronizando; i++) await new Promise(r=>setTimeout(r, 1000));
+    if(nuvemSincronizando && Date.now() - nuvemSincronizandoDesde > 120000) nuvemSincronizando = false;
+    if(nuvemSincronizando){ showToast('O sincronismo ainda está rodando — tente de novo daqui a pouco. Nada foi mexido.', 'info'); return; }
+  }
   nuvemSincronizando = true;
+  nuvemSincronizandoDesde = Date.now();
   showToast('Atualizando da nuvem… não feche o sistema.', 'info');
   try{
     /* 1) manda o que é daqui — juntando campo a campo com a nuvem
@@ -65250,9 +65292,13 @@ function nuvemAplicar(linhas){
            espelho guarda a digital do que VEIO. O config daqui conta como
            alteração e sobe na próxima rodada, levando o que falta pras
            outras máquinas. */
-        const digitalDeFora = nuvemDigital(JSON.stringify({ valor: deFora }));
-        const digitalJunto  = nuvemDigital(JSON.stringify({ valor: juntos }));
-        espelho[chave] = digitalJunto === digitalDeFora ? digitalJunto : digitalDeFora;
+        /* "7 a enviar" que nunca zerava (18/11/2026): a junção põe as chaves
+           numa ordem e o outro aparelho em outra — o MESMO conteúdo parecia
+           diferente, e os dois ficavam se reenviando pra sempre. Agora
+           compara pelo conteúdo (chaves em ordem). */
+        espelho[chave] = nuvemJsonEstavel(juntos) === nuvemJsonEstavel(deFora)
+          ? nuvemDigital(JSON.stringify({ valor: juntos }))
+          : nuvemDigital(JSON.stringify({ valor: deFora }));
         mudou++;
         return;
       }
@@ -65268,9 +65314,9 @@ function nuvemAplicar(linhas){
          completo: guarda a digital do que VEIO, pra isto contar como
          alteração e subir na próxima rodada, corrigindo a outra máquina
          em vez de ser corrigido por ela. */
-      const digDeFora = nuvemDigital(JSON.stringify({ valor: linha.dados.valor }));
-      const digJunto  = nuvemDigital(JSON.stringify({ valor: juntoDoc }));
-      espelho[chave] = (digJunto === digDeFora) ? digJunto : digDeFora;
+      espelho[chave] = nuvemJsonEstavel(juntoDoc) === nuvemJsonEstavel(linha.dados.valor)
+        ? nuvemDigital(JSON.stringify({ valor: juntoDoc }))
+        : nuvemDigital(JSON.stringify({ valor: linha.dados.valor }));
       mudou++;
       return;
     }
@@ -65397,11 +65443,18 @@ function nuvemAvisarNovidades(){
 /* ---------------------------------------------------------
    O CICLO
    --------------------------------------------------------- */
+let nuvemSincronizandoDesde = 0;
 async function nuvemSincronizar(silencioso){
   if(!nuvemUsuario || !nuvemUsuario.ativo) return;
+  /* preso há mais de 2 minutos (conexão que travou no celular): solta */
+  if(nuvemSincronizando && nuvemSincronizandoDesde && Date.now() - nuvemSincronizandoDesde > 120000){
+    console.warn('[nuvem] sincronismo preso — soltando');
+    nuvemSincronizando = false;
+  }
   if(nuvemSincronizando) return;
   if(!navigator.onLine){ nuvemPintarStatus(); return; }
   nuvemSincronizando = true;
+  nuvemSincronizandoDesde = Date.now();
   nuvemPintarStatus();
   try{
     /* Primeira vez nesta máquina: BAIXA antes de subir.
@@ -65428,8 +65481,13 @@ async function nuvemSincronizar(silencioso){
        Elas não entram na tabela de registros (derrubariam o
        localStorage), e um erro aqui não pode derrubar o sincronismo do
        resto: pedido e orçamento valem mais que foto. */
-    try{ await fotoEnfileirarAntigas(); await fotoSincronizar(); }
-    catch(e){ console.warn('[fotos]', e); }
+    /* "atualizei e continua a DALA" (18/11/2026): as fotos subiam DENTRO
+       do sincronismo — no celular, com dezenas de fotos do balanço e
+       internet móvel, isso segurava tudo por minutos (ou pra sempre, se
+       uma conexão travasse): os dados já baixados não apareciam e o botão
+       "Atualizar tudo" respondia "já está sincronizando". Agora as fotos
+       vão POR FORA, com trava própria, sem segurar os dados. */
+    setTimeout(()=>{ (async ()=>{ try{ await fotoEnfileirarAntigas(); await fotoSincronizar(); }catch(e){ console.warn('[fotos]', e); } })(); }, 0);
     if(erroAoSubir) throw erroAoSubir;
     nuvemUltimoErro = null;
     if(baixados > 0){
