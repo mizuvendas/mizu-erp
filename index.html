@@ -50634,6 +50634,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-j',
+    data: '2026-11-18',
+    titulo: 'Nuvem: alteração esperando pra subir nunca é desfeita · ver o que está "a enviar"',
+    itens: [
+      'CORREÇÃO DA JUNÇÃO: quando um aparelho tem uma alteração esperando pra subir, ela não é mais desfeita pela versão da nuvem. E orçamento nunca anda pra trás: venda feita e entrega feita continuam, venha de qual aparelho vier.',
+      '"⏳ X A ENVIAR" (no rodapé do menu) agora é clicável: mostra quais alterações deste aparelho estão esperando pra subir.'
+    ]
+  },
+  {
     id: '2026-11-18-i',
     data: '2026-11-18',
     titulo: 'Não perder nada entre celular e computador · fotos de volta · celular igual à nuvem',
@@ -63986,7 +63995,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 18:30';
+const SISTEMA_VERSAO = '18/11/2026 19:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64918,8 +64927,29 @@ function nuvemJuntarTres(base, meu, deles, semBase, campo){
   }
   if(soma && (campo === 'temFoto' || campo === 'mostrarFoto')) return !!(meu || deles);
   if(soma && campo === 'fotoV') return Math.max(Number(meu)||0, Number(deles)||0);
-  if(semBase) return deles;   /* sem base: a nuvem manda */
-  return meu;                 /* os dois mudaram o mesmo campo: vale quem acabou de mexer */
+  /* Os dois mudaram o mesmo campo (ou não há base): vale o DAQUI — é a
+     alteração que está esperando pra subir, feita por alguém de verdade
+     (corrigido 18/11/2026: "sem base, a nuvem manda" podia desfazer uma
+     alteração do notebook que ainda não tinha subido). O que NÃO pode é
+     andar pra trás: isso o nuvemSemRetroceder segura. */
+  return meu;
+}
+
+/* ORÇAMENTO NÃO ANDA PRA TRÁS (18/11/2026)
+   Seja qual for a cópia, venda feita continua feita e entrega feita
+   continua feita. É o que impede a cópia velha (a DALA do celular) de
+   desfazer o que o computador fez. */
+const ORC_PASSO_ENTREGA = { '':0, nenhum:0, separacao:1, em_rota:2, entregue:3, retirado:3 };
+function nuvemSemRetroceder(colecao, junto, a, b){
+  if(colecao !== 'orcamentos' || !junto || !a || !b) return junto;
+  const r = Object.assign({}, junto);
+  const pe = v=>ORC_PASSO_ENTREGA[String(v || '')] || 0;
+  [a, b].forEach(x=>{
+    if(pe(x.statusEntrega) > pe(r.statusEntrega)) r.statusEntrega = x.statusEntrega;
+    if(x.vendaGeradaId && !r.vendaGeradaId) r.vendaGeradaId = x.vendaGeradaId;
+    if(x.status === 'convertido' && r.status !== 'convertido') r.status = 'convertido';
+  });
+  return r;
 }
 
 async function nuvemJuntarAntesDeSubir(fila){
@@ -64949,7 +64979,7 @@ async function nuvemJuntarAntesDeSubir(fila){
   conflito.forEach(r=>{
     const fora = naNuvem.get(r._chave).dados;
     const temBase = Object.prototype.hasOwnProperty.call(bases, r._chave);
-    const junto = nuvemJuntarTres(bases[r._chave], r.dados, fora, !temBase, '');
+    const junto = nuvemSemRetroceder(r.colecao, nuvemJuntarTres(bases[r._chave], r.dados, fora, !temBase, ''), r.dados, fora);
     if(nuvemIgual(junto, r.dados)) return;
     r.dados = junto;
     r._digital = nuvemDigital(JSON.stringify(junto));
@@ -64999,40 +65029,10 @@ async function nuvemAtualizarTudoMesmo(){
   nuvemSincronizando = true;
   showToast('Atualizando da nuvem… não feche o sistema.', 'info');
   try{
-    const pend = nuvemMudancas().filter(r=>!r.excluido);
-    /* as versões da nuvem dos registros que estão diferentes aqui */
-    const naNuvem = new Map();
-    const porCol = {};
-    pend.forEach(r=>{ (porCol[r.colecao] = porCol[r.colecao] || []).push(r.id); });
-    for(const col of Object.keys(porCol)){
-      const ids = porCol[col];
-      for(let i = 0; i < ids.length; i += 40){
-        const lote = ids.slice(i, i + 40).map(id=>'"' + String(id).replace(/"/g, '') + '"').join(',');
-        const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,dados,excluido'
-          + '&colecao=eq.' + encodeURIComponent(col) + '&id=in.(' + encodeURIComponent(lote) + ')', { method: 'GET' });
-        (linhas || []).forEach(l=>naNuvem.set(l.colecao + '|' + l.id, l));
-      }
-    }
-    const espelho = nuvemLerEspelho();
-    let ficouANuvem = 0, sobe = 0;
-    pend.forEach(r=>{
-      const fora = naNuvem.get(r._chave);
-      if(!fora || fora.excluido || r.colecao === 'balancoBipes' || r.colecao === '_doc'){ sobe++; return; }
-      let dados = fora.dados;
-      if(r.colecao === 'orcamentos' && r.dados && r.dados.motorista){
-        dados = Object.assign({}, dados, { motorista: nuvemJuntarFundo(dados.motorista || {}, r.dados.motorista) });
-      }
-      const lista = STATE[r.colecao];
-      if(!Array.isArray(lista)) return;
-      const idx = lista.findIndex(x=>x && String(x.id) === String(r.id));
-      if(idx >= 0) lista[idx] = dados;
-      /* espelho = a da nuvem: se a junção do motorista mudou algo, sobe */
-      espelho[r._chave] = nuvemDigital(JSON.stringify(fora.dados));
-      ficouANuvem++;
-    });
-    nuvemGravarEspelho(espelho);
-    nuvemAplicandoRemoto = true;
-    try{ saveState(); } finally { nuvemAplicandoRemoto = false; }
+    /* 1) manda o que é daqui — juntando campo a campo com a nuvem
+       (nuvemJuntarAntesDeSubir), sem desfazer o que o outro aparelho fez */
+    const sobe = nuvemMudancas().filter(r=>!r.excluido).length;
+    const ficouANuvem = 0;
     await nuvemSubir();
     localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z');
     const baixados = await nuvemBaixar();
@@ -65488,7 +65488,7 @@ function nuvemPintarStatus(){
     icone = '⏳'; cor = 'var(--warning)';
     texto = nuvemPendentes + (nuvemPendentes === 1 ? ' a enviar' : ' a enviar');
   }
-  const temProblema = !!nuvemUltimoErro || nuvemRegistrosRecusados.length > 0;
+  const temProblema = !!nuvemUltimoErro || nuvemRegistrosRecusados.length > 0 || nuvemPendentes > 0;
   el.innerHTML = `<span style="color:${cor};">${icone}</span> ${escapeHtml(texto)}`
     + (temProblema ? ` <u style="cursor:pointer;">ver o que houve</u>` : '');
   el.style.cursor = temProblema ? 'pointer' : 'default';
@@ -65536,6 +65536,18 @@ function nuvemMostrarProblema(){
         <div style="font-family:var(--font-num);font-size:12.5px;margin-top:4px;word-break:break-word;">${escapeHtml(nuvemUltimoErro)}</div>
         ${explica?`<small style="display:block;margin-top:6px;">${escapeHtml(explica)}</small>`:''}
       </div>`:''}
+      ${(()=>{ /* "7 a enviar" (18/11/2026): mostrar O QUE está esperando pra subir.
+           Com erro na tela, a janela é do erro (não lista conteúdo nenhum). */
+        if(nuvemUltimoErro || nuvemRegistrosRecusados.length) return '';
+        let pend = []; try{ pend = nuvemMudancas(); }catch(e){}
+        if(!pend.length) return '';
+        const nomeDe = r=>{ const d = r.dados || {}; return d.numero != null ? ('nº ' + d.numero) : (d.nome || d.descricao || d.clienteNome || String(r.id).slice(0,24)); };
+        return `<div class="lic-doc aviso" style="display:block;margin-top:10px;">
+          <b>⏳ ${pend.length} alteração(ões) deste aparelho esperando pra subir</b>
+          <ul style="margin:6px 0 0;padding-left:20px;font-size:12.5px;line-height:1.6;">
+            ${pend.slice(0, 15).map(r=>`<li>${escapeHtml(armazNome(r.colecao))} · ${escapeHtml(String(nomeDe(r)).slice(0,60))}${r.excluido ? ' <i>(exclusão)</i>' : ''}</li>`).join('')}
+            ${pend.length > 15 ? `<li style="color:var(--ink-faint);">…e mais ${pend.length - 15}</li>` : ''}
+          </ul></div>`; })()}
       ${nuvemRegistrosRecusados.length ? `<div class="lic-doc aviso" style="display:block;margin-top:10px;">
         <b>${nuvemRegistrosRecusados.length} registro${nuvemRegistrosRecusados.length===1?'':'s'} que o servidor não aceitou</b>
         <small>O resto subiu normalmente — um registro ruim não segura mais os outros.</small>
