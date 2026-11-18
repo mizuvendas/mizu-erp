@@ -1166,6 +1166,9 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <a class="nav-item" data-page="logistica" href="#">
       <span class="ic ic-operacao">🚚</span> Logística
     </a>
+    <a class="nav-item" data-page="motorista" href="#">
+      <span class="ic ic-operacao">📱</span> Motorista
+    </a>
     <a class="nav-item" data-page="entrada-nota" href="#">
       <span class="ic ic-operacao">📥</span> Entrada de Nota
     </a>
@@ -1462,6 +1465,10 @@ body.orc-gaveta-travada{ overflow:hidden; }
         </div>
       </div>
       <div id="logistica-content"></div>
+    </section>
+
+    <section class="page" id="page-motorista">
+      <div id="motorista-content"></div>
     </section>
 
     <section class="page" id="page-lancar-venda">
@@ -2824,7 +2831,7 @@ function navigateTo(page){
   /* ver o comentário em .bal-foco no CSS: no celular, o balanço abre
      sem o menu por cima */
   try{ document.body.classList.toggle('bal-foco',
-         page === 'balanco' && typeof balEhCelular === 'function' && balEhCelular()); }catch(e){}
+         (page === 'balanco' || page === 'motorista') && typeof balEhCelular === 'function' && balEhCelular()); }catch(e){}
   RENDERERS[page] && RENDERERS[page]();
   /* trocar de tela nunca pode deixar a rolagem trancada atrás */
   if(typeof orcSoltarRolagemSeFechou === 'function') orcSoltarRolagemSeFechou();
@@ -21041,7 +21048,7 @@ function renderLogistica(){
   // nem parada avulsa marcada
   const semSelecao = roteiro.length===0;
 
-  box.innerHTML = cardPartida + tabelaEntregas + cardParadasAvulsasLogistica() + `
+  box.innerHTML = motoristaRetornoHtml() + cardPartida + tabelaEntregas + cardParadasAvulsasLogistica() + `
     <div class="card" style="margin-top:14px;">
       <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
         <div>
@@ -21049,6 +21056,7 @@ function renderLogistica(){
           <p class="help-text" style="margin:2px 0 0;">${entregasSelecionadas.length} de ${entregas.length} entrega(s) selecionada(s) para o roteiro${semSelecao?'':` · ${qtdColetasNoRoteiro} ponto(s) de coleta`}${qtdAvulsasNoRoteiro?` · ${qtdAvulsasNoRoteiro} parada(s) avulsa(s)`:''}</p>
         </div>
         <div class="cell-actions">
+          <button class="btn btn-primary" id="logistica-btn-motorista" ${semSelecao?'disabled':''}>📱 Enviar pro motorista</button>
           <button class="btn" id="logistica-btn-pdf-roteiro" ${semSelecao?'disabled':''}>📄 Baixar Roteiro (PDF)</button>
           <button class="btn" id="logistica-btn-whatsapp" ${semSelecao?'disabled':''}>📱 Copiar para WhatsApp</button>
           <button class="btn" id="logistica-btn-mapa" ${semSelecao?'disabled':''}>🗺️ Ver no Mapa</button>
@@ -21061,6 +21069,7 @@ function renderLogistica(){
     ${blocoBloqueadas}
   `;
 
+  document.getElementById('logistica-btn-motorista').addEventListener('click', motoristaEnviar);
   document.getElementById('logistica-btn-pdf-roteiro').addEventListener('click', gerarPdfRoteiro);
   document.getElementById('logistica-btn-whatsapp').addEventListener('click', copiarRoteiroWhatsApp);
   document.getElementById('logistica-btn-mapa').addEventListener('click', abrirMapaRoteiro);
@@ -21265,6 +21274,312 @@ function desfazerEntregaOrcamento(orcamentoId){
 }
 
 RENDERERS['logistica'] = renderLogistica;
+
+/* =========================================================
+   MOTORISTA NO CELULAR (18/11/2026)
+
+   "enviar um link pro meu funcionário marcar o que já coletou e o que já
+    entregou, pelo celular, bem organizado pra celular; e se ele marcar,
+    me dá o retorno aqui na logística; e por lá mesmo ele clica no link da
+    localização"
+
+   Ela escolheu: o motorista tem USUÁRIO PRÓPRIO (Usuários → liberar só o
+   menu "Motorista"). O link é o endereço do sistema com #motorista: depois
+   do login, cai direto nesta tela.
+
+   O roteiro que ele vê é o que ELA mandou ("📱 Enviar pro motorista"):
+   fica guardado em STATE.roteirosMotorista (um por dia), e o que ele marca
+   vai no próprio orçamento (o.motorista) — os dois sincronizam registro por
+   registro. "Entregue" do motorista NÃO fecha a venda sozinho: aparece pra
+   ela na Logística, e ela confirma (a confirmação é que baixa estoque e
+   lança no financeiro).
+   ========================================================= */
+function motoristaHoje(){
+  return (STATE.roteirosMotorista || []).find(r=>r.id === 'rot_' + todayISO()) || null;
+}
+function motoristaHora(iso){
+  if(!iso) return '';
+  try{ return new Date(iso).toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' }); }catch(e){ return ''; }
+}
+function motoristaLink(){
+  return 'https://mizuvendas.github.io/mizu-erp/#motorista';
+}
+
+function motoristaEnviar(){
+  const entregas = getEntregasSelecionadasLogistica();
+  const avulsas = paradasAvulsasParaRoteiro();
+  if(!entregas.length && !avulsas.length){ showToast('Nada marcado pra entrar no roteiro.', 'error'); return; }
+  if(!Array.isArray(STATE.roteirosMotorista)) STATE.roteirosMotorista = [];
+  const id = 'rot_' + todayISO();
+  let r = STATE.roteirosMotorista.find(x=>x.id === id);
+  if(!r){ r = { id, data: todayISO(), criadoEm: new Date().toISOString() }; STATE.roteirosMotorista.push(r); }
+  r.orcamentoIds = entregas.map(e=>e.orcamentoId);
+  r.avulsaIds = avulsas.map(a=>a.id);
+  r.enviadoEm = new Date().toISOString();
+  /* só o roteiro de hoje e dos últimos dias: não acumula pra sempre */
+  STATE.roteirosMotorista = STATE.roteirosMotorista.filter(x=>String(x.data||'') >= addMonths(todayISO(), -1));
+  saveState();
+
+  const link = motoristaLink();
+  const msg = `Roteiro de hoje (${fmtDate(todayISO())}): ${link}\nEntre com o seu usuário e marque o que for coletando e entregando.`;
+  document.getElementById('modal-motorista-link')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open'; m.id = 'modal-motorista-link';
+  m.innerHTML = `<div class="modal-box" style="max-width:min(480px,95vw);">
+      <h3 style="margin-top:0;">📱 Roteiro enviado pro motorista</h3>
+      <p class="help-text">${r.orcamentoIds.length} entrega(s)${r.avulsaIds.length ? ` e ${r.avulsaIds.length} parada(s) avulsa(s)` : ''}.
+        Mande o link pra ele. Ele entra com o usuário dele e já cai no roteiro — o que ele marcar aparece aqui na Logística.</p>
+      <div class="field"><input type="text" id="motorista-link-campo" readonly value="${escapeAttr(link)}"></div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+        <button class="btn" id="motorista-copiar">📋 Copiar o link</button>
+        <a class="btn btn-primary" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(msg)}">💬 Mandar pelo WhatsApp</a>
+        <button class="btn" onclick="document.getElementById('modal-motorista-link').remove()">Fechar</button>
+      </div>
+      <p class="help-text" style="margin-top:10px;">Primeira vez? Em <strong>Usuários</strong>, crie o usuário dele e libere só o menu <strong>📱 Motorista</strong>.</p>
+    </div>`;
+  document.body.appendChild(m);
+  document.getElementById('motorista-copiar').addEventListener('click', async ()=>{
+    try{ await navigator.clipboard.writeText(msg); showToast('Link copiado.', 'success'); }
+    catch(e){ const c = document.getElementById('motorista-link-campo'); c.select(); try{ document.execCommand('copy'); showToast('Link copiado.', 'success'); }catch(e2){} }
+  });
+  try{ renderLogistica(); }catch(e){}
+}
+
+/* o roteiro de hoje, na ordem, só com o que ela mandou */
+function motoristaRoteiro(){
+  const r = motoristaHoje();
+  if(!r) return null;
+  const ids = new Set(r.orcamentoIds || []);
+  const entregas = getDadosLogistica().entregas.filter(e=>ids.has(e.orcamentoId));
+  /* entrega que já saiu da rota (ela confirmou) continua aparecendo pra ele, como feita */
+  (r.orcamentoIds || []).forEach(id=>{
+    if(entregas.some(e=>e.orcamentoId === id)) return;
+    const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+    if(!o) return;
+    const c = (STATE.clientes||[]).find(x=>x.id === o.clienteId);
+    entregas.push({ orcamentoId: o.id, clienteId: o.clienteId, clienteNome: c ? c.nome : '(cliente)', endereco: clienteEnderecoEntrega(c),
+      lat: c ? c.lat : null, lng: c ? c.lng : null, itens: (o.itens||[]).map(it=>({ nome: it.nome, qtd: it.qtd, origemTipo: 'dep', origemId: 'mizu' })), jaConfirmada: true });
+  });
+  const avs = new Set(r.avulsaIds || []);
+  const { roteiro } = calcularRoteiro(entregas);
+  return roteiro.filter(p=>p.tipo !== 'avulsa' || avs.has(p.id));
+}
+
+function motoristaDoOrc(o){ if(!o.motorista) o.motorista = {}; if(!o.motorista.coletas) o.motorista.coletas = {}; return o.motorista; }
+/* coleta: um item do ponto pode servir a vários orçamentos — marca em todos */
+function motoristaColetaFeita(p, nome){
+  const ids = [...new Set((p.itens||[]).filter(it=>it.nome === nome).map(it=>it.orcamentoId))];
+  return ids.length > 0 && ids.every(id=>{
+    const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+    return !!(o && o.motorista && o.motorista.coletas && o.motorista.coletas[p.chave + '|' + nome]);
+  });
+}
+function motoristaMarcarColeta(chavePonto, nome, feito){
+  const p = (motoristaRoteiro() || []).find(x=>x.tipo === 'coleta' && x.chave === chavePonto);
+  if(!p) return;
+  const ids = [...new Set((p.itens||[]).filter(it=>it.nome === nome).map(it=>it.orcamentoId))];
+  ids.forEach(id=>{
+    const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+    if(!o) return;
+    const m = motoristaDoOrc(o);
+    if(feito) m.coletas[chavePonto + '|' + nome] = new Date().toISOString();
+    else delete m.coletas[chavePonto + '|' + nome];
+  });
+  saveState();
+  renderMotorista();
+}
+function motoristaMarcarEntrega(orcamentoId, feito){
+  const o = (STATE.orcamentos||[]).find(x=>x.id === orcamentoId);
+  if(!o) return;
+  const m = motoristaDoOrc(o);
+  if(feito){
+    m.entregueEm = new Date().toISOString();
+    const rec = document.getElementById('mot-rec-' + orcamentoId);
+    m.recebidoPor = rec ? rec.value.trim() : (m.recebidoPor || '');
+  }else{ delete m.entregueEm; }
+  saveState();
+  renderMotorista();
+  if(feito) showToast('Entrega marcada. Já aparece pra loja.', 'success');
+}
+function motoristaMarcarTarefa(paradaId, tarefaId){
+  const parada = paradasAvulsas().find(p=>p.id === paradaId);
+  const t = parada && (parada.tarefas||[]).find(x=>x.id === tarefaId);
+  if(!t) return;
+  t.feita = !t.feita;
+  saveState();
+  renderMotorista();
+}
+function motoristaMarcarParada(paradaId){
+  const parada = paradasAvulsas().find(p=>p.id === paradaId);
+  if(!parada) return;
+  parada.feitaMotoristaEm = parada.feitaMotoristaEm ? '' : new Date().toISOString();
+  saveState();
+  renderMotorista();
+}
+
+/* situação de cada parada (vale pra tela dele e pro retorno dela) */
+function motoristaSituacao(p){
+  if(p.tipo === 'coleta'){
+    const nomes = [...new Set((p.itens||[]).map(it=>it.nome))];
+    const feitos = nomes.filter(n=>motoristaColetaFeita(p, n)).length;
+    return { feita: nomes.length > 0 && feitos === nomes.length, texto: `${feitos} de ${nomes.length} item(ns) coletado(s)`, parcial: feitos > 0 };
+  }
+  if(p.tipo === 'avulsa'){
+    const par = paradasAvulsas().find(x=>x.id === p.id) || {};
+    const feita = !!par.feitaMotoristaEm || !!par.concluida;
+    return { feita, texto: feita ? `feita ${motoristaHora(par.feitaMotoristaEm)}` : 'pendente', parcial: false };
+  }
+  const o = (STATE.orcamentos||[]).find(x=>x.id === p.orcamentoId) || {};
+  const m = o.motorista || {};
+  const confirmada = ['entregue','retirado'].includes(o.statusEntrega);
+  return { feita: !!m.entregueEm || confirmada, confirmada,
+    texto: m.entregueEm ? `entregue ${motoristaHora(m.entregueEm)}${m.recebidoPor ? ' · recebido por ' + m.recebidoPor : ''}` : (confirmada ? 'entregue' : 'pendente'),
+    parcial: false };
+}
+
+/* rota inteira no Google Maps (grátis, sem chave): loja → paradas → loja */
+function motoristaLinkRotaInteira(roteiro){
+  const pts = roteiro.filter(p=>p.lat != null && p.lng != null && !motoristaSituacao(p).feita).map(p=>`${p.lat},${p.lng}`);
+  if(!pts.length) return '';
+  const loja = (STATE.config.lojaLat != null && STATE.config.lojaLng != null) ? `${STATE.config.lojaLat},${STATE.config.lojaLng}` : '';
+  const destino = loja || pts[pts.length - 1];
+  const meio = (loja ? pts : pts.slice(0, -1)).slice(0, 9);
+  return `https://www.google.com/maps/dir/?api=1&travelmode=driving${loja ? '&origin=' + encodeURIComponent(loja) : ''}`
+    + `&destination=${encodeURIComponent(destino)}${meio.length ? '&waypoints=' + encodeURIComponent(meio.join('|')) : ''}`;
+}
+
+function renderMotorista(){
+  const box = document.getElementById('motorista-content');
+  if(!box) return;
+  const r = motoristaHoje();
+  const roteiro = motoristaRoteiro();
+  const est = `
+    <style>
+      #motorista-content{ max-width:560px; margin:0 auto; }
+      .mot-topo{ background:var(--primary-escuro,#1B4B5A); color:#fff; border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+      .mot-topo h2{ margin:0; font-size:20px; color:#fff; }
+      .mot-topo .sub{ font-size:13px; opacity:.85; margin-top:2px; }
+      .mot-barra{ height:8px; background:rgba(255,255,255,.25); border-radius:5px; overflow:hidden; margin-top:10px; }
+      .mot-barra > div{ height:100%; background:#8FD9B4; }
+      .mot-cartao{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:12px; }
+      .mot-cartao.feita{ opacity:.6; }
+      .mot-cab{ display:flex; gap:10px; align-items:flex-start; }
+      .mot-num{ width:32px; height:32px; border-radius:50%; background:var(--primary-escuro,#1B4B5A); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+      .mot-cartao.feita .mot-num{ background:var(--positive,#2E7D5B); }
+      .mot-tipo{ font-size:11px; font-weight:700; letter-spacing:.04em; }
+      .mot-nome{ font-size:17px; font-weight:700; line-height:1.25; }
+      .mot-end{ font-size:13.5px; color:var(--ink-soft); margin-top:2px; }
+      .mot-btn-mapa{ display:block; text-align:center; margin-top:10px; padding:12px; border-radius:10px; background:#E8F3F6; color:#1B4B5A; font-weight:700; font-size:15px; text-decoration:none; border:1px solid #C5DEE6; }
+      .mot-item{ display:flex; gap:12px; align-items:center; padding:11px 4px; border-top:1px solid var(--border); font-size:15.5px; cursor:pointer; }
+      .mot-item input{ width:26px; height:26px; flex-shrink:0; margin:0; }
+      .mot-item.ok span{ text-decoration:line-through; color:var(--ink-faint); }
+      .mot-qtd{ font-weight:800; white-space:nowrap; }
+      .mot-entregar{ display:block; width:100%; margin-top:10px; padding:15px; font-size:17px; font-weight:800; border-radius:12px; border:0; background:var(--positive,#2E7D5B); color:#fff; cursor:pointer; }
+      .mot-desfazer{ display:block; width:100%; margin-top:8px; padding:10px; font-size:14px; border-radius:10px; border:1px solid var(--border); background:#fff; cursor:pointer; }
+      .mot-rec{ width:100%; box-sizing:border-box; margin-top:10px; padding:12px; font-size:16px; border:1px solid var(--border); border-radius:10px; }
+      .mot-feito{ margin-top:10px; padding:10px 12px; border-radius:10px; background:#E7F4EE; color:#1F6047; font-weight:700; font-size:14.5px; }
+    </style>`;
+  if(!r || !roteiro){
+    box.innerHTML = est + `<div class="mot-topo"><h2>📱 Roteiro de hoje</h2><div class="sub">${fmtDate(todayISO())}</div></div>
+      <div class="mot-cartao" style="text-align:center;font-size:16px;padding:26px 16px;">Ainda não tem roteiro pra hoje.<br>
+      <span class="help-text">Quando a loja mandar, ele aparece aqui sozinho.</span></div>`;
+    return;
+  }
+  const feitas = roteiro.filter(p=>motoristaSituacao(p).feita).length;
+  const pct = roteiro.length ? Math.round(feitas * 100 / roteiro.length) : 0;
+  const rota = motoristaLinkRotaInteira(roteiro);
+  const mapa = p=>{ const l = roteiroLinkMaps(p); return l ? `<a class="mot-btn-mapa" href="${escapeAttr(l)}" target="_blank" rel="noopener">🗺️ Abrir no Google Maps</a>` : ''; };
+  const cartoes = roteiro.map((p, i)=>{
+    const s = motoristaSituacao(p);
+    if(p.tipo === 'coleta'){
+      const agr = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; }, {});
+      return `<div class="mot-cartao ${s.feita?'feita':''}">
+        <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
+          <div class="mot-tipo" style="color:#8A5A18;">📦 COLETAR</div>
+          <div class="mot-nome">${escapeHtml(p.nome)}</div>
+          <div class="mot-end">${escapeHtml(roteiroEnderecoCurto(p.endereco) || 'Endereço não cadastrado')}</div></div></div>
+        ${mapa(p)}
+        <div style="margin-top:8px;">${Object.entries(agr).map(([nome,qtd])=>{
+          const ok = motoristaColetaFeita(p, nome);
+          return `<label class="mot-item ${ok?'ok':''}"><input type="checkbox" ${ok?'checked':''}
+            onchange="motoristaMarcarColeta('${escapeAttr(p.chave)}', decodeURIComponent('${encodeURIComponent(nome)}'), this.checked)">
+            <span><span class="mot-qtd">${fmtNum(qtd)}×</span> ${escapeHtml(nome)}</span></label>`; }).join('')}</div>
+      </div>`;
+    }
+    if(p.tipo === 'avulsa'){
+      const papel = papelDaParada(p);
+      const par = paradasAvulsas().find(x=>x.id === p.id) || {};
+      return `<div class="mot-cartao ${s.feita?'feita':''}">
+        <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
+          <div class="mot-tipo">${papel.icone} ${escapeHtml(papel.rotulo)}</div>
+          <div class="mot-nome">${escapeHtml(p.nome)}</div>
+          <div class="mot-end">${escapeHtml(roteiroEnderecoCurto(p.endereco) || 'Endereço não informado')}</div></div></div>
+        ${mapa(p)}
+        <div style="margin-top:8px;">${(par.tarefas||[]).map(t=>`<label class="mot-item ${t.feita?'ok':''}"><input type="checkbox" ${t.feita?'checked':''}
+            onchange="motoristaMarcarTarefa('${escapeAttr(p.id)}','${escapeAttr(t.id)}')"><span>${escapeHtml(t.texto)}</span></label>`).join('')}</div>
+        ${s.feita ? `<div class="mot-feito">✓ Feita ${escapeHtml(motoristaHora(par.feitaMotoristaEm))}</div>
+            ${par.concluida ? '' : `<button class="mot-desfazer" onclick="motoristaMarcarParada('${escapeAttr(p.id)}')">Desfazer</button>`}`
+          : `<button class="mot-entregar" onclick="motoristaMarcarParada('${escapeAttr(p.id)}')">✓ Feita</button>`}
+      </div>`;
+    }
+    const o = (STATE.orcamentos||[]).find(x=>x.id === p.orcamentoId) || {};
+    const m = o.motorista || {};
+    const agr = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; }, {});
+    return `<div class="mot-cartao ${s.feita?'feita':''}">
+      <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
+        <div class="mot-tipo" style="color:#6B3FA0;">🏠 ENTREGAR${o.numero ? ` · orçamento nº ${escapeHtml(String(o.numero))}` : ''}</div>
+        <div class="mot-nome">${escapeHtml(p.clienteNome)}</div>
+        <div class="mot-end">${escapeHtml(roteiroEnderecoCurto(p.endereco) || 'Endereço não cadastrado')}</div></div></div>
+      ${mapa(p)}
+      <div style="margin-top:8px;">${Object.entries(agr).map(([nome,qtd])=>`<div class="mot-item" style="cursor:default;"><span><span class="mot-qtd">${fmtNum(qtd)}×</span> ${escapeHtml(nome)}</span></div>`).join('')}</div>
+      ${s.feita
+        ? `<div class="mot-feito">✓ ${escapeHtml(s.texto.charAt(0).toUpperCase() + s.texto.slice(1))}</div>
+           ${s.confirmada ? '' : `<button class="mot-desfazer" onclick="motoristaMarcarEntrega('${escapeAttr(p.orcamentoId)}', false)">Desfazer</button>`}`
+        : `<input class="mot-rec" id="mot-rec-${escapeAttr(p.orcamentoId)}" placeholder="Quem recebeu? (opcional)" value="${escapeAttr(m.recebidoPor||'')}">
+           <button class="mot-entregar" onclick="motoristaMarcarEntrega('${escapeAttr(p.orcamentoId)}', true)">✓ Entregue</button>`}
+    </div>`;
+  }).join('');
+  box.innerHTML = est + `
+    <button class="btn btn-sm bal-voltar-menu" style="margin:0 0 8px;" onclick="balMostrarMenu()">☰ Menu</button>
+    <div class="mot-topo">
+      <h2>📱 Roteiro de hoje</h2>
+      <div class="sub">${fmtDate(todayISO())} · ${feitas} de ${roteiro.length} parada(s) feita(s)</div>
+      <div class="mot-barra"><div style="width:${pct}%;"></div></div>
+    </div>
+    ${rota ? `<a class="mot-btn-mapa" style="margin:0 0 12px;background:#fff;" href="${escapeAttr(rota)}" target="_blank" rel="noopener">🧭 Abrir a rota inteira no Google Maps</a>` : ''}
+    ${cartoes}`;
+}
+RENDERERS['motorista'] = renderMotorista;
+
+/* O RETORNO, na Logística dela: o que o motorista já marcou */
+function motoristaRetornoHtml(){
+  const r = motoristaHoje();
+  if(!r) return '';
+  let roteiro = [];
+  try{ roteiro = motoristaRoteiro() || []; }catch(e){ return ''; }
+  if(!roteiro.length) return '';
+  const feitas = roteiro.filter(p=>motoristaSituacao(p).feita).length;
+  const linhas = roteiro.map((p, i)=>{
+    const s = motoristaSituacao(p);
+    const nome = p.tipo === 'entrega' ? p.clienteNome : p.nome;
+    const icone = p.tipo === 'coleta' ? '📦' : p.tipo === 'entrega' ? '🏠' : papelDaParada(p).icone;
+    const confirmar = p.tipo === 'entrega' && s.feita && !s.confirmada
+      ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${escapeAttr(p.orcamentoId)}')">Confirmar entrega</button>` : '';
+    return `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--border);font-size:13.5px;">
+      <div><strong>${i+1}.</strong> ${icone} ${escapeHtml(nome)}
+        <span style="margin-left:6px;color:${s.feita?'var(--positive)':(s.parcial?'var(--warning)':'var(--ink-faint)')};font-weight:${s.feita?700:400};">
+          ${s.feita?'✓ ':''}${escapeHtml(s.texto)}${s.confirmada ? ' · confirmada' : ''}</span></div>
+      ${confirmar}</div>`;
+  }).join('');
+  return `<div class="card" style="border-left:4px solid var(--primary);">
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
+      <h3 style="margin:0;">📱 Retorno do motorista — ${feitas} de ${roteiro.length} parada(s)</h3>
+      <span class="help-text" style="margin:0;">enviado às ${escapeHtml(motoristaHora(r.enviadoEm))}</span>
+    </div>
+    <p class="help-text" style="margin:4px 0 6px;">O que ele marca no celular aparece aqui. "Entregue" dele não fecha a venda: confirme você, como sempre.</p>
+    ${linhas}
+  </div>`;
+}
 
 // Gera o PDF do roteiro completo do dia — uma seção por parada, na ordem
 // calculada por calcularRoteiro(). Coletas mostram só item + quantidade
@@ -50265,6 +50580,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-g',
+    data: '2026-11-18',
+    titulo: 'Logística: o motorista marca pelo celular, e o retorno aparece aqui',
+    itens: [
+      '📱 ENVIAR PRO MOTORISTA (na Logística, ao lado do PDF): guarda o roteiro de hoje e mostra o link pra mandar pelo WhatsApp.',
+      'NO CELULAR DELE (menu 📱 Motorista): cartões grandes, na ordem da rota. Em cada coleta ele marca o que pegou; em cada entrega, escreve quem recebeu (se quiser) e toca "✓ Entregue". Cada parada tem "🗺️ Abrir no Google Maps", e no topo "Abrir a rota inteira".',
+      'NA SUA LOGÍSTICA aparece o quadro "Retorno do motorista": o que já foi coletado e entregue, com a hora. O "Entregue" dele não fecha a venda sozinho — você toca "Confirmar entrega", como sempre.',
+      'PRIMEIRA VEZ: em Usuários, crie o usuário dele e libere só o menu "📱 Motorista". O link já abre direto nessa tela depois do login.'
+    ]
+  },
+  {
     id: '2026-11-18-f',
     data: '2026-11-18',
     titulo: 'Logística: o PDF do roteiro ficou completo pro motorista',
@@ -63568,7 +63894,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 13:00';
+const SISTEMA_VERSAO = '18/11/2026 15:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
