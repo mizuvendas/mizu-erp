@@ -3683,6 +3683,14 @@ function renderPerfilClienteResumo(cliente){
    Os dois primeiros valores são os antigos ("Público", "Privado"), mantidos
    de propósito: trocar o texto renomearia o tipo de todo mundo que já está
    cadastrado. */
+/* "o endereço de entrega vai ser algo interno nosso que fica gravado no
+   cliente" (18/11/2026): a nota usa o endereço do cadastro; a entrega
+   (roteiro, orçamento) usa este, quando tiver. */
+function clienteEnderecoEntrega(c){
+  if(!c) return '';
+  return String(c.enderecoEntrega || '').trim() || String(c.endereco || '').trim();
+}
+
 const TIPOS_CLIENTE = [
   { valor: 'Pessoa Física', rotulo: 'Cliente pessoa física', pessoa: 'PF' },
   { valor: 'Privado',       rotulo: 'Empresa',               pessoa: 'PJ' },
@@ -3926,10 +3934,6 @@ function abrirFormCliente(id, onCriado){
               <input type="text" id="f-pessoa-contato" value="${cliente?escapeAttr(cliente.pessoaContato||''):''}">
             </div>
             <div class="field">
-              <label>Cidade / UF</label>
-              <input type="text" id="f-cidade" value="${cliente?escapeAttr(cliente.cidade||''):''}">
-            </div>
-            <div class="field">
               <label>Tipo de cliente <span class="req">*</span></label>
               <select id="f-tipo">
                 <option value="" ${cliente?'':'selected'}>— selecione —</option>
@@ -3937,48 +3941,81 @@ function abrirFormCliente(id, onCriado){
               </select>
               <div class="help-text">Decide o modelo da proposta e o que a nota exige. Cadastro novo não salva sem escolher.</div>
             </div>
-            <div class="field field-full">
-              <label>Endereço</label>
-              <div style="display:flex; gap:8px;">
-                <input type="text" id="f-endereco" style="flex:1;" value="${cliente?escapeAttr(cliente.endereco||''):''}">
-                <button type="button" class="btn" id="f-btn-mapa" style="white-space:nowrap;">📍 Localizar no mapa</button>
-              </div>
-              <div id="f-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;">${cliente&&cliente.lat?`Localização salva (${cliente.lat.toFixed(5)}, ${cliente.lng.toFixed(5)})`:''}</div>
+            <!-- UM ENDEREÇO SÓ (18/11/2026): "ficou confuso, duplicado, dois
+                 lugares pra preencher endereço" + "ao colocar o CEP deveria
+                 puxar as informações". Antes: texto livre + Cidade/UF + bloco
+                 "estruturado" escondido (o único que a nota lia). Agora: CEP
+                 primeiro, que preenche rua, bairro, cidade e UF; o endereço
+                 completo é montado destes campos. -->
+            ${(()=>{
+              const c = cliente || {};
+              /* cadastro antigo, só com o texto livre: o texto vai pra Rua
+                 pra ela ajeitar — nada se perde */
+              const rua = c.logradouro != null && c.logradouro !== '' ? c.logradouro : (c.endereco || '');
+              let cid = c.cidadeEstruturada || '', uf = c.uf || '';
+              if(!cid && c.cidade){
+                const m = String(c.cidade).match(/^\s*(.+?)\s*[\/-]\s*([A-Za-z]{2})\s*$/);
+                if(m){ cid = m[1]; if(!uf) uf = m[2].toUpperCase(); } else cid = c.cidade;
+              }
+              const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+              return `
+            <div class="field field-full" style="margin-bottom:0;">
+              <label style="font-weight:700;border-top:1px solid var(--border);padding-top:10px;">📍 Endereço <span class="hint" style="font-weight:400;">— é o que vai na nota fiscal e no orçamento. Comece pelo CEP.</span></label>
             </div>
+            <div class="field">
+              <label>CEP</label>
+              <input type="text" id="f-cep" maxlength="9" inputmode="numeric" placeholder="só os números" value="${escapeAttr(c.cep||'')}">
+              <div id="f-cep-status" class="help-text" style="margin-top:3px;"></div>
+            </div>
+            <div class="field">
+              <label>Rua / Avenida</label>
+              <input type="text" id="f-logradouro" value="${escapeAttr(rua)}">
+            </div>
+            <div class="field">
+              <label>Número</label>
+              <input type="text" id="f-numero" placeholder="S/N se não tiver" value="${escapeAttr(c.numero||'')}">
+            </div>
+            <div class="field">
+              <label>Complemento</label>
+              <input type="text" id="f-complemento" placeholder="quadra, lote, sala, apto…" value="${escapeAttr(c.complemento||'')}">
+            </div>
+            <div class="field">
+              <label>Bairro</label>
+              <input type="text" id="f-bairro" value="${escapeAttr(c.bairro||'')}">
+            </div>
+            <div class="field">
+              <label>Cidade</label>
+              <div style="display:flex;gap:6px;">
+                <input type="text" id="f-cidade-estruturada" style="flex:1;" value="${escapeAttr(cid)}">
+                <select id="f-uf" style="width:78px;">
+                  <option value="">UF</option>
+                  ${UFS.map(u=>`<option value="${u}" ${uf===u?'selected':''}>${u}</option>`).join('')}
+                </select>
+              </div>
+            </div>
+            <input type="hidden" id="f-endereco" value="${escapeAttr(c.endereco||'')}">
+            <input type="hidden" id="f-cidade" value="${escapeAttr(c.cidade||'')}">
+            <input type="hidden" id="f-mapa-endereco" value="">
+            <div class="field field-full">
+              <label style="display:flex;gap:8px;align-items:center;font-weight:600;margin:0;">
+                <input type="checkbox" id="f-entrega-outro" style="width:auto;margin:0;" ${c.enderecoEntrega?'checked':''}>
+                🚚 Entregar em outro endereço <span class="hint">só nosso: não vai na nota</span>
+              </label>
+              <div id="f-entrega-wrap" style="display:${c.enderecoEntrega?'':'none'};margin-top:6px;">
+                <textarea id="f-entrega" rows="2" style="width:100%;box-sizing:border-box;" placeholder="Ex.: Galpão dos fundos, Rua X, 120 — Setor Y. Procurar o Sr. João.">${escapeHtml(c.enderecoEntrega||'')}</textarea>
+                <div class="help-text">Vai no roteiro da entrega e no "📍 Localizar no mapa". A nota continua com o endereço acima.</div>
+              </div>
+            </div>
+            <div class="field field-full">
+              <button type="button" class="btn" id="f-btn-mapa" style="white-space:nowrap;">📍 Localizar no mapa</button>
+              <div id="f-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;">${c.lat?`Localização salva (${c.lat.toFixed(5)}, ${c.lng.toFixed(5)})`:''}</div>
+            </div>`;
+            })()}
             <div class="field field-full">
               <label>Observações</label>
               <textarea id="f-obs">${cliente?escapeHtml(cliente.obs||''):''}</textarea>
             </div>
           </div>
-
-          <details style="margin-top:14px;border:1px solid var(--border);border-radius:var(--radius-sm);padding:2px 12px;">
-            <summary style="cursor:pointer;padding:8px 0;font-weight:700;font-size:13px;color:var(--ink);">📍 Endereço estruturado (CEP/UF/Cidade/Bairro/Número) <span class="hint">opcional, complementa o endereço acima</span></summary>
-            <div class="form-grid" style="padding-bottom:10px;">
-              <div class="field">
-                <label>CEP</label>
-                <input type="text" id="f-cep" maxlength="9" value="${cliente?escapeAttr(cliente.cep||''):''}">
-              </div>
-              <div class="field">
-                <label>Estado (UF)</label>
-                <select id="f-uf">
-                  <option value="">Selecione...</option>
-                  ${['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'].map(uf=>`<option value="${uf}" ${cliente&&cliente.uf===uf?'selected':''}>${uf}</option>`).join('')}
-                </select>
-              </div>
-              <div class="field">
-                <label>Cidade</label>
-                <input type="text" id="f-cidade-estruturada" value="${cliente?escapeAttr(cliente.cidadeEstruturada||''):''}">
-              </div>
-              <div class="field">
-                <label>Bairro</label>
-                <input type="text" id="f-bairro" value="${cliente?escapeAttr(cliente.bairro||''):''}">
-              </div>
-              <div class="field">
-                <label>Número</label>
-                <input type="text" id="f-numero" value="${cliente?escapeAttr(cliente.numero||''):''}">
-              </div>
-            </div>
-          </details>
 
           <div class="form-grid" style="margin-top:10px;">
             <div class="field field-full" style="display:flex;align-items:center;gap:8px;">
@@ -4008,7 +4045,70 @@ function abrirFormCliente(id, onCriado){
 
   let latClienteSelecionado = cliente && cliente.lat ? cliente.lat : null;
   let lngClienteSelecionado = cliente && cliente.lng ? cliente.lng : null;
-  ativarBotaoMapaEndereco('f-btn-mapa', 'f-endereco',
+
+  /* o endereço completo, montado dos campos */
+  const valorDe = id => { const el = document.getElementById(id); return el ? String(el.value||'').trim() : ''; };
+  function montarEnderecoCliente(){
+    const rua = valorDe('f-logradouro'), num = valorDe('f-numero'), comp = valorDe('f-complemento');
+    const bai = valorDe('f-bairro'), cid = valorDe('f-cidade-estruturada'), uf = valorDe('f-uf');
+    let s = rua;
+    if(num) s += (s ? ', ' : '') + num;
+    if(comp) s += (s ? ' - ' : '') + comp;
+    if(bai) s += (s ? ', ' : '') + bai;
+    const cidUf = cid ? cid + (uf ? '/' + uf : '') : uf;
+    if(cidUf) s += (s ? ' - ' : '') + cidUf;
+    return { completo: s, cidadeUf: cidUf };
+  }
+  /* entrega em outro endereço: mostra/esconde */
+  const chkEntrega = document.getElementById('f-entrega-outro');
+  chkEntrega.addEventListener('change', ()=>{
+    document.getElementById('f-entrega-wrap').style.display = chkEntrega.checked ? '' : 'none';
+    if(chkEntrega.checked) document.getElementById('f-entrega').focus();
+  });
+  /* o mapa procura a ENTREGA, se tiver; senão o endereço da nota. Roda
+     antes do clique do mapa (fase de captura) pra deixar o texto pronto */
+  document.getElementById('f-btn-mapa').addEventListener('click', ()=>{
+    const ent = chkEntrega.checked ? valorDe('f-entrega') : '';
+    document.getElementById('f-mapa-endereco').value = ent || montarEnderecoCliente().completo;
+  }, true);
+
+  /* CEP: digitou os 8 números, busca rua, bairro, cidade e UF (ViaCEP,
+     gratuito). Não mexe no número nem no complemento. Sem internet, avisa. */
+  const campoCep = document.getElementById('f-cep');
+  const statusCep = document.getElementById('f-cep-status');
+  let ultimoCepBuscado = '', ibgeDoCep = (cliente && cliente.codigoIbge) || '';
+  async function buscarCep(){
+    const cep = campoCep.value.replace(/\D/g, '');
+    if(cep.length !== 8 || cep === ultimoCepBuscado) return;
+    ultimoCepBuscado = cep;
+    if(cep.length === 8) campoCep.value = cep.slice(0,5) + '-' + cep.slice(5);
+    statusCep.textContent = 'Buscando o CEP…';
+    try{
+      const r = await fetch(`https://viacep.com.br/ws/${cep}/json/`);
+      const d = await r.json();
+      if(!d || d.erro){ statusCep.innerHTML = '<span style="color:var(--negative);">CEP não encontrado. Confira os números ou preencha à mão.</span>'; return; }
+      const põe = (id, v) => { const el = document.getElementById(id); if(el && v) el.value = v; };
+      põe('f-logradouro', d.logradouro);
+      põe('f-bairro', d.bairro);
+      põe('f-cidade-estruturada', d.localidade);
+      põe('f-uf', d.uf);
+      if(d.complemento && !valorDe('f-complemento')) põe('f-complemento', d.complemento);
+      ibgeDoCep = d.ibge || '';
+      statusCep.innerHTML = `<span style="color:var(--positive);">✓ ${escapeHtml([d.localidade, d.uf].filter(Boolean).join('/'))} — agora é só o número.</span>`;
+      const num = document.getElementById('f-numero'); if(num && !num.value) num.focus();
+    }catch(e){
+      ultimoCepBuscado = '';
+      statusCep.innerHTML = '<span style="color:var(--negative);">Sem internet pra buscar o CEP agora — preencha à mão.</span>';
+    }
+  }
+  campoCep.addEventListener('input', ()=>{
+    clearTimeout(buscarCep._t);
+    if(campoCep.value.replace(/\D/g, '').length === 8) buscarCep._t = setTimeout(buscarCep, 350);
+    else statusCep.textContent = '';
+  });
+  campoCep.addEventListener('blur', ()=>buscarCep());
+
+  ativarBotaoMapaEndereco('f-btn-mapa', 'f-mapa-endereco',
     ()=>({lat:latClienteSelecionado, lng:lngClienteSelecionado}),
     (lat,lng)=>{
       latClienteSelecionado = lat; lngClienteSelecionado = lng;
@@ -4042,10 +4142,8 @@ function abrirFormCliente(id, onCriado){
       const põe = (id, valor) => { const el = document.getElementById(id); if(el && valor) el.value = valor; };
       põe('f-nome', dados.razaoSocial);
       põe('f-nome-fantasia', dados.fantasia);
-      const rua = [dados.logradouro, dados.numero, dados.bairro].filter(Boolean).join(', ');
-      if(rua){
-        põe('f-endereco', rua + (dados.municipio ? ' - ' + dados.municipio : '') + (dados.uf ? '/' + dados.uf : ''));
-      }
+      põe('f-logradouro', dados.logradouro);
+      põe('f-complemento', dados.complemento);
       põe('f-cep', dados.cep);
       põe('f-uf', dados.uf);
       põe('f-cidade-estruturada', dados.municipio);
@@ -4107,6 +4205,25 @@ function abrirFormCliente(id, onCriado){
   /* Digitou (ou colou) os 14 dígitos: busca sozinho, sem precisar clicar.
      Só uma vez por CNPJ — esses serviços têm limite por minuto, e
      redisparar a cada tecla queimaria a cota à toa. */
+  /* CPF não tem busca pública: o botão "Buscar" é só pra CNPJ. Com CPF,
+     o sistema confere os dígitos e diz se está certo. */
+  const btnBuscarDoc = document.getElementById('f-btn-buscar-cnpj');
+  function ajustarCampoDocumento(){
+    const d = campoDoc.value.replace(/\D/g, '');
+    const ehCpf = d.length === 11 || (d.length > 0 && d.length < 12 && document.getElementById('f-tipo').value === 'Pessoa Física');
+    btnBuscarDoc.style.display = ehCpf ? 'none' : '';
+    if(d.length === 11){
+      statusCnpj.innerHTML = cpfDigitoConfere(d)
+        ? '<span class="help-text" style="color:var(--positive);">✓ CPF válido. (CPF não tem busca pública — o resto é à mão; o CEP preenche o endereço.)</span>'
+        : '<span class="help-text" style="color:var(--negative);">Esse CPF não é válido — os dois últimos dígitos não batem. Confira no documento.</span>';
+    }else if(ehCpf || d.length === 0){
+      statusCnpj.innerHTML = '';
+    }
+  }
+  campoDoc.addEventListener('input', ajustarCampoDocumento);
+  document.getElementById('f-tipo').addEventListener('change', ajustarCampoDocumento);
+  ajustarCampoDocumento();
+
   campoDoc.addEventListener('input', ()=>{
     const digitos = cnpjDigitosValidos(campoDoc.value);
     if(!digitos || digitos === ultimoCnpjBuscado) return;
@@ -4141,10 +4258,22 @@ function abrirFormCliente(id, onCriado){
       nacionalidade: document.getElementById('f-nacionalidade').value,
       contato: document.getElementById('f-contato').value.trim(),
       pessoaContato: document.getElementById('f-pessoa-contato').value.trim(),
-      cidade: document.getElementById('f-cidade').value.trim(),
+      /* cidade e endereco continuam gravados (o resto do sistema lê), mas
+         agora são MONTADOS dos campos do endereço */
+      cidade: montarEnderecoCliente().cidadeUf,
       tipo: document.getElementById('f-tipo').value,
       inscricaoEstadual: document.getElementById('f-inscricao-estadual').value.trim().toUpperCase(),
-      endereco: document.getElementById('f-endereco').value.trim(),
+      endereco: montarEnderecoCliente().completo,
+      logradouro: valorDe('f-logradouro'),
+      complemento: valorDe('f-complemento'),
+      enderecoEntrega: chkEntrega.checked ? valorDe('f-entrega') : '',
+      /* código do município (a nota usa): CEP igual, fica o que tinha;
+         CEP novo, vale o que a busca do CEP trouxe (ou a nota busca depois) */
+      codigoIbge: (()=>{
+        const novo = valorDe('f-cep').replace(/\D/g,''), velho = String((cliente&&cliente.cep)||'').replace(/\D/g,'');
+        if(novo === velho) return (cliente && cliente.codigoIbge) || ibgeDoCep || '';
+        return ultimoCepBuscado === novo ? ibgeDoCep : '';
+      })(),
       cep: document.getElementById('f-cep').value.trim(),
       uf: document.getElementById('f-uf').value,
       cidadeEstruturada: document.getElementById('f-cidade-estruturada').value.trim(),
@@ -18739,7 +18868,7 @@ function gerarPdfControleEntrega(id, opcoes){
 
       <div class="meta">
         <strong>Cliente:</strong> ${escapeHtml(cliente?cliente.nome:'')}<br>
-        <strong>Endereço de entrega:</strong> ${escapeHtml(cliente&&cliente.endereco?cliente.endereco:'(endereço não cadastrado)')}<br>
+        <strong>Endereço de entrega:</strong> ${escapeHtml(clienteEnderecoEntrega(cliente) || '(endereço não cadastrado)')}<br>
         ${cliente&&cliente.contato?`<strong>Contato:</strong> ${escapeHtml(cliente.contato)}<br>`:''}
         <strong>Data do orçamento:</strong> ${fmtDate(orcamento.data)}
       </div>
@@ -20382,7 +20511,7 @@ function getDadosLogistica(){
       orcamentoId: o.id,
       clienteId: o.clienteId,
       clienteNome: cliente ? cliente.nome : '(cliente removido)',
-      endereco: cliente ? cliente.endereco : '',
+      endereco: clienteEnderecoEntrega(cliente),
       lat: cliente ? cliente.lat : null,
       lng: cliente ? cliente.lng : null,
       data: o.data,
@@ -46184,7 +46313,8 @@ async function nfeMontarPayload(orcamento, numeroNota, modelo, cpfNaNota){
       cnpj: doc.length===14 ? doc : '',
       ie: (cliente.inscricaoEstadual||'').replace(/\D/g,''),
       endereco: {
-        logradouro: nfeCampo(cliente.endereco, NFE_LIMITES.logradouro, 'endereço') || 'NAO INFORMADO',
+        /* a rua sozinha (cadastro novo); cadastro antigo só tinha o texto livre */
+        logradouro: nfeCampo(cliente.logradouro || cliente.endereco, NFE_LIMITES.logradouro, 'endereço') || 'NAO INFORMADO',
         numero: nfeCampo(cliente.numero, NFE_LIMITES.numero) || 'S/N',
         bairro: nfeCampo(cliente.bairro, NFE_LIMITES.bairro, 'bairro'),
         cep: (cliente.cep||'').replace(/\D/g,''),
@@ -49976,6 +50106,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-18-d',
+    data: '2026-11-18',
+    titulo: 'Cadastro de cliente: um endereço só, o CEP preenche, e endereço de entrega',
+    itens: [
+      'UM BLOCO SÓ DE ENDEREÇO: CEP, rua, número, complemento, bairro, cidade e UF. Saíram o campo de texto livre, o "Cidade / UF" separado e o bloco "Endereço estruturado" escondido — era confuso preencher em três lugares.',
+      'DIGITOU O CEP, o sistema preenche sozinho rua, bairro, cidade e UF (e guarda o código do município pra nota). Você só completa o número. Sem internet, ele avisa e você digita à mão.',
+      '🚚 ENTREGAR EM OUTRO ENDEREÇO: marque e escreva o endereço de entrega. Ele fica gravado no cliente, vai no roteiro e no orçamento ("Endereço de entrega"), e no "📍 Localizar no mapa". A nota fiscal continua com o endereço do cadastro.',
+      'CPF: o botão "Buscar" é só pra CNPJ (CPF não tem busca pública). Com CPF, o sistema confere se os números estão certos.',
+      'Cliente antigo: nada se perde — o endereço que estava em texto aparece no campo "Rua" pra você ajeitar quando abrir.'
+    ]
+  },
   {
     id: '2026-11-18-c',
     data: '2026-11-18',
@@ -63247,7 +63389,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 09:30';
+const SISTEMA_VERSAO = '18/11/2026 11:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
