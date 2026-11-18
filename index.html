@@ -26628,6 +26628,19 @@ function abrirFormDespesa(id){
       // já tem parcela paga: mantém as parcelas como estão, só descrição/categoria mudam
       parcelasDetalhe = despesa.parcelasDetalhe;
       repeticaoIlimitada = !!despesa.repeticaoIlimitada;
+      /* "estou tentando mudar o dia de um boleto que venceu, o fornecedor
+         alterou a data, e ele não permite" (18/11/2026). A tela deixava
+         mudar a data das parcelas em aberto, mas aqui as datas eram
+         ignoradas em silêncio. Agora as parcelas NÃO pagas recebem a data
+         nova; as pagas não mudam (o campo delas nem fica liberado). */
+      if(despesa.tipo === 'boleto' || despesa.tipo === 'parcelada'){
+        document.querySelectorAll('.fd-data-parcela').forEach(campo=>{
+          const i = Number(campo.dataset.idx);
+          const p = parcelasDetalhe[i];
+          if(!p || p.pago || campo.disabled) return;
+          if(campo.value && campo.value !== p.vencimento) p.vencimento = campo.value;
+        });
+      }
     }else{
       // cadastro novo, OU edição sem nenhuma parcela paga ainda: regenera as parcelas do zero
       if(tipo==='boleto'){
@@ -49964,6 +49977,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-c',
+    data: '2026-11-18',
+    titulo: 'Despesas: dá pra mudar a data de parcela mesmo com parcela já paga',
+    itens: [
+      'EM "EDITAR DESPESA", quando já tinha alguma parcela paga, a tela deixava mudar a data das outras, mas ao salvar ignorava a data nova. Agora a data nova é gravada nas parcelas em aberto (vencidas ou a vencer).',
+      'As parcelas já pagas não mudam — data, valor e pagamento ficam como estão.'
+    ]
+  },
+  {
     id: '2026-11-18-b',
     data: '2026-11-18',
     titulo: 'Balanço: a foto aparece na busca',
@@ -63225,7 +63247,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 08:00';
+const SISTEMA_VERSAO = '18/11/2026 09:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
