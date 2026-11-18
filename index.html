@@ -21270,9 +21270,68 @@ RENDERERS['logistica'] = renderLogistica;
 // calculada por calcularRoteiro(). Coletas mostram só item + quantidade
 // (sem revelar pra qual cliente é, como pedido); entregas mostram cliente
 // e endereço. Pensado pra ser impresso e entregue ao motorista.
+/* "Roteiro de Entrega" — sugestões aprovadas (18/11/2026):
+   entrega mostra O QUE entregar e o nº do orçamento; item com ☐ pra marcar,
+   quantidade na frente, um por linha; endereço sem "Região Centro-Oeste,
+   Brasil"; QR por parada que abre o Google Maps; motorista, saída e km no
+   topo; "Recebido por" na entrega. Sem telefone e sem valor a receber (ela
+   não quer). Coleta continua SEM dizer pra qual cliente (regra antiga dela). */
+const ROT_ESTADOS = {'Acre':'AC','Alagoas':'AL','Amapá':'AP','Amazonas':'AM','Bahia':'BA','Ceará':'CE','Distrito Federal':'DF',
+  'Espírito Santo':'ES','Goiás':'GO','Maranhão':'MA','Mato Grosso':'MT','Mato Grosso do Sul':'MS','Minas Gerais':'MG','Pará':'PA',
+  'Paraíba':'PB','Paraná':'PR','Pernambuco':'PE','Piauí':'PI','Rio de Janeiro':'RJ','Rio Grande do Norte':'RN','Rio Grande do Sul':'RS',
+  'Rondônia':'RO','Roraima':'RR','Santa Catarina':'SC','São Paulo':'SP','Sergipe':'SE','Tocantins':'TO'};
+function roteiroEnderecoCurto(s){
+  let t = String(s || '').trim();
+  if(!t) return '';
+  t = t.replace(/,\s*Brasil\s*$/i, '').replace(/,\s*Regi[aã]o\s+[^,]+/gi, '');
+  /* "…, Rio Verde, Goiás, 75907-551" → "…, Rio Verde/GO, CEP 75907-551" */
+  const cep = (t.match(/\b\d{5}-?\d{3}\b/) || [])[0];
+  if(cep) t = t.replace(new RegExp(',?\\s*' + cep.replace('-', '-?') + '\\s*'), ' ').trim();
+  Object.keys(ROT_ESTADOS).forEach(nome=>{
+    t = t.replace(new RegExp(',\\s*' + nome + '\\b', 'g'), '/' + ROT_ESTADOS[nome]);
+  });
+  t = t.replace(/\s+,/g, ',').replace(/,\s*$/, '').trim();
+  return t + (cep ? ` · CEP ${cep.length === 8 ? cep.slice(0,5) + '-' + cep.slice(5) : cep}` : '');
+}
+function roteiroLinkMaps(p){
+  if(p && p.lat != null && p.lng != null) return `https://www.google.com/maps/dir/?api=1&destination=${p.lat},${p.lng}`;
+  const end = roteiroEnderecoCurto(p && p.endereco);
+  return end ? `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(end)}` : '';
+}
+/* km pelas ruas (OSRM, o mesmo do mapa), saindo e voltando pra loja;
+   sem internet, a conta em linha reta (avisando que é aproximada) */
+async function roteiroKmTotal(roteiro){
+  const pts = roteiro.filter(p=>p.lat != null && p.lng != null).map(p=>[p.lng, p.lat]);
+  const temLoja = STATE.config.lojaLat != null && STATE.config.lojaLng != null;
+  const trajeto = temLoja ? [[STATE.config.lojaLng, STATE.config.lojaLat]].concat(pts, [[STATE.config.lojaLng, STATE.config.lojaLat]]) : pts;
+  if(trajeto.length < 2) return '';
+  try{
+    const ctl = new AbortController(); setTimeout(()=>ctl.abort(), 6000);
+    const url = 'https://router.project-osrm.org/route/v1/driving/' + trajeto.map(c=>c.join(',')).join(';') + '?overview=false';
+    const d = await (await fetch(url, { signal: ctl.signal })).json();
+    const km = d && d.routes && d.routes[0] ? d.routes[0].distance / 1000 : null;
+    if(km != null) return `~${km.toFixed(1)} km${temLoja ? ' (saindo e voltando pra loja)' : ''}`;
+  }catch(e){}
+  let km = 0;
+  for(let i = 1; i < trajeto.length; i++) km += distanciaKm(trajeto[i-1][1], trajeto[i-1][0], trajeto[i][1], trajeto[i][0]);
+  return `~${(km * 1.3).toFixed(1)} km (estimado, sem internet)`;
+}
+
 function gerarPdfRoteiro(){
   const { roteiro, entregasBloqueadas } = calcularRoteiro();
   if(roteiro.length===0){ showToast('Nenhum ponto no roteiro ainda.', 'error'); return; }
+  /* abre a janela já no clique (senão o navegador bloqueia), e escreve
+     quando a conta dos km voltar */
+  const janela = window.open('', '_blank');
+  if(janela) janela.document.write('<p style="font-family:Arial;padding:20px;">Montando o roteiro…</p>');
+  roteiroKmTotal(roteiro).then(km=>gerarPdfRoteiroEscrever(janela, roteiro, entregasBloqueadas, km));
+}
+
+function gerarPdfRoteiroEscrever(janela, roteiro, entregasBloqueadas, kmTexto){
+  if(!janela) return;
+  /* 18/11/2026: ela tirou o QR code e a linha "Motorista / Saída / Volta" */
+  const qr = ()=>'';
+  const lista = itens=>`<div class="itens">${itens.map(([nome,qtd])=>`<div class="item"><span class="caixa">☐</span><strong>${fmtNum(qtd)}×</strong> ${escapeHtml(nome)}</div>`).join('')}</div>`;
 
   // Layout compacto (item 5 da especificação): cada parada em uma faixa
   // baixa, sem cards grandes nem espaçamento generoso, pra caber várias
@@ -21286,9 +21345,10 @@ function gerarPdfRoteiro(){
           <div class="numero">${idx+1}</div>
           <div class="corpo">
             <div class="linha-topo"><span class="${papel.selo}">${papel.rotulo}</span><h3>${papel.icone} ${escapeHtml(p.nome)}</h3></div>
-            <div class="endereco">${escapeHtml(p.endereco||'Endereço não informado')}</div>
-            ${tarefas ? `<div class="itens-3col">${tarefas}</div>` : ''}
+            <div class="endereco">${escapeHtml(roteiroEnderecoCurto(p.endereco)||'Endereço não informado')}</div>
+            ${tarefas ? `<div class="itens">${(p.tarefas||[]).map(t=>`<div class="item"><span class="caixa">${t.feita?'☑':'☐'}</span>${escapeHtml(t.texto)}</div>`).join('')}</div>` : ''}
           </div>
+          ${qr(p)}
         </div>`;
     }
     if(p.tipo==='coleta'){
@@ -21296,26 +21356,30 @@ function gerarPdfRoteiro(){
         acc[it.nome] = (acc[it.nome]||0) + it.qtd;
         return acc;
       },{});
-      // itens em 3 colunas (em vez de um por linha) pra caber mais coisa
-      // numa folha só de impressão, como pedido.
-      const itensColunas = Object.entries(itensAgrupados).map(([nome,qtd])=>`<span>${escapeHtml(nome)} (${fmtNum(qtd)})</span>`).join('');
       return `
         <div class="parada parada-coleta">
           <div class="numero">${idx+1}</div>
           <div class="corpo">
             <div class="linha-topo"><span class="selo">COLETA</span><h3>📦 ${escapeHtml(p.nome)}</h3></div>
-            <div class="endereco">${escapeHtml(p.endereco||'Endereço não cadastrado')}</div>
-            <div class="itens-3col">${itensColunas}</div>
+            <div class="endereco">${escapeHtml(roteiroEnderecoCurto(p.endereco)||'Endereço não cadastrado')}</div>
+            ${lista(Object.entries(itensAgrupados))}
           </div>
+          ${qr(p)}
         </div>`;
     }else{
+      const o = (STATE.orcamentos||[]).find(x=>x.id===p.orcamentoId);
+      const itensEntrega = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; },{});
       return `
         <div class="parada parada-entrega">
           <div class="numero">${idx+1}</div>
           <div class="corpo">
-            <div class="linha-topo"><span class="selo selo-entrega">ENTREGA</span><h3>🏠 ${escapeHtml(p.clienteNome)}</h3></div>
-            <div class="endereco">${escapeHtml(p.endereco||'Endereço não cadastrado')}</div>
+            <div class="linha-topo"><span class="selo selo-entrega">ENTREGA</span><h3>🏠 ${escapeHtml(p.clienteNome)}</h3>
+              ${o && o.numero ? `<span class="orc">Orçamento nº ${escapeHtml(String(o.numero))}</span>` : ''}</div>
+            <div class="endereco">${escapeHtml(roteiroEnderecoCurto(p.endereco)||'Endereço não cadastrado')}</div>
+            ${Object.keys(itensEntrega).length ? lista(Object.entries(itensEntrega)) : ''}
+            <div class="recebido">Recebido por: ______________________________ &nbsp; Hora: ________</div>
           </div>
+          ${qr(p)}
         </div>`;
     }
   }).join('');
@@ -21326,7 +21390,7 @@ function gerarPdfRoteiro(){
     </div>
   ` : '';
 
-  const janela = window.open('', '_blank');
+  janela.document.open();
   janela.document.write(`
     <!DOCTYPE html>
     <html>
@@ -21348,7 +21412,15 @@ function gerarPdfRoteiro(){
         .selo-entrega{ background:#EDE4FA; color:#6B3FA0; }
         .corpo h3{ font-size:12.5px; margin:0; }
         .endereco{ font-size:10.5px; color:#666; margin-top:1px; }
-        .itens-3col{ font-size:10.5px; color:#333; margin-top:3px; display:grid; grid-template-columns:repeat(3, 1fr); gap:2px 10px; }
+        .itens{ font-size:11px; color:#222; margin-top:4px; display:grid; grid-template-columns:repeat(2, 1fr); gap:2px 14px; }
+        .item{ display:flex; gap:5px; align-items:baseline; line-height:1.3; }
+        .item .caixa{ font-size:13px; line-height:1; }
+        .item strong{ white-space:nowrap; }
+        .orc{ font-size:10px; color:#555; border:1px solid #ccc; border-radius:8px; padding:0 6px; }
+        .recebido{ font-size:10.5px; color:#444; margin-top:7px; }
+        .qr{ flex-shrink:0; text-align:center; font-size:8px; color:#888; }
+        .qr svg{ width:64px; height:64px; display:block; }
+        .motorista{ display:flex; gap:22px; font-size:11px; color:#333; margin:2px 0 10px; flex-wrap:wrap; }
         .bloqueadas{ margin-top:10px; font-size:10.5px; color:#B23B3B; background:#FBEAEA; padding:6px 10px; border-radius:6px; }
         @media print{ body{ padding:8px 14px; } .parada{ padding:4px 0; } }
       </style>
@@ -21359,7 +21431,7 @@ function gerarPdfRoteiro(){
           <h1>Roteiro de Entrega</h1>
           <div class="data">${DADOS_EMPRESA.nomeFantasia} · ${fmtDate(todayISO())}</div>
         </div>
-        <div class="resumo">${roteiro.length} parada(s)</div>
+        <div class="resumo">${roteiro.length} parada(s)${kmTexto ? `<br>${escapeHtml(kmTexto)}` : ''}</div>
       </div>
       ${blocosHtml}
       ${blocoBloqueadas}
@@ -50193,6 +50265,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-f',
+    data: '2026-11-18',
+    titulo: 'Logística: o PDF do roteiro ficou completo pro motorista',
+    itens: [
+      'ENTREGA mostra O QUE entregar (cada item com a quantidade) e o nº do orçamento, e tem "Recebido por ____ Hora ____" pra assinar.',
+      'CADA ITEM tem o quadradinho ☐ pra marcar, com a quantidade na frente (3× ÁGUA SANITÁRIA…), um por linha. Na coleta, o mesmo item de clientes diferentes aparece somado; na entrega, cada cliente com a sua parte.',
+      'ENDEREÇO mais limpo (sem "Região Centro-Oeste, Brasil").',
+      'NO TOPO: os km do dia, saindo e voltando pra loja.'
+    ]
+  },
+  {
     id: '2026-11-18-e',
     data: '2026-11-18',
     titulo: 'Fornecedor e Local de compra: endereço com CEP, igual ao do cliente',
@@ -63485,7 +63568,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 11:45';
+const SISTEMA_VERSAO = '18/11/2026 13:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
