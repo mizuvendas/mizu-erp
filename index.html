@@ -19863,17 +19863,20 @@ function servicoConcluido(servicoId){
 let logisticaAvulsasSelecionadas = new Set();
 let logisticaAvulsasConhecidas = new Set();
 
+/* "toda hora que atualizo a página ele marca todos, e vira bagunça no
+   celular" (18/11/2026): a escolha agora fica GRAVADA na parada
+   (foraDoRoteiro), vai pros outros aparelhos e não volta sozinha. */
 function garantirSelecaoAvulsas(lista){
-  lista.forEach(p=>{
-    if(!logisticaAvulsasConhecidas.has(p.id)){
-      logisticaAvulsasSelecionadas.add(p.id);
-      logisticaAvulsasConhecidas.add(p.id);
-    }
-  });
-  const idsAtuais = new Set(lista.map(p=>p.id));
-  [...logisticaAvulsasConhecidas].forEach(id=>{
-    if(!idsAtuais.has(id)){ logisticaAvulsasConhecidas.delete(id); logisticaAvulsasSelecionadas.delete(id); }
-  });
+  logisticaAvulsasSelecionadas = new Set(lista.filter(p=>{
+    const reg = paradasAvulsas().find(x=>x.id === p.id);
+    return !(reg && reg.foraDoRoteiro);
+  }).map(p=>p.id));
+  logisticaAvulsasConhecidas = new Set(lista.map(p=>p.id));
+}
+function logisticaMarcarAvulsa(id, entra){
+  const reg = paradasAvulsas().find(x=>x.id === id);
+  if(!reg) return;
+  if(entra) delete reg.foraDoRoteiro; else reg.foraDoRoteiro = true;
 }
 
 /* No formato que o cálculo do roteiro espera: mesmas chaves de posição
@@ -20659,18 +20662,23 @@ function computarPontosColeta(entregas){
 let logisticaEntregasSelecionadas = new Set();
 let logisticaIdsConhecidosLogistica = new Set();
 
+/* "toda hora que atualizo a página ele marca todos ... se eu desmarcar,
+   ele não pode ser marcado de novo a não ser que eu mesma marque"
+   (18/11/2026). A escolha ficava só na tela e voltava a marcar tudo ao
+   recarregar — e o celular do motorista não sabia de nada. Agora fica
+   GRAVADA no orçamento (foraDoRoteiro) e sincroniza: entrega nova entra
+   marcada; desmarcada, só volta quando ela marcar. */
 function garantirSelecaoLogistica(entregas){
-  entregas.forEach(e=>{
-    if(!logisticaIdsConhecidosLogistica.has(e.orcamentoId)){
-      logisticaEntregasSelecionadas.add(e.orcamentoId); // entrega nova (recém aprovada) entra selecionada por padrão
-      logisticaIdsConhecidosLogistica.add(e.orcamentoId);
-    }
-  });
-  // limpa quem não é mais uma entrega em rota (foi marcada como entregue, por exemplo)
-  const idsAtuais = new Set(entregas.map(e=>e.orcamentoId));
-  [...logisticaIdsConhecidosLogistica].forEach(id=>{
-    if(!idsAtuais.has(id)){ logisticaIdsConhecidosLogistica.delete(id); logisticaEntregasSelecionadas.delete(id); }
-  });
+  logisticaEntregasSelecionadas = new Set(entregas.filter(e=>{
+    const o = (STATE.orcamentos||[]).find(x=>x.id === e.orcamentoId);
+    return !(o && o.foraDoRoteiro);
+  }).map(e=>e.orcamentoId));
+  logisticaIdsConhecidosLogistica = new Set(entregas.map(e=>e.orcamentoId));
+}
+function logisticaMarcarEntrega(orcamentoId, entra){
+  const o = (STATE.orcamentos||[]).find(x=>x.id === orcamentoId);
+  if(!o) return;
+  if(entra) delete o.foraDoRoteiro; else o.foraDoRoteiro = true;
 }
 
 function getEntregasSelecionadasLogistica(){
@@ -20969,14 +20977,21 @@ function renderLogistica(){
                    : ''; })()}
             </div>
           </div>
+          ${(()=>{ const nomes = Object.keys(itensAgrupados); const n = nomes.filter(x=>motoristaColetaFeita(p, x)).length;
+             return n ? `<div style="margin-top:6px;font-size:13px;font-weight:700;color:${n===nomes.length?'var(--positive)':'var(--warning)'};">
+               ${n===nomes.length?'✓ ':''}${n} de ${nomes.length} item(ns) coletado(s) pelo motorista</div>` : ''; })()}
           <table class="data-table" style="margin-top:10px;">
-            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th><th>Para quem é</th></tr></thead>
-            <tbody>${Object.entries(itensAgrupados).map(([nome,info])=>`
-              <tr>
+            <thead><tr><th>Item</th><th class="num">Quantidade a coletar</th><th>Para quem é</th><th>Coletado</th></tr></thead>
+            <tbody>${Object.entries(itensAgrupados).map(([nome,info])=>{
+              /* "quando ele coletar, mostrar aqui também" (18/11/2026) */
+              const ok = motoristaColetaFeita(p, nome);
+              return `
+              <tr ${ok?'style="background:#E7F4EE;"':''}>
                 <td>${escapeHtml(nome)}</td>
                 <td class="num">${fmtNum(info.qtd)}</td>
                 <td style="font-size:12px;color:var(--ink-soft);">${Object.entries(info.destinos).map(([cli,qtd])=>`${escapeHtml(cli)} (${fmtNum(qtd)})`).join(', ')}</td>
-              </tr>`).join('')}</tbody>
+                <td style="font-weight:700;color:var(--positive);white-space:nowrap;">${ok ? '✓ ' + escapeHtml(motoristaColetaHora(p, nome)) : '<span style="color:var(--ink-faint);font-weight:400;">—</span>'}</td>
+              </tr>`; }).join('')}</tbody>
           </table>
         </div>`;
     }else{
@@ -20985,6 +21000,9 @@ function renderLogistica(){
           <div style="font-size:12px;color:var(--ink-faint);font-weight:600;">PARADA ${idx+1} · ENTREGA</div>
           <h3 style="margin:2px 0 2px;">🏠 ${escapeHtml(p.clienteNome)}</h3>
           <div class="help-text">${escapeHtml(p.endereco||'Endereço não cadastrado')}${p.lat==null?' · <span style="color:var(--negative);">sem localização no mapa</span>':''}</div>
+          ${(()=>{ const o = (STATE.orcamentos||[]).find(x=>x.id===p.orcamentoId); const m = o && o.motorista;
+             return m && m.entregueEm ? `<div style="margin-top:6px;font-size:13px;font-weight:700;color:var(--positive);">✓ Entregue pelo motorista às ${escapeHtml(motoristaHora(m.entregueEm))}${
+               m.recebidoPor ? ' · recebido por ' + escapeHtml(m.recebidoPor) : ''} — confirme abaixo</div>` : ''; })()}
           <div class="cell-actions" style="margin-top:8px;">
             ${p.clienteId ? `<button class="btn btn-sm ${p.lat==null?'btn-primary':''}" onclick="ajustarEnderecoDaParada('cliente','${p.clienteId}')">📍 ${p.lat==null?'Definir endereço':'Ajustar endereço'}</button>` : ''}
             <button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${p.orcamentoId}')">📄 Controle de Entrega</button>
@@ -21075,16 +21093,16 @@ function renderLogistica(){
   document.getElementById('logistica-btn-mapa').addEventListener('click', abrirMapaRoteiro);
   document.querySelectorAll('.logistica-checkbox-entrega').forEach(cb=>{
     cb.addEventListener('change', ()=>{
-      const id = cb.dataset.id;
-      if(cb.checked) logisticaEntregasSelecionadas.add(id); else logisticaEntregasSelecionadas.delete(id);
+      logisticaMarcarEntrega(cb.dataset.id, cb.checked);
+      saveState();
       renderLogistica();
     });
   });
   const selTodas = document.getElementById('logistica-selecionar-todas');
   if(selTodas){
     selTodas.addEventListener('change', ()=>{
-      if(selTodas.checked){ entregas.forEach(e=>logisticaEntregasSelecionadas.add(e.orcamentoId)); }
-      else{ entregas.forEach(e=>logisticaEntregasSelecionadas.delete(e.orcamentoId)); }
+      entregas.forEach(e=>logisticaMarcarEntrega(e.orcamentoId, selTodas.checked));
+      saveState();
       renderLogistica();
     });
   }
@@ -21106,10 +21124,8 @@ function ativarCheckboxesAvulsas(){
          carro, sem a parada que resolve a tarefa. */
       const p = paradasAvulsas().find(x=>x.id===id);
       const irmas = (p && p.servicoId) ? paradasDoServico(p.servicoId) : [p];
-      irmas.filter(Boolean).forEach(x=>{
-        if(cb.checked) logisticaAvulsasSelecionadas.add(x.id);
-        else logisticaAvulsasSelecionadas.delete(x.id);
-      });
+      irmas.filter(Boolean).forEach(x=>logisticaMarcarAvulsa(x.id, cb.checked));
+      saveState();
       if(p && p.servicoId && irmas.length > 1){
         showToast(cb.checked
           ? `As ${irmas.length} paradas da tarefa entraram no roteiro — coleta e entrega andam juntas.`
@@ -21329,6 +21345,8 @@ function motoristaEnviar(){
       <h3 style="margin-top:0;">📱 Roteiro enviado pro motorista</h3>
       <p class="help-text">${r.orcamentoIds.length} entrega(s)${r.avulsaIds.length ? ` e ${r.avulsaIds.length} parada(s) avulsa(s)` : ''}.
         Mande o link pra ele. Ele entra com o usuário dele e já cai no roteiro — o que ele marcar aparece aqui na Logística.</p>
+      <p class="help-text"><strong>O link é sempre o mesmo</strong> (ele pode salvar no celular). O roteiro dele segue o que estiver
+        marcado aqui: marcou ou desmarcou uma entrega, o celular dele atualiza sozinho — não precisa mandar de novo.</p>
       <div class="field"><input type="text" id="motorista-link-campo" readonly value="${escapeAttr(link)}"></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
         <button class="btn" id="motorista-copiar">📋 Copiar o link</button>
@@ -21346,13 +21364,29 @@ function motoristaEnviar(){
 }
 
 /* o roteiro de hoje, na ordem, só com o que ela mandou */
+/* "esse link vai servir pras próximas? interessante ele atualizar
+   automaticamente" (18/11/2026): o roteiro dele SEGUE o que ela deixa
+   marcado na Logística (a marcação agora é gravada e sincroniza). Não
+   precisa mandar de novo: marcou/desmarcou, o celular atualiza sozinho. */
 function motoristaRoteiro(){
   const r = motoristaHoje();
-  if(!r) return null;
-  const ids = new Set(r.orcamentoIds || []);
-  const entregas = getDadosLogistica().entregas.filter(e=>ids.has(e.orcamentoId));
-  /* entrega que já saiu da rota (ela confirmou) continua aparecendo pra ele, como feita */
-  (r.orcamentoIds || []).forEach(id=>{
+  const hoje = todayISO();
+  const selecionadas = getEntregasSelecionadasLogistica();
+  /* entrega que ele já marcou hoje (ou que estava no envio de hoje) e que
+     ela já confirmou continua aparecendo pra ele, como feita */
+  const extras = new Set((r && r.orcamentoIds) || []);
+  (STATE.orcamentos||[]).forEach(o=>{ if(o.motorista && String(o.motorista.entregueEm||'').slice(0,10) === hoje) extras.add(o.id); });
+  const avulsasMarcadas = paradasAvulsasParaRoteiro();
+  if(!selecionadas.length && !avulsasMarcadas.length && !extras.size) return null;
+  const ids = new Set(selecionadas.map(e=>e.orcamentoId));
+  const entregas = selecionadas.slice();
+  [...extras].forEach(id=>{
+    if(ids.has(id)) return;
+    const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+    if(!o || !['entregue','retirado'].includes(o.statusEntrega)) return;
+    ids.add(id);
+  });
+  [...ids].forEach(id=>{
     if(entregas.some(e=>e.orcamentoId === id)) return;
     const o = (STATE.orcamentos||[]).find(x=>x.id === id);
     if(!o) return;
@@ -21360,9 +21394,8 @@ function motoristaRoteiro(){
     entregas.push({ orcamentoId: o.id, clienteId: o.clienteId, clienteNome: c ? c.nome : '(cliente)', endereco: clienteEnderecoEntrega(c),
       lat: c ? c.lat : null, lng: c ? c.lng : null, itens: (o.itens||[]).map(it=>({ nome: it.nome, qtd: it.qtd, origemTipo: 'dep', origemId: 'mizu' })), jaConfirmada: true });
   });
-  const avs = new Set(r.avulsaIds || []);
   const { roteiro } = calcularRoteiro(entregas);
-  return roteiro.filter(p=>p.tipo !== 'avulsa' || avs.has(p.id));
+  return roteiro;
 }
 
 function motoristaDoOrc(o){ if(!o.motorista) o.motorista = {}; if(!o.motorista.coletas) o.motorista.coletas = {}; return o.motorista; }
@@ -21373,6 +21406,15 @@ function motoristaColetaFeita(p, nome){
     const o = (STATE.orcamentos||[]).find(x=>x.id === id);
     return !!(o && o.motorista && o.motorista.coletas && o.motorista.coletas[p.chave + '|' + nome]);
   });
+}
+function motoristaColetaHora(p, nome){
+  let ultimo = '';
+  (p.itens||[]).filter(it=>it.nome === nome).forEach(it=>{
+    const o = (STATE.orcamentos||[]).find(x=>x.id === it.orcamentoId);
+    const t = o && o.motorista && o.motorista.coletas && o.motorista.coletas[p.chave + '|' + nome];
+    if(t && t > ultimo) ultimo = t;
+  });
+  return motoristaHora(ultimo);
 }
 function motoristaMarcarColeta(chavePonto, nome, feito){
   const p = (motoristaRoteiro() || []).find(x=>x.tipo === 'coleta' && x.chave === chavePonto);
@@ -21479,7 +21521,7 @@ function renderMotorista(){
       .mot-rec{ width:100%; box-sizing:border-box; margin-top:10px; padding:12px; font-size:16px; border:1px solid var(--border); border-radius:10px; }
       .mot-feito{ margin-top:10px; padding:10px 12px; border-radius:10px; background:#E7F4EE; color:#1F6047; font-weight:700; font-size:14.5px; }
     </style>`;
-  if(!r || !roteiro){
+  if(!roteiro || !roteiro.length){
     box.innerHTML = est + `<div class="mot-topo"><h2>📱 Roteiro de hoje</h2><div class="sub">${fmtDate(todayISO())}</div></div>
       <div class="mot-cartao" style="text-align:center;font-size:16px;padding:26px 16px;">Ainda não tem roteiro pra hoje.<br>
       <span class="help-text">Quando a loja mandar, ele aparece aqui sozinho.</span></div>`;
@@ -21554,10 +21596,12 @@ RENDERERS['motorista'] = renderMotorista;
 /* O RETORNO, na Logística dela: o que o motorista já marcou */
 function motoristaRetornoHtml(){
   const r = motoristaHoje();
-  if(!r) return '';
   let roteiro = [];
   try{ roteiro = motoristaRoteiro() || []; }catch(e){ return ''; }
   if(!roteiro.length) return '';
+  /* só aparece depois que ela mandou o link hoje, ou se ele já marcou algo */
+  const algoMarcado = roteiro.some(p=>{ const s = motoristaSituacao(p); return s.feita || s.parcial; });
+  if(!r && !algoMarcado) return '';
   const feitas = roteiro.filter(p=>motoristaSituacao(p).feita).length;
   const linhas = roteiro.map((p, i)=>{
     const s = motoristaSituacao(p);
@@ -21574,7 +21618,7 @@ function motoristaRetornoHtml(){
   return `<div class="card" style="border-left:4px solid var(--primary);">
     <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">
       <h3 style="margin:0;">📱 Retorno do motorista — ${feitas} de ${roteiro.length} parada(s)</h3>
-      <span class="help-text" style="margin:0;">enviado às ${escapeHtml(motoristaHora(r.enviadoEm))}</span>
+      <span class="help-text" style="margin:0;">${r ? 'link enviado às ' + escapeHtml(motoristaHora(r.enviadoEm)) + ' · ' : ''}atualiza sozinho</span>
     </div>
     <p class="help-text" style="margin:4px 0 6px;">O que ele marca no celular aparece aqui. "Entregue" dele não fecha a venda: confirme você, como sempre.</p>
     ${linhas}
@@ -50580,6 +50624,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-h',
+    data: '2026-11-18',
+    titulo: 'Logística: marcação fica gravada, coluna "Coletado" e atualiza sozinha',
+    itens: [
+      'ENTREGAS EM ROTA: a entrega que você desmarca fica desmarcada — recarregar a página não marca tudo de novo. Só entrega nova já entra marcada. Vale também pras paradas avulsas.',
+      'O ROTEIRO DO MOTORISTA segue o que está marcado: marcou ou desmarcou, o celular dele atualiza sozinho. O link é sempre o mesmo — não precisa mandar de novo.',
+      'ROTEIRO DO DIA: cada coleta ganhou a coluna "Coletado" (✓ e a hora que ele marcou, linha verde) e o total "X de Y itens coletados". A entrega mostra "Entregue pelo motorista às …" pra você confirmar.',
+      'A LOGÍSTICA E A TELA DO MOTORISTA atualizam sozinhas quando chega novidade (a cada ~20 segundos), sem precisar recarregar — só esperam se você estiver digitando num campo.'
+    ]
+  },
+  {
     id: '2026-11-18-g',
     data: '2026-11-18',
     titulo: 'Logística: o motorista marca pelo celular, e o retorno aparece aqui',
@@ -63894,7 +63949,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 15:00';
+const SISTEMA_VERSAO = '18/11/2026 16:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64995,6 +65050,18 @@ function nuvemTrabalhoEmAndamento(){
   return false;
 }
 
+function nuvemTelaQueSeAtualizaSozinha(){
+  try{
+    const ativa = document.querySelector('.page.active');
+    const pagina = ativa ? ativa.id.replace('page-', '') : '';
+    if(pagina !== 'logistica' && pagina !== 'motorista') return false;
+    if(document.querySelector('.modal-overlay.open')) return false;
+    const foco = document.activeElement;
+    if(foco && ['INPUT','SELECT','TEXTAREA'].includes(foco.tagName) && ativa.contains(foco) && foco.type !== 'checkbox') return false;
+    return true;
+  }catch(e){ return false; }
+}
+
 function nuvemRedesenharTelaAtual(){
   const ativa = document.querySelector('.page.active');
   const pagina = ativa ? ativa.id.replace('page-', '') : '';
@@ -65074,7 +65141,14 @@ async function nuvemSincronizar(silencioso){
          perdia (fica no rascunho), mas o trabalho ia pro chão.
          Agora: se ela está mexendo em alguma coisa, NÃO redesenha — avisa
          com um botão e ela atualiza quando terminar. */
-      if(nuvemTrabalhoEmAndamento()){
+      if(nuvemTelaQueSeAtualizaSozinha()){
+        /* Logística e Motorista (18/11/2026): "ele marcou que coletou e não
+           atualiza no meu computador". Elas não têm formulário pra perder:
+           redesenham sozinhas — a não ser que haja uma janela aberta ou o
+           cursor esteja num campo DESTA tela. O carrinho ou o cliente
+           escolhido no orçamento (outra tela) não seguram mais. */
+        nuvemRedesenharTelaAtual();
+      }else if(nuvemTrabalhoEmAndamento()){
         nuvemAvisarNovidades();
       }else if(!silencioso){
         nuvemRedesenharTelaAtual();
