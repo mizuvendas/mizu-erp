@@ -21505,6 +21505,16 @@ function renderMotorista(){
       .mot-barra > div{ height:100%; background:#8FD9B4; }
       .mot-cartao{ background:#fff; border:1px solid var(--border); border-radius:14px; padding:14px; margin-bottom:12px; }
       .mot-cartao.feita{ opacity:.6; }
+      /* "entrega e coleta diferentes, talvez cor de fundo — parece tudo confuso" (18/11/2026) */
+      .mot-cartao.coleta{ background:#FFF7E8; border:1px solid #F0D9AE; border-left:7px solid #C98A2C; }
+      .mot-cartao.entrega{ background:#F6F1FD; border:1px solid #DCCDF3; border-left:7px solid #6B3FA0; }
+      .mot-cartao.avulsa{ background:#EEF6F8; border:1px solid #C5DEE6; border-left:7px solid #1B4B5A; }
+      .mot-cartao.coleta .mot-num{ background:#C98A2C; }
+      .mot-cartao.entrega .mot-num{ background:#6B3FA0; }
+      .mot-cartao .mot-tipo{ display:inline-block; font-size:14px; padding:2px 10px; border-radius:999px; margin-bottom:3px; }
+      .mot-cartao.coleta .mot-tipo{ background:#C98A2C; color:#fff !important; }
+      .mot-cartao.entrega .mot-tipo{ background:#6B3FA0; color:#fff !important; }
+      .mot-cartao .mot-btn-mapa{ background:#fff; }
       .mot-cab{ display:flex; gap:10px; align-items:flex-start; }
       .mot-num{ width:32px; height:32px; border-radius:50%; background:var(--primary-escuro,#1B4B5A); color:#fff; font-weight:700; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
       .mot-cartao.feita .mot-num{ background:var(--positive,#2E7D5B); }
@@ -21535,9 +21545,9 @@ function renderMotorista(){
     const s = motoristaSituacao(p);
     if(p.tipo === 'coleta'){
       const agr = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; }, {});
-      return `<div class="mot-cartao ${s.feita?'feita':''}">
+      return `<div class="mot-cartao coleta ${s.feita?'feita':''}">
         <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
-          <div class="mot-tipo" style="color:#8A5A18;">📦 COLETAR</div>
+          <div class="mot-tipo">📦 COLETAR</div>
           <div class="mot-nome">${escapeHtml(p.nome)}</div>
           <div class="mot-end">${escapeHtml(roteiroEnderecoCurto(p.endereco) || 'Endereço não cadastrado')}</div></div></div>
         ${mapa(p)}
@@ -21551,7 +21561,7 @@ function renderMotorista(){
     if(p.tipo === 'avulsa'){
       const papel = papelDaParada(p);
       const par = paradasAvulsas().find(x=>x.id === p.id) || {};
-      return `<div class="mot-cartao ${s.feita?'feita':''}">
+      return `<div class="mot-cartao avulsa ${s.feita?'feita':''}">
         <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
           <div class="mot-tipo">${papel.icone} ${escapeHtml(papel.rotulo)}</div>
           <div class="mot-nome">${escapeHtml(p.nome)}</div>
@@ -21567,13 +21577,13 @@ function renderMotorista(){
     const o = (STATE.orcamentos||[]).find(x=>x.id === p.orcamentoId) || {};
     const m = o.motorista || {};
     const agr = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; }, {});
-    return `<div class="mot-cartao ${s.feita?'feita':''}">
+    return `<div class="mot-cartao entrega ${s.feita?'feita':''}">
       <div class="mot-cab"><div class="mot-num">${s.feita?'✓':i+1}</div><div>
-        <div class="mot-tipo" style="color:#6B3FA0;">🏠 ENTREGAR${o.numero ? ` · orçamento nº ${escapeHtml(String(o.numero))}` : ''}</div>
+        <div class="mot-tipo">🏠 ENTREGAR${o.numero ? ` · orçamento nº ${escapeHtml(String(o.numero))}` : ''}</div>
         <div class="mot-nome">${escapeHtml(p.clienteNome)}</div>
         <div class="mot-end">${escapeHtml(roteiroEnderecoCurto(p.endereco) || 'Endereço não cadastrado')}</div></div></div>
       ${mapa(p)}
-      <div style="margin-top:8px;">${Object.entries(agr).map(([nome,qtd])=>`<div class="mot-item" style="cursor:default;"><span><span class="mot-qtd">${fmtNum(qtd)}×</span> ${escapeHtml(nome)}</span></div>`).join('')}</div>
+      <div style="margin-top:8px;">${Object.entries(agr).map(([nome,qtd])=>`<div class="mot-item" style="cursor:default;"><span>📦 <span class="mot-qtd">${fmtNum(qtd)}×</span> ${escapeHtml(nome)}</span></div>`).join('')}</div>
       ${s.feita
         ? `<div class="mot-feito">✓ ${escapeHtml(s.texto.charAt(0).toUpperCase() + s.texto.slice(1))}</div>
            ${s.confirmada ? '' : `<button class="mot-desfazer" onclick="motoristaMarcarEntrega('${escapeAttr(p.orcamentoId)}', false)">Desfazer</button>`}`
@@ -50624,6 +50634,17 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-i',
+    data: '2026-11-18',
+    titulo: 'Não perder nada entre celular e computador · fotos de volta · celular igual à nuvem',
+    itens: [
+      'CELULAR × COMPUTADOR: antes, quem salvava por último ganhava tudo — uma cópia velha no celular podia desfazer o que foi feito no computador. Agora, antes de mandar, o aparelho confere a nuvem e JUNTA campo a campo: o que um mudou e o outro não, fica; marcações do motorista e marcas de foto se somam. Cópia velha não desfaz mais venda, entrega nem foto.',
+      'FOTOS QUE "SUMIRAM" no Balanço (o prato, os dispensers…): elas não se perderam. Foram tiradas no item da planilha, e quando esse item foi juntado ao produto do cadastro a tela passou a procurar a foto no lugar errado. Agora ela é achada de novo.',
+      '🔄 ATUALIZAR TUDO DA NUVEM (em Armazenamento): pra quando um aparelho mostrar coisa velha (como a entrega da DALA no celular). Primeiro manda o que só existe nele (bipes do balanço, cadastros novos, marcações do motorista), depois baixa tudo de novo. Sem internet ou sem espaço, nem começa.',
+      'NO CELULAR DO MOTORISTA: coleta com fundo amarelo e faixa laranja, entrega com fundo lilás e faixa roxa — fica fácil ver o que é o quê.'
+    ]
+  },
+  {
     id: '2026-11-18-h',
     data: '2026-11-18',
     titulo: 'Logística: marcação fica gravada, coluna "Coletado" e atualiza sozinha',
@@ -58914,7 +58935,7 @@ function totvsFotosPendentes(){
   BAL_CAT.forEach(it=>{
     const t = totvsAchaPorCodigos(it.codigos);
     if(!t || !t.fotoUrl) return;
-    const dono = it.produtoId || it.chave;
+    const dono = balDonoFoto(it);
     if(fotoTemDono(dono)) return;     /* já tem foto: não encosta */
     saida.push({ dono, url: t.fotoUrl, nome: it.nome });
   });
@@ -60382,6 +60403,8 @@ function balCatalogo(){
       if(Number(l.venda||0) > 0) it.venda = Number(l.venda);
       else if(!it.venda) it.venda = Number(l.venda||0);
       confCodigosDaLinha(l).forEach(c=>{ if(!it.codigos.includes(c)) it.codigos.push(c); });
+      /* a foto pode ter sido tirada quando a linha ainda andava sozinha */
+      (it.linhasChaves = it.linhasChaves || []).push(confChaveLinha(l));
       return;
     }
     /* linha da planilha que ainda não é produto aqui. A chave é o
@@ -61512,8 +61535,22 @@ function balEtiquetaDono(it){
    pequena à esquerda. Nas listas, tocar na foto escolhe o item (não abre
    a câmera): por isso o quadradinho não recebe o toque. A foto que ainda
    está chegando entra sozinha no lugar, sem redesenhar a lista. */
+/* DE QUEM É A FOTO DO ITEM (18/11/2026)
+   "esse PRATO PLÁSTICO certeza tinha foto ... na verdade todos tinham
+   foto": a foto foi tirada quando a linha da planilha andava sozinha
+   (ex.: c:10000247, c:9005502); depois a linha foi juntada ao produto do
+   cadastro (vínculo ou "nome igual") e a tela passou a procurar a foto no
+   produto — que não tem. A foto não se perdeu: aqui ela volta a ser achada. */
+function balDonoFoto(it){
+  if(!it) return '';
+  if(it.produtoId && fotoTemDono(it.produtoId)) return it.produtoId;
+  const daLinha = (it.linhasChaves || []).find(ch=>fotoTemDono(ch));
+  if(daLinha) return daLinha;
+  return it.produtoId || it.chave;
+}
+
 function balFichaComFotoHtml(it){
-  const dono = it.produtoId || it.chave;
+  const dono = balDonoFoto(it);
   return `<div style="display:flex;gap:10px;align-items:center;min-width:0;">
     <div style="pointer-events:none;flex-shrink:0;">${fotoMiniHtml(dono, 46, 'renderBalanco()')}</div>
     ${balFichaItemHtml(it)}
@@ -61671,7 +61708,7 @@ function balItemHtml(grande){
       <button class="btn btn-primary" style="flex:1;min-width:190px;padding:${grande?'14':'11'}px;
         font-size:${grande?'16':'14.5'}px;font-weight:700;" onclick="balConfirmar()">Contar e ler o próximo</button>
     </div>
-    ${(()=>{ const dono = it.produtoId || it.chave;
+    ${(()=>{ const dono = balDonoFoto(it);
       return `<div style="display:flex;gap:9px;align-items:center;margin-top:10px;">
         ${fotoMiniHtml(dono, 46, 'renderBalanco()')}
         <button class="btn btn-sm" onclick="abrirFotoDoProduto('${escapeAttr(dono)}', ()=>renderBalanco())">
@@ -61819,7 +61856,7 @@ function balListaHtml(limite){
           const passou = it.comodato && qtd > it.saldoComodato;
           const naoContado = !contados.has(ch);
           return `<tr${naoContado ? ' style="opacity:.72;"' : (it.produtoId ? '' : ' style="background:#FFFBF2;"')}>
-            <td style="text-align:center;">${fotoMiniHtml(it.produtoId || ch, 36, 'renderBalanco()')}</td>
+            <td style="text-align:center;">${fotoMiniHtml(balDonoFoto(it) || ch, 36, 'renderBalanco()')}</td>
             <td><strong>${escapeHtml(it.nome)}</strong>
               <div class="help-text" style="margin:0;">${it.codigos.length
                   ? escapeHtml(it.codigos[0])
@@ -63565,7 +63602,7 @@ function balListaCelularHtml(){
     const passou = it.comodato && qtd > it.saldoComodato;
     return `<div style="padding:10px 11px;border-bottom:1px solid var(--border);display:flex;
         justify-content:space-between;gap:10px;align-items:center;">
-      ${fotoMiniHtml(it.produtoId || ch, 40, 'renderBalanco()')}
+      ${fotoMiniHtml(balDonoFoto(it) || ch, 40, 'renderBalanco()')}
       ${balFichaItemHtml(it)}
       <div style="text-align:right;white-space:nowrap;">
         ${naoContado
@@ -63949,7 +63986,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 16:30';
+const SISTEMA_VERSAO = '18/11/2026 18:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -63986,6 +64023,18 @@ async function renderArmazenamento(){
           <button class="btn btn-sm btn-primary" onclick="versaoConferirAgora()">🔎 Conferir atualização</button>
           <button class="btn btn-sm" onclick="versaoAtualizarAgora()">↻ Recarregar sem cache</button>
         </div>
+      </div>
+    </div>
+
+    <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+      <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+        <div style="max-width:640px;">
+          <div style="font-weight:700;">🔄 Deixar este aparelho igual à nuvem</div>
+          <div class="help-text" style="margin:2px 0 0;">Use quando este aparelho estiver mostrando coisa velha (ex.: uma entrega que já foi feita no computador).
+            Primeiro ele <b>manda</b> o que só existe aqui (bipes do balanço, cadastros novos, o que o motorista marcou),
+            depois <b>baixa tudo</b> de novo. O que foi feito no computador vale.</div>
+        </div>
+        <button class="btn btn-primary" onclick="nuvemAtualizarTudo()">🔄 Atualizar tudo da nuvem</button>
       </div>
     </div>
 
@@ -64647,6 +64696,10 @@ async function nuvemSubir(){
   nuvemPendentes = fila.length;
   if(fila.length === 0) return 0;
 
+  /* JUNTA COM A NUVEM ANTES DE SUBIR (18/11/2026) — ver nuvemJuntarAntesDeSubir */
+  try{ await nuvemJuntarAntesDeSubir(fila); }
+  catch(e){ console.warn('[nuvem] não consegui conferir antes de subir — sobe como antes', e); }
+
   const espelho = nuvemLerEspelho();
   const LOTE = 100;
   /* Exclusão vai num lote separado e SEM o campo "dados". Antes mandava
@@ -64728,7 +64781,9 @@ async function nuvemSubir(){
     subiram.forEach(r => {
       if(r._digital) espelho[r._chave] = r._digital;
       else delete espelho[r._chave];
+      if(!r.excluido) nuvemBaseAnotar(r._chave, r.dados);
     });
+    try{ await nuvemBaseGravar(); }catch(e){}
     nuvemGravarEspelho(espelho);
     nuvemPendentes = Math.max(0, nuvemPendentes - subiram.length);
     nuvemPintarStatus();
@@ -64746,11 +64801,253 @@ async function nuvemBaixar(){
       + '&order=atualizado_em.asc&limit=500', { method: 'GET' });
     if(!linhas || linhas.length === 0) break;
     aplicados += nuvemAplicar(linhas);
+    try{ await nuvemBaseGravar(); }catch(e){}
     marca = linhas[linhas.length - 1].atualizado_em;
     localStorage.setItem(NUVEM_MARCA, marca);
     if(linhas.length < 500) break;
   }
   return aplicados;
+}
+
+/* =========================================================
+   NÃO PERDER NADA ENTRE O CELULAR E O COMPUTADOR (18/11/2026)
+
+   "minha preocupação é fazer algo no notebook e perder no celular, ou
+    fazer algo no celular e perder no notebook"
+
+   Como era: cada registro (um orçamento, um produto, uma linha da
+   planilha) sobe INTEIRO. Se o celular estava com uma cópia velha e mexia
+   numa coisinha nela, subia a cópia velha inteira — e desfazia no
+   computador o que tinha sido feito lá (o orçamento da DALA, as marcas de
+   foto). Quem salvava por último ganhava tudo.
+
+   Como fica: este aparelho guarda a "BASE" — a última versão de cada
+   registro que ele e a nuvem tinham em comum (no IndexedDB, que tem
+   espaço de sobra). Antes de subir, ele olha a nuvem: se lá mudou desde
+   a base, JUNTA campo a campo: o que só ele mudou fica o dele; o que só a
+   nuvem mudou fica o da nuvem; os dois mudaram o mesmo campo, fica o
+   daqui (é a mão de quem acabou de mexer). As marcações do motorista e as
+   marcas de foto se somam em vez de uma apagar a outra.
+   ========================================================= */
+const NUVEM_BASE_DB = 'mizu-nuvem-base';
+let NUVEM_BASE_FILA = {};
+function nuvemBaseIdb(modo, dados){
+  return new Promise((ok, falha)=>{
+    let req;
+    try{ req = indexedDB.open(NUVEM_BASE_DB, 1); }catch(e){ return falha(e); }
+    req.onupgradeneeded = ()=>{ if(!req.result.objectStoreNames.contains('base')) req.result.createObjectStore('base'); };
+    req.onerror = ()=>falha(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      const tx = db.transaction('base', modo === 'ler' ? 'readonly' : 'readwrite');
+      const st = tx.objectStore('base');
+      const saida = {};
+      if(modo === 'ler'){
+        (dados || []).forEach(ch=>{ const g = st.get(ch); g.onsuccess = ()=>{ if(g.result != null) saida[ch] = g.result; }; });
+      }else{
+        Object.keys(dados || {}).forEach(ch=>st.put(dados[ch], ch));
+      }
+      tx.oncomplete = ()=>{ db.close(); ok(saida); };
+      tx.onerror = ()=>{ db.close(); falha(tx.error); };
+    };
+  });
+}
+function nuvemBaseAnotar(chave, dados){
+  try{ NUVEM_BASE_FILA[chave] = JSON.stringify(dados); }catch(e){}
+}
+async function nuvemBaseGravar(){
+  const fila = NUVEM_BASE_FILA; NUVEM_BASE_FILA = {};
+  if(!Object.keys(fila).length) return;
+  await nuvemBaseIdb('gravar', fila);
+}
+async function nuvemBaseLer(chaves){
+  const r = await nuvemBaseIdb('ler', chaves);
+  const saida = {};
+  Object.keys(r).forEach(ch=>{ try{ saida[ch] = JSON.parse(r[ch]); }catch(e){} });
+  return saida;
+}
+/* Primeira vez com esta versão: a base de tudo que JÁ está igual à nuvem
+   é a cópia daqui (o espelho confirma que é a mesma que subiu/desceu). */
+async function nuvemBaseSemear(){
+  if(localStorage.getItem('mizu_base_semeada_v1')) return;
+  const agora = nuvemInstantaneo();
+  const espelho = nuvemLerEspelho();
+  const fila = {};
+  Object.keys(agora).forEach(ch=>{
+    if(!(ch in espelho)) return;
+    const txt = JSON.stringify(agora[ch].dados);
+    if(espelho[ch] === nuvemDigital(txt)) fila[ch] = txt;
+  });
+  await nuvemBaseIdb('gravar', fila);
+  localStorage.setItem('mizu_base_semeada_v1', new Date().toISOString());
+}
+
+function nuvemIgual(a, b){ try{ return JSON.stringify(a) === JSON.stringify(b); }catch(e){ return false; } }
+function nuvemMapaSimples(v){ return v && typeof v === 'object' && !Array.isArray(v); }
+/* junção de três: base (o que os dois tinham), meu (daqui), deles (nuvem).
+   semBase: este aparelho não sabe o que os dois tinham em comum (cópia
+   que nunca chegou a ficar igual) — aí, no campo em que os dois diferem,
+   vale a NUVEM: é o caso da cópia velha do celular, que não pode desfazer
+   o que o computador fez. Marcações do motorista e marcas de foto se
+   SOMAM nos dois casos. */
+const NUVEM_CAMPOS_SOMAM = ['motorista', 'coletas', 'temFoto', 'fotoV', 'mostrarFoto'];
+function nuvemJuntarTres(base, meu, deles, semBase, campo){
+  if(nuvemIgual(meu, deles)) return meu;
+  if(!semBase){
+    if(nuvemIgual(meu, base)) return deles;     /* só a nuvem mudou */
+    if(nuvemIgual(deles, base)) return meu;     /* só eu mudei */
+  }
+  if(nuvemMapaSimples(meu) && nuvemMapaSimples(deles)){
+    const b = nuvemMapaSimples(base) ? base : undefined;
+    const r = {};
+    new Set([...Object.keys(meu), ...Object.keys(deles)]).forEach(k=>{
+      const v = nuvemJuntarTres(b ? b[k] : undefined, meu[k], deles[k], semBase || !b, k);
+      if(v !== undefined) r[k] = v;
+    });
+    return r;
+  }
+  const soma = NUVEM_CAMPOS_SOMAM.includes(campo);
+  if(meu === undefined){
+    if(!semBase && nuvemIgual(deles, base)) return undefined;   /* eu apaguei */
+    return deles;
+  }
+  if(deles === undefined){
+    if(soma) return meu;
+    if(semBase) return meu;                                      /* campo que a nuvem nunca teve */
+    return nuvemIgual(meu, base) ? undefined : meu;              /* a nuvem apagou / eu mudei */
+  }
+  if(soma && (campo === 'temFoto' || campo === 'mostrarFoto')) return !!(meu || deles);
+  if(soma && campo === 'fotoV') return Math.max(Number(meu)||0, Number(deles)||0);
+  if(semBase) return deles;   /* sem base: a nuvem manda */
+  return meu;                 /* os dois mudaram o mesmo campo: vale quem acabou de mexer */
+}
+
+async function nuvemJuntarAntesDeSubir(fila){
+  const normais = fila.filter(r=>!r.excluido && r.colecao !== '_doc');
+  if(!normais.length) return;
+  const espelho = nuvemLerEspelho();
+  const naNuvem = new Map();
+  const porCol = {};
+  normais.forEach(r=>{ (porCol[r.colecao] = porCol[r.colecao] || []).push(r.id); });
+  for(const col of Object.keys(porCol)){
+    const ids = porCol[col];
+    for(let i = 0; i < ids.length; i += 40){
+      const lote = ids.slice(i, i + 40).map(id=>'"' + String(id).replace(/"/g, '') + '"').join(',');
+      const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,dados,excluido'
+        + '&colecao=eq.' + encodeURIComponent(col) + '&id=in.(' + encodeURIComponent(lote) + ')', { method: 'GET' });
+      (linhas || []).forEach(l=>naNuvem.set(l.colecao + '|' + l.id, l));
+    }
+  }
+  /* só quem mudou na nuvem desde a última vez que os dois estavam iguais */
+  const conflito = normais.filter(r=>{
+    const fora = naNuvem.get(r._chave);
+    if(!fora || fora.excluido) return false;
+    return espelho[r._chave] !== nuvemDigital(JSON.stringify(fora.dados));
+  });
+  if(!conflito.length) return;
+  const bases = await nuvemBaseLer(conflito.map(r=>r._chave));
+  conflito.forEach(r=>{
+    const fora = naNuvem.get(r._chave).dados;
+    const temBase = Object.prototype.hasOwnProperty.call(bases, r._chave);
+    const junto = nuvemJuntarTres(bases[r._chave], r.dados, fora, !temBase, '');
+    if(nuvemIgual(junto, r.dados)) return;
+    r.dados = junto;
+    r._digital = nuvemDigital(JSON.stringify(junto));
+    const lista = STATE[r.colecao];
+    if(Array.isArray(lista)){
+      const idx = lista.findIndex(x=>x && String(x.id) === String(r.id));
+      if(idx >= 0) lista[idx] = junto;
+    }
+  });
+  nuvemAplicandoRemoto = true;
+  try{ saveState(); } finally { nuvemAplicandoRemoto = false; }
+}
+
+/* =========================================================
+   "🔄 ATUALIZAR TUDO DA NUVEM" (18/11/2026)
+
+   O celular dela ficou com uma cópia velha do orçamento 186 (DALA): pra
+   ele, ainda estava em rota — no computador já tinha virado venda. Ela
+   quer o aparelho igual à nuvem SEM perder nada: "nem o que foi feito no
+   computador, e tem o balanço também".
+
+   A regra, nesta ordem:
+   1. O que SÓ existe aqui (registro que a nuvem não tem: bipe do balanço,
+      produto cadastrado na hora) SOBE.
+   2. O que existe nos dois e está diferente aqui: VALE O DA NUVEM (o
+      computador é a referência) — menos os bipes, que são só deste aparelho,
+      e as marcações do motorista (o.motorista), que são JUNTADAS por cima.
+   3. Depois baixa TUDO de novo, desde o começo.
+   Sem internet ou sem espaço pra gravar, nem começa.
+   ========================================================= */
+function nuvemAtualizarTudo(){
+  if(!nuvemUsuario || !nuvemSessao){ showToast('A nuvem não está ligada neste aparelho.', 'error'); return; }
+  if(!navigator.onLine){ showToast('Precisa de internet pra atualizar da nuvem. Nada foi mexido.', 'error'); return; }
+  try{ localStorage.setItem('mizu_teste_espaco', 'x'.repeat(200000)); localStorage.removeItem('mizu_teste_espaco'); }
+  catch(e){
+    showToast('O espaço do navegador está cheio — não comecei, pra não ficar pela metade. Em Armazenamento, limpe as fotos antigas e tente de novo.', 'error');
+    return;
+  }
+  confirmAction('Atualizar tudo da nuvem',
+    'Primeiro mando pra nuvem o que só existe neste aparelho (bipes do balanço, cadastros novos, marcações do motorista). '
+    + 'Depois baixo tudo de novo: o que estiver diferente aqui fica igual ao do computador. Pode levar um minuto.',
+    ()=>nuvemAtualizarTudoMesmo(), 'Atualizar tudo');
+}
+
+async function nuvemAtualizarTudoMesmo(){
+  if(nuvemSincronizando){ showToast('Já está sincronizando — tente de novo em alguns segundos.', 'info'); return; }
+  nuvemSincronizando = true;
+  showToast('Atualizando da nuvem… não feche o sistema.', 'info');
+  try{
+    const pend = nuvemMudancas().filter(r=>!r.excluido);
+    /* as versões da nuvem dos registros que estão diferentes aqui */
+    const naNuvem = new Map();
+    const porCol = {};
+    pend.forEach(r=>{ (porCol[r.colecao] = porCol[r.colecao] || []).push(r.id); });
+    for(const col of Object.keys(porCol)){
+      const ids = porCol[col];
+      for(let i = 0; i < ids.length; i += 40){
+        const lote = ids.slice(i, i + 40).map(id=>'"' + String(id).replace(/"/g, '') + '"').join(',');
+        const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,dados,excluido'
+          + '&colecao=eq.' + encodeURIComponent(col) + '&id=in.(' + encodeURIComponent(lote) + ')', { method: 'GET' });
+        (linhas || []).forEach(l=>naNuvem.set(l.colecao + '|' + l.id, l));
+      }
+    }
+    const espelho = nuvemLerEspelho();
+    let ficouANuvem = 0, sobe = 0;
+    pend.forEach(r=>{
+      const fora = naNuvem.get(r._chave);
+      if(!fora || fora.excluido || r.colecao === 'balancoBipes' || r.colecao === '_doc'){ sobe++; return; }
+      let dados = fora.dados;
+      if(r.colecao === 'orcamentos' && r.dados && r.dados.motorista){
+        dados = Object.assign({}, dados, { motorista: nuvemJuntarFundo(dados.motorista || {}, r.dados.motorista) });
+      }
+      const lista = STATE[r.colecao];
+      if(!Array.isArray(lista)) return;
+      const idx = lista.findIndex(x=>x && String(x.id) === String(r.id));
+      if(idx >= 0) lista[idx] = dados;
+      /* espelho = a da nuvem: se a junção do motorista mudou algo, sobe */
+      espelho[r._chave] = nuvemDigital(JSON.stringify(fora.dados));
+      ficouANuvem++;
+    });
+    nuvemGravarEspelho(espelho);
+    nuvemAplicandoRemoto = true;
+    try{ saveState(); } finally { nuvemAplicandoRemoto = false; }
+    await nuvemSubir();
+    localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z');
+    const baixados = await nuvemBaixar();
+    nuvemUltimoErro = null;
+    try{ CONF_LINHAS = null; BAL_CAT = null; if(typeof confCarregarGuardada === 'function') await confCarregarGuardada(); }catch(e){}
+    nuvemRedesenharTelaAtual();
+    showToast(`Pronto: este aparelho está igual à nuvem. ${sobe ? sobe + ' coisa(s) daqui subiram; ' : ''}`
+      + `${ficouANuvem ? ficouANuvem + ' cópia(s) velha(s) trocada(s) pela da nuvem; ' : ''}${baixados} registro(s) conferido(s).`, 'success');
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui terminar (' + (e.message || e) + '). Nada daqui foi perdido — tente de novo com internet.', 'error');
+  }finally{
+    nuvemSincronizando = false;
+    try{ nuvemPintarStatus(); }catch(e){}
+  }
 }
 
 /* Põe no STATE o que veio de fora. Um registro que está esperando
@@ -64995,12 +65292,14 @@ function nuvemAplicar(linhas){
          sistema enxerga a daqui como alteração e ela sobe na próxima
          rodada, corrigindo a outra máquina em vez de ser corrigida. */
       espelho[chave] = nuvemDigital(JSON.stringify(segurei ? linha.dados : escolhido));
+      nuvemBaseAnotar(chave, linha.dados);
       if(segurei) nuvemSeguradas.push(escolhido);
       mudou++;
       return;
     }
     lista.push(linha.dados);
     espelho[chave] = nuvemDigital(JSON.stringify(linha.dados));
+    nuvemBaseAnotar(chave, linha.dados);
     mudou++;
   });
 
@@ -65533,6 +65832,9 @@ async function nuvemDepoisDeEntrar(){
   nuvemMontarRodape();
   if(nuvemUsuario.dono) nuvemMontarMenuUsuarios();
   nuvemAplicarPermissoes();
+
+  /* a base pra juntar sem perder nada (ver nuvemJuntarAntesDeSubir) */
+  try{ await nuvemBaseSemear(); }catch(e){ console.warn('[nuvem] base', e); }
 
   await nuvemSincronizar(false);
 
