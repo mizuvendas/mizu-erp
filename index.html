@@ -7965,6 +7965,7 @@ function renderProdutos(){
             <option value="incompletos" ${produtosFiltroSituacao==='incompletos'?'selected':''}>Só os incompletos (${STATE.produtos.filter(produtoDadosIncompletos).length})</option>
             <option value="semnota" ${produtosFiltroSituacao==='semnota'?'selected':''}>Só os que não emitem nota (${STATE.produtos.filter(x=>produtoPendencias(x).bloqueia.length>0).length})</option>
             <option value="ok" ${produtosFiltroSituacao==='ok'?'selected':''}>Só os completos</option>
+            <option value="balanco" ${produtosFiltroSituacao==='balanco'?'selected':''}>Cadastrados no balanço (${STATE.produtos.filter(produtoDoBalanco).length})</option>
           </select>
         </div>
         <button class="btn btn-primary btn-sm" onclick="abrirFormProduto(null)">+ Novo produto</button>
@@ -8078,7 +8079,14 @@ function produtosAlternarEdicao(){
   renderProdutos();
 }
 
+/* "o cadastro rápido do balanço, depois eu preencho custo, venda, NCM"
+   (17/11/2026): a marca "nasceu no balanço" sumia quando o balanço
+   fechava, e esses produtos ficavam perdidos no meio dos incompletos.
+   Agora fica guardado quando e em que balanço ele foi cadastrado. */
+function produtoDoBalanco(p){ return !!(p && (p.cadastradoNoBalanco || p.nascidoNoBalanco)); }
+
 function filtrarProdutosPorSituacao(lista){
+  if(produtosFiltroSituacao==='balanco')     return lista.filter(produtoDoBalanco);
   if(produtosFiltroSituacao==='incompletos') return lista.filter(produtoDadosIncompletos);
   if(produtosFiltroSituacao==='semnota')     return lista.filter(p=>produtoPendencias(p).bloqueia.length>0);
   if(produtosFiltroSituacao==='ok')          return lista.filter(p=>!produtoDadosIncompletos(p));
@@ -49956,6 +49964,18 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-a',
+    data: '2026-11-18',
+    titulo: 'Balanço: os repetidos do cadastro foram juntados ao comodato · filtro "Cadastrados no balanço"',
+    itens: [
+      'OS REPETIDOS: no cadastro havia produtos SEM código de barras com o mesmo nome de um item da planilha (ex.: RODO PLASTICO FLUOR 40 CM - RODOBEM). Na busca apareciam dois — um "Mizu" em cima e o do comodato embaixo. Agora, quando o nome é IGUAL (o da planilha ou o do TOTVS) e é um pra um, o sistema junta sozinho: vira um item só, de comodato, com o nome do TOTVS e o código da planilha. Na cópia do seu backup foram 179.',
+      'NOME SÓ PARECIDO (ex.: "SHAMPOO AUTOMOTIVO DETMOL 2L" x "DET MOL"): não junta sozinho. Ao abrir o item "Mizu" sem código, aparece o quadro "Esse produto está na planilha? é o mesmo: …" — um toque e junta.',
+      'NA BUSCA (inclusive na tela "Não achei esse código"), o comodato aparece sempre primeiro.',
+      'Se você desfizer uma junção na tela de vincular, o sistema não junta de novo sozinho.',
+      'PRODUTOS → Situação → "Cadastrados no balanço": lista os produtos que você cadastrou rápido durante o balanço, pra completar custo, venda, NCM e o resto depois — mesmo depois de fechar o balanço.'
+    ]
+  },
+  {
     id: '2026-11-17-i',
     data: '2026-11-17',
     titulo: 'Balanço mais calmo: busca sem travar, aviso pequeno, etiqueta só na caixinha, foto sempre aparece',
@@ -56079,9 +56099,61 @@ function confCodigosDoProduto(p){
   });
   return out;
 }
+/* código de ENCHIMENTO da planilha (0000000000003 e parecidos): não é
+   código de barras de verdade, não serve pra dizer que são produtos
+   diferentes */
+function confBarrasDeVerdade(c){ return String(c||'').replace(/^0+/, '').length >= 8; }
 function confBarrasBrigam(l, p){
-  const a = confCodigosDaLinha(l), b = confCodigosDoProduto(p);
+  const a = confCodigosDaLinha(l).filter(confBarrasDeVerdade), b = confCodigosDoProduto(p).filter(confBarrasDeVerdade);
   return a.length > 0 && b.length > 0 && !a.some(c=>b.includes(c));
+}
+
+/* OS REPETIDOS DE NOME IGUAL (17/11/2026, pendência nº 6)
+   "bipei o rodo, procurei 'rodo fluor' e apareceu como Mizu". No cadastro
+   havia ~270 produtos SEM código de barras e sem vínculo com exatamente o
+   mesmo nome de uma linha da planilha (ou do nome do TOTVS dela) — sobra
+   de uma importação antiga. Na busca apareciam dois: o do cadastro (Mizu)
+   em cima e o do comodato embaixo. Regra combinada com ela: nome IGUAL,
+   produto SEM código, um pra um → junta sozinho (vira um item só, comodato,
+   nome do TOTVS, código da planilha). Parecido ou ambíguo não junta: fica
+   pro quadro "é o mesmo?" na ficha. Se ela desvincular, não junta de novo. */
+function confNomeChave(t){
+  return String(t || '').toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^A-Z0-9]+/g, ' ').trim();
+}
+function confJuntarPorNome(linhas){
+  if(!Array.isArray(linhas) || !linhas.length) return 0;
+  const presos = new Set();
+  linhas.forEach(l=>{ if(l.produtoId) presos.add(l.produtoId); if(l.produtoIdEscolhido) presos.add(l.produtoIdEscolhido); });
+  const porNome = new Map();
+  (STATE.produtos||[]).forEach(p=>{
+    if(!p || presos.has(p.id) || confCodigosDoProduto(p).length) return;
+    const k = confNomeChave(p.nome); if(!k) return;
+    if(!porNome.has(k)) porNome.set(k, []);
+    porNome.get(k).push(p);
+  });
+  if(!porNome.size) return 0;
+  const ixT = (typeof totvsIndice === 'function') ? totvsIndice() : new Map();
+  const pares = [];
+  const usoDoProduto = new Map();
+  linhas.forEach(l=>{
+    if(l.produtoId || l.vinculoBriga || l.naoJuntarPorNome || l.semIgual) return;
+    const nomes = new Set([confNomeChave(l.nome), confNomeChave(l.nomeEscolhido)]);
+    confCodigosDaLinha(l).forEach(c=>{ const t = ixT.get(c); if(t) nomes.add(confNomeChave(t.nome)); });
+    const achados = new Map();
+    nomes.forEach(k=>{ if(k) (porNome.get(k)||[]).forEach(p=>achados.set(p.id, p)); });
+    if(achados.size !== 1) return;          /* nenhum, ou ambíguo */
+    const p = [...achados.values()][0];
+    pares.push([l, p]);
+    usoDoProduto.set(p.id, (usoDoProduto.get(p.id)||0) + 1);
+  });
+  let n = 0;
+  pares.forEach(([l, p])=>{
+    if(usoDoProduto.get(p.id) !== 1) return; /* o mesmo produto serviria pra duas linhas: não arrisca */
+    l.produto = p; l.produtoId = p.id; l.ambiguo = false; l.juntoPorNome = true;
+    n++;
+  });
+  return n;
 }
 
 async function confCarregarGuardada(){
@@ -56116,6 +56188,7 @@ async function confCarregarGuardada(){
       const vistos = {};
       CONF_LINHAS.forEach(l=>{ if(l.barras) vistos[l.barras] = (vistos[l.barras]||0)+1; });
       CONF_LINHAS.forEach(l=>{ if(l.barras && vistos[l.barras] > 1) l.barrasRepetida = true; });
+      try{ confJuntarPorNome(CONF_LINHAS); }catch(e){ console.warn(e); }
     }
   }catch(e){ console.warn(e); }
   return CONF_LINHAS;
@@ -56139,7 +56212,9 @@ function confRecasar(){
     l.produto = achados[0] || null;
     l.produtoId = achados[0] ? achados[0].id : null;
     l.ambiguo = achados.length > 1;
+    l.juntoPorNome = false;
   });
+  try{ confJuntarPorNome(CONF_LINHAS); }catch(e){ console.warn(e); }
 }
 
 /* ---------------------------------------------------------------
@@ -57210,6 +57285,7 @@ function vincVincular(linhaId, produtoId){
   }
 
   const chaveAntiga = confChaveLinha(l);
+  l.naoJuntarPorNome = false;
   l.produtoId = p.id;
   l.produtoIdEscolhido = p.id;
   l.produto = p;
@@ -57237,6 +57313,8 @@ function vincDesvincular(linhaId){
   l.produtoId = null;
   l.produtoIdEscolhido = null;
   l.produto = null;
+  l.juntoPorNome = false;
+  l.naoJuntarPorNome = true;   /* ela desfez: não junta sozinho de novo pelo nome */
   /* desfazendo, a contagem volta pra chave da planilha — só se a linha
      continuar fora do cadastro, senão ela ficaria órfã */
   if(antiga) vincMigrarContagem(antiga, confChaveLinha(l));
@@ -58981,6 +59059,7 @@ function confGuardarLinhas(){
        sumia sempre. Agora a escolha dela é gravada e manda. */
     guardada.produtoIdEscolhido = l.produtoIdEscolhido || null;
     guardada.codigosExtras = (l.codigosExtras && l.codigosExtras.length) ? l.codigosExtras.slice() : null;
+    guardada.naoJuntarPorNome = !!l.naoJuntarPorNome || null;
     guardada.semIgual = !!l.semIgual;
     guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
     guardada.marca = l.marca || null;
@@ -59992,18 +60071,9 @@ function balProcurar(termo){
 }
 function balProcurarAgora(){
   if(!balNaoAchei) return;
-  const t = ncmNormalizar(balNaoAchei.termo || '');
-  if(t.length < 2) balNaoAchei.sugestoes = [];
-  else{
-    const palavras = t.split(' ').filter(Boolean);
-    if(!BAL_CAT) balRecarregarCatalogo();
-    const achados = [];
-    BAL_CAT.forEach(it=>{
-      const txt = ncmNormalizar([it.nome, it.sku, it.codigos.join(' ')].join(' '));
-      if(palavras.every(p=>txt.includes(p))) achados.push(it);
-    });
-    balNaoAchei.sugestoes = achados.slice(0, 12);
-  }
+  /* mesma ordem da busca de cima: o COMODATO primeiro (nº 6 — "procurei
+     'rodo fluor' e apareceu como Mizu": o do comodato estava lá, embaixo) */
+  balNaoAchei.sugestoes = balAcharPorNome(balNaoAchei.termo || '').slice(0, 12);
   const caixa = document.getElementById('bal-procura-sugestoes');
   if(!caixa){ renderBalanco(); return; }
   caixa.innerHTML = balNaoAcheiSugestoesHtml();
@@ -60078,6 +60148,7 @@ function balCadastrarRapido(){
     estoqueAtual: 0, estoqueMinimo: 0,
     comodato: false,
     nascidoNoBalanco: true,
+    cadastradoNoBalanco: new Date().toISOString(),   /* fica depois de fechar: filtro "Cadastrados no balanço" */
     criadoEm: new Date().toISOString()
   };
   p.sku = proximoSku(p.id);
@@ -60331,6 +60402,7 @@ function balFecharMesmo(b, fornecedor, zerar){
       const f = (STATE.fornecedores||[]).find(x=>String(x.nome||'').trim().toUpperCase() === fornecedor.trim().toUpperCase());
       p.fornecedorId = f ? f.id : null;
     }
+    if(p.nascidoNoBalanco && !p.cadastradoNoBalanco) p.cadastradoNoBalanco = p.criadoEm || new Date().toISOString();
     delete p.nascidoNoBalanco;
     if(antes !== p.estoqueAtual){
       registrarMovimentoEstoque(p.id, 'ajuste', p.estoqueAtual - antes,
@@ -62255,8 +62327,26 @@ function balLinhasParecidas(chave){
   if(minhas.length === 0) return [];
   const saida = [];
   const ixTotvs = totvsIndice();
+  /* O REPETIDO SEM CÓDIGO (17/11/2026, nº 6): produto do cadastro SEM
+     código de barras nenhum não tem identidade própria — é sobra de
+     importação, e quase sempre é o mesmo de uma linha do comodato com o
+     nome um pouco diferente ("SHAMPOO AUTOMOTIVO DETMOL 2L" x "DET MOL").
+     Pra ele o quadro "é o mesmo?" volta a aparecer, mesmo que a linha já
+     tenha código no TOTVS. Pra quem TEM código, continua desligado. */
+  const pr = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+  const semCodigo = !!pr && confCodigosDoProduto(pr).length === 0;
   (CONF_LINHAS||[]).forEach(l=>{
-    if(l.produtoId) return;
+    if(l.produtoId || l.semIgual) return;
+    if(pr && confBarrasBrigam(l, pr)) return;   /* código diferente: nem sugere (o código manda) */
+    if(semCodigo){
+      const nome = l.nomeEscolhido || l.nome;
+      const t = totvsAchaPorCodigos(confCodigosDaLinha(l));
+      const dele = balPalavrasDoNome(nome).concat(t ? balPalavrasDoNome(t.nome) : []);
+      if(dele.length === 0) return;
+      const juntas = minhas.filter(w=>dele.includes(w)).length;
+      if(juntas >= Math.min(2, minhas.length)) saida.push({ linha: l, nome: (t && t.nome) || nome, juntas });
+      return;
+    }
     /* JÁ TEM IDENTIDADE PELO CÓDIGO DE BARRAS: NÃO SE SUGERE NADA.
 
        Com o TOTVS ligado, as 508 linhas da ECOVILLE casaram todas pelo
@@ -62315,6 +62405,10 @@ function balJuntarComProduto(chave, produtoId){
   if(!it || !p) return;
   const linha = (CONF_LINHAS||[]).find(l=>(confChaveLinha(l)) === chave);
   if(!linha) return;
+  if(confBarrasBrigam(linha, p)){
+    showToast(`Não juntei: "${p.nome}" tem outro código de barras. O código de barras manda — se for o mesmo produto, use "✏️ Código de barras certo" na Conferência.`, 'error');
+    return;
+  }
 
   confirmAction('É o mesmo produto?',
     `Planilha da ${CONF_FORNECEDOR_PADRAO}: ${it.nome} — saldo ${fmtNum(it.saldoComodato)}\n`
@@ -63108,7 +63202,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 23:30';
+const SISTEMA_VERSAO = '18/11/2026 00:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
