@@ -5822,6 +5822,108 @@ function fmtDocumento(doc){
   return d || '';
 }
 
+/* ---------------------------------------------------------------
+   BLOCO DE ENDEREÇO COM CEP (18/11/2026) — o mesmo do cadastro de
+   cliente, pro Fornecedor e pro Local de Compra: CEP primeiro, que
+   preenche rua, bairro, cidade e UF; o endereço completo (o que o
+   roteiro de coleta e o mapa usam) é montado destes campos. Cadastro
+   antigo, só com o texto livre: o texto vai pro campo Rua.
+   --------------------------------------------------------------- */
+const UFS_BR = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
+function enderecoBlocoHtml(p, item){
+  const c = item || {};
+  const rua = c.logradouro ? c.logradouro : (c.endereco || '');
+  let cid = c.cidade || '', uf = String(c.uf || '').toUpperCase();
+  const m = String(cid).match(/^\s*(.+?)\s*[\/-]\s*([A-Za-z]{2})\s*$/);
+  if(m){ cid = m[1]; if(!uf) uf = m[2].toUpperCase(); }
+  return `
+    <div class="field">
+      <label>CEP</label>
+      <input type="text" id="${p}-cep" maxlength="9" inputmode="numeric" placeholder="só os números" value="${escapeAttr(c.cep||'')}">
+      <div id="${p}-cep-status" class="help-text" style="margin-top:3px;"></div>
+    </div>
+    <div class="field">
+      <label>Rua / Avenida</label>
+      <input type="text" id="${p}-logradouro" value="${escapeAttr(rua)}">
+    </div>
+    <div class="field">
+      <label>Número</label>
+      <input type="text" id="${p}-numero" placeholder="S/N se não tiver" value="${escapeAttr(c.numero||'')}">
+    </div>
+    <div class="field">
+      <label>Complemento</label>
+      <input type="text" id="${p}-complemento" placeholder="quadra, lote, galpão…" value="${escapeAttr(c.complemento||'')}">
+    </div>
+    <div class="field">
+      <label>Bairro</label>
+      <input type="text" id="${p}-bairro" value="${escapeAttr(c.bairro||'')}">
+    </div>
+    <div class="field">
+      <label>Cidade</label>
+      <div style="display:flex;gap:6px;">
+        <input type="text" id="${p}-cidade" style="flex:1;" value="${escapeAttr(cid)}">
+        <select id="${p}-uf" style="width:78px;">
+          <option value="">UF</option>
+          ${UFS_BR.map(u=>`<option value="${u}" ${uf===u?'selected':''}>${u}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+    <input type="hidden" id="${p}-endereco" value="${escapeAttr(c.endereco||'')}">`;
+}
+function enderecoBlocoLigar(p, item){
+  const v = id => { const el = document.getElementById(`${p}-${id}`); return el ? String(el.value||'').trim() : ''; };
+  const montar = ()=>{
+    let s = v('logradouro');
+    if(v('numero')) s += (s ? ', ' : '') + v('numero');
+    if(v('complemento')) s += (s ? ' - ' : '') + v('complemento');
+    if(v('bairro')) s += (s ? ', ' : '') + v('bairro');
+    const cu = v('cidade') ? v('cidade') + (v('uf') ? '/' + v('uf') : '') : v('uf');
+    if(cu) s += (s ? ' - ' : '') + cu;
+    return s;
+  };
+  let ultimo = '', ibge = (item && item.codigoIbge) || '';
+  const campo = document.getElementById(`${p}-cep`);
+  const st = document.getElementById(`${p}-cep-status`);
+  async function buscar(){
+    const cep = campo.value.replace(/\D/g, '');
+    if(cep.length !== 8 || cep === ultimo) return;
+    ultimo = cep;
+    campo.value = cep.slice(0,5) + '-' + cep.slice(5);
+    st.textContent = 'Buscando o CEP…';
+    try{
+      const d = await (await fetch(`https://viacep.com.br/ws/${cep}/json/`)).json();
+      if(!d || d.erro){ st.innerHTML = '<span style="color:var(--negative);">CEP não encontrado. Confira ou preencha à mão.</span>'; return; }
+      const põe = (id, val)=>{ const el = document.getElementById(`${p}-${id}`); if(el && val) el.value = val; };
+      põe('logradouro', d.logradouro); põe('bairro', d.bairro); põe('cidade', d.localidade); põe('uf', d.uf);
+      if(d.complemento && !v('complemento')) põe('complemento', d.complemento);
+      ibge = d.ibge || '';
+      st.innerHTML = `<span style="color:var(--positive);">✓ ${escapeHtml([d.localidade, d.uf].filter(Boolean).join('/'))} — agora é só o número.</span>`;
+      const num = document.getElementById(`${p}-numero`); if(num && !num.value) num.focus();
+    }catch(e){
+      ultimo = '';
+      st.innerHTML = '<span style="color:var(--negative);">Sem internet pra buscar o CEP agora — preencha à mão.</span>';
+    }
+  }
+  campo.addEventListener('input', ()=>{
+    clearTimeout(buscar._t);
+    if(campo.value.replace(/\D/g, '').length === 8) buscar._t = setTimeout(buscar, 350); else st.textContent = '';
+  });
+  campo.addEventListener('blur', ()=>buscar());
+  /* o mapa procura o endereço montado: deixa o texto pronto antes do clique */
+  const btnMapa = document.getElementById(`${p}-btn-mapa`);
+  if(btnMapa) btnMapa.addEventListener('click', ()=>{ document.getElementById(`${p}-endereco`).value = montar(); }, true);
+  return {
+    dados: ()=>{
+      const cepNovo = v('cep').replace(/\D/g,''), cepVelho = String((item && item.cep) || '').replace(/\D/g,'');
+      return {
+        endereco: montar(), logradouro: v('logradouro'), numero: v('numero'), complemento: v('complemento'),
+        bairro: v('bairro'), cidade: v('cidade'), uf: v('uf'), cep: cepNovo,
+        codigoIbge: cepNovo === cepVelho ? ((item && item.codigoIbge) || ibge || '') : (ultimo === cepNovo ? ibge : '')
+      };
+    }
+  };
+}
+
 function criarModuloEndereco(config){
   const { chaveEstado, prefixoId, icone, tituloSingular, tituloPlural, contentId, tableBodyId, paginacaoId, sortVarNome } = config;
   let sortState = {key:'nome', dir:'asc'};
@@ -5969,27 +6071,14 @@ function criarModuloEndereco(config){
                 <label>Contato (quem atende)</label>
                 <input type="text" id="${prefixo}-contato" value="${item?escapeAttr(item.contato||''):''}" placeholder="Nome do vendedor, ramal...">
               </div>` : ''}
+              <div class="field field-full" style="margin-bottom:0;">
+                <label style="font-weight:700;border-top:1px solid var(--border);padding-top:10px;">📍 Endereço <span class="hint" style="font-weight:400;">— comece pelo CEP: ele preenche rua, bairro, cidade e UF</span></label>
+              </div>
+              ${enderecoBlocoHtml(prefixo, item)}
               <div class="field field-full">
-                <label>Endereço completo</label>
-                <div style="display:flex; gap:8px;">
-                  <input type="text" id="${prefixo}-endereco" style="flex:1;" value="${item?escapeAttr(item.endereco||''):''}" placeholder="Rua, número, bairro, cidade - UF">
-                  <button type="button" class="btn" id="${prefixo}-btn-mapa" style="white-space:nowrap;">📍 Localizar no mapa</button>
-                </div>
+                <button type="button" class="btn" id="${prefixo}-btn-mapa" style="white-space:nowrap;">📍 Localizar no mapa</button>
                 <div id="${prefixo}-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;">${item&&item.lat?`Localização salva (${item.lat.toFixed(5)}, ${item.lng.toFixed(5)})`:''}</div>
               </div>
-              ${temFiscal ? `
-              <div class="field">
-                <label>Cidade</label>
-                <input type="text" id="${prefixo}-cidade" value="${item?escapeAttr(item.cidade||''):''}">
-              </div>
-              <div class="field">
-                <label>UF</label>
-                <input type="text" id="${prefixo}-uf" maxlength="2" value="${item?escapeAttr(item.uf||''):''}" style="text-transform:uppercase;">
-              </div>
-              <div class="field">
-                <label>CEP</label>
-                <input type="text" id="${prefixo}-cep" value="${item?escapeAttr(item.cep||''):''}">
-              </div>` : ''}
               <div class="field field-full">
                 <label>Observações</label>
                 <textarea id="${prefixo}-obs">${item?escapeHtml(item.obs||''):''}</textarea>
@@ -6009,6 +6098,7 @@ function criarModuloEndereco(config){
 
     let latSelecionado = item && item.lat ? item.lat : null;
     let lngSelecionado = item && item.lng ? item.lng : null;
+    const blocoEnd = enderecoBlocoLigar(prefixo, item);
     ativarBotaoMapaEndereco(`${prefixo}-btn-mapa`, `${prefixo}-endereco`,
       ()=>({lat:latSelecionado, lng:lngSelecionado}),
       (lat,lng)=>{
@@ -6025,13 +6115,12 @@ function criarModuloEndereco(config){
         const el = document.getElementById(`${prefixo}-${sufixo}`);
         return el ? el.value.trim() : '';
       };
-      const data = {
+      const data = Object.assign({
         nome,
         telefone: campo('telefone'),
-        endereco: campo('endereco'),
         obs: campo('obs'),
         lat: latSelecionado, lng: lngSelecionado,
-      };
+      }, blocoEnd.dados());
       if(temFiscal){
         Object.assign(data, {
           fantasia: campo('fantasia'),
@@ -6039,9 +6128,6 @@ function criarModuloEndereco(config){
           ie: campo('ie'),
           email: campo('email'),
           contato: campo('contato'),
-          cidade: campo('cidade'),
-          uf: campo('uf').toUpperCase(),
-          cep: campo('cep').replace(/\D/g,''),
           razaoSocial: nome
         });
         /* Dois fornecedores com o mesmo CNPJ é a receita pra lista duplicada
@@ -6161,13 +6247,13 @@ function abrirFormEnderecoRapido(config, id, onCriado, nomeInicial){
           <label>Telefone</label>
           <input type="text" id="${prefixo}-telefone">
         </div>
-        <div class="field" style="margin-top:10px;">
-          <label>Endereço</label>
-          <div style="display:flex; gap:8px;">
-            <input type="text" id="${prefixo}-endereco" style="flex:1;" placeholder="Rua, número, bairro, cidade - UF">
+        <div class="form-grid" style="margin-top:10px;">
+          <div class="field field-full" style="margin-bottom:0;"><label style="font-weight:700;">📍 Endereço <span class="hint" style="font-weight:400;">— comece pelo CEP</span></label></div>
+          ${enderecoBlocoHtml(prefixo, null)}
+          <div class="field field-full">
             <button type="button" class="btn" id="${prefixo}-btn-mapa" style="white-space:nowrap;">📍 Localizar no mapa</button>
+            <div id="${prefixo}-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;"></div>
           </div>
-          <div id="${prefixo}-mapa-status" style="font-size:12px;color:var(--ink-faint);margin-top:4px;"></div>
         </div>
         <div class="form-actions">
           <button type="button" class="btn" id="${prefixo}-cancelar">Cancelar</button>
@@ -6180,12 +6266,13 @@ function abrirFormEnderecoRapido(config, id, onCriado, nomeInicial){
   document.getElementById(`${prefixo}-cancelar`).addEventListener('click', ()=>modal.remove());
   if(nomeInicial){
     document.getElementById(`${prefixo}-nome`).value = nomeInicial;
-    document.getElementById(`${prefixo}-endereco`).focus(); // nome já veio pronto: o que falta é o endereço
+    document.getElementById(`${prefixo}-cep`).focus(); // nome já veio pronto: o que falta é o endereço (começa pelo CEP)
   }else{
     document.getElementById(`${prefixo}-nome`).focus();
   }
 
   let latSelecionadoRapido = null, lngSelecionadoRapido = null;
+  const blocoEndRapido = enderecoBlocoLigar(prefixo, null);
   ativarBotaoMapaEndereco(`${prefixo}-btn-mapa`, `${prefixo}-endereco`,
     ()=>({lat:latSelecionadoRapido, lng:lngSelecionadoRapido}),
     (lat,lng)=>{
@@ -6197,13 +6284,12 @@ function abrirFormEnderecoRapido(config, id, onCriado, nomeInicial){
   document.getElementById(`${prefixo}-confirmar`).addEventListener('click', ()=>{
     const nome = document.getElementById(`${prefixo}-nome`).value.trim();
     if(!nome){ showToast('Informe o nome.', 'error'); return; }
-    const novo = {
+    const novo = Object.assign({
       id: uid(config.prefixoId), nome,
       telefone: document.getElementById(`${prefixo}-telefone`).value.trim(),
-      endereco: document.getElementById(`${prefixo}-endereco`).value.trim(),
       obs: '', criadoEm: todayISO(),
       lat: latSelecionadoRapido, lng: lngSelecionadoRapido,
-    };
+    }, blocoEndRapido.dados());
     STATE[config.chaveEstado].push(novo);
     saveState();
     showToast(`${config.titulo} cadastrado.`, 'success');
@@ -50107,6 +50193,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-e',
+    data: '2026-11-18',
+    titulo: 'Fornecedor e Local de compra: endereço com CEP, igual ao do cliente',
+    itens: [
+      'O CADASTRO DE FORNECEDOR E O DE LOCAL DE COMPRA (inclusive o rápido, aberto de dentro do produto) ganharam o mesmo bloco de endereço do cliente: CEP, rua, número, complemento, bairro, cidade e UF.',
+      'DIGITOU O CEP, preenche rua, bairro, cidade e UF. O endereço completo — o que o roteiro de coleta e o mapa usam — é montado sozinho.',
+      'Cadastro antigo: o endereço que estava em texto aparece no campo "Rua" pra você ajeitar quando abrir.'
+    ]
+  },
+  {
     id: '2026-11-18-d',
     data: '2026-11-18',
     titulo: 'Cadastro de cliente: um endereço só, o CEP preenche, e endereço de entrega',
@@ -63389,7 +63485,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 11:00';
+const SISTEMA_VERSAO = '18/11/2026 11:45';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
