@@ -50634,6 +50634,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-l',
+    data: '2026-11-18',
+    titulo: 'Balanço: unidade, marca e categoria do TOTVS também vão pra Conferência',
+    itens: [
+      'AO BIPAR um item que está no TOTVS, além do NCM, agora também a UNIDADE (UN, CX, PCT…), a MARCA e a CATEGORIA vão pra linha da Conferência. Os que você já contou recebem ao abrir o Balanço.',
+      'Só preenche o que está VAZIO — o que você já digitou ou corrigiu na Conferência não muda.'
+    ]
+  },
+  {
     id: '2026-11-18-k',
     data: '2026-11-18',
     titulo: 'Celular: o sincronismo não fica mais preso nas fotos',
@@ -59838,6 +59847,7 @@ function confGuardarLinhas(){
     guardada.semIgual = !!l.semIgual;
     guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
     guardada.marca = l.marca || null;
+    guardada.categoria = l.categoria || null;
     guardada.setor = l.setor || null;
     /* A FOTO DA LINHA DA PLANILHA TAMBÉM PRECISA SER GRAVADA.
 
@@ -60624,17 +60634,30 @@ function balPuxarNcmDoTotvs(chaves){
   const guardadas = {};
   confLinhasDoEstado().forEach(l=>{ guardadas[l.id] = l; });
   let feitos = 0;
+  /* 18/11/2026: além do NCM, também UNIDADE, MARCA e CATEGORIA ("faz o
+     item 2"). Mesma regra: só preenche o que está vazio na Conferência. */
+  const CAMPOS = [
+    ['ncm',       t=>ncmSo8(t.ncm || '')],
+    ['unidade',   t=>String(t.unidade || '').trim().toUpperCase()],
+    ['marca',     t=>String(t.marca || '').trim()],
+    ['categoria', t=>String(t.categoria || '').trim()]
+  ];
   CONF_LINHAS.forEach(l=>{
     const minha = l.produtoId && alvo.has('p:' + l.produtoId);
     if(!minha && !alvo.has(confChaveLinha(l))) return;
-    if(String(l.ncm||'').trim()) return;
     const t = totvsAchaPorCodigos(confCodigosDaLinha(l));
-    const ncm = t ? ncmSo8(t.ncm || '') : '';
-    if(!ncm) return;
-    l.ncm = ncm;
+    if(!t) return;
     const g = guardadas[l.id];
-    if(g && !String(g.ncm||'').trim()) g.ncm = ncm;
-    feitos++;
+    let mexeu = false;
+    CAMPOS.forEach(([campo, pega])=>{
+      if(String(l[campo] || '').trim()) return;
+      const v = pega(t);
+      if(!v) return;
+      l[campo] = v;
+      if(g && !String(g[campo] || '').trim()) g[campo] = v;
+      mexeu = true;
+    });
+    if(mexeu) feitos++;
   });
   if(feitos) saveState();
   return feitos;
@@ -64010,7 +64033,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 20:00';
+const SISTEMA_VERSAO = '18/11/2026 20:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
