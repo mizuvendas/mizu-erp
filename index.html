@@ -13405,7 +13405,12 @@ function orcEscHtml(){
       <h3>🏫 1. Dados do orçamento escolar</h3>
       <div class="form-grid">
         ${campo('Nº do Orçamento <span class="req">*</span>', `<input type="number" id="esc-numero" min="1" step="1" value="${att(e.numero)}" onchange="orcEscCampo('numero',this.value)">`)}
-        ${campo('Escola <span class="req">*</span>', `<div style="display:flex;gap:6px;">
+        ${campo('Escola <span class="req">*</span>', `
+            <!-- "pra pesquisar o cliente não dá certo, ele não deixa pesquisar"
+                 (18/11/2026): digite aqui e a lista abaixo filtra -->
+            <input type="text" id="esc-cliente-busca" placeholder="🔍 Digite pra procurar a escola (nome ou CNPJ)…" autocomplete="off"
+                   style="margin-bottom:5px;" oninput="orcEscFiltrarEscolas(this.value)">
+            <div style="display:flex;gap:6px;">
             <select id="esc-cliente" style="flex:1;min-width:140px;" onchange="orcEscCampo('clienteId',this.value)">
               <option value="">Selecione...</option>
               ${ordenados.map(cl=>`<option value="${cl.id}" ${cl.id===e.clienteId?'selected':''}>${escapeHtml(cl.nome)}</option>`).join('')}
@@ -13444,7 +13449,11 @@ function orcEscHtml(){
         <input type="number" id="esc-pct-todos" step="0.1" value="${att(e.pctTodos)}" style="width:80px;">
         <span class="help-text" style="margin:0;">% em todos os itens</span>
         <button type="button" class="btn btn-sm" onclick="orcEscAplicarTodos()">Aplicar</button>
-        <button type="button" class="btn btn-sm" style="margin-left:auto;" onclick="prodOrcAbrir()">📚 Produtos de orçamento (${prodOrcLista().length})</button>
+        <button type="button" class="btn btn-sm" style="margin-left:auto;" title="Planilha da escola (.xls/.xlsx) com Nº, Descrição, Unid., Quant. e Preço unitário (o custo)"
+          onclick="document.getElementById('esc-planilha-arq').click()">📎 Anexar planilha da escola</button>
+        <input type="file" id="esc-planilha-arq" accept=".xls,.xlsx,.csv" style="display:none;"
+          onchange="if(this.files&&this.files[0]) orcEscImportarPlanilha(this.files[0]); this.value='';">
+        <button type="button" class="btn btn-sm" onclick="prodOrcAbrir()">📚 Produtos de orçamento (${prodOrcLista().length})</button>
       </div>
       ${e.itens.length === 0 ? '<p class="help-text" style="text-align:center;padding:14px 0;">Nenhum item ainda.</p>' : `
       <div class="table-wrap"><table class="data-table">
@@ -13485,6 +13494,40 @@ function orcEscCampo(campo, valor){
   if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId'].includes(campo)) orcEscDesenhar();
 }
 
+/* "pra pesquisar o cliente não dá certo" (18/11/2026): a lista de escolas
+   era um seletor sem busca. Digitar no campo de cima filtra a lista (nome
+   ou CNPJ, sem ligar pra acento); com uma escola só, Enter escolhe ela. */
+function orcEscFiltrarEscolas(termo){
+  const sel = document.getElementById('esc-cliente');
+  if(!sel) return;
+  const e = orcEsc();
+  const escolas = (STATE.clientes || []).filter(c=>tipoClienteDe(c) === 'Escola');
+  const lista = (escolas.length ? escolas : (STATE.clientes || []))
+    .slice().sort((a,b)=>String(a.nome||'').localeCompare(String(b.nome||''), 'pt-BR'));
+  const norm = s=>String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase();
+  const palavras = norm(termo).split(/\s+/).filter(Boolean);
+  const dig = String(termo||'').replace(/\D/g,'');
+  const achou = lista.filter(cl=>{
+    if(!palavras.length) return true;
+    const txt = norm([cl.nome, cl.nomeFantasia].join(' '));
+    if(palavras.every(p=>txt.includes(p))) return true;
+    return dig.length >= 4 && String(cl.documento||'').replace(/\D/g,'').includes(dig);
+  });
+  sel.innerHTML = `<option value="">${palavras.length ? (achou.length ? achou.length + ' escola(s) — escolha:' : 'Nenhuma escola com esse nome') : 'Selecione...'}</option>`
+    + achou.map(cl=>`<option value="${escapeAttr(cl.id)}" ${cl.id===e.clienteId?'selected':''}>${escapeHtml(cl.nome)}</option>`).join('');
+  const busca = document.getElementById('esc-cliente-busca');
+  if(busca && !busca.dataset.ligado){
+    busca.dataset.ligado = '1';
+    busca.addEventListener('keydown', ev=>{
+      if(ev.key !== 'Enter') return;
+      ev.preventDefault();
+      const opts = [...sel.options].filter(o=>o.value);
+      if(opts.length === 1) orcEscCampo('clienteId', opts[0].value);
+      else sel.focus();
+    });
+  }
+}
+
 function orcEscEnter(ev){
   if(ev && ev.key === 'Enter'){ ev.preventDefault(); orcEscAdicionar(); }
 }
@@ -13518,6 +13561,93 @@ function orcEscAdicionar(){
   });
   orcEscDesenhar();
   setTimeout(()=>{ const d = document.getElementById('esc-novo-desc'); if(d) d.focus(); }, 30);
+}
+
+/* "📎 ANEXAR PLANILHA DA ESCOLA" (18/11/2026)
+   "tenho uma planilha no Excel com Nº, discriminação, und., quantidade,
+    preço unitário — anexar e ele digitar pra mim". O preço unitário é o
+   CUSTO do fornecedor; a % de venda ela põe depois. Os itens da planilha
+   SUBSTITUEM os que estavam (perguntando antes). Escola e responsável ela
+   escolhe — a planilha não mexe neles. As colunas são achadas pelo nome do
+   cabeçalho; o resto (colunas de outros fornecedores, linhas numeradas e
+   vazias no fim) fica de fora. */
+function orcEscUnidade(u){
+  const s = String(u || '').toUpperCase().replace(/[^A-Z]/g, '');
+  const mapa = { UNID:'UN', UND:'UN', UNIDADE:'UN', UN:'UN', U:'UN', PCT:'PCT', PACOTE:'PCT', PC:'PC', PCA:'PC', PECA:'PC',
+                 CX:'CX', CAIXA:'CX', KG:'KG', GR:'G', G:'G', L:'L', LT:'L', LITRO:'L', ML:'ML', RL:'RL', ROLO:'RL',
+                 FD:'FD', FARDO:'FD', GL:'GL', GALAO:'GL', RESMA:'RESMA', RM:'RESMA', DZ:'DZ', DUZIA:'DZ', PAR:'PAR', KIT:'KIT', JG:'JG', JOGO:'JG', FR:'FR', FRASCO:'FR', TB:'TB', TUBO:'TB', BL:'BL', BLOCO:'BL', M:'M', MT:'M', METRO:'M' };
+  return mapa[s] || s || 'UN';
+}
+function orcEscNumeroDaPlanilha(v){
+  if(typeof v === 'number') return v;
+  const t = String(v == null ? '' : v).replace(/R\$|\s/g, '');
+  if(!t) return 0;
+  const n = /,\d{1,2}$/.test(t) ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '');
+  return Number(n) || 0;
+}
+function orcEscLerGrade(grade){
+  const norm = s=>String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/\s+/g,' ').trim();
+  let cab = -1, cDesc = -1, cUn = -1, cQtd = -1, cPreco = -1;
+  for(let i = 0; i < Math.min(grade.length, 60) && cab < 0; i++){
+    const t = (grade[i] || []).map(norm);
+    const d = t.findIndex(x=>x.startsWith('discrimina') || x.startsWith('descri') || x === 'produto' || x === 'item descricao');
+    const q = t.findIndex(x=>x.startsWith('quant') || x === 'qtd' || x === 'qtde');
+    if(d < 0 || q < 0) continue;
+    cab = i; cDesc = d; cQtd = q;
+    cUn = t.findIndex(x=>x.startsWith('unid') || x === 'und' || x === 'un' || x.startsWith('unidade'));
+    cPreco = t.findIndex(x=>x.startsWith('preco unit') || x.startsWith('valor unit') || x.startsWith('vlr unit') || x.startsWith('custo'));
+    if(cPreco < 0) cPreco = t.findIndex((x, k)=>k > q && (x.startsWith('preco') || x.startsWith('valor')));
+  }
+  if(cab < 0) return { erro: 'Não achei o cabeçalho (preciso das colunas de Descrição e Quantidade).' };
+  const itens = [];
+  for(let i = cab + 1; i < grade.length; i++){
+    const r = grade[i] || [];
+    const desc = String(r[cDesc] == null ? '' : r[cDesc]).replace(/\s+/g, ' ').trim();
+    const qtd = orcEscNumeroDaPlanilha(r[cQtd]);
+    if(!desc || desc === '0' || !(qtd > 0)) continue;           /* linha vazia, total, numerada sem item */
+    if(/^total/i.test(desc)) continue;
+    itens.push({
+      descricao: desc,
+      unidade: cUn >= 0 ? orcEscUnidade(r[cUn]) : 'UN',
+      qtd,
+      custo: cPreco >= 0 ? Math.round(orcEscNumeroDaPlanilha(r[cPreco]) * 100) / 100 : 0
+    });
+  }
+  return { itens, temPreco: cPreco >= 0 };
+}
+async function orcEscImportarPlanilha(arquivo){
+  if(!arquivo) return;
+  if(typeof XLSX === 'undefined' || (typeof XLSX_DISPONIVEL !== 'undefined' && !XLSX_DISPONIVEL)){
+    showToast('A leitura de planilha precisa de internet na primeira vez. Tente de novo com internet.', 'error'); return;
+  }
+  let lida = null;
+  try{
+    const wb = XLSX.read(new Uint8Array(await arquivo.arrayBuffer()), { type:'array' });
+    /* a aba com os itens: a primeira que tiver o cabeçalho */
+    for(const nome of wb.SheetNames){
+      const r = orcEscLerGrade(XLSX.utils.sheet_to_json(wb.Sheets[nome], { header:1, defval:null, raw:true }));
+      if(r.itens && r.itens.length){ lida = r; break; }
+      if(!lida) lida = r;
+    }
+  }catch(e){ console.error(e); showToast('Não consegui ler a planilha: ' + (e.message || e), 'error'); return; }
+  if(!lida || !lida.itens || !lida.itens.length){ showToast((lida && lida.erro) || 'Não achei itens nessa planilha.', 'error'); return; }
+  const e = orcEsc();
+  const aplicar = ()=>{
+    e.itens = lida.itens.map(it=>{
+      const p = prodOrcAchar(it.descricao);
+      return { prodOrcId: p ? p.id : null, descricao: it.descricao, unidade: it.unidade, qtd: it.qtd,
+               custo: it.custo || (p ? orcEscNum(p.custo) : 0), pct: orcEscNum(e.pctTodos) };
+    });
+    orcEscDesenhar();
+    const semCusto = e.itens.filter(x=>!(x.custo > 0)).length;
+    showToast(`${e.itens.length} item(ns) da planilha no orçamento. Agora é pôr a % de venda`
+      + (semCusto ? ` — ${semCusto} sem custo, confira.` : '.'), 'success');
+  };
+  if(e.itens.length){
+    confirmAction('Trocar os itens pelos da planilha',
+      `O orçamento tem ${e.itens.length} item(ns). Os ${lida.itens.length} da planilha vão SUBSTITUIR esses (escola, responsável e o resto não mudam).`,
+      aplicar, 'Substituir');
+  }else aplicar();
 }
 
 function orcEscMudarItem(i, campo, valor){
@@ -50634,6 +50764,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-18-m',
+    data: '2026-11-18',
+    titulo: 'Orçamento escolar: procurar a escola digitando · anexar a planilha da escola',
+    itens: [
+      'ESCOLA: em cima da lista tem um campo "🔍 Digite pra procurar a escola" — filtra pelo nome ou CNPJ, sem ligar pra acento. Com uma escola só na lista, Enter escolhe ela.',
+      '📎 ANEXAR PLANILHA DA ESCOLA (em Itens): escolha o arquivo do Excel da escola (.xls ou .xlsx) e os itens entram sozinhos — descrição, unidade (UN, CX, PCT…), quantidade e o CUSTO (o "preço unitário" da planilha). Depois é só pôr a % de venda, em todos ou item por item.',
+      'Os itens da planilha SUBSTITUEM os que estavam no orçamento (o sistema pergunta antes). Escola, responsável e o resto você escolhe — a planilha não mexe. As colunas de outros fornecedores e as linhas vazias do fim ficam de fora.'
+    ]
+  },
+  {
     id: '2026-11-18-l',
     data: '2026-11-18',
     titulo: 'Balanço: unidade, marca e categoria do TOTVS também vão pra Conferência',
@@ -64033,7 +64173,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 20:30';
+const SISTEMA_VERSAO = '18/11/2026 21:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
