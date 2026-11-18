@@ -49956,6 +49956,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-17-h',
+    data: '2026-11-17',
+    titulo: 'Balanço: o código de barras manda · código certo · linha que faltou',
+    itens: [
+      'O CÓDIGO DE BARRAS MANDA: bipou, abre o item que tem AQUELE código. Linha da planilha vinculada a um produto com código de barras diferente (a ESSENCIA LAVANDA 10ML estava ligada ao CHÁ BRANCO 120ML) não é mais juntada — a Conferência avisa, e a tela de vincular não deixa fazer de novo.',
+      '✏️ CÓDIGO DE BARRAS CERTO: na Conferência, em cada linha. Quando a planilha traz o código da caixa (ex.: LIMP PERF GEO … CX12) e a unidade tem outro, você digita o da unidade: ele passa a ser daquela linha do comodato, o da caixa continua valendo, e o que você já tinha contado vem junto.',
+      '➕ ACRESCENTAR O QUE FALTOU: na Conferência. Lê a planilha de novo e só põe as linhas que tinham ficado de fora (o Spray Essencial 120ml veio sem o código da ECOVILLE e não tinha entrado). As outras linhas não mudam, e a contagem vem junto.'
+    ]
+  },
+  {
     id: '2026-11-17-g',
     data: '2026-11-17',
     titulo: 'Balanço: os 10 itens contados no celular voltam pro computador',
@@ -55908,7 +55918,11 @@ function confLerGrade(grade, nomeArquivo){
     const r = grade[i] || [];
     const codigo = cCod >= 0 ? r[cCod] : null;
     const desc = cDesc >= 0 ? r[cDesc] : null;
-    if(codigo == null || codigo === '') continue;                 /* cabeçalho de grupo */
+    /* sem o Código da ECOVILLE: cabeçalho de grupo — a não ser que tenha
+       código de barras. O "Spray Essencial 120ml" (17/11/2026) veio assim,
+       com saldo 12, e ficava de fora: os 12 contados entravam como Mizu. */
+    const semCodigo = (codigo == null || String(codigo).trim() === '');
+    if(semCodigo && !confBarras(r[cBarras])) continue;
     if(String(desc||'').trim().toLowerCase() === 'total') continue;
     /* Rodapé da planilha: "Total Geral", linha em branco, um ponto solto.
        Têm código mas não são produto — e contá-los como "sem saldo"
@@ -55924,7 +55938,7 @@ function confLerGrade(grade, nomeArquivo){
     const barras = confBarras(r[cBarras]);
     const achados = barras ? (ix.get(barras) || []) : [];
     linhas.push({
-      codigo: String(codigo).trim(),
+      codigo: semCodigo ? '' : String(codigo).trim(),
       nome: String(desc||'').trim(),
       custo: Number(r[cCusto]) || 0,
       venda: cVenda >= 0 ? (Number(r[cVenda]) || 0) : 0,
@@ -55983,6 +55997,42 @@ async function confAplicarLeitura(r){
   showToast(`${r.linhas.length} produto(s) com saldo lidos. ${r.ignoradasSemSaldo} sem saldo ficaram de fora.`, 'success');
 }
 
+/* "➕ ACRESCENTAR O QUE FALTOU" (17/11/2026)
+   Reler a planilha inteira troca o id de todas as linhas e leva junto os
+   vínculos, descrições e NCMs que ela já acertou. Aqui é o contrário: lê
+   o arquivo e só ENTRA quem não está — pelo código da ECOVILLE, ou pelo
+   código de barras quando a linha não tem código. Ninguém sai, ninguém
+   muda. O que já foi contado no balanço com aquele código vem junto
+   (balResgatarContagemDoTotvs, ao recarregar o catálogo). */
+function confAcrescentarFaltantes(r){
+  const atuais = confLinhasDoEstado();
+  const temCodigo = new Set(atuais.filter(l=>confCodigoDeVerdade(l.codigo) && l.codigo !== '#').map(l=>String(l.codigo).trim()));
+  const temBarras = new Set();
+  atuais.forEach(l=>confCodigosDaLinha(l).forEach(c=>temBarras.add(c)));
+  const novas = [];
+  (r && r.linhas || []).forEach(l=>{
+    const cod = String(l.codigo||'').trim();
+    const real = confCodigoDeVerdade(cod) && cod !== '#';
+    if(real && temCodigo.has(cod)) return;
+    if(!real && l.barras && temBarras.has(l.barras)) return;
+    if(!real && !l.barras) return;
+    const nova = { id: uid('cl'), codigo: l.codigo, nome: l.nome, custo: l.custo, venda: l.venda, saldo: l.saldo,
+                   barras: l.barras, nomeEscolhido: null, unidade: null, ncm: null };
+    novas.push(nova);
+    if(real) temCodigo.add(cod);
+    if(l.barras) temBarras.add(l.barras);
+  });
+  if(!novas.length) return novas;
+  if(!Array.isArray(STATE.conferenciaLinhas)) STATE.conferenciaLinhas = [];
+  novas.forEach(n=>STATE.conferenciaLinhas.push(n));
+  const res = STATE.conferenciaResumo || (STATE.conferenciaResumo = {});
+  res.total = STATE.conferenciaLinhas.length;
+  saveState();
+  CONF_LINHAS = null;
+  TOTVS_IX = null;
+  return novas;
+}
+
 /* Mudança de casa: o que ficou no espaço antigo do navegador entra no
    estado que sincroniza, uma vez só. Numa máquina que nunca teve a
    planilha (o celular), não faz nada — e não apaga nada. */
@@ -55997,6 +56047,32 @@ async function confMigrarPlanilhaSeFaltar(){
   return true;
 }
 
+/* "O CÓDIGO DE BARRAS MANDA" (17/11/2026).
+   Ela bipou a ESSENCIA LAVANDA COALA 10ML e abriu o CHÁ BRANCO 120ML:
+   a linha da planilha tinha sido vinculada a esse produto, e os dois têm
+   códigos de barras diferentes. Regra dela: bipou, abre o item que tem
+   AQUELE código. Linha e produto com códigos diferentes não se juntam.
+   Os códigos da linha são o da planilha mais os que ELA disse que são
+   dela ("✏️ Código de barras certo") — esses contam como iguais. */
+function confCodigosDaLinha(l){
+  const out = [];
+  [l && l.barras].concat((l && l.codigosExtras) || []).forEach(c=>{
+    const d = confBarras(c); if(d && !out.includes(d)) out.push(d);
+  });
+  return out;
+}
+function confCodigosDoProduto(p){
+  const out = [];
+  [p && p.codigoBarras].concat((p && p.codigosExtras) || []).forEach(c=>{
+    const d = confBarras(c); if(d && !out.includes(d)) out.push(d);
+  });
+  return out;
+}
+function confBarrasBrigam(l, p){
+  const a = confCodigosDaLinha(l), b = confCodigosDoProduto(p);
+  return a.length > 0 && b.length > 0 && !a.some(c=>b.includes(c));
+}
+
 async function confCarregarGuardada(){
   if(CONF_LINHAS) return CONF_LINHAS;
   try{ await confMigrarPlanilhaSeFaltar(); }catch(e){ console.warn(e); }
@@ -56006,7 +56082,8 @@ async function confCarregarGuardada(){
     if(g && Array.isArray(g.linhas) && g.linhas.length){
       const ix = confIndiceProdutos();
       CONF_LINHAS = g.linhas.map(l=>{
-        const achados = l.barras ? (ix.get(l.barras) || []) : [];
+        let achados = [];
+        for(const c of confCodigosDaLinha(l)){ achados = ix.get(c) || []; if(achados.length) break; }
         /* nomeEscolhido, unidade e ncm vêm no próprio l: são a decisão
            dela, e precisam voltar igual quando ela reabre a tela.
            E a mão dela manda mais que o código de barras: se ela
@@ -56015,6 +56092,11 @@ async function confCarregarGuardada(){
         const meu = l.produtoIdEscolhido
           ? (STATE.produtos||[]).find(p=>p.id === l.produtoIdEscolhido)
           : null;
+        if(meu && confBarrasBrigam(l, meu)){
+          /* vínculo com código de barras diferente: não junta (a escolha
+             fica guardada, e a tela avisa pra ela desfazer ou corrigir) */
+          return Object.assign({}, l, { produto: null, produtoId: null, ambiguo: false, vinculoBriga: meu.nome || 'outro produto' });
+        }
         if(meu) return Object.assign({}, l, { produto: meu, produtoId: meu.id, ambiguo: false });
         return Object.assign({}, l, { produto: achados[0] || null,
                                       produtoId: achados[0] ? achados[0].id : null,
@@ -56036,8 +56118,13 @@ function confRecasar(){
     const meu = l.produtoIdEscolhido
       ? (STATE.produtos||[]).find(p=>p.id === l.produtoIdEscolhido)
       : null;
+    l.vinculoBriga = null;
+    if(meu && confBarrasBrigam(l, meu)){
+      l.produto = null; l.produtoId = null; l.ambiguo = false; l.vinculoBriga = meu.nome || 'outro produto'; return;
+    }
     if(meu){ l.produto = meu; l.produtoId = meu.id; l.ambiguo = false; return; }
-    const achados = l.barras ? (ix.get(l.barras) || []) : [];
+    let achados = [];
+    for(const c of confCodigosDaLinha(l)){ achados = ix.get(c) || []; if(achados.length) break; }
     l.produto = achados[0] || null;
     l.produtoId = achados[0] ? achados[0].id : null;
     l.ambiguo = achados.length > 1;
@@ -57102,6 +57189,12 @@ function vincVincular(linhaId, produtoId){
   const jaTem = (CONF_LINHAS||[]).find(x=>x.produtoId === p.id && x.id !== l.id);
   if(jaTem){
     showToast(`"${p.nome}" já está vinculado a outra linha da planilha.`, 'error');
+    return;
+  }
+  /* o código de barras manda: código diferente, não junta */
+  if(confBarrasBrigam(l, p)){
+    showToast(`Não vinculei: "${p.nome}" tem outro código de barras (${confCodigosDoProduto(p).join(', ')}) `
+      + `e a linha da planilha tem ${confCodigosDaLinha(l).join(', ')}. Se for o mesmo produto, use "✏️ Código de barras certo" na Conferência.`, 'error');
     return;
   }
 
@@ -58452,6 +58545,9 @@ function renderConferenciaAgora(){
           ${confBotaoFiltro('○ Não contei', 'cont-naocontei', 'var(--ink-soft)')}` : ''}
         <button class="btn btn-sm btn-primary" onclick="confCompletarTodos()">✓ Completar os que dá</button>
         <button class="btn btn-sm" onclick="confTrocarPlanilha()">Trocar a planilha</button>
+        <button class="btn btn-sm" title="Lê a planilha de novo e só ACRESCENTA as linhas que ficaram de fora — não mexe nas outras"
+          onclick="document.getElementById('conf-acrescentar-arq').click()">➕ Acrescentar o que faltou</button>
+        <input type="file" id="conf-acrescentar-arq" accept=".xlsx,.xls" style="display:none;">
         <div class="field" style="max-width:260px;margin:0 0 0 auto;">
           <input type="text" id="conf-busca" value="${escapeAttr(confBusca)}" placeholder="🔍 Nome, código ou barras...">
         </div>
@@ -58461,6 +58557,23 @@ function renderConferenciaAgora(){
     </div>`;
 
   confAtivarEdicao();
+
+  const arqMais = document.getElementById('conf-acrescentar-arq');
+  if(arqMais) arqMais.addEventListener('change', async (e)=>{
+    const f = e.target.files && e.target.files[0];
+    if(!f) return;
+    if(!XLSX_DISPONIVEL){ showToast('A biblioteca de planilha não carregou — precisa de internet na primeira vez.', 'error'); return; }
+    try{
+      const r = confLerPlanilha(await f.arrayBuffer(), f.name);
+      const novas = confAcrescentarFaltantes(r);
+      await confCarregarGuardada();
+      balRecarregarCatalogo();   /* o que já foi contado com esse código vem pra linha nova */
+      showToast(novas.length
+        ? `Acrescentei ${novas.length} linha(s) que tinham ficado de fora: ${novas.map(l=>l.nome).join(', ')}. As outras não mudaram.`
+        : 'Nenhuma linha faltando: tudo o que tem saldo nessa planilha já está aqui.', novas.length ? 'success' : 'info');
+      renderConferencia();
+    }catch(err){ console.error(err); showToast('Não consegui ler a planilha: ' + err.message, 'error'); }
+  });
 
   const busca = document.getElementById('conf-busca');
   if(busca) busca.addEventListener('input', (e)=>{
@@ -58667,8 +58780,11 @@ function confLinha(l){
         ? `<div class="help-text" style="margin:0;">no seu cadastro: ${escapeHtml(p.nome)}
              <button class="btn btn-sm" style="padding:0 6px;" onclick="confUsarNomeDoCadastro('${l.barras}')">usar este</button></div>`
         : ''}
-      <div class="help-text" style="margin:0;">${escapeHtml(l.codigo)} · ${escapeHtml(l.barras)}</div>
+      <div class="help-text" style="margin:0;">${escapeHtml(l.codigo)} · ${escapeHtml(l.barras)}${
+        (l.codigosExtras||[]).length ? ` · <strong>certo: ${escapeHtml(l.codigosExtras.join(', '))}</strong>` : ''}</div>
       ${l.barrasRepetida ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ o fornecedor repetiu este código de barras</div>` : ''}
+      ${l.vinculoBriga ? `<div class="help-text" style="margin:0;color:var(--negative);">⚠ estava vinculado a "${escapeHtml(l.vinculoBriga)}",
+          que tem outro código de barras — não juntei. Se for o mesmo produto, use ✏️ Código de barras certo.</div>` : ''}
     </td>
     <td><span class="conf-edit" data-barras="${l.barras}" data-campo="unidade"
               title="Clique para alterar">${escapeHtml(un || '—')}</span></td>
@@ -58682,8 +58798,83 @@ function confLinha(l){
     <td><div class="cell-actions">
       ${p ? `<button class="btn btn-sm" onclick="confCompletarLinha('${l.barras}')">Completar</button>`
           : `<button class="btn btn-sm btn-primary" onclick="confCadastrar('${l.barras}')">Cadastrar</button>`}
+      <button class="btn btn-sm" title="O código da embalagem é outro? Diga qual é." onclick="confCodigoCertoAbrir('${escapeAttr(l.id)}')">✏️ Código de barras certo</button>
     </div></td>
   </tr>`;
+}
+
+/* "✏️ CÓDIGO DE BARRAS CERTO" (17/11/2026)
+   "LIMP PERF GEO CONC FR VERM 120ML CX12": a planilha traz o código da
+   CAIXA; a unidade que ela bipa tem outro. O bipe caía num item do TOTVS
+   como Mizu e os 9 contados ficavam fora do comodato. Ela diz qual é o
+   código certo: ele passa a ser desta linha (o da planilha continua
+   valendo), o bipe abre o comodato e o que já foi contado vem junto. */
+function confCodigoCertoAbrir(linhaId){
+  const l = (CONF_LINHAS||[]).find(x=>x.id === linhaId);
+  if(!l) return;
+  document.getElementById('modal-codigo-certo')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-codigo-certo';
+  m.innerHTML = `<div class="modal-box" style="max-width:min(460px,95vw);">
+      <h3 style="margin-top:0;">✏️ Código de barras certo</h3>
+      <p class="help-text"><strong>${escapeHtml(l.nomeEscolhido || l.nome)}</strong><br>
+        Na planilha: ${escapeHtml(l.barras || '—')}${(l.codigosExtras||[]).length ? ` · já marcado como certo: ${escapeHtml(l.codigosExtras.join(', '))}` : ''}</p>
+      <div class="field"><label>Código de barras da embalagem (o que você bipa)</label>
+        <input type="text" id="codigo-certo-valor" inputmode="numeric" autocomplete="off" placeholder="ex.: 7896471804673"></div>
+      <p class="help-text" id="codigo-certo-aviso" style="min-height:18px;"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn" onclick="document.getElementById('modal-codigo-certo').remove()">Cancelar</button>
+        <button class="btn btn-primary" id="codigo-certo-ok">Usar este código</button>
+      </div></div>`;
+  document.body.appendChild(m);
+  const inp = document.getElementById('codigo-certo-valor');
+  const ok = ()=>{
+    const r = confCodigoCertoAplicar(linhaId, inp.value);
+    if(r.erro){ document.getElementById('codigo-certo-aviso').innerHTML = `<span style="color:var(--negative);">${escapeHtml(r.erro)}</span>`; return; }
+    m.remove();
+    showToast(r.msg, 'success');
+    renderConferencia();
+  };
+  document.getElementById('codigo-certo-ok').addEventListener('click', ok);
+  inp.addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); ok(); } });
+  setTimeout(()=>inp.focus(), 30);
+}
+
+function confCodigoCertoAplicar(linhaId, valor){
+  const l = (CONF_LINHAS||[]).find(x=>x.id === linhaId);
+  if(!l) return { erro: 'Não achei essa linha.' };
+  const cod = confBarras(valor);
+  const dig = String(valor||'').replace(/\D/g,'');
+  if(!cod || dig.length < 8) return { erro: 'Digite o código de barras inteiro (8 a 14 números).' };
+  if(confCodigosDaLinha(l).includes(cod)) return { erro: 'Esse código já é desta linha.' };
+  /* já é de outra linha da planilha? aí é outro produto da ECOVILLE */
+  const outra = (CONF_LINHAS||[]).find(x=>x.id !== l.id && confCodigosDaLinha(x).includes(cod));
+  if(outra) return { erro: `Esse código é de outra linha da planilha: ${outra.nomeEscolhido || outra.nome}.` };
+
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const donosAntes = (BAL_IX && BAL_IX.get(cod)) || [];
+  l.codigosExtras = (l.codigosExtras || []).concat([cod]);
+  confGuardarLinhas();
+  confRecasar();
+  saveState();
+  balRecarregarCatalogo();   /* o item do TOTVS com esse código sai e a contagem dele vem pra cá */
+
+  /* contagem que estava num item só do TOTVS: leva pra esta linha */
+  const agora = (BAL_IX && BAL_IX.get(cod)) || [];
+  const destino = agora.find(ch=>ch.startsWith('c:') || ch.startsWith('p:'));
+  let veio = 0;
+  if(destino){
+    donosAntes.filter(ch=>ch !== destino && ch.startsWith('t:') && !BAL_CAT.has(ch))
+      .forEach(ch=>{ veio += vincMigrarContagem(ch, destino); });
+    if(veio){ saveState(); balRecarregarCatalogo(); }
+  }
+  const b = balAberto();
+  const contado = b && destino ? balContadoDe(b.id, destino) : 0;
+  const produtoDono = donosAntes.find(ch=>ch.startsWith('p:') && ch !== destino);
+  return { msg: `Pronto: ${cod} agora é desta linha do comodato.`
+      + (contado ? ` Já contado no balanço: ${fmtNum(contado)}.` : '')
+      + (produtoDono ? ' Atenção: um produto do seu cadastro também tem esse código — se for o mesmo, use Vincular.' : '') };
 }
 
 /* Traz pra conferência o nome que já está certo no cadastro. */
@@ -58778,6 +58969,7 @@ function confGuardarLinhas(){
        casamento por barras é justamente o que não acha esses itens,
        sumia sempre. Agora a escolha dela é gravada e manda. */
     guardada.produtoIdEscolhido = l.produtoIdEscolhido || null;
+    guardada.codigosExtras = (l.codigosExtras && l.codigosExtras.length) ? l.codigosExtras.slice() : null;
     guardada.semIgual = !!l.semIgual;
     guardada.fornecedorEscolhido = l.fornecedorEscolhido || null;
     guardada.marca = l.marca || null;
@@ -59365,7 +59557,7 @@ function balCatalogo(){
       else if(!it.custo) it.custo = Number(l.custo||0);
       if(Number(l.venda||0) > 0) it.venda = Number(l.venda);
       else if(!it.venda) it.venda = Number(l.venda||0);
-      if(l.barras && !it.codigos.includes(l.barras)) it.codigos.push(l.barras);
+      confCodigosDaLinha(l).forEach(c=>{ if(!it.codigos.includes(c)) it.codigos.push(c); });
       return;
     }
     /* linha da planilha que ainda não é produto aqui. A chave é o
@@ -59392,7 +59584,7 @@ function balCatalogo(){
       barrasPlanilha: l.barras || '',
       semIgual: !!l.semIgual,
       fornecedorEscolhido: l.fornecedorEscolhido || '',
-      codigos: l.barras ? [l.barras] : []
+      codigos: confCodigosDaLinha(l)
     });
   });
 
@@ -59426,11 +59618,15 @@ function balCatalogo(){
      duplicar o cadastro inteiro. Esses continuam no caminho normal. */
   if(totvsCatalogo().length){
     const tomados = new Set();
+    const ixT = totvsIndice();
     itens.forEach(it=>{
       const t = totvsAchaPorCodigos(it.codigos);
       if(!t) return;
       totvsAplicarNoItem(it, t);
       tomados.add(t.idTotvs);
+      /* item com dois códigos (o da caixa e o da unidade, que ela marcou
+         como certo): os DOIS itens do TOTVS são este — nenhum sobra solto */
+      it.codigos.forEach(c=>{ const o = ixT.get(String(c).replace(/\D/g,'')); if(o) tomados.add(o.idTotvs); });
     });
 
     totvsCatalogo().forEach(t=>{
@@ -59565,7 +59761,7 @@ function balPuxarNcmDoTotvs(chaves){
     const minha = l.produtoId && alvo.has('p:' + l.produtoId);
     if(!minha && !alvo.has(confChaveLinha(l))) return;
     if(String(l.ncm||'').trim()) return;
-    const t = totvsAchaPorCodigos([l.barras]);
+    const t = totvsAchaPorCodigos(confCodigosDaLinha(l));
     const ncm = t ? ncmSo8(t.ncm || '') : '';
     if(!ncm) return;
     l.ncm = ncm;
@@ -62866,7 +63062,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '17/11/2026 21:00';
+const SISTEMA_VERSAO = '17/11/2026 22:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
