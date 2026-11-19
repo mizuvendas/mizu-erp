@@ -50860,6 +50860,19 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-19-c',
+    data: '2026-11-19',
+    titulo: 'Celular e notebook iguais: nada mais fica pra trás na nuvem',
+    itens: [
+      'Corrigido: ao baixar da nuvem, alguns registros eram pulados (por isso cada aparelho mostrava um número diferente). Na primeira vez com esta versão, cada aparelho baixa tudo de novo — pode levar um minuto.',
+      'Conferência automática: de tempos em tempos cada aparelho confere com a nuvem e traz o que falta (ou manda o que não subiu).',
+      'Produto que já foi contado no balanço não some por exclusão vinda de outro aparelho. Etiquetas marcadas em aparelhos diferentes se somam.',
+      'Balanço: aviso "contagens sem produto neste aparelho", com botão pra buscar na nuvem.',
+      'Balanço: na ficha do item aparecem os códigos ligados a ele, com "✕ não é deste" pra desfazer um código ligado por engano. O "é este" agora pede confirmação.',
+      'Código repetido de fábrica (dois produtos com o mesmo código): botão "🏷️ Gerar código próprio pra este" — cria um código só dele e já marca pra etiqueta.'
+    ]
+  },
+  {
     id: '2026-11-19-b',
     data: '2026-11-19',
     titulo: 'Assinar e emitir nota: janela de "carregando" até terminar',
@@ -61142,8 +61155,15 @@ function balProcurarAgora(){
    esperando dono, ele se amarra; se não tem, só abre pra contar. Antes
    isso estava espalhado em três lugares, e num deles o código sumia. */
 function balEscolherItem(chave){
-  if(balCodigoPendente || (balNaoAchei && balNaoAchei.codigo)) balEsseMesmo(chave);
-  else balAbrirItem(chave);
+  const codigo = (balNaoAchei && balNaoAchei.codigo) || balCodigoPendente || null;
+  if(!codigo){ balAbrirItem(chave); return; }
+  /* "é este" grava o código no item pra sempre: na pressa, tocar no item
+     errado fazia o código abrir o produto errado (o limpador abria o
+     disco). Confirma antes (19/11/2026). */
+  const it = balItem(chave);
+  confirmAction('Esse código é deste item?',
+    `O código ${codigo} vai passar a abrir:\n\n${it ? it.nome : chave}\n\nConfere com a embalagem que você tem na mão?`,
+    ()=>balEsseMesmo(chave), 'Sim, é este');
 }
 
 function balEsseMesmo(chave){
@@ -61894,6 +61914,140 @@ function balAvisoHtml(){
   </div>`;
 }
 
+/* CONTAGEM SEM PRODUTO NESTE APARELHO (19/11/2026): "um mostra 416 e o
+   outro 423". O bipe existia, mas o produto dele não tinha chegado aqui —
+   e o total lá de cima somava menos, calado. Agora avisa, com a lista, e
+   oferece buscar na nuvem. */
+function balSemProduto(){
+  const b = balAberto();
+  if(!b) return [];
+  if(!BAL_CAT) balRecarregarCatalogo();
+  const out = [];
+  balContados(b.id).forEach((qtd, ch)=>{ if(qtd && !BAL_CAT.has(ch)) out.push({ chave: ch, qtd }); });
+  return out;
+}
+function balSemProdutoHtml(){
+  const s = balSemProduto();
+  if(!s.length) return '';
+  const un = s.reduce((a, x)=>a + Number(x.qtd || 0), 0);
+  return `<div id="bal-sem-produto" style="background:#fff8e6;border:1px solid #f0d58a;border-left:4px solid var(--warning);
+      border-radius:10px;padding:11px 13px;margin-bottom:12px;">
+    <strong>⚠️ ${s.length} contage${s.length === 1 ? 'm' : 'ns'} sem produto neste aparelho (${fmtNum(un)} un.)</strong>
+    <p class="help-text" style="margin:4px 0 8px;">Os bipes estão guardados, mas o produto deles ainda não chegou aqui — por isso o total de cima fica menor.
+      Toque em buscar: eu confiro com a nuvem e trago o que falta.</p>
+    <div class="help-text" style="margin-bottom:8px;">${s.slice(0, 12).map(x=>escapeHtml(x.chave) + ' · ' + fmtNum(x.qtd)).join(' &nbsp;|&nbsp; ')}${s.length > 12 ? ' …' : ''}</div>
+    <button class="btn btn-sm btn-primary" onclick="balBuscarSemProduto()">🔄 Buscar na nuvem</button>
+  </div>`;
+}
+async function balBuscarSemProduto(){
+  try{
+    showToast('Conferindo com a nuvem…', 'info');
+    const c = await nuvemConferirComNuvem();
+    if(c.subir){ try{ await nuvemSubir(); }catch(e){} }
+    balRecarregarCatalogo();
+    renderBalanco();
+    const falta = balSemProduto().length;
+    showToast(falta ? `Ainda faltam ${falta} — o aparelho onde o produto existe precisa abrir o sistema pra mandar.` : 'Pronto: todos os bipes acharam o produto.', falta ? 'info' : 'success');
+  }catch(e){ showToast('Não consegui falar com a nuvem agora: ' + (e.message || e), 'error'); }
+}
+
+/* "✕ NÃO É DESTE" (19/11/2026): código ligado a um item por engano no
+   "é este" (o 7899682756335 na fibra, o do limpador no disco). Ela desfaz
+   sozinha: o código sai do item e, bipado de novo, cai no "não achei". */
+function balLinhasDoItem(it){
+  return (STATE.conferenciaLinhas||[]).filter(l=>l && (confChaveLinha(l) === it.chave || (it.produtoId && l.produtoIdEscolhido === it.produtoId)));
+}
+function balCodigoRemovivel(it, codigo){
+  if(!it || !codigo) return false;
+  const d = String(codigo);
+  if(STATE.codigosApelido && STATE.codigosApelido[d] === it.chave) return true;
+  if(STATE.codigosPrincipais && String(STATE.codigosPrincipais[it.chave] || '') === d) return true;
+  if(it.produtoId){
+    const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+    if(p && (p.codigosExtras||[]).map(String).includes(d)) return true;
+  }
+  return balLinhasDoItem(it).some(l=>(l.codigosExtras||[]).map(String).includes(d));
+}
+function balCodigosDoItemHtml(it){
+  if(!it) return '';
+  const cods = (it.codigos || []).slice();
+  Object.keys(STATE.codigosApelido||{}).forEach(c=>{ if(STATE.codigosApelido[c] === it.chave && !cods.includes(c)) cods.push(c); });
+  if(!cods.some(c=>balCodigoRemovivel(it, c))) return '';
+  return `<div class="help-text" style="margin:6px 0 0;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+    <span>Códigos deste item:</span>
+    ${cods.map(c=>`<span style="display:inline-flex;align-items:center;gap:4px;border:1px solid var(--border);border-radius:7px;padding:1px 6px;">${escapeHtml(c)}${
+      balCodigoRemovivel(it, c) ? ` <button class="btn btn-sm bal-tirar-codigo" style="padding:0 6px;" title="Esse código não é deste item"
+         onclick="balTirarCodigo('${escapeAttr(it.chave)}','${escapeAttr(c)}')">✕ não é deste</button>` : ''}</span>`).join('')}
+  </div>`;
+}
+function balTirarCodigo(chave, codigo){
+  const it = balItem(chave);
+  if(!it) return;
+  confirmAction('Esse código não é deste item',
+    `Tirar o código ${codigo} de "${it.nome}"?\n\nA contagem que já foi feita continua. Depois, ao bipar esse código, aparece "não achei" e você escolhe o item certo.`,
+    ()=>{
+      const d = String(codigo);
+      if(STATE.codigosApelido && STATE.codigosApelido[d] === chave) delete STATE.codigosApelido[d];
+      if(STATE.codigosPrincipais && String(STATE.codigosPrincipais[chave] || '') === d) delete STATE.codigosPrincipais[chave];
+      if(it.produtoId){
+        const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+        if(p && p.codigosExtras) p.codigosExtras = p.codigosExtras.filter(c=>String(c) !== d);
+      }
+      const tirar = l=>{ if(l && l.codigosExtras){ l.codigosExtras = l.codigosExtras.filter(c=>String(c) !== d); if(!l.codigosExtras.length) l.codigosExtras = null; } };
+      balLinhasDoItem(it).forEach(tirar);
+      (CONF_LINHAS||[]).forEach(l=>{ if(l && (confChaveLinha(l) === chave || (it.produtoId && l.produtoIdEscolhido === it.produtoId))) tirar(l); });
+      saveState();
+      balRecarregarCatalogo();
+      renderBalanco();
+      showToast(`Pronto: ${d} não abre mais "${it.nome}". Bipe de novo pra escolher o item certo.`, 'success');
+    }, 'Tirar o código');
+}
+
+/* CÓDIGO REPETIDO DE FÁBRICA (19/11/2026): "o limpador lavanda e o folhas
+   de pimenta estão com o mesmo código no produto — talvez gerar um novo
+   código". Gera um código interno só deste item e marca pra etiqueta: com
+   a etiqueta colada, o bipe vai direto. O de fábrica continua abrindo a
+   escolha. */
+function balNovoCodigoInterno(){
+  const usados = new Set();
+  (STATE.produtos||[]).forEach(p=>{ [p.codigoBarras].concat(p.codigosExtras||[]).forEach(c=>{ if(c) usados.add(String(c)); }); });
+  (STATE.conferenciaLinhas||[]).forEach(l=>{ [l.barras].concat(l.codigosExtras||[]).forEach(c=>{ if(c) usados.add(String(c)); }); });
+  Object.keys(STATE.codigosApelido||{}).forEach(c=>usados.add(c));
+  Object.values(STATE.codigosPrincipais||{}).forEach(c=>usados.add(String(c)));
+  for(let i = 0; i < 500; i++){
+    const corpo = '2' + String(Date.now() + i).slice(-11);   /* começa com 2: faixa de uso interno da loja */
+    const cod = corpo + balDigitoGtin(corpo);
+    if(!usados.has(cod)) return cod;
+  }
+  return null;
+}
+function balGerarCodigoProprio(chave){
+  const it = balItem(chave);
+  const b = balAberto();
+  if(!it || !b) return;
+  confirmAction('Gerar código próprio',
+    `Criar um código de barras só pra "${it.nome}"?\n\nEle já fica marcado pra etiqueta: imprima e cole na embalagem — daí o bipe vai direto nele. O código de fábrica continua valendo (abre a escolha).`,
+    ()=>{
+      const cod = balNovoCodigoInterno();
+      if(!cod){ showToast('Não consegui gerar o código agora. Tente de novo.', 'error'); return; }
+      if(!STATE.codigosPrincipais) STATE.codigosPrincipais = {};
+      STATE.codigosPrincipais[chave] = cod;
+      if(!STATE.codigosApelido) STATE.codigosApelido = {};
+      STATE.codigosApelido[cod] = chave;
+      if(it.produtoId){
+        const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+        if(p){ if(!p.codigosExtras) p.codigosExtras = []; if(!p.codigosExtras.includes(cod)) p.codigosExtras.push(cod); }
+      }
+      if(!b.etiquetas) b.etiquetas = {};
+      b.etiquetas[chave] = true;
+      saveState();
+      balRecarregarCatalogo();
+      balEscolhas = null;
+      balAbrirItem(chave);
+      showToast(`Pronto: ${cod} é o código de "${it.nome}". Já está marcado pra etiqueta.`, 'success');
+    }, 'Gerar código');
+}
+
 function balEscolhasHtml(){
   if(!balEscolhas) return '';
   const porNome = !balEscolhas.codigo;
@@ -61910,8 +62064,12 @@ function balEscolhasHtml(){
       ${balEscolhas.chaves.map(ch=>{
         const it = balItem(ch);
         if(!it) return '';
-        return `<button class="btn" style="text-align:left;padding:10px 12px;display:block;width:100%;"
+        const botao = `<button class="btn" style="text-align:left;padding:10px 12px;display:block;width:100%;"
           onclick="balEscolherItem('${escapeAttr(ch)}')">${balFichaComFotoHtml(it)}</button>`;
+        if(porNome) return botao;
+        /* código repetido de fábrica: dá pra gerar um código só deste */
+        return `<div style="display:flex;flex-direction:column;gap:4px;">${botao}
+          <button class="btn btn-sm bal-codigo-proprio" style="align-self:flex-start;" onclick="balGerarCodigoProprio('${escapeAttr(ch)}')">🏷️ Gerar código próprio pra este</button></div>`;
       }).join('')}
     </div>
   </div>`;
@@ -61987,6 +62145,7 @@ function balItemHtml(grande){
       ${it.comodato ? ` · <span style="color:var(--primary-escuro,#1B4B5A);font-weight:600;">comodato ${escapeHtml(it.comodatoDe||'')}: ${fmtNum(it.saldoComodato)}</span>` : ''}
       ${it.barrasPlanilha && it.barrasPlanilha !== it.codigos[0]
         ? `<div style="margin:1px 0 0;">na planilha vinha ${escapeHtml(it.barrasPlanilha)} — vale o que você bipou</div>` : ''}
+      ${balCodigosDoItemHtml(it)}
     </div>
     <div class="help-text" style="margin:3px 0 0;">
       custo <strong>${fmtMoney(it.custo)}</strong> · venda <strong>${fmtMoney(it.venda)}</strong>
@@ -63757,6 +63916,7 @@ function balTelaComputador(b){
     <div class="card">
       ${balBiparHtml(true)}
       ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
+      ${balSemProdutoHtml()}
       ${balEscolhasHtml()}
       ${balNaoAcheiHtml()}
       ${balAvisoHtml()}
@@ -63817,6 +63977,7 @@ function balTelaCelular(b){
       ${balMsg ? `<p class="help-text" style="color:var(--positive);margin:-4px 0 10px;">✓ ${escapeHtml(balMsg)}</p>` : ''}
       ${balAvisoHtml()}
       ${balAtualChave ? balItemHtml(true) : ''}
+      ${balSemProdutoHtml()}
       ${balEscolhasHtml()}
       ${balNaoAcheiHtml()}
 
@@ -64288,7 +64449,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '19/11/2026 10:00';
+const SISTEMA_VERSAO = '19/11/2026 11:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64983,7 +65144,7 @@ function nuvemAvisarExclusoes(linhas, motivo){
     const espelho = nuvemLerEspelho();
     linhas.forEach(r=>{ if(r._chave) delete espelho[r._chave]; });
     nuvemGravarEspelho(espelho);
-    try{ localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z'); }catch(e){}
+    try{ localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z'); localStorage.removeItem(NUVEM_MARCA + '_chave'); }catch(e){}
     nuvemExclusoesSeguradas = null;
     m.remove();
     showToast('Buscando de volta o que está na nuvem…','info');
@@ -65114,19 +65275,52 @@ async function nuvemSubir(){
   return fila.length;
 }
 
+/* O BAIXAR PULAVA REGISTROS (achado em 19/11/2026).
+   "Comparando número com número, tudo está diferente": cada aparelho
+   tinha um pedaço diferente faltando — 12 produtos no celular roxo, 17
+   itens do TOTVS nos dois celulares, as etiquetas de um celular no outro.
+   A causa: os registros sobem em lotes de 100, e o lote inteiro ganha a
+   MESMA hora na nuvem. O baixar pegava de 500 em 500 e continuava
+   "depois da hora do último" — se o corte de 500 caísse no meio de um
+   lote, o resto daquele lote (mesma hora) nunca mais descia. Nem com
+   "Atualizar tudo", que cortava sempre no mesmo lugar.
+   Agora a marca é hora + coleção + id: continua exatamente do registro
+   seguinte, mesmo com a hora repetida. */
+const NUVEM_MARCA_CHAVE = NUVEM_MARCA + '_chave';
+function nuvemFiltroDepoisDe(marca, chave){
+  const q = v=>'"' + String(v).replace(/["\\]/g, '') + '"';
+  if(!chave) return 'atualizado_em=gt.' + encodeURIComponent(marca);
+  const i = chave.indexOf('|');
+  const col = chave.slice(0, i), id = chave.slice(i + 1);
+  const ou = '(atualizado_em.gt.' + q(marca)
+    + ',and(atualizado_em.eq.' + q(marca) + ',colecao.gt.' + q(col) + ')'
+    + ',and(atualizado_em.eq.' + q(marca) + ',colecao.eq.' + q(col) + ',id.gt.' + q(id) + '))';
+  return 'or=' + encodeURIComponent(ou);
+}
 async function nuvemBaixar(){
+  /* uma vez nesta versão: baixa tudo de novo, pra recuperar o que o
+     baixar antigo pulou */
+  if(!localStorage.getItem('mizu_marca_v2')){
+    localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z');
+    localStorage.removeItem(NUVEM_MARCA_CHAVE);
+    localStorage.setItem('mizu_marca_v2', new Date().toISOString());
+  }
   let marca = localStorage.getItem(NUVEM_MARCA) || '1970-01-01T00:00:00Z';
+  let chave = localStorage.getItem(NUVEM_MARCA_CHAVE) || '';
   let aplicados = 0;
-  for(let volta = 0; volta < 50; volta++){
+  for(let volta = 0; volta < 200; volta++){
     const linhas = await nuvemJson(
       '/rest/v1/registros?select=colecao,id,dados,excluido,atualizado_em'
-      + '&atualizado_em=gt.' + encodeURIComponent(marca)
-      + '&order=atualizado_em.asc&limit=500', { method: 'GET' });
+      + '&' + nuvemFiltroDepoisDe(marca, chave)
+      + '&order=atualizado_em.asc,colecao.asc,id.asc&limit=500', { method: 'GET' });
     if(!linhas || linhas.length === 0) break;
     aplicados += nuvemAplicar(linhas);
     try{ await nuvemBaseGravar(); }catch(e){}
-    marca = linhas[linhas.length - 1].atualizado_em;
+    const ult = linhas[linhas.length - 1];
+    marca = ult.atualizado_em;
+    chave = ult.colecao + '|' + ult.id;
     localStorage.setItem(NUVEM_MARCA, marca);
+    localStorage.setItem(NUVEM_MARCA_CHAVE, chave);
     if(linhas.length < 500) break;
   }
   return aplicados;
@@ -65366,7 +65560,13 @@ async function nuvemAtualizarTudoMesmo(){
     const ficouANuvem = 0;
     await nuvemSubir();
     localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z');
-    const baixados = await nuvemBaixar();
+    localStorage.removeItem(NUVEM_MARCA_CHAVE);
+    let baixados = await nuvemBaixar();
+    try{
+      const c = await nuvemConferirComNuvem();
+      baixados += c.baixados;
+      if(c.subir) await nuvemSubir();
+    }catch(e){ console.warn('[nuvem] conferência', e); }
     nuvemUltimoErro = null;
     try{ CONF_LINHAS = null; BAL_CAT = null; if(typeof confCarregarGuardada === 'function') await confCarregarGuardada(); }catch(e){}
     nuvemRedesenharTelaAtual();
@@ -65525,6 +65725,88 @@ function nuvemContarSeguradas(){
   }catch(e){}
 }
 
+/* CONFERÊNCIA AUTOMÁTICA COM A NUVEM (19/11/2026)
+   "acho que deveria ser automático: usei um celular pra bipar e depois
+   outro porque a bateria estava acabando". De tempos em tempos cada
+   aparelho compara a LISTA de ids (sem os dados, é leve) de produtos,
+   planilha e TOTVS com a nuvem:
+   - a nuvem tem e aqui não tem (e não é exclusão daqui esperando subir):
+     baixa esses registros;
+   - aqui tem e a nuvem não tem: sobe (tira do espelho = vira alteração);
+   - a nuvem diz excluído mas o balanço aberto usa: sobe de novo, vivo. */
+const NUVEM_CONFERIR_COLECOES = ['produtos', 'conferenciaLinhas', 'totvsProdutos'];
+let NUVEM_CONFERIDO_EM = 0;
+async function nuvemConferirComNuvem(){
+  const q = v=>'"' + String(v).replace(/["\\]/g, '') + '"';
+  const naNuvem = new Map();       /* chave -> excluido */
+  let ult = null;
+  for(let volta = 0; volta < 40; volta++){
+    let filtro = '&colecao=in.(' + NUVEM_CONFERIR_COLECOES.join(',') + ')';
+    if(ult) filtro += '&or=' + encodeURIComponent('(colecao.gt.' + q(ult.colecao)
+      + ',and(colecao.eq.' + q(ult.colecao) + ',id.gt.' + q(ult.id) + '))');
+    const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,excluido' + filtro
+      + '&order=colecao.asc,id.asc&limit=1000', { method: 'GET' });
+    if(!linhas || !linhas.length) break;
+    linhas.forEach(l=>naNuvem.set(l.colecao + '|' + l.id, !!l.excluido));
+    ult = linhas[linhas.length - 1];
+    if(linhas.length < 1000) break;
+  }
+  const agora = nuvemInstantaneo();
+  const espelho = nuvemLerEspelho();
+  let subir = 0;
+  const baixar = [];
+  Object.keys(agora).forEach(ch=>{
+    const col = ch.split('|')[0];
+    if(!NUVEM_CONFERIR_COLECOES.includes(col)) return;
+    const fora = naNuvem.get(ch);
+    if(fora === undefined || (fora === true && nuvemNaoPodeSumir(col, agora[ch].dados))){
+      if(ch in espelho){ delete espelho[ch]; subir++; }
+    }
+  });
+  naNuvem.forEach((excluido, ch)=>{
+    if(excluido || agora[ch]) return;
+    if(ch in espelho) return;      /* exclusão daqui esperando subir */
+    baixar.push(ch);
+  });
+  if(subir) nuvemGravarEspelho(espelho);
+  let baixados = 0;
+  const porCol = {};
+  baixar.forEach(ch=>{ const i = ch.indexOf('|'); (porCol[ch.slice(0, i)] = porCol[ch.slice(0, i)] || []).push(ch.slice(i + 1)); });
+  for(const col of Object.keys(porCol)){
+    const ids = porCol[col];
+    for(let i = 0; i < ids.length; i += 40){
+      const lote = ids.slice(i, i + 40).map(q).join(',');
+      const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,dados,excluido'
+        + '&colecao=eq.' + encodeURIComponent(col) + '&id=in.(' + encodeURIComponent(lote) + ')', { method: 'GET' });
+      if(linhas && linhas.length) baixados += nuvemAplicar(linhas);
+    }
+  }
+  if(baixados){
+    try{ await nuvemBaseGravar(); }catch(e){}
+    try{ CONF_LINHAS = null; BAL_CAT = null; TOTVS_IX = null; if(typeof confCarregarGuardada === 'function') await confCarregarGuardada(); }catch(e){}
+  }
+  NUVEM_CONFERIDO_EM = Date.now();
+  if(subir || baixados) console.info('[nuvem] conferência: subir', subir, '· baixados', baixados);
+  return { subir, baixados };
+}
+
+/* registro que o balanço aberto está usando: não pode sumir por exclusão
+   vinda de outro aparelho */
+function nuvemNaoPodeSumir(colecao, reg){
+  try{
+    if(!reg) return false;
+    const bal = (STATE.balancos||[]).find(b=>b && b.aberto);
+    const bipado = ch=>!!bal && (STATE.balancoBipes||[]).some(x=>x && x.balancoId === bal.id && x.chave === ch);
+    if(colecao === 'produtos'){
+      if(bipado('p:' + reg.id)) return true;
+      return (STATE.conferenciaLinhas||[]).some(l=>l && l.produtoIdEscolhido === reg.id);
+    }
+    if(colecao === 'conferenciaLinhas') return bipado(confChaveLinha(reg));
+    if(colecao === 'totvsProdutos') return reg.idTotvs != null && bipado('t:' + reg.idTotvs);
+  }catch(e){}
+  return false;
+}
+
 function nuvemAplicar(linhas){
   const espelho = nuvemLerEspelho();
   const agora = nuvemInstantaneo();
@@ -65620,6 +65902,14 @@ function nuvemAplicar(linhas){
     const idx = lista.findIndex(x => x && String(x.id) === String(linha.id));
 
     if(linha.excluido){
+      /* PRODUTO CONTADO NÃO SOME (19/11/2026): o celular roxo ficou sem 12
+         produtos — 7 já contados (o mopinho verde) — e os bipes ficaram
+         sem dono. Se o registro tem bipe no balanço aberto (ou está ligado
+         a uma linha da planilha), fica aqui e volta pra nuvem como vivo. */
+      if(idx >= 0 && nuvemNaoPodeSumir(linha.colecao, lista[idx])){
+        delete espelho[chave];      /* sem espelho = alteração: sobe na próxima rodada */
+        return;
+      }
       if(idx >= 0){ lista.splice(idx, 1); mudou++; }
       delete espelho[chave];
       return;
@@ -65771,6 +66061,14 @@ async function nuvemSincronizar(silencioso){
     let erroAoSubir = null;
     try{ await nuvemSubir(); }catch(e){ erroAoSubir = e; }
     try{ await nfeChaveSubirSeFaltar(); }catch(e){ console.warn('[nfe] chave', e); }
+    /* conferência automática com a nuvem: logo ao abrir e a cada 15 min */
+    if(!erroAoSubir && Date.now() - NUVEM_CONFERIDO_EM > 15 * 60000){
+      try{
+        const c = await nuvemConferirComNuvem();
+        baixados += c.baixados;
+        if(c.subir){ try{ await nuvemSubir(); }catch(e){ erroAoSubir = e; } }
+      }catch(e){ console.warn('[nuvem] conferência', e); NUVEM_CONFERIDO_EM = Date.now(); }
+    }
     /* aparelho sem a chave (ex.: já tinha baixado tudo antes dela subir):
        procura de vez em quando, pra tela de fechar venda já mostrar a nota */
     try{
