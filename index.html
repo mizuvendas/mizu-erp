@@ -50860,6 +50860,14 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-19-d',
+    data: '2026-11-19',
+    titulo: 'Balanço: etiquetas não se perdem ao baixar da nuvem',
+    itens: [
+      'Se um aparelho tem etiquetas marcadas que a nuvem ainda não tem, ao receber a versão da nuvem ele junta as duas (não apaga as dele) e manda as dele pra nuvem.'
+    ]
+  },
+  {
     id: '2026-11-19-c',
     data: '2026-11-19',
     titulo: 'Celular e notebook iguais: nada mais fica pra trás na nuvem',
@@ -64449,7 +64457,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '19/11/2026 11:30';
+const SISTEMA_VERSAO = '19/11/2026 12:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -65704,6 +65712,21 @@ function nuvemJuntarCompra(meu, deFora, junto){
 }
 
 function nuvemVersaoQueFica(colecao, meu, deFora){
+  /* BALANÇO: AS ETIQUETAS SE SOMAM (19/11/2026). Um celular tinha 20
+     etiquetas e a nuvem 7: baixar a versão da nuvem por cima apagaria as
+     13 marcadas nele. O que estiver marcado aqui continua marcado (e sobe). */
+  if(colecao === 'balancos'){
+    if(!meu || !deFora || typeof meu !== 'object' || typeof deFora !== 'object') return deFora;
+    const juntar = (a, b)=>{
+      const r = Object.assign({}, (b && typeof b === 'object') ? b : {});
+      Object.keys((a && typeof a === 'object') ? a : {}).forEach(k=>{ if(a[k] && !r[k]) r[k] = a[k]; });
+      return r;
+    };
+    const et = juntar(meu.etiquetas, deFora.etiquetas);
+    const ex = juntar(meu.excedenteAceito, deFora.excedenteAceito);
+    if(nuvemIgual(et, deFora.etiquetas || {}) && nuvemIgual(ex, deFora.excedenteAceito || {})) return deFora;
+    return Object.assign({}, deFora, { etiquetas: et, excedenteAceito: ex });
+  }
   if(colecao !== 'licitacoes') return deFora;
   if(!meu || !deFora || typeof meu !== 'object' || typeof deFora !== 'object') return deFora;
   const meusItens  = Array.isArray(meu.itens)    ? meu.itens.length    : 0;
@@ -65923,7 +65946,7 @@ function nuvemAplicar(linhas){
          rodada, corrigindo a outra máquina em vez de ser corrigida. */
       espelho[chave] = nuvemDigital(JSON.stringify(segurei ? linha.dados : escolhido));
       nuvemBaseAnotar(chave, linha.dados);
-      if(segurei) nuvemSeguradas.push(escolhido);
+      if(segurei && linha.colecao === 'licitacoes') nuvemSeguradas.push(escolhido);
       mudou++;
       return;
     }
