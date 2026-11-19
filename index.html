@@ -50860,6 +50860,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-19-e',
+    data: '2026-11-19',
+    titulo: 'Balanço: trocar o nome pelo próprio balanço · fotos antigas se acertam',
+    itens: [
+      'Na ficha do item no balanço, o botão "✏️ nome" troca o nome — vale no balanço e no cadastro, em todos os aparelhos, mesmo que o TOTVS tenha outro nome.',
+      'Foto tirada antes de existir o controle de versão: cada aparelho baixa a da nuvem uma vez, pra todos mostrarem a mesma.'
+    ]
+  },
+  {
     id: '2026-11-19-d',
     data: '2026-11-19',
     titulo: 'Balanço: etiquetas não se perdem ao baixar da nuvem',
@@ -60811,7 +60820,36 @@ function balCatalogo(){
     });
   }
 
+  /* O NOME QUE ELA DIGITOU NO BALANÇO MANDA (19/11/2026) — mais até que o
+     do TOTVS, que sobrescrevia tudo */
+  const nomes = STATE.nomesManuais || {};
+  itens.forEach((it, chave)=>{ const n = String(nomes[chave] || '').trim(); if(n){ it.nome = n; it.nomeManual = true; } });
+
   return itens;
+}
+
+/* ✏️ TROCAR O NOME PELO BALANÇO (19/11/2026): "quero alterar o nome dele
+   quando eu fizer o balanço, pelo balanço mesmo" */
+function balRenomear(chave){
+  const it = balItem(chave);
+  if(!it) return;
+  cpCaixaDeTexto('Trocar o nome', 'Nome do produto', it.nome, (valor)=>{
+    const n = String(valor || '').replace(/\s+/g, ' ').trim();
+    if(!n){ showToast('Escreva o nome.', 'error'); return false; }
+    if(!STATE.nomesManuais) STATE.nomesManuais = {};
+    STATE.nomesManuais[chave] = n;
+    if(it.produtoId){
+      const p = (STATE.produtos||[]).find(x=>x.id === it.produtoId);
+      if(p) p.nome = n;
+    }
+    const daLinha = l=>l && (confChaveLinha(l) === chave || (it.produtoId && l.produtoIdEscolhido === it.produtoId));
+    (STATE.conferenciaLinhas||[]).forEach(l=>{ if(daLinha(l)) l.nomeEscolhido = n; });
+    (CONF_LINHAS||[]).forEach(l=>{ if(daLinha(l)) l.nomeEscolhido = n; });
+    saveState();
+    balRecarregarCatalogo();
+    renderBalanco();
+    showToast('Nome trocado — vale em todos os aparelhos.', 'success');
+  }, 'Esse nome passa a valer no balanço e no cadastro, em todos os aparelhos (mesmo que o TOTVS tenha outro).');
 }
 
 /* código bipado -> chave(s) do catálogo. Inclui as leituras derivadas
@@ -62137,7 +62175,9 @@ function balItemHtml(grande){
   const jaTem = b ? balContadoDe(b.id, it.chave) : 0;
   return `<div style="background:#fff;border:1px solid var(--border);border-left:4px solid var(--positive);
       border-radius:10px;padding:12px 13px;margin-bottom:12px;">
-    <strong style="font-size:${grande?'15.5':'14.5'}px;line-height:1.25;display:block;">${escapeHtml(it.nome)}</strong>
+    <strong style="font-size:${grande?'15.5':'14.5'}px;line-height:1.25;display:block;">${escapeHtml(it.nome)}
+      <button class="btn btn-sm bal-renomear" style="padding:1px 7px;margin-left:4px;font-weight:400;" title="Trocar o nome"
+        onclick="balRenomear('${escapeAttr(it.chave)}')">✏️ nome</button></strong>
     <div class="help-text" style="margin:3px 0 0;">
       ${it.codigos.length
         ? escapeHtml(it.codigos[0])
@@ -62949,6 +62989,15 @@ function fotoVersaoLocalGravar(chave, v){
   try{ localStorage.setItem(FOTO_VLOCAL, JSON.stringify(m)); }catch(e){}
 }
 
+const FOTO_SEMVERSAO = 'mizu_foto_semversao_v1';
+function fotoSemVersaoFeitas(){
+  try{ return JSON.parse(localStorage.getItem(FOTO_SEMVERSAO) || '{}') || {}; }catch(e){ return {}; }
+}
+function fotoSemVersaoMarcar(chave){
+  const m = fotoSemVersaoFeitas(); m[chave] = 1;
+  try{ localStorage.setItem(FOTO_SEMVERSAO, JSON.stringify(m)); }catch(e){}
+}
+
 function fotoFilaLer(){
   try{ return JSON.parse(localStorage.getItem(FOTO_FILA) || '[]') || []; }
   catch(e){ return []; }
@@ -63026,9 +63075,13 @@ async function fotoSubirUma(chave){
 async function fotoBaixarUma(chave){
   const r = await nuvemFetch('/storage/v1/object/' + fotoCaminhoNuvem(chave), { method: 'GET' });
   if(!r.ok){
-    if(r.status === 404) return null;     /* ainda não subiu do outro aparelho */
+    if(r.status === 404){                 /* ainda não subiu do outro aparelho */
+      if(fotoVersaoDoDono(chave) === 0) fotoSemVersaoMarcar(chave);
+      return null;
+    }
     throw new Error('não baixou (' + r.status + ')');
   }
+  if(fotoVersaoDoDono(chave) === 0) fotoSemVersaoMarcar(chave);
   const blob = await r.blob();
   const dataUrl = await fotoBlobParaDataUrl(blob);
   await fotoIdb('put', chave, { recortada: dataUrl });
@@ -63041,9 +63094,19 @@ async function fotoBaixarUma(chave){
 function fotoFaltandoAqui(){
   const locais = fotoVersoesLocais();
   const faltam = [];
+  const semVersaoFeitas = fotoSemVersaoFeitas();
+  const naFila = new Set(fotoFilaLer());
   const olhar = (chave)=>{
     const v = fotoVersaoDoDono(chave);
     if(v == null) return;
+    /* FOTO SEM VERSÃO (19/11/2026): tirada antes de existir a versão, cada
+       aparelho ficava com a que tinha (o roxo com a do pacote maior). Baixa
+       a da nuvem UMA vez — a não ser que a daqui ainda esteja pra subir. */
+    if(v === 0){
+      if(semVersaoFeitas[chave] || naFila.has(chave)) return;
+      faltam.push(chave);
+      return;
+    }
     if(locais[chave] && locais[chave] >= v) return;
     faltam.push(chave);
   };
@@ -64457,7 +64520,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '19/11/2026 12:00';
+const SISTEMA_VERSAO = '19/11/2026 12:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
