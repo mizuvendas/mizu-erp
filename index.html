@@ -46464,6 +46464,8 @@ function salvarConfigNfe(){
   if(token) localStorage.setItem(NFE_TOKEN_KEY, token);
   else localStorage.removeItem(NFE_TOKEN_KEY);
   saveState();
+  /* vale pra todos os aparelhos com login (trocar ou apagar também) */
+  nfeChaveSubir(token).catch(e=>console.warn('[nfe] chave não subiu', e));
   document.getElementById('modal-config-nfe').remove();
   showToast('Configuração da nota fiscal salva.', 'success');
   renderListaOrcamentos();
@@ -46471,8 +46473,55 @@ function salvarConfigNfe(){
 
 /* ---------- comunicação com o servidor ---------- */
 
+/* ---------- a chave anda com o login (19/11/2026) ---------- */
+
+/* Sobe a chave (ou apaga, se vier vazia) na coleção à parte. */
+async function nfeChaveSubir(token){
+  if(typeof nuvemSessao === 'undefined' || !nuvemSessao || !nuvemSessao.access_token) return false;
+  const t = String(token || '').trim();
+  await nuvemJson('/rest/v1/registros?on_conflict=colecao,id', {
+    method: 'POST',
+    headers: { 'Prefer': 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{ colecao: NUVEM_COL_NFE_CHAVE, id: 'servidor', excluido: !t, dados: t ? { token: t } : {} }])
+  });
+  try{ localStorage.setItem(NFE_CHAVE_SUBIDA_KEY, t); }catch(e){}
+  return true;
+}
+
+/* Chegou do sincronismo: guarda neste aparelho. */
+function nfeChaveRecebida(linha){
+  try{
+    const t = (!linha || linha.excluido || !linha.dados) ? '' : String(linha.dados.token || '').trim();
+    if(t) localStorage.setItem(NFE_TOKEN_KEY, t);
+    else localStorage.removeItem(NFE_TOKEN_KEY);
+    /* o que veio de fora não precisa subir de volta */
+    localStorage.setItem(NFE_CHAVE_SUBIDA_KEY, t);
+  }catch(e){}
+}
+
+/* Na hora de assinar/emitir sem chave: tenta buscar na nuvem antes de
+   pedir pra configurar (aparelho que já tinha baixado tudo antes). */
+async function nfeChaveBuscarNaNuvem(){
+  if(typeof nuvemSessao === 'undefined' || !nuvemSessao || !nuvemSessao.access_token) return '';
+  try{
+    const linhas = await nuvemJson('/rest/v1/registros?select=colecao,id,dados,excluido&colecao=eq.'
+      + NUVEM_COL_NFE_CHAVE + '&id=eq.servidor', { method: 'GET' });
+    if(linhas && linhas[0]) nfeChaveRecebida(linhas[0]);
+  }catch(e){ console.warn('[nfe] não achei a chave na nuvem', e); }
+  return localStorage.getItem(NFE_TOKEN_KEY) || '';
+}
+
+/* No aparelho da dona: a chave que já estava digitada sobe sozinha, uma vez. */
+async function nfeChaveSubirSeFaltar(){
+  if(typeof nuvemUsuario === 'undefined' || !nuvemUsuario || !nuvemUsuario.dono) return;
+  const t = localStorage.getItem(NFE_TOKEN_KEY) || '';
+  if(!t || localStorage.getItem(NFE_CHAVE_SUBIDA_KEY) === t) return;
+  await nfeChaveSubir(t);
+}
+
 async function nfeChamar(rota, corpo){
   const c = nfeCfg();
+  if(c.url && !c.token) c.token = await nfeChaveBuscarNaNuvem();
   if(!c.url || !c.token){
     abrirConfigNfe();
     throw new Error('Configure o servidor de nota fiscal antes de emitir.');
@@ -50763,6 +50812,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-19-a',
+    data: '2026-11-19',
+    titulo: 'Funcionários com login agora assinam orçamento e emitem nota',
+    itens: [
+      'A chave do servidor da nota fiscal anda junto com o login: quem entrar com o cadastro dele, em qualquer aparelho, já consegue assinar o orçamento e emitir a nota — sem configurar nada.',
+      'Se a chave for trocada ou apagada em Configurações → Nota fiscal, vale pra todos os aparelhos.',
+      'A chave não vai no backup exportado, e o certificado digital continua só no servidor.'
+    ]
+  },
   {
     id: '2026-11-18-m',
     data: '2026-11-18',
@@ -64173,7 +64232,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '18/11/2026 21:30';
+const SISTEMA_VERSAO = '19/11/2026 09:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64425,6 +64484,16 @@ const NUVEM_NAO_SINCRONIZA = ['licitacoesGeocodeCache'];
    ela anexa e desce direto pro IndexedDB no sincronismo normal. */
 const NUVEM_COL_CERTIDAO = 'certidaoArquivo';
 
+/* A CHAVE DO SERVIDOR DA NOTA ANDA COM O LOGIN (19/11/2026).
+   "Os outros funcionários com o cadastro dele não estão conseguindo
+   assinar e nem gerar nota fiscal": a chave ficava só no localStorage
+   do aparelho onde foi digitada. Agora ela sobe numa coleção à parte
+   (como as certidões) e desce pra quem entrou com login. NÃO passa pelo
+   STATE de propósito: assim não vai no backup exportado. O certificado
+   A1 continua só no servidor. */
+const NUVEM_COL_NFE_CHAVE = 'chaveNfe';
+const NFE_CHAVE_SUBIDA_KEY = 'mizu_nfe_token_subido';
+
 let nuvemSessao   = null;   // { access_token, refresh_token, expira }
 let nuvemUsuario  = null;   // { id, nome, email, dono, ativo, permissoes }
 let nuvemPendentes = 0;
@@ -64674,6 +64743,7 @@ function nuvemMudancas(){
     /* os arquivos das certidões não vivem no STATE — se entrassem aqui,
        toda rodada apagaria do servidor o PDF que acabou de subir */
     if(colecao === NUVEM_COL_CERTIDAO) return;
+    if(colecao === NUVEM_COL_NFE_CHAVE) return;
     subir.push({
       colecao: colecao,
       id: resto.join('|'),
@@ -65423,6 +65493,11 @@ function nuvemAplicar(linhas){
       licGuardarCertidaoBaixada(linha);
       return;
     }
+    /* chave do servidor da nota: vai pro localStorage deste aparelho */
+    if(linha.colecao === NUVEM_COL_NFE_CHAVE){
+      nfeChaveRecebida(linha);
+      return;
+    }
 
     if(linha.colecao === '_doc'){
       /* Chave que ainda não existe nesta máquina (um bloco criado depois,
@@ -65639,6 +65714,7 @@ async function nuvemSincronizar(silencioso){
        outras máquinas fizeram continua acontecendo. */
     let erroAoSubir = null;
     try{ await nuvemSubir(); }catch(e){ erroAoSubir = e; }
+    try{ await nfeChaveSubirSeFaltar(); }catch(e){ console.warn('[nfe] chave', e); }
     baixados += await nuvemBaixar();
     /* AS FOTOS VÃO POR FORA, E DE PROPÓSITO.
        Elas não entram na tabela de registros (derrubariam o
