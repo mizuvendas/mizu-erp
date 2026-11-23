@@ -46602,7 +46602,16 @@ async function nfeChamar(rota, corpo){
   const tipo = resp.headers.get('content-type') || '';
   if(tipo.includes('application/pdf')) return { pdf: await resp.blob() };
   const dados = await resp.json().catch(()=>({ erro:'Resposta inesperada do servidor.' }));
-  if(!resp.ok) throw new Error(dados.erro || ('Servidor respondeu ' + resp.status));
+  if(!resp.ok){
+    /* "Servidor respondeu 422" escondia o motivo que a Receita mandou
+       (23/11/2026): agora vai o código e a frase dela */
+    const motivo = dados.erro
+      || (dados.mensagem ? ((dados.codigoStatus ? dados.codigoStatus + ': ' : '') + dados.mensagem) : '')
+      || ('Servidor respondeu ' + resp.status);
+    const err = new Error(motivo);
+    err.dados = dados;
+    throw err;
+  }
   return dados;
 }
 
@@ -50883,6 +50892,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-23-c',
+    data: '2026-11-23',
+    titulo: 'Notas na Receita: o motivo da recusa aparece · prazo da ciência vencido',
+    itens: [
+      'Quando a Receita recusa a ciência, aparece o código e o motivo que ela mandou (antes: só "Servidor respondeu 422").',
+      'Se o prazo da ciência já passou, o sistema oferece "Confirmar a operação" — também libera o XML, e o prazo é bem maior. Só confirme se a mercadoria chegou.'
+    ]
+  },
   {
     id: '2026-11-23-b',
     data: '2026-11-23',
@@ -56497,23 +56515,50 @@ async function distDarEntrada(chave){
 
 /* Registra a ciência de UMA nota. Devolve o que aconteceu em vez de
    desenhar: quem chama decide o que mostrar (uma nota só, ou 40). */
-async function distDarCiencia(n){
-  const m = await nfeChamar('/manifestar', { chave: n.chave, evento: DIST_EVENTO_CIENCIA });
+const DIST_EVENTO_CONFIRMACAO = 210200;
+async function distDarCiencia(n, evento){
+  let m;
+  try{
+    m = await nfeChamar('/manifestar', { chave: n.chave, evento: evento || DIST_EVENTO_CIENCIA });
+  }catch(e){
+    /* a Receita recusou (o servidor responde 422 com o motivo dela) */
+    if(e && e.dados && (e.dados.codigoStatus || e.dados.mensagem)){
+      m = e.dados;
+    }else throw e;
+  }
   if(!m.ok){
-    return { ok:false, erro: `${m.codigoStatus||'?'}: ${m.mensagem||m.erro||''}` };
+    return { ok:false, codigo: String(m.codigoStatus||''), mensagem: m.mensagem || m.erro || '',
+             erro: `${m.codigoStatus||'?'}: ${m.mensagem||m.erro||''}` };
   }
   n.cienciaEm = todayISO();
+  if(evento === DIST_EVENTO_CONFIRMACAO) n.confirmadaEm = todayISO();
   saveState();
   return { ok:true, jaRegistrado: !!m.jaRegistrado };
 }
+/* prazo da ciência vencido (a ciência tem prazo curto; a confirmação, longo) */
+function distRecusaPorPrazo(r){
+  return !!r && (r.codigo === '596' || /prazo/i.test(String(r.mensagem || r.erro || '')));
+}
 
-async function distCienciaEEntrada(chave){
+async function distCienciaEEntrada(chave, evento){
   const n = distEstado().notas.find(x=>x.chave === chave);
   if(!n) return;
-  showToast('Registrando a ciência na Receita...', 'info');
+  const confirmando = evento === DIST_EVENTO_CONFIRMACAO;
+  showToast(confirmando ? 'Registrando a confirmação da operação na Receita...' : 'Registrando a ciência na Receita...', 'info');
   try{
-    const r = await distDarCiencia(n);
-    if(!r.ok){ showToast('A Receita recusou a ciência (' + r.erro + ')', 'error'); return; }
+    const r = await distDarCiencia(n, evento);
+    if(!r.ok){
+      if(!confirmando && distRecusaPorPrazo(r)){
+        /* "estou tentando dar entrada e aparece isso na hora da ciência" (23/11/2026) */
+        confirmAction('O prazo da ciência já passou',
+          `A Receita respondeu: ${r.erro}\n\nComo a mercadoria chegou, dá pra "Confirmar a operação" — também libera o XML, e o prazo dela é bem maior.\n\n`
+          + `Confirmar a operação diz à Receita que a mercadoria foi recebida. Só confirme se recebeu mesmo.\n\nNota de ${n.emitenteNome || ''} — ${fmtMoney(n.valor||0)}`,
+          ()=>distCienciaEEntrada(chave, DIST_EVENTO_CONFIRMACAO), 'Confirmar a operação');
+        return;
+      }
+      showToast((confirmando ? 'A Receita recusou a confirmação (' : 'A Receita recusou a ciência (') + r.erro + ')', 'error');
+      return;
+    }
 
     /* UMA varredura, aqui e agora: às vezes a posição nova já existe e a
        nota abre na hora. Uma só — depois do "acabou" a Receita bloqueia
@@ -64563,7 +64608,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '23/11/2026 16:30';
+const SISTEMA_VERSAO = '23/11/2026 17:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
