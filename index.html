@@ -36061,7 +36061,7 @@ function licPainelOportunidades(){
     <div class="kpi-row">
       <div class="kpi-card"><div class="kpi-label">Aguardando triagem</div><div class="kpi-value">${lista.length}</div><div class="kpi-sub">importadas, não decididas</div></div>
       <div class="kpi-card"><div class="kpi-label">Encerra em até 24h</div><div class="kpi-value ${ate24?'negative':''}">${ate24}</div><div class="kpi-sub">decidir hoje ou perde</div></div>
-      <div class="kpi-card"><div class="kpi-label">Prazo já vencido</div><div class="kpi-value">${jaVencidas}</div><div class="kpi-sub">dá pra tirar da lista</div></div>
+      <div class="kpi-card" ${jaVencidas ? `style="cursor:pointer;" title="Tirar todas as vencidas da lista" onclick="licTirarVencidas()"` : ''}><div class="kpi-label">Prazo já vencido</div><div class="kpi-value">${jaVencidas}</div><div class="kpi-sub">${jaVencidas ? '🗑️ clique pra tirar da lista' : 'dá pra tirar da lista'}</div></div>
       <div class="kpi-card"><div class="kpi-label">Referência de distância</div><div class="kpi-value" style="font-size:18px;">${escapeHtml(cidade)}</div><div class="kpi-sub">de onde medimos</div></div>
     </div>
 
@@ -36074,6 +36074,8 @@ function licPainelOportunidades(){
           <option value="prazo" ${licOrdem==='prazo'?'selected':''}>Ordenar: encerra primeiro</option>
           <option value="valor" ${licOrdem==='valor'?'selected':''}>Ordenar: maior valor</option>
         </select>
+        ${jaVencidas>0 ? `<button class="btn btn-sm lic-tirar-vencidas" onclick="licTirarVencidas()">🗑️ Tirar as vencidas (${jaVencidas})</button>` : ''}
+        ${filtradas.length>0 ? `<button class="btn btn-sm lic-marcar-todas" onclick="licMarcarTodas()">${filtradas.every(o=>licSelecionadas.has(o.id)) ? '☐ Desmarcar todas' : `☑ Marcar todas (${filtradas.length})`}</button>` : ''}
         ${licSelecionadas.size>0 ? `
           <button class="btn btn-sm btn-primary" onclick="licTriarSelecionadas(true)">✓ Tenho interesse (${licSelecionadas.size})</button>
           <button class="btn btn-sm" onclick="licTriarSelecionadas(false)">✕ Descartar (${licSelecionadas.size})</button>
@@ -37122,6 +37124,28 @@ function licMarcar(id, marcado){
   if(marcado) licSelecionadas.add(id); else licSelecionadas.delete(id);
   renderPortalLicitacoes();
 }
+/* "nas licitações que já foram encerradas, permita eu já marcar pra tirar
+   da lista de uma vez só" (23/11/2026). Vão pras descartadas, como o
+   "✕ Descartar" — e voltam pelo "↩ Limpar a lista de descartadas". */
+function licTirarVencidas(){
+  const ids = (STATE.licitacoesRevisao||[]).filter(o=>licPrazoInfo(o).encerrada).map(o=>o.id);
+  if(!ids.length){ showToast('Nenhuma com prazo vencido.', 'info'); return; }
+  confirmAction('Tirar as vencidas da lista',
+    `${ids.length} dispensa${ids.length===1?'':'s'} com o prazo já encerrado vão para as descartadas.\n\nSe precisar de alguma, dá pra trazer de volta em "↩ Limpar a lista de descartadas".`,
+    ()=>{ licSelecionadas = new Set(ids); licTriarSelecionadas(false); }, 'Tirar da lista');
+}
+/* marca (ou desmarca) todas as que aparecem com a busca de agora */
+function licMarcarTodas(){
+  const busca = (licFiltroBusca||'').toLowerCase();
+  const lista = (STATE.licitacoesRevisao||[]);
+  const visiveis = busca ? lista.filter(o=>
+    ((o.objeto||'')+' '+(o.orgao||'')+' '+(o.municipioNome||'')+' '+(o.numero||'')).toLowerCase().includes(busca)) : lista;
+  const todas = visiveis.length && visiveis.every(o=>licSelecionadas.has(o.id));
+  if(todas) visiveis.forEach(o=>licSelecionadas.delete(o.id));
+  else visiveis.forEach(o=>licSelecionadas.add(o.id));
+  renderPortalLicitacoes();
+}
+
 function licTriarSelecionadas(interesse){
   const ids = [...licSelecionadas];
   licSelecionadas = new Set();
@@ -50860,6 +50884,16 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-23-a',
+    data: '2026-11-23',
+    titulo: 'Licitações: tirar as vencidas de uma vez · marcar todas',
+    itens: [
+      'Oportunidades: botão "🗑️ Tirar as vencidas" (e o quadro "Prazo já vencido" clicável) — todas as que já encerraram vão pras descartadas de uma vez.',
+      '"☑ Marcar todas" marca todas as que aparecem na busca de agora, pra descartar ou mandar pra análise de uma vez.',
+      'Tirou alguma por engano? "↩ Limpar a lista de descartadas", lá embaixo, traz de volta.'
+    ]
+  },
+  {
     id: '2026-11-19-e',
     data: '2026-11-19',
     titulo: 'Balanço: trocar o nome pelo próprio balanço · fotos antigas se acertam',
@@ -64520,7 +64554,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '19/11/2026 12:30';
+const SISTEMA_VERSAO = '23/11/2026 15:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
