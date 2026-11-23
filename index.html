@@ -50884,6 +50884,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-23-b',
+    data: '2026-11-23',
+    titulo: 'Login da nuvem não vence mais com o sistema aberto em várias abas',
+    itens: [
+      'O login é renovado antes de vencer, e uma aba só renova — as outras aproveitam. Era isso que derrubava o login ("JWT expired") e travava o sincronismo.',
+      'Se mesmo assim o login cair, aparece um aviso claro "Seu login venceu — entre de novo", com o botão. Nada do aparelho se perde.'
+    ]
+  },
+  {
     id: '2026-11-23-a',
     data: '2026-11-23',
     titulo: 'Licitações: tirar as vencidas de uma vez · marcar todas',
@@ -64554,7 +64563,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '23/11/2026 15:30';
+const SISTEMA_VERSAO = '23/11/2026 16:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -64839,6 +64848,11 @@ function nuvemGravarSessao(s){
 }
 
 async function nuvemFetch(caminho, opcoes, semToken){
+  /* renova ANTES de vencer (e pega o login que outra aba já renovou) */
+  if(!semToken && nuvemSessao && nuvemSessao.refresh_token){
+    nuvemSessaoDeOutraAba();
+    if(nuvemSessao.expira && Date.now() > nuvemSessao.expira) await nuvemRenovar();
+  }
   const cab = Object.assign({
     'apikey': NUVEM.chave,
     'Content-Type': 'application/json'
@@ -64890,17 +64904,50 @@ function nuvemGuardarToken(dados){
   return true;
 }
 
-async function nuvemRenovar(){
-  try{
-    const d = await nuvemJson('/auth/v1/token?grant_type=refresh_token', {
-      method: 'POST',
-      body: JSON.stringify({ refresh_token: nuvemSessao.refresh_token })
-    }, true);
-    return nuvemGuardarToken(d);
-  }catch(e){
-    return false;
+/* LOGIN QUE VENCIA COM DUAS ABAS (23/11/2026): "no computador do Neto
+   está dando erro de sincronismo — JWT expired". Cada aba renovava o login
+   por conta própria, com o MESMO código de renovação; a nuvem usa esse
+   código uma vez só — a segunda aba levava "não", e o login caía.
+   Agora: uma aba renova de cada vez (trava do navegador), e antes de
+   renovar ela olha se outra aba já renovou — se sim, só aproveita. */
+let NUVEM_RENOVANDO = null;
+function nuvemSessaoDeOutraAba(){
+  const g = nuvemLerSessao();
+  if(g && g.access_token && nuvemSessao && g.access_token !== nuvemSessao.access_token
+     && (g.expira || 0) > Date.now()){
+    nuvemSessao = g;
+    return true;
   }
+  return false;
 }
+async function nuvemRenovar(){
+  if(NUVEM_RENOVANDO) return NUVEM_RENOVANDO;
+  const fazer = async ()=>{
+    if(nuvemSessaoDeOutraAba()) return true;
+    const g = nuvemLerSessao();
+    const rt = (g && g.refresh_token) || (nuvemSessao && nuvemSessao.refresh_token);
+    if(!rt) return false;
+    try{
+      const d = await nuvemJson('/auth/v1/token?grant_type=refresh_token', {
+        method: 'POST',
+        body: JSON.stringify({ refresh_token: rt })
+      }, true);
+      return nuvemGuardarToken(d);
+    }catch(e){
+      /* outra aba pode ter renovado no mesmo instante */
+      return nuvemSessaoDeOutraAba();
+    }
+  };
+  NUVEM_RENOVANDO = (async ()=>{
+    try{
+      if(typeof navigator !== 'undefined' && navigator.locks && navigator.locks.request)
+        return await navigator.locks.request('mizu-renovar-login', fazer);
+      return await fazer();
+    }finally{ setTimeout(()=>{ NUVEM_RENOVANDO = null; }, 0); }
+  })();
+  return NUVEM_RENOVANDO;
+}
+function nuvemErroDeLogin(msg){ return /jwt|expired|invalid.*token|refresh.?token|not authenticated/i.test(String(msg || '')); }
 
 async function nuvemEntrar(email, senha){
   const d = await nuvemJson('/auth/v1/token?grant_type=password', {
@@ -65354,6 +65401,9 @@ async function nuvemSubir(){
       await enviar(lote);
     }catch(e){
       if(lote.length === 1) throw e;           // um só e falhou: é esse mesmo
+      /* login vencido não é culpa de registro nenhum: tentar um por um só
+         enchia a tela com 3785 "recusados" (23/11/2026) */
+      if(nuvemErroDeLogin(e && e.message)) throw e;
       subiram = [];
       for(const r of lote){
         try{ await enviar([r]); subiram.push(r); }
@@ -66310,7 +66360,13 @@ function nuvemMostrarProblema(){
   m.innerHTML = `
     <div class="modal-box" style="max-width:min(680px,95vw);max-height:90vh;overflow-y:auto;">
       <h3 style="margin-top:0;color:var(--negative);">⚠️ O que está impedindo o sincronismo</h3>
-      ${nuvemUltimoErro ? `<div class="lic-doc falta" style="display:block;">
+      ${nuvemErroDeLogin(nuvemUltimoErro) ? `<div class="lic-doc falta nuvem-login-vencido" style="display:block;">
+        <b style="font-size:15px;">🔑 Seu login na nuvem venceu — entre de novo</b>
+        <small style="display:block;margin:6px 0 10px;">Nada daqui se perde: o que você fez fica guardado neste computador e sobe sozinho assim que você entrar.
+          Não limpe os dados do navegador antes de entrar.</small>
+        <button class="btn btn-primary" onclick="nuvemSair()">Entrar de novo</button>
+      </div>` : ''}
+      ${nuvemUltimoErro && !nuvemErroDeLogin(nuvemUltimoErro) ? `<div class="lic-doc falta" style="display:block;">
         <b>O servidor respondeu:</b>
         <div style="font-family:var(--font-num);font-size:12.5px;margin-top:4px;word-break:break-word;">${escapeHtml(nuvemUltimoErro)}</div>
         ${explica?`<small style="display:block;margin-top:6px;">${escapeHtml(explica)}</small>`:''}
