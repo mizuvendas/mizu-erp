@@ -1492,6 +1492,7 @@ body.orc-gaveta-travada{ overflow:hidden; }
           <h2>Análise de Vendas</h2>
           <p class="subtitle">Filtre por cliente, fornecedor, marca, produto e período — a margem aqui é a margem realizada nas vendas (não o preço de tabela do cadastro)</p>
         </div>
+        <button class="btn" id="btn-vendas-repetidas" onclick="vendasRepetidasAbrir()">🔁 Vendas repetidas</button>
       </div>
       <div id="analise-content"></div>
     </section>
@@ -12931,7 +12932,130 @@ function cancelarVenda(vendaId){
   confirmAction(
     'Cancelar venda',
     'Isso vai marcar a venda como cancelada, devolver as quantidades ao estoque dos produtos e remover os valores dos relatórios. Esta ação não apaga o histórico, mas não pode ser desfeita pelo sistema. Deseja continuar?',
-    ()=>{
+    ()=>{ cancelarVendaAgora(venda); }
+  );
+}
+
+/* Nota cancelada: pergunta se a venda dela também é cancelada. */
+function nfePerguntarCancelarVenda(venda, nota){
+  if(!venda || venda.status === 'cancelada') return;
+  const cli = (STATE.clientes||[]).find(c=>c.id === venda.clienteId);
+  confirmAction('Cancelar a venda também?',
+    `A nota nº ${nota ? nota.numero : ''} foi cancelada. A venda dela (${cli ? cli.nome : ''} — ${fmtDate(venda.data)}) continua lançada, com o estoque baixado.\n\n`
+    + `• Se a mercadoria NÃO vai ser vendida: cancele a venda (o estoque volta).\n`
+    + `• Se vai refazer a nota: cancele também — o orçamento volta a "Aprovado" e você fatura de novo por ele, SEM fazer outro orçamento (senão a venda fica duplicada).\n`
+    + `• Se a venda continua valendo (só a nota estava errada e vai emitir outra pra esta mesma venda): não cancele.`,
+    ()=>cancelarVendaAgora(venda, 'nota nº ' + (nota ? nota.numero : '') + ' cancelada', true),
+    'Cancelar a venda');
+}
+
+/* =========================================================
+   VENDAS REPETIDAS (24/11/2026)
+   "tem que resolver pra quando o sistema ficar 100% não acontecer esse
+   problema, porque dá problema no estoque". A mesma venda lançada duas
+   vezes: clique duplo (A), nota cancelada e venda refeita sem cancelar a
+   antiga (B), o mesmo orçamento virando venda em dois aparelhos (C).
+   Esta tela acha os pares e sugere qual cancelar; D é "conferir" (pode
+   ser compra de verdade repetida).
+   ========================================================= */
+function vendasRepetidasChave(a, b){ return [a.id, b.id].sort().join('|'); }
+function vendasRepetidasAchar(){
+  const ignorar = (STATE.config && STATE.config.vendasNaoRepetidas) || {};
+  const orcDaVenda = {};
+  (STATE.orcamentos||[]).forEach(o=>{ if(o.vendaGeradaId) orcDaVenda[o.vendaGeradaId] = o; });
+  (STATE.vendas||[]).forEach(v=>{ if(v.orcamentoId && !orcDaVenda[v.id]){ const o = (STATE.orcamentos||[]).find(x=>x.id === v.orcamentoId); if(o) orcDaVenda[v.id] = o; } });
+  const notas = {};
+  (STATE.notasFiscais||[]).forEach(n=>{ if(n.vendaId) (notas[n.vendaId] = notas[n.vendaId] || []).push(n); });
+  const notaOk = v=>(notas[v.id]||[]).some(n=>n.status === 'autorizada');
+  const soCancelada = v=>(notas[v.id]||[]).length > 0 && !notaOk(v);
+  const assin = v=>(v.clienteId||'') + '#' + (v.itens||[]).map(i=>[i.produtoId, i.qtd, i.precoUnit].join(':')).sort().join(',');
+  const grupos = new Map();
+  (STATE.vendas||[]).forEach(v=>{
+    if(!v || v.status === 'cancelada') return;
+    const k = assin(v); if(!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(v);
+  });
+  const pares = [];
+  grupos.forEach(vs=>{
+    if(vs.length < 2) return;
+    vs.sort((x,y)=>String(x.criadoEm||'').localeCompare(String(y.criadoEm||'')));
+    for(let i = 0; i < vs.length - 1; i++){
+      const a = vs[i], b = vs[i+1];
+      if(ignorar[vendasRepetidasChave(a, b)]) continue;
+      const ta = Date.parse(a.criadoEm||''), tb = Date.parse(b.criadoEm||'');
+      const dt = (isFinite(ta) && isFinite(tb)) ? (tb - ta) / 1000 : null;
+      const oa = orcDaVenda[a.id] || null, ob = orcDaVenda[b.id] || null;
+      const mesmaRef = !!a.referencia && a.referencia === b.referencia;
+      const peso = (v, o)=>(notaOk(v) ? 2 : 0) + (o ? 1 : 0);
+      let manter = a, cancelar = b;
+      if(peso(a, oa) <= peso(b, ob)){ manter = b; cancelar = a; }
+      let tipo;
+      if((!oa || !ob) && dt != null && dt < 60) tipo = 'A';
+      else if((!oa || !ob) && mesmaRef) tipo = 'C';
+      else if(oa && ob && (soCancelada(a) || soCancelada(b))){ tipo = 'B'; if(soCancelada(a)){ cancelar = a; manter = b; } else { cancelar = b; manter = a; } }
+      else { tipo = 'D'; cancelar = null; }
+      pares.push({ tipo, a, b, oa, ob, dt, manter, cancelar, notas });
+    }
+  });
+  return pares.sort((x,y)=>x.tipo.localeCompare(y.tipo) || String(x.a.data).localeCompare(String(y.a.data)));
+}
+const VENDAS_REPETIDAS_TIPO = {
+  A: { titulo: 'Clique duplo — a mesma venda lançada 2 vezes', cor: '#FFE0B2' },
+  B: { titulo: 'Nota cancelada e venda refeita — a antiga ficou ativa', cor: '#FFF59D' },
+  C: { titulo: 'O mesmo orçamento virou venda 2 vezes', cor: '#FFCCBC' },
+  D: { titulo: 'Pode ser compra de verdade repetida — conferir', cor: '#ECEFF1' }
+};
+function vendasRepetidasAbrir(){
+  document.getElementById('modal-vendas-repetidas')?.remove();
+  const pares = vendasRepetidasAchar();
+  const cli = id=>{ const c = (STATE.clientes||[]).find(x=>x.id === id); return c ? c.nome : '(cliente removido)'; };
+  const nTxt = (p, v)=>(p.notas[v.id]||[]).map(n=>`nota nº ${escapeHtml(String(n.numero))} (${escapeHtml(n.status||'')})`).join(', ') || 'sem nota';
+  const oTxt = o=>o ? `orçamento #${escapeHtml(String(o.numero!=null?o.numero:'?'))}` : 'sem orçamento ligado';
+  const tempo = s=>s == null ? '' : s < 60 ? `${s.toFixed(1)} s depois` : s < 3600 ? `${Math.round(s/60)} min depois` : s < 86400 ? `${(s/3600).toFixed(1)} h depois` : `${(s/86400).toFixed(1)} dias depois`;
+  const vendaHtml = (p, v, rotulo)=>`<div style="flex:1;min-width:200px;padding:8px 10px;border:1px solid var(--border);border-radius:8px;background:#fff;${p.cancelar===v?'outline:2px solid var(--negative,#B02A37);':''}">
+      <b>${rotulo}</b> · ${fmtDate(v.data)} · ${fmtMoney(getValoresFinanceirosVenda(v).valorFinal)}<br>
+      <small>${oTxt(v===p.a?p.oa:p.ob)} · ${nTxt(p, v)}</small>
+      ${p.cancelar===v?'<div style="color:var(--negative,#B02A37);font-weight:700;font-size:12px;margin-top:3px;">← sugestão: cancelar esta</div>':''}
+    </div>`;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-vendas-repetidas';
+  m.innerHTML = `<div class="modal-box" style="max-width:min(920px,96vw);max-height:90vh;overflow-y:auto;">
+    <h3 style="margin-top:0;">🔁 Vendas repetidas</h3>
+    <p class="help-text">A mesma venda lançada mais de uma vez baixa o estoque e lança o valor em dobro. Confira cada par: cancelar a repetida devolve o estoque e tira o valor das contas.</p>
+    ${pares.length ? pares.map((p, i)=>`<div class="vr-par" style="background:${VENDAS_REPETIDAS_TIPO[p.tipo].cor};border-radius:10px;padding:10px 12px;margin:8px 0;">
+        <div style="font-weight:700;">${escapeHtml(cli(p.a.clienteId))}</div>
+        <div style="font-size:12px;margin-bottom:6px;">${p.tipo}) ${escapeHtml(VENDAS_REPETIDAS_TIPO[p.tipo].titulo)} · a 2ª foi lançada ${tempo(p.dt)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">${vendaHtml(p, p.a, 'Venda 1')}${vendaHtml(p, p.b, 'Venda 2')}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+          ${p.cancelar ? `<button class="btn btn-sm btn-primary vr-cancelar" onclick="vendasRepetidasCancelar('${escapeAttr(p.cancelar.id)}')">Cancelar a repetida (${p.cancelar===p.a?'Venda 1':'Venda 2'})</button>` : ''}
+          <button class="btn btn-sm" onclick="vendasRepetidasCancelar('${escapeAttr((p.cancelar===p.a?p.b:p.a).id)}')">Cancelar a ${p.cancelar===p.a?'Venda 2':'Venda 1'}</button>
+          ${!p.cancelar ? `<button class="btn btn-sm" onclick="vendasRepetidasCancelar('${escapeAttr(p.b.id)}')">Cancelar a Venda 2</button>` : ''}
+          <button class="btn btn-sm vr-nao-e" onclick="vendasRepetidasNaoE('${escapeAttr(p.a.id)}','${escapeAttr(p.b.id)}')">Não é repetida</button>
+        </div>
+      </div>`).join('') : '<p style="margin:16px 0;">✅ Nenhuma venda repetida.</p>'}
+    <div class="modal-actions"><button class="btn" onclick="this.closest('.modal-overlay').remove()">Fechar</button></div>
+  </div>`;
+  document.body.appendChild(m);
+}
+function vendasRepetidasCancelar(vendaId){
+  const v = (STATE.vendas||[]).find(x=>x.id === vendaId);
+  if(!v) return;
+  const cli = (STATE.clientes||[]).find(c=>c.id === v.clienteId);
+  confirmAction('Cancelar esta venda',
+    `${cli ? cli.nome : ''} — ${fmtDate(v.data)} — ${fmtMoney(getValoresFinanceirosVenda(v).valorFinal)}\n\nO estoque dos itens volta e o valor sai das contas. A outra venda do par continua.`,
+    ()=>{ cancelarVendaAgora(v, 'venda repetida'); vendasRepetidasAbrir(); }, 'Cancelar a venda');
+}
+function vendasRepetidasNaoE(idA, idB){
+  STATE.config.vendasNaoRepetidas = STATE.config.vendasNaoRepetidas || {};
+  STATE.config.vendasNaoRepetidas[[idA, idB].sort().join('|')] = new Date().toISOString();
+  saveState();
+  vendasRepetidasAbrir();
+}
+
+/* O cancelamento em si, sem perguntar — quem chama já perguntou
+   (24/11/2026: usado também pelo "cancelar a nota" e pelas vendas repetidas) */
+function cancelarVendaAgora(venda, motivo, liberarOrcamento){
+      if(!venda || venda.status==='cancelada') return false;
       venda.itens.forEach(it=>{
         const produto = STATE.produtos.find(p=>p.id===it.produtoId);
         if(produto){
@@ -12946,15 +13070,22 @@ function cancelarVenda(vendaId){
       });
       venda.status = 'cancelada';
       venda.canceladaEm = new Date().toISOString();
+      if(motivo) venda.motivoCancelamento = motivo;
+      /* nota cancelada pra refazer: o orçamento dessa venda volta a poder
+         ser faturado (em vez de fazer um orçamento novo e deixar a venda
+         antiga ativa) */
+      if(liberarOrcamento) (STATE.orcamentos||[]).forEach(o=>{
+        if(o.vendaGeradaId === venda.id){ o.vendaGeradaId = null; if(o.status === 'convertido') o.status = 'aprovado'; }
+      });
       const clienteAud = STATE.clientes.find(c=>c.id===venda.clienteId);
       const valorAud = getValoresFinanceirosVenda(venda).valorFinal;
-      registrarAuditoria('venda_cancelada', `Venda cancelada — ${clienteAud?clienteAud.nome:'(cliente removido)'} (${fmtDate(venda.data)})`, valorAud);
+      registrarAuditoria('venda_cancelada', `Venda cancelada — ${clienteAud?clienteAud.nome:'(cliente removido)'} (${fmtDate(venda.data)})${motivo ? ' — ' + motivo : ''}`, valorAud);
       saveState();
       showToast('Venda cancelada e estoque estornado.', 'success');
       if(document.getElementById('v-vendas-recentes-body')) renderVendasRecentes();
       if(typeof renderResultadoVendasPorCliente==='function' && document.getElementById('vc-resultado')) renderResultadoVendasPorCliente();
-    }
-  );
+      try{ if(document.getElementById('orc-lista-body')) renderListaOrcamentos(); }catch(e){}
+      return true;
 }
 
 // Duplica uma venda existente como um novo ORÇAMENTO (mesmo cliente, mesmos
@@ -46037,6 +46168,11 @@ async function nfeEnviarCancelamento(){
       nossa.motivoCancelamento = just.texto;
       saveState();
       try{ renderListaOrcamentos(); }catch(e){}
+      /* NOTA CANCELADA, E A VENDA? (24/11/2026): cancelavam a nota, faziam um
+         orçamento novo e a venda antiga ficava ativa — estoque baixado duas
+         vezes (Athos, Calumério, SPE Bela Vista). Agora pergunta. */
+      const vendaDaNota = nossa.vendaId ? (STATE.vendas||[]).find(v=>v.id === nossa.vendaId && v.status !== 'cancelada') : null;
+      if(vendaDaNota) setTimeout(()=>nfePerguntarCancelarVenda(vendaDaNota, nossa), 700);
     }
 
     const xml = r.xml || null;
@@ -50959,6 +51095,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-24-c',
+    data: '2026-11-24',
+    titulo: 'Vendas repetidas: achar, cancelar e não deixar acontecer',
+    itens: [
+      'Análise de Vendas → "🔁 Vendas repetidas": mostra as vendas lançadas mais de uma vez (clique duplo, nota cancelada e venda refeita, mesmo orçamento virando venda duas vezes) e sugere qual cancelar. Cancelar devolve o estoque e tira o valor das contas. "Não é repetida" tira o par da lista.',
+      'Ao cancelar uma nota fiscal, o sistema pergunta se cancela a venda também — e o orçamento volta a "Aprovado" pra faturar de novo, sem fazer outro orçamento.',
+      'Toda venda nova guarda de qual orçamento veio: um orçamento não vira duas vendas.'
+    ]
+  },  {
     id: '2026-11-24-b',
     data: '2026-11-24',
     titulo: 'Orçamento não vira venda duas vezes',
@@ -64691,7 +64836,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '24/11/2026 12:30';
+const SISTEMA_VERSAO = '24/11/2026 15:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
