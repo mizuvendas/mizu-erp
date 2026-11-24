@@ -14364,6 +14364,41 @@ function orcAtualizarRodapeBalcao(){
   }
 }
 
+/* CÓDIGO NA VENDA (24/11/2026): "tenho medo de fazer uma venda e ele tirar
+   o saldo do outro". A venda pegava o PRIMEIRO produto com aquele código
+   e só olhava o código principal. Agora: acha por todos os códigos do
+   produto (os extras também) e, se o código está em mais de um, PERGUNTA. */
+function produtosPorCodigo(digitos){
+  const d = String(digitos||'').replace(/\D/g,'').replace(/^0+/, '');
+  if(!d) return [];
+  const igual = c=>String(c||'').replace(/\D/g,'').replace(/^0+/, '') === d;
+  return (STATE.produtos||[]).filter(p=>p && !p.inativo && (igual(p.codigoBarras) || (p.codigosExtras||[]).some(igual)));
+}
+function produtoDoCodigoEscolher(codigo, produtos, aoEscolher){
+  if(!produtos || !produtos.length) return;
+  if(produtos.length === 1){ aoEscolher(produtos[0]); return; }
+  document.getElementById('modal-codigo-escolher')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open';
+  m.id = 'modal-codigo-escolher';
+  m.style.zIndex = '1300';
+  m.innerHTML = `<div class="modal-box" style="max-width:min(520px,95vw);">
+      <h3 style="margin-top:0;">Esse código está em ${produtos.length} produtos — qual é?</h3>
+      <p class="help-text">O código <strong>${escapeHtml(codigo)}</strong> foi impresso pelo fabricante em mais de um produto. Toque no que você tem na mão: o estoque sai só dele.</p>
+      <div style="display:flex;flex-direction:column;gap:7px;">
+        ${produtos.map(p=>`<button class="btn codigo-escolher-op" style="text-align:left;padding:10px 12px;" data-id="${escapeAttr(p.id)}">
+            <strong>${escapeHtml(p.nome)}</strong><br><small>${escapeHtml(p.sku||'')} · estoque ${fmtNum(p.estoqueAtual||0)}</small></button>`).join('')}
+      </div>
+      <div class="modal-actions"><button class="btn" onclick="this.closest('.modal-overlay').remove()">Cancelar</button></div>
+    </div>`;
+  document.body.appendChild(m);
+  m.querySelectorAll('.codigo-escolher-op').forEach(b=>b.addEventListener('click', ()=>{
+    const p = produtos.find(x=>x.id === b.dataset.id);
+    m.remove();
+    if(p) aoEscolher(p);
+  }));
+}
+
 /* Bipar ou buscar. Uma leitura exata de código de barras entra direto no
    carrinho; o resto mostra a lista pra escolher. */
 function orcBalcaoBuscar(termo){
@@ -14374,13 +14409,13 @@ function orcBalcaoBuscar(termo){
   if(!t) return;
 
   const digitos = t.replace(/\D/g, '');
-  const exato = digitos.length >= 8
-    ? STATE.produtos.find(p => (p.codigoBarras || '').replace(/\D/g, '') === digitos)
-    : null;
-  if(exato){
-    orcBalcaoAdicionar(exato.id);
+  const achados = digitos.length >= 8 ? produtosPorCodigo(digitos) : [];
+  if(achados.length){
     if(input) input.value = '';
-    showToast('Item adicionado: ' + exato.nome, 'success');
+    produtoDoCodigoEscolher(digitos, achados, p=>{
+      orcBalcaoAdicionar(p.id);
+      showToast('Item adicionado: ' + p.nome, 'success');
+    });
     return;
   }
 
@@ -14926,12 +14961,14 @@ function orcBalcaoLigarBusca(){
     if(e.key !== 'Enter') return;
     const digitos = (input.value || '').replace(/\D/g, '');
     if(digitos.length < 8) return;
-    const exato = STATE.produtos.find(p => (p.codigoBarras || '').replace(/\D/g, '') === digitos);
-    if(!exato) return;
+    const achados = produtosPorCodigo(digitos);
+    if(!achados.length) return;
     e.preventDefault();
     e.stopPropagation();
-    orcBalcaoAdicionar(exato.id);
-    showToast('Item adicionado: ' + exato.nome, 'success');
+    produtoDoCodigoEscolher(digitos, achados, p=>{
+      orcBalcaoAdicionar(p.id);
+      showToast('Item adicionado: ' + p.nome, 'success');
+    });
     input.value = '';
     const dd = document.getElementById('orc-balcao-busca-dropdown');
     if(dd) dd.classList.remove('open');
@@ -51128,6 +51165,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-24-e',
+    data: '2026-11-24',
+    titulo: 'Venda pergunta quando o código está em 2 produtos · códigos do balanço corrigidos',
+    itens: [
+      'Na venda (balcão), se o código bipado está em mais de um produto — como os limpadores Brisa do Mar e Folhas de Pimenta —, aparece "qual é?" e o estoque sai só do escolhido. A venda também acha o produto pelos códigos extras (o da fábrica e o corrigido no balanço).',
+      'Códigos do balanço corrigidos: inseticida com o código do frasco (7892020000114) e junto num item só; o código do limpador c/ brilho 2L saiu do disco; o da fibra da Mizu saiu da fibra do comodato; o do garfo saiu da lixeira; saíram os códigos digitados por engano (5, 80, 350…). Nenhuma contagem mudou.',
+      'A fibra do comodato agora se chama "FIBRA P/ LIMPEZA 87X125MM LIMP ULT PESADA" (vendida por unidade).'
+    ]
+  },  {
     id: '2026-11-24-d',
     data: '2026-11-24',
     titulo: 'Cancelou a nota? A venda é cancelada junto',
@@ -61283,7 +61329,70 @@ let balTeclado = 'numero';   /* no celular: teclado de número ou de letra */
 let balCelular = false;      /* a mesma tela, no formato do celular */
 let balMsg = '';
 
+/* CORREÇÃO DOS CÓDIGOS DO BALANÇO (24/11/2026), decidida com ela item a
+   item: códigos ligados por engano no "não achei → é este" saem; a fibra do
+   comodato perde o "C/5 NOBRE" do nome. Uma vez só (marca no config, que
+   viaja pela nuvem); refazer não estraga nada. */
+const CORRECAO_2411_SEMPRE = ['484948411', '7992020000114', '78920200000114', '5', '80', '350', '784865165156'];
+const CORRECAO_2411_DE = [
+  ['7898665891452', 'c:201410'],                 /* do limpador c/ brilho 2L, estava no disco branco */
+  ['7899682756335', 'p:prod_mthtxbiq17tsx'],     /* da fibra da Mizu, estava na fibra do comodato */
+  ['7898202615039', 'p:prod_mthtxbim8mci4']      /* do garfo Strawplast, estava na lixeira porta-copos */
+];
+function correcaoCodigos2411(){
+  if(!STATE.config || STATE.config.correcaoCodigos2411) return false;
+  const so = c=>String(c||'').replace(/\D/g,'');
+  const sempre = new Set(CORRECAO_2411_SEMPRE);
+  const deQuem = {}; CORRECAO_2411_DE.forEach(([c, k])=>{ deQuem[c] = k; });
+  const ap = STATE.codigosApelido || {};
+  Object.keys(ap).forEach(c=>{ if(sempre.has(so(c)) || deQuem[so(c)] === ap[c]) delete ap[c]; });
+  const pr = STATE.codigosPrincipais || {};
+  Object.keys(pr).forEach(k=>{ const c = so(pr[k]); if(sempre.has(c) || deQuem[c] === k) delete pr[k]; });
+  const linhaDe = k=>(STATE.conferenciaLinhas||[]).filter(l=>l && ('c:' + l.codigo === k || (k.startsWith('p:') && l.produtoIdEscolhido === k.slice(2))));
+  const limpar = (lista, k)=>(lista||[]).filter(c=>{ const d = so(c); return !sempre.has(d) && deQuem[d] !== k; });
+  (STATE.produtos||[]).forEach(p=>{
+    if(p.codigosExtras && p.codigosExtras.length){ p.codigosExtras = limpar(p.codigosExtras, 'p:' + p.id); }
+  });
+  (STATE.conferenciaLinhas||[]).forEach(l=>{
+    if(!l || !l.codigosExtras || !l.codigosExtras.length) return;
+    const k = 'c:' + l.codigo, kp = l.produtoIdEscolhido ? 'p:' + l.produtoIdEscolhido : '';
+    l.codigosExtras = l.codigosExtras.filter(c=>{ const d = so(c); return !sempre.has(d) && deQuem[d] !== k && deQuem[d] !== kp; });
+    if(!l.codigosExtras.length) l.codigosExtras = null;
+  });
+  /* inseticida: o cadastro estava com o código errado (7992…) e separado
+     da linha da planilha — viravam dois itens. Código certo do frasco
+     (7892020000114) e os dois juntos num só (a contagem, 24, vai junto) */
+  const inset = (STATE.produtos||[]).find(p=>p.id === 'prod_mthtxbjck4e5h');
+  if(inset){
+    inset.codigoBarras = '7892020000114';
+    inset.codigosExtras = (inset.codigosExtras||[]).filter(c=>so(c) !== '7892020000114' && !sempre.has(so(c)));
+    if(!inset.codigosExtras.length) delete inset.codigosExtras;
+    (STATE.conferenciaLinhas||[]).forEach(l=>{ if(l && String(l.codigo) === '9011518' && !l.produtoIdEscolhido) l.produtoIdEscolhido = inset.id; });
+    (CONF_LINHAS||[]).forEach(l=>{ if(l && String(l.codigo) === '9011518' && !l.produtoIdEscolhido){ l.produtoIdEscolhido = inset.id; l.produto = inset; l.produtoId = inset.id; } });
+  }
+  /* fibra do comodato: vendida por unidade */
+  const nomeFibra = 'FIBRA P/ LIMPEZA 87X125MM LIMP ULT PESADA';
+  const fibra = (STATE.produtos||[]).find(p=>p.id === 'prod_mthtxbiq17tsx');
+  if(fibra){
+    fibra.nome = nomeFibra;
+    if(!STATE.nomesManuais) STATE.nomesManuais = {};
+    STATE.nomesManuais['p:prod_mthtxbiq17tsx'] = nomeFibra;
+  }
+  (STATE.conferenciaLinhas||[]).forEach(l=>{ if(l && String(l.codigo) === '201475') l.nomeEscolhido = nomeFibra; });
+  /* a cópia da tela (CONF_LINHAS) recebe o mesmo */
+  try{
+    (CONF_LINHAS||[]).forEach(l=>{
+      const g = (STATE.conferenciaLinhas||[]).find(x=>x && x.id === l.id);
+      if(g){ l.codigosExtras = g.codigosExtras; if(String(l.codigo) === '201475') l.nomeEscolhido = nomeFibra; }
+    });
+  }catch(e){}
+  STATE.config.correcaoCodigos2411 = new Date().toISOString();
+  saveState();
+  return true;
+}
+
 function balRecarregarCatalogo(){
+  try{ correcaoCodigos2411(); }catch(e){ console.warn('[correção 24/11]', e); }
   TOTVS_IX = null;   /* o índice do TOTVS é refeito junto, senão fica velho */
   TOTVS_IX_FORN = null;
   confMigrarChavesSemCodigo();
@@ -64878,7 +64987,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '24/11/2026 16:00';
+const SISTEMA_VERSAO = '24/11/2026 19:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
