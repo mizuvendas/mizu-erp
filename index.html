@@ -18125,6 +18125,17 @@ function excluirOrcamento(id){
 // fluxo manual (converterOrcamentoEmVenda, com confirmação) quanto pelo
 // automático (ao aprovar o orçamento, na mudança de status).
 function executarConversaoOrcamentoEmVenda(orcamento){
+  /* TRAVA (24/11/2026): o #236 virou DUAS vendas com 0,35 s de diferença
+     (clique duplo no fechar venda) — baixou o estoque duas vezes e lançou
+     em dobro. Orçamento que já tem venda ativa não gera outra: devolve a
+     que existe. */
+  if(orcamento && orcamento.vendaGeradaId){
+    const ja = (STATE.vendas||[]).find(v=>v.id === orcamento.vendaGeradaId && v.status !== 'cancelada');
+    if(ja) return ja;
+  }
+  if(orcamento && (STATE.vendas||[]).some(v=>v.status !== 'cancelada' && v.orcamentoId === orcamento.id)){
+    return (STATE.vendas||[]).find(v=>v.status !== 'cancelada' && v.orcamentoId === orcamento.id);
+  }
   // Orçamentos salvos antes da "Forma de Pagamento" existir aqui não têm
   // condicaoPagamento gravada — mantém o padrão automático que já existia.
   const condicaoPagamento = orcamento.condicaoPagamento || (orcamento.pagadorId ? 'boleto' : 'vista');
@@ -18134,6 +18145,7 @@ function executarConversaoOrcamentoEmVenda(orcamento){
     clienteId: orcamento.clienteId,
     vendedor: orcamento.vendedor||'',
     referencia: `Orçamento ${fmtDate(orcamento.data)}`,
+    orcamentoId: orcamento.id,
     temComissao: orcamento.temComissao,
     pagadorId: orcamento.pagadorId,
     condicaoPagamento,
@@ -50947,6 +50959,14 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-24-b',
+    data: '2026-11-24',
+    titulo: 'Orçamento não vira venda duas vezes',
+    itens: [
+      'Trava: orçamento que já virou venda não gera outra — nem com clique duplo no "fechar venda", nem tentando emitir a nota de novo. O estoque não baixa em dobro.'
+    ]
+  },
+  {
     id: '2026-11-24-a',
     data: '2026-11-24',
     titulo: 'Nota fiscal: código do município do cliente',
@@ -64671,7 +64691,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '24/11/2026 11:00';
+const SISTEMA_VERSAO = '24/11/2026 12:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
