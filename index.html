@@ -46723,6 +46723,11 @@ function nfeConferir(orcamento, modelo){
         texto:`Cliente "${cliente.nome}": falta o endereço completo (CEP, UF, cidade e bairro). Está no bloco "Endereço estruturado" do cadastro.`,
         acao:()=>abrirFormCliente(cliente.id)
       });
+    }else if(!nfeIbgeConhecido(cliente)){
+      problemas.push({
+        texto:`Cliente "${cliente.nome}": não consegui descobrir o código do município (pelo CEP ${cliente.cep} nem pela cidade "${cliente.cidadeEstruturada||cliente.cidade}"/${cliente.uf||'?'}). Confira o CEP no cadastro — quando o CEP é achado, a cidade se preenche sozinha.`,
+        acao:()=>abrirFormCliente(cliente.id)
+      });
     }
   }
 
@@ -46945,6 +46950,48 @@ async function nfeCodigoIbge(cliente){
       }
     }catch(e){ console.warn('Não consegui buscar o código IBGE pelo CEP.', e); }
   }
+  /* SEM CEP (OU CEP QUE NÃO ACHOU): PELA CIDADE E UF, DIRETO NO IBGE
+     (24/11/2026 — a nota do #236 saiu sem código do município: "cMun ''") */
+  const ibgeCidade = await nfeCodigoIbgePelaCidade(cliente);
+  if(ibgeCidade){
+    cliente.codigoIbge = ibgeCidade;
+    saveState();
+    return ibgeCidade;
+  }
+  return '';
+}
+
+/* já sabemos o código do município deste cliente? (sem ir na internet) */
+function nfeIbgeConhecido(cliente){
+  if(!cliente) return false;
+  if(/^\d{7}$/.test(String(cliente.codigoIbge||''))) return true;
+  const cache = (STATE.config && STATE.config.nfeIbgeCache) || {};
+  const cep = String(cliente.cep||'').replace(/\D/g,'');
+  return !!(cep && cache[cep]);
+}
+
+function nfeNormCidade(s){
+  return String(s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^A-Za-z0-9 ]/g,' ').replace(/\s+/g,' ').trim().toUpperCase();
+}
+async function nfeCodigoIbgePelaCidade(cliente){
+  let nome = String(cliente.cidadeEstruturada || cliente.cidade || '').trim();
+  let uf = String(cliente.uf || '').trim().toUpperCase();
+  /* "Rio Verde/GO" ou "Rio Verde - GO" */
+  const m = nome.match(/^(.*?)\s*[\/\-]\s*([A-Za-z]{2})$/);
+  if(m){ nome = m[1]; if(!uf) uf = m[2].toUpperCase(); }
+  if(!nome || uf.length !== 2) return '';
+  const chave = nfeNormCidade(nome) + '|' + uf;
+  STATE.config.nfeIbgeCache = STATE.config.nfeIbgeCache || {};
+  if(STATE.config.nfeIbgeCache[chave]) return STATE.config.nfeIbgeCache[chave];
+  try{
+    const r = await fetch(`https://servicodados.ibge.gov.br/api/v1/localidades/estados/${uf}/municipios`);
+    const lista = await r.json();
+    const achou = (Array.isArray(lista) ? lista : []).find(x=>x && nfeNormCidade(x.nome) === nfeNormCidade(nome));
+    if(achou && achou.id){
+      STATE.config.nfeIbgeCache[chave] = String(achou.id);
+      return String(achou.id);
+    }
+  }catch(e){ console.warn('Não consegui buscar o código IBGE pela cidade.', e); }
   return '';
 }
 
@@ -47397,6 +47444,13 @@ async function nfeEmitir(origem, modelo, opcoes){
      que mostra, numa lista só, o que falta no cliente e nos produtos —
      com o botão de arrumar ali mesmo. Arrumou tudo, o botão de emitir
      acende e a emissão continua daqui de dentro. */
+  /* o código do município é descoberto ANTES da conferência (pelo CEP ou
+     pela cidade): se não achar, a conferência mostra, com o botão de
+     abrir o cadastro — em vez do erro "cMun" da Receita */
+  if(modelo !== NFE_MODELO.NFCE){
+    const cli = STATE.clientes.find(c=>c.id===orcamento.clienteId);
+    if(cli){ try{ await nfeCodigoIbge(cli); }catch(e){} }
+  }
   const problemas = nfeConferir(orcamento, modelo);
   if(problemas.length){
     nfeAbrirConferencia(orcamento, modelo, ()=>nfeEmitir(origem, modelo, opcoes));
@@ -50892,6 +50946,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
    ========================================================= */
 
 const NOVIDADES = [
+  {
+    id: '2026-11-24-a',
+    data: '2026-11-24',
+    titulo: 'Nota fiscal: código do município do cliente',
+    itens: [
+      'Se o CEP do cliente não traz o código do município, o sistema busca pela cidade e UF, direto no IBGE.',
+      'Se nem assim achar, a conferência avisa ANTES de mandar pra Receita, com o botão de abrir o cadastro — em vez do erro "cMun".'
+    ]
+  },
   {
     id: '2026-11-23-c',
     data: '2026-11-23',
@@ -64608,7 +64671,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '23/11/2026 17:30';
+const SISTEMA_VERSAO = '24/11/2026 11:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
