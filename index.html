@@ -12936,6 +12936,29 @@ function cancelarVenda(vendaId){
   );
 }
 
+/* NOTA CANCELADA = VENDA CANCELADA (24/11/2026, o jeito dela): os produtos
+   voltam ao estoque, a venda sai das contas e o orçamento fica "Nota
+   cancelada" — pra refazer, "Duplicar" cria um orçamento novo. */
+function nfeCancelarVendaDaNota(nota){
+  if(!nota) return null;
+  let venda = nota.vendaId ? (STATE.vendas||[]).find(v=>v.id === nota.vendaId) : null;
+  const orc = (nota.orcamentoId && (STATE.orcamentos||[]).find(o=>o.id === nota.orcamentoId))
+           || (venda && (STATE.orcamentos||[]).find(o=>o.vendaGeradaId === venda.id)) || null;
+  if(!venda && orc && orc.vendaGeradaId) venda = (STATE.vendas||[]).find(v=>v.id === orc.vendaGeradaId) || null;
+  if(venda && venda.status !== 'cancelada') cancelarVendaAgora(venda, 'nota nº ' + (nota.numero||'') + ' cancelada');
+  if(orc){
+    orc.status = 'cancelado';
+    if(venda) orc.vendaCanceladaId = venda.id;
+    orc.vendaGeradaId = null;
+    orc.notaCanceladaNumero = nota.numero || null;
+    orc.canceladoEm = new Date().toISOString();
+    saveState();
+    try{ renderListaOrcamentos(); }catch(e){}
+  }
+  showToast('Nota cancelada: a venda foi cancelada e os produtos voltaram ao estoque. Pra refazer, use "Duplicar" no orçamento.', 'success');
+  return venda;
+}
+
 /* Nota cancelada: pergunta se a venda dela também é cancelada. */
 function nfePerguntarCancelarVenda(venda, nota){
   if(!venda || venda.status === 'cancelada') return;
@@ -17738,6 +17761,8 @@ let orcAbaAtual = 'todos';
 function orcSituacao(o){
   if(!o) return 'aguardando';
   if(o.status==='pre_venda' || o.status==='rascunho') return 'rascunho';
+  /* nota cancelada = venda cancelada; pra refazer, Duplicar (24/11/2026) */
+  if(o.status==='cancelado') return 'cancelada';
   /* venda concluída: virou venda de verdade, ou a mercadoria já chegou
      no cliente. Os dois querem dizer "acabou". */
   if(o.status==='convertido' || o.vendaGeradaId) return 'concluida';
@@ -17754,7 +17779,8 @@ const ORC_SITUACAO_ROTULO = {
   aprovado:   { texto:'Aprovado',            cor:'background:#E7F4EE;color:#2E7D5B;' },
   entrega:    { texto:'Em entrega',          cor:'background:#E6F1FB;color:#185FA5;' },
   recusado:   { texto:'Recusado',            cor:'background:#FBEAE8;color:#C4483D;' },
-  concluida:  { texto:'Venda concluída',     cor:'background:#E7F4EE;color:#1F6246;' }
+  concluida:  { texto:'Venda concluída',     cor:'background:#E7F4EE;color:#1F6246;' },
+  cancelada:  { texto:'Nota cancelada',      cor:'background:#FBEAE8;color:#B02A37;' }
 };
 
 /* as que ela escolhe à mão no selinho da linha; rascunho e venda
@@ -18019,7 +18045,7 @@ function orcAcoesDaLinha(o, sit){
   }
 
   /* --- as outras abas: o passo natural + o resto escondido --- */
-  const jaConvertido = sit==='concluida';
+  const jaConvertido = sit==='concluida' || sit==='cancelada';
   return `
     <div>
       ${orcAcaoPrincipal(o, sit)}
@@ -18034,7 +18060,7 @@ function orcAcoesDaLinha(o, sit){
           ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button>
                     <button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>
                     <button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`
-                 : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${nfeBotoesOrcamento(o)}`}
+                 : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${sit==='cancelada' ? '' : nfeBotoesOrcamento(o)}`}
           ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer entrega</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
         </div>
@@ -18051,6 +18077,8 @@ function orcAcaoPrincipal(o, sit){
     return `<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 Gerar nota fiscal</button>`;
   if(sit==='entrega')
     return `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>`;
+  if(sit==='cancelada')
+    return `<button class="btn btn-sm btn-primary" onclick="duplicarOrcamento('${o.id}')" title="Cria um orçamento novo com os mesmos itens">📄 Duplicar e refazer</button>`;
   return '';
 }
 
@@ -18195,6 +18223,9 @@ function duplicarOrcamento(id){
     itens: original.itens.map(it=>({...it}))
   };
   delete copia.vendaGeradaId;
+  delete copia.vendaCanceladaId;
+  delete copia.notaCanceladaNumero;
+  delete copia.canceladoEm;
   if(original.desconto) copia.desconto = {...original.desconto};
   if(original.acrescimo) copia.acrescimo = {...original.acrescimo};
   STATE.orcamentos.push(copia);
@@ -46171,8 +46202,10 @@ async function nfeEnviarCancelamento(){
       /* NOTA CANCELADA, E A VENDA? (24/11/2026): cancelavam a nota, faziam um
          orçamento novo e a venda antiga ficava ativa — estoque baixado duas
          vezes (Athos, Calumério, SPE Bela Vista). Agora pergunta. */
-      const vendaDaNota = nossa.vendaId ? (STATE.vendas||[]).find(v=>v.id === nossa.vendaId && v.status !== 'cancelada') : null;
-      if(vendaDaNota) setTimeout(()=>nfePerguntarCancelarVenda(vendaDaNota, nossa), 700);
+      /* jeito dela (24/11/2026): nota cancelada = venda cancelada, sem
+         perguntar; o orçamento fica "Nota cancelada" e ela refaz pelo
+         Duplicar */
+      nfeCancelarVendaDaNota(nossa);
     }
 
     const xml = r.xml || null;
@@ -51095,6 +51128,15 @@ RENDERERS['sugestao-compra'] = renderSugestaoCompra;
 
 const NOVIDADES = [
   {
+    id: '2026-11-24-d',
+    data: '2026-11-24',
+    titulo: 'Cancelou a nota? A venda é cancelada junto',
+    itens: [
+      'Ao cancelar uma nota fiscal, a venda dela é cancelada sozinha: os produtos voltam ao estoque e o valor sai das contas.',
+      'O orçamento fica marcado "Nota cancelada" (em vermelho). Pra refazer, clique em "📄 Duplicar e refazer" — cria um orçamento novo com os mesmos itens.',
+      'Assim a venda nunca fica em dobro, e nenhum aparelho desfaz o cancelamento.'
+    ]
+  },  {
     id: '2026-11-24-c',
     data: '2026-11-24',
     titulo: 'Vendas repetidas: achar, cancelar e não deixar acontecer',
@@ -64836,7 +64878,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '24/11/2026 15:00';
+const SISTEMA_VERSAO = '24/11/2026 16:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -65889,6 +65931,17 @@ const ORC_PASSO_ENTREGA = { '':0, nenhum:0, separacao:1, em_rota:2, entregue:3, 
 function nuvemSemRetroceder(colecao, junto, a, b){
   if(colecao !== 'orcamentos' || !junto || !a || !b) return junto;
   const r = Object.assign({}, junto);
+  /* nota cancelada = venda cancelada (24/11/2026): o cancelamento é o fim
+     da linha — nenhuma cópia velha "Venda concluída" desfaz ele */
+  if(a.status === 'cancelado' || b.status === 'cancelado'){
+    const c = a.status === 'cancelado' ? a : b;
+    r.status = 'cancelado';
+    r.vendaGeradaId = null;
+    if(c.vendaCanceladaId) r.vendaCanceladaId = c.vendaCanceladaId;
+    if(c.notaCanceladaNumero) r.notaCanceladaNumero = c.notaCanceladaNumero;
+    if(c.canceladoEm) r.canceladoEm = c.canceladoEm;
+    return r;
+  }
   const pe = v=>ORC_PASSO_ENTREGA[String(v || '')] || 0;
   [a, b].forEach(x=>{
     if(pe(x.statusEntrega) > pe(r.statusEntrega)) r.statusEntrega = x.statusEntrega;
