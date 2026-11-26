@@ -21768,7 +21768,10 @@ function motoristaMarcarColeta(chavePonto, nome, feito){
     const o = (STATE.orcamentos||[]).find(x=>x.id === id);
     if(!o) return;
     const m = motoristaDoOrc(o);
-    if(feito) m.coletas[chavePonto + '|' + nome] = new Date().toISOString();
+    if(feito){
+      m.coletas[chavePonto + '|' + nome] = new Date().toISOString();
+      motoristaAvisoVisto('c|' + chavePonto + '|' + nome + '|' + m.coletas[chavePonto + '|' + nome]);
+    }
     else delete m.coletas[chavePonto + '|' + nome];
   });
   saveState();
@@ -21778,14 +21781,110 @@ function motoristaMarcarEntrega(orcamentoId, feito){
   const o = (STATE.orcamentos||[]).find(x=>x.id === orcamentoId);
   if(!o) return;
   const m = motoristaDoOrc(o);
+  let jaNoPainel = false;
   if(feito){
     m.entregueEm = new Date().toISOString();
     const rec = document.getElementById('mot-rec-' + orcamentoId);
     m.recebidoPor = rec ? rec.value.trim() : (m.recebidoPor || '');
+    /* 26/11/2026: "permita ele marcar que foi entregue e automaticamente já
+       marca aqui no meu painel também". Quando o pedido JÁ é venda (o caso
+       normal: a nota sai antes de ir pra rua), o entregue dele já vale como
+       o dela. Se ainda não é venda, NÃO converte no celular dele (estoque e
+       financeiro ficam com ela): aparece "falta virar venda" pra ela. */
+    if((o.status === 'convertido' || o.vendaGeradaId) && !['entregue','retirado'].includes(o.statusEntrega)){
+      o.statusEntrega = 'entregue';
+      m.confirmadoPeloMotorista = true;
+      jaNoPainel = true;
+    }
+    motoristaAvisoVisto('e|' + o.id + '|' + m.entregueEm);
   }else{ delete m.entregueEm; }
   saveState();
   renderMotorista();
-  if(feito) showToast('Entrega marcada. Já aparece pra loja.', 'success');
+  if(feito) showToast(jaNoPainel ? 'Entregue — já está marcado no painel da loja.' : 'Entrega marcada. Já aparece pra loja.', 'success');
+}
+
+/* =========================================================
+   AVISO PRA ELA A CADA COLETA / ENTREGA / PARADA (26/11/2026)
+   "a cada coleta que o entregador fizer, ou cada entrega, aparecer aqui
+    pra mim como uma notificação"
+   O que ele marca chega pela nuvem; aqui o sistema compara com o que este
+   aparelho já avisou (localStorage) e mostra uma notificação por cima de
+   qualquer tela. O que ele mesmo marca neste aparelho já nasce "visto"
+   (não avisa no celular dele). Na primeira vez, tudo o que já existe vira
+   visto sem avisar — não chega uma enxurrada de coisa velha.
+   ========================================================= */
+const MOT_AVISOS_CHAVE = 'mizu_motorista_avisados';
+function motoristaAvisosLer(){
+  try{ const v = JSON.parse(localStorage.getItem(MOT_AVISOS_CHAVE) || 'null'); return (v && typeof v === 'object') ? v : null; }catch(e){ return null; }
+}
+function motoristaAvisosGravar(v){
+  /* não acumula pra sempre: guarda só os dos últimos 7 dias */
+  const limite = Date.now() - 7*24*3600*1000;
+  Object.keys(v).forEach(k=>{ if(typeof v[k] === 'number' && v[k] < limite) delete v[k]; });
+  try{ localStorage.setItem(MOT_AVISOS_CHAVE, JSON.stringify(v)); }catch(e){}
+}
+function motoristaAvisoVisto(chave){
+  const v = motoristaAvisosLer() || {};
+  v[chave] = Date.now();
+  motoristaAvisosGravar(v);
+}
+/* tudo o que o motorista marcou, com uma chave única por marcação */
+function motoristaMarcacoes(){
+  const lista = [];
+  const nomePonto = {};
+  try{ (motoristaRoteiro() || []).forEach(p=>{ if(p.tipo === 'coleta') nomePonto[p.chave] = p.nome; }); }catch(e){}
+  (STATE.orcamentos||[]).forEach(o=>{
+    const m = o.motorista;
+    if(!m) return;
+    const c = (STATE.clientes||[]).find(x=>x.id === o.clienteId);
+    if(m.entregueEm){
+      lista.push({ chave: 'e|' + o.id + '|' + m.entregueEm, quando: m.entregueEm, tipo: 'entrega',
+        titulo: '🚚 Entregue', texto: (c ? c.nome : 'Cliente') + (m.recebidoPor ? ' · recebido por ' + m.recebidoPor : '') + ' · ' + motoristaHora(m.entregueEm)
+          + (['entregue','retirado'].includes(o.statusEntrega) ? '' : ' · falta virar venda — confirme na Logística') });
+    }
+    Object.keys(m.coletas || {}).forEach(k=>{
+      const quando = m.coletas[k];
+      if(!quando) return;
+      const i = k.lastIndexOf('|');
+      const ponto = k.slice(0, i), item = k.slice(i + 1);
+      /* o mesmo item pode servir a vários orçamentos: um aviso só */
+      lista.push({ chave: 'c|' + k + '|' + quando, quando, tipo: 'coleta',
+        titulo: '📦 Coletado', texto: (nomePonto[ponto] ? nomePonto[ponto] + ' · ' : '') + item + ' · ' + motoristaHora(quando) });
+    });
+  });
+  paradasAvulsas().forEach(p=>{
+    if(!p.feitaMotoristaEm) return;
+    lista.push({ chave: 'p|' + p.id + '|' + p.feitaMotoristaEm, quando: p.feitaMotoristaEm, tipo: 'parada',
+      titulo: '📍 Parada feita', texto: (p.nome || 'Parada') + ' · ' + motoristaHora(p.feitaMotoristaEm) });
+  });
+  const unicas = new Map();
+  lista.forEach(x=>{ if(!unicas.has(x.chave)) unicas.set(x.chave, x); });
+  return [...unicas.values()].sort((a, b)=>String(a.quando).localeCompare(String(b.quando)));
+}
+function motoristaAvisosConferir(){
+  const marcacoes = motoristaMarcacoes();
+  let vistos = motoristaAvisosLer();
+  if(!vistos){
+    /* primeira vez neste aparelho: o que já existe não vira aviso */
+    vistos = {};
+    marcacoes.forEach(x=>{ vistos[x.chave] = Date.now(); });
+    motoristaAvisosGravar(vistos);
+    return 0;
+  }
+  const recente = Date.now() - 12*3600*1000;
+  const novas = marcacoes.filter(x=>!vistos[x.chave]);
+  if(!novas.length) return 0;
+  novas.forEach(x=>{ vistos[x.chave] = Date.now(); });
+  motoristaAvisosGravar(vistos);
+  const mostrar = novas.filter(x=>{ const t = Date.parse(x.quando); return !isNaN(t) && t >= recente; });
+  const irPraLogistica = ()=>{ try{ navigateTo('logistica'); }catch(e){} };
+  mostrar.slice(-5).forEach(x=>{
+    mostrarNotificacaoGlobal(x.titulo, x.texto, x.tipo === 'entrega' ? 'success' : 'info', irPraLogistica);
+  });
+  if(mostrar.length > 5){
+    mostrarNotificacaoGlobal('📱 Motorista', `e mais ${mostrar.length - 5} marcação(ões) — veja na Logística`, 'info', irPraLogistica);
+  }
+  return mostrar.length;
 }
 function motoristaMarcarTarefa(paradaId, tarefaId){
   const parada = paradasAvulsas().find(p=>p.id === paradaId);
@@ -21799,6 +21898,7 @@ function motoristaMarcarParada(paradaId){
   const parada = paradasAvulsas().find(p=>p.id === paradaId);
   if(!parada) return;
   parada.feitaMotoristaEm = parada.feitaMotoristaEm ? '' : new Date().toISOString();
+  if(parada.feitaMotoristaEm) motoristaAvisoVisto('p|' + parada.id + '|' + parada.feitaMotoristaEm);
   saveState();
   renderMotorista();
 }
@@ -21962,7 +22062,7 @@ function motoristaRetornoHtml(){
     const nome = p.tipo === 'entrega' ? p.clienteNome : p.nome;
     const icone = p.tipo === 'coleta' ? '📦' : p.tipo === 'entrega' ? '🏠' : papelDaParada(p).icone;
     const confirmar = p.tipo === 'entrega' && s.feita && !s.confirmada
-      ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${escapeAttr(p.orcamentoId)}')">Confirmar entrega</button>` : '';
+      ? `<button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${escapeAttr(p.orcamentoId)}')">Falta virar venda · Confirmar</button>` : '';
     return `<div style="display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:7px 0;border-top:1px solid var(--border);font-size:13.5px;">
       <div><strong>${i+1}.</strong> ${icone} ${escapeHtml(nome)}
         <span style="margin-left:6px;color:${s.feita?'var(--positive)':(s.parcial?'var(--warning)':'var(--ink-faint)')};font-weight:${s.feita?700:400};">
@@ -21974,7 +22074,7 @@ function motoristaRetornoHtml(){
       <h3 style="margin:0;">📱 Retorno do motorista — ${feitas} de ${roteiro.length} parada(s)</h3>
       <span class="help-text" style="margin:0;">${r ? 'link enviado às ' + escapeHtml(motoristaHora(r.enviadoEm)) + ' · ' : ''}atualiza sozinho</span>
     </div>
-    <p class="help-text" style="margin:4px 0 6px;">O que ele marca no celular aparece aqui. "Entregue" dele não fecha a venda: confirme você, como sempre.</p>
+    <p class="help-text" style="margin:4px 0 6px;">O que ele marca no celular aparece aqui (e vira aviso na sua tela). Pedido que já é venda: o "Entregue" dele já marca entregue aqui. Se ainda não é venda, confirme você.</p>
     ${linhas}
   </div>`;
 }
@@ -65002,7 +65102,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '25/11/2026 10:00';
+const SISTEMA_VERSAO = '26/11/2026 09:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -66559,6 +66659,8 @@ function nuvemAplicar(linhas){
     nuvemGravarEspelho(espelho);
     nuvemAplicandoRemoto = true;
     try { saveState(); } finally { nuvemAplicandoRemoto = false; }
+    /* o que o motorista marcou no celular vira aviso aqui (26/11/2026) */
+    try{ motoristaAvisosConferir(); }catch(e){}
   }
   return mudou;
 }
