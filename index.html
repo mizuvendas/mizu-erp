@@ -36318,6 +36318,82 @@ function licPncpExtrasHtml(o){
   </div>`;
 }
 
+/* ARQUIVOS DO EDITAL DENTRO DO PROCESSO (26/11/2026)
+   "abrir o processo e aparecer a opção pra baixar os arquivos ou pra que
+    ele leia os arquivos, sem eu precisar baixar e enviar de novo".
+   Baixar = link do PNCP (o navegador baixa normal). Ler = o nosso servidor
+   da nota (Render) busca no PNCP — o PNCP manda o CORS duplicado e o
+   navegador não deixa buscar direto — e o arquivo entra no processo pelo
+   mesmo caminho de quando ela anexa (lê PDF, ZIP, planilha). */
+function licArquivosPncpProcessoHtml(l){
+  const arqs = l.arquivosPncp || [];
+  const temControle = !!licPedacosDoLink(l.numeroControlePNCP || l.linkPncp || '');
+  if(!arqs.length){
+    return temControle ? `<div class="lic-doc" style="margin-bottom:8px;"><div><b>📎 Arquivos do edital no PNCP</b>
+      <small>ainda não busquei a lista</small>
+      <button class="btn btn-sm" style="margin-top:6px;" onclick="licBuscarArquivosAgora('${l.id}')">🔎 Buscar a lista no PNCP</button></div></div>` : '';
+  }
+  const trazidos = new Set(l.arquivosPncpTrazidos || []);
+  const faltam = arqs.filter(a=>a.url && !trazidos.has(a.url)).length;
+  return `<div class="lic-doc" style="margin-bottom:8px;display:block;">
+    <b>📎 Arquivos do edital no PNCP (${arqs.length})</b>
+    <div style="display:flex;flex-direction:column;gap:3px;margin:6px 0;">
+      ${arqs.map(a=>`<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px;">
+        ${a.url ? `<a class="btn btn-sm" href="${escapeAttr(a.url)}" target="_blank" rel="noopener" title="Baixar do PNCP">⬇ Baixar</a>` : ''}
+        <span>${escapeHtml(a.titulo)}</span>
+        ${trazidos.has(a.url) ? '<span style="color:var(--positive);font-size:12px;">✓ já no processo</span>' : ''}
+      </div>`).join('')}
+    </div>
+    ${faltam ? `<button class="btn btn-sm btn-primary" onclick="licTrazerArquivosPncp('${l.id}')">📥 Trazer ${faltam === arqs.length ? 'os arquivos' : 'os que faltam'} do PNCP e ler</button>
+      <span class="help-text" style="margin-left:6px;">entram aqui como se você tivesse anexado · a 1ª vez do dia pode levar ~1 min</span>`
+      : '<span class="help-text">Todos já estão no processo.</span>'}
+  </div>`;
+}
+
+async function licBuscarArquivosAgora(id){
+  const l = licAchar(id); if(!l) return;
+  showToast('Buscando a lista no PNCP...', 'info');
+  await licBuscarExtrasPncp(l);
+  saveState(); renderPortalLicitacoes();
+  showToast((l.arquivosPncp||[]).length ? `${l.arquivosPncp.length} arquivo(s) no PNCP.` : 'O PNCP não tem arquivo nessa dispensa (ou não respondeu).', (l.arquivosPncp||[]).length ? 'success' : 'info');
+}
+
+/* pede o arquivo pro nosso servidor (que busca no PNCP) e devolve um File */
+async function licBaixarArquivoPncpPeloServidor(a){
+  const c = nfeCfg();
+  if(c.url && !c.token) c.token = await nfeChaveBuscarNaNuvem();
+  if(!c.url || !c.token) throw new Error('o servidor da nota fiscal não está configurado neste computador');
+  const r = await fetch(c.url + '/pncp-arquivo', { method:'POST',
+    headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer ' + c.token }, body: JSON.stringify({ url: a.url }) });
+  if(!r.ok){
+    const d = await r.json().catch(()=>({}));
+    throw new Error(d.erro || ('servidor respondeu ' + r.status));
+  }
+  let nome = r.headers.get('X-Nome-Arquivo');
+  try{ nome = nome ? decodeURIComponent(nome) : ''; }catch(e){}
+  if(!nome) nome = a.titulo || 'arquivo';
+  if(!/\.[a-z0-9]{2,4}$/i.test(nome)) nome += '.pdf';
+  const buf = await r.arrayBuffer();
+  return new File([buf], nome);
+}
+
+async function licTrazerArquivosPncp(id){
+  const l = licAchar(id); if(!l) return;
+  const trazidos = new Set(l.arquivosPncpTrazidos || []);
+  const lista = (l.arquivosPncp || []).filter(a=>a.url && !trazidos.has(a.url));
+  if(!lista.length){ showToast('Todos os arquivos já estão no processo.', 'info'); return; }
+  const files = [], falhas = [];
+  for(let i = 0; i < lista.length; i++){
+    showToast(`Trazendo do PNCP ${i+1} de ${lista.length}: ${lista[i].titulo}`, 'info');
+    try{ files.push(await licBaixarArquivoPncpPeloServidor(lista[i])); trazidos.add(lista[i].url); }
+    catch(e){ falhas.push(`${lista[i].titulo} (${e.message})`); }
+  }
+  l.arquivosPncpTrazidos = [...trazidos];
+  if(files.length) await licAnexar(l.id, files);
+  else { saveState(); renderPortalLicitacoes(); }
+  if(falhas.length) showToast(`Não consegui trazer ${falhas.length}: ${falhas.join('; ').slice(0,220)}. Use o "⬇ Baixar" e solte aqui.`, 'error');
+}
+
 /* "sem descrição" = veio só com o link (PNCP fora do ar, ou a dispensa
    ainda não estava na consulta) */
 function licIncompleta(o){
@@ -36482,6 +36558,7 @@ async function licTrazerPorLink(){
   licTodas().forEach(o=>jaTem.add(licChaveOportunidade(o)));
 
   const linhasRes = [];
+  const trazidasAgora = [];
   let novas = 0;
   for(const linha of linhas){
     const p = licPedacosDoLink(linha);
@@ -36565,10 +36642,21 @@ async function licTrazerPorLink(){
     jaTem.add(chave);
     STATE.licitacoesRevisao.push(o);
     novas++;
+    if(!aviso) trazidasAgora.push(o.id); else trazidasAgora.push(null);
     linhasRes.push(`<div class="lic-doc ${aviso?'aviso':'ok'}"><div>
       <b>${escapeHtml((o.objeto||'').slice(0,70))}</b>
       <small>${escapeHtml(o.orgao||'')}${o.municipioNome?` · ${escapeHtml(o.municipioNome)}/${escapeHtml(o.uf||'')}`:''}${o.valorEstimado>0?` · ${fmtMoney(o.valorEstimado)}`:''}</small>
-      ${aviso?`<small style="color:var(--warning);">${escapeHtml(aviso)}</small>`:''}</div></div>`);
+      ${aviso?`<small style="color:var(--warning);">${escapeHtml(aviso)}</small>`:''}
+      <button class="btn btn-sm" style="margin-top:6px;" onclick="licLevarAte('${o.id}','oportunidades')">Abrir ela →</button></div></div>`);
+  }
+  /* 26/11/2026: "adicionei e tive que rolar muitos itens pra encontrar".
+     Trouxe UMA: já leva até ela (a triagem fica só com ela na tela). */
+  if(trazidasAgora.length === 1 && trazidasAgora[0] && linhas.length === 1){
+    saveState();
+    licLevarAte(trazidasAgora[0], 'oportunidades');
+    showToast('Trouxe e deixei ela na tela pra você abrir e analisar.', 'success');
+    ta.value = '';
+    return;
   }
 
   if(novas){
@@ -37749,6 +37837,11 @@ function licTriar(id, interesse, emLote){
     if(quem && !o.captadoPor){ o.captadoPor = quem; o.captadoEm = new Date().toISOString(); }
     licRegistrar(o, 'Marcada como "tenho interesse"' + (quem?` por ${quem}`:'') + ' — foi para análise.');
     STATE.licitacoes.push(o);
+    /* 26/11/2026: veio do arquivo do PNCP? Busca sozinho os itens e os
+       arquivos do edital — só das que interessam, não das 68 da planilha */
+    if(!o.arquivosPncp && !o.itensPncp && licPedacosDoLink(o.numeroControlePNCP || o.linkPncp || '')){
+      licBuscarExtrasPncp(o).then(mudou=>{ if(mudou){ saveState(); try{ renderPortalLicitacoes(); }catch(e){} } }).catch(()=>{});
+    }
   }else{
     licDescartadas().push(licChaveOportunidade(o));
     licParaLixeira(o, 'descartada na triagem');
@@ -38452,12 +38545,29 @@ function licOrdenarLista(lista){
 
 let licFiltroCaptou = '';   /* '' = todas */
 
+/* 26/11/2026: "em análise tenha opção de procurar a dispensa também" */
+let licBuscaAnalise = '';
+function licCasaBuscaAnalise(l){
+  const q = navBuscaNormal(licBuscaAnalise);
+  if(!q) return true;
+  const alvo = navBuscaNormal([l.objeto, l.orgao, l.unidade, l.municipioNome, l.uf, l.numero, l.numeroControlePNCP, l.captadoPor].join(' '));
+  return q.split(/\s+/).every(p=>alvo.includes(p));
+}
+function licBuscarNaAnalise(v){
+  licBuscaAnalise = v;
+  clearTimeout(licBuscarNaAnalise._t);
+  licBuscarNaAnalise._t = setTimeout(()=>{
+    renderPortalLicitacoes();
+    const n = document.getElementById('lic-busca-analise');
+    if(n){ n.focus(); n.setSelectionRange(n.value.length, n.value.length); }
+  }, 250);
+}
 function licPainelAnalise(){
   const todas = licPorEtapa(['analise']);
   const captadores = [...new Set(todas.map(l=>l.captadoPor).filter(Boolean))].sort();
   if(licFiltroCaptou && !captadores.includes(licFiltroCaptou)) licFiltroCaptou = '';
   const lista = licOrdenarLista(
-    licFiltroCaptou ? todas.filter(l=>l.captadoPor===licFiltroCaptou) : todas);
+    (licFiltroCaptou ? todas.filter(l=>l.captadoPor===licFiltroCaptou) : todas).filter(licCasaBuscaAnalise));
   return `
     <div class="lic-topo">
       <div>
@@ -38478,7 +38588,13 @@ function licPainelAnalise(){
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
       </div>
     </div>
-    ${lista.length===0 ? '<div class="card"><div class="lic-vazio">Nada em análise. Marque uma oportunidade com "tenho interesse".</div></div>'
+    ${todas.length ? `<div class="card" style="padding:10px 14px;">
+      <input type="search" id="lic-busca-analise" value="${escapeAttr(licBuscaAnalise)}" oninput="licBuscarNaAnalise(this.value)"
+        placeholder="🔎 Procurar: órgão, cidade, objeto ou nº da dispensa"
+        style="width:100%;box-sizing:border-box;padding:9px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);font:inherit;font-size:13.5px;">
+      ${licBuscaAnalise ? `<div class="help-text" style="margin:6px 0 0;">${lista.length} de ${todas.length} · <a href="#" onclick="licBuscaAnalise='';renderPortalLicitacoes();return false;">limpar</a></div>` : ''}
+    </div>` : ''}
+    ${lista.length===0 ? (licBuscaAnalise && todas.length ? '<div class="card"><div class="lic-vazio">Nenhuma dispensa em análise com isso. Confira o que digitou.</div></div>' : '<div class="card"><div class="lic-vazio">Nada em análise. Marque uma oportunidade com "tenho interesse".</div></div>')
       : lista.map(l=>{
         const p = licPrazoInfo(l);
         /* Três estados, de relance: a análise já voltou da IA, o edital
@@ -39729,6 +39845,7 @@ function licTelaProcesso(l){
         : (l.semEdital ? 'Guarde aqui a planilha ou o print que eles mandaram'
                        : 'Baixe tudo no PNCP e solte aqui — PDF, planilha ou .zip'),
       `
+      ${licArquivosPncpProcessoHtml(l)}
       <div class="lic-solta ${arqs.length?'compacta':''}" id="lic-solta">
         ${arqs.length
           ? `<span>Arraste mais arquivos aqui</span>
@@ -65356,7 +65473,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 11:00';
+const SISTEMA_VERSAO = '26/11/2026 13:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
