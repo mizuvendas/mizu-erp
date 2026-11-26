@@ -550,15 +550,33 @@ table.data-table{ width:100%; font-size:13px; }
    pra não poluir a tabela com muitos botões lado a lado. Usa <details> nativo
    (expande a própria linha em vez de flutuar por cima, pra não ser cortado
    pelo overflow:auto do .table-wrap). */
-.acoes-ver-mais{ margin-top:2px; }
+/* 26/11/2026: o "Ver mais" virou uma JANELINHA ao lado da linha (um botão
+   embaixo do outro, com o emoji na frente); clicou fora, fecha. A linha
+   não cresce mais. Fica "fixed" (posicionada por orcVerMaisPosicionar) pra
+   não ser cortada pelo overflow do .table-wrap. */
+.acoes-ver-mais{ margin-top:2px; display:inline-block; }
 .acoes-ver-mais summary{
   cursor:pointer; font-size:12px; color:var(--primary); font-weight:600;
   list-style:none; user-select:none; display:inline-block;
+  padding:2px 8px; border-radius:6px; border:1px solid transparent;
 }
+.acoes-ver-mais summary:hover{ border-color:var(--primary); }
+.acoes-ver-mais[open] summary{ border-color:var(--primary); background:var(--primary-soft); }
 .acoes-ver-mais summary::-webkit-details-marker{ display:none; }
-.acoes-ver-mais summary::before{ content:'▸ Ver mais'; }
-.acoes-ver-mais[open] summary::before{ content:'▾ Ver menos'; }
-.acoes-ver-mais-lista{ display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+.acoes-ver-mais summary::before{ content:'⋯ Ver mais'; }
+.acoes-ver-mais-lista{ display:flex; flex-direction:column; gap:2px; position:fixed; z-index:1200;
+  background:#fff; border:1px solid var(--border); border-radius:10px; padding:6px; min-width:210px;
+  box-shadow:0 10px 30px rgba(0,0,0,.16); white-space:nowrap; }
+.acoes-ver-mais-lista .btn{ width:100%; justify-content:flex-start; text-align:left; border:none;
+  background:transparent; box-shadow:none; padding:7px 10px; font-size:13px; border-radius:6px; }
+.acoes-ver-mais-lista .btn:hover{ background:var(--primary-soft); }
+.acoes-ver-mais-lista .btn.btn-danger{ color:var(--negative); background:transparent; margin-top:3px;
+  border-top:1px solid var(--border); border-radius:0 0 6px 6px; }
+.acoes-ver-mais-lista .btn.btn-danger:hover{ background:#FBEAE8; }
+/* a lista de orçamentos mais enxuta, pra caber em qualquer tela */
+#orc-tabela thead th, #orc-tabela tbody td{ padding:7px 8px; }
+#orc-tabela td.orc-cli{ max-width:min(340px, 26vw); overflow:hidden; text-overflow:ellipsis; }
+#orc-tabela th.centro, #orc-tabela td.centro{ text-align:center; }
 
 .badge{
   display:inline-block;
@@ -13501,7 +13519,7 @@ let ORC_ESC = null;
 function orcEscNovo(){
   return {
     id: null, numero: proximoNumeroOrcamento(), clienteId: '', data: todayISO(), validadeDias: 7,
-    vendedor: '', prazoEntrega: prazoEntregaPadrao(), prazoEnvio: '', responsavel: '', cargo: '', numeroPesquisa: '',
+    vendedor: orcVendedorPadrao(), prazoEntrega: prazoEntregaPadrao(), prazoEnvio: '', responsavel: '', cargo: '', numeroPesquisa: '',
     observacoes: '', itens: [], pctTodos: '',
     freteFornecedor: 0, freteCliente: 0,
     comissaoPct: ORC_ESC_COMISSAO_PADRAO, impostoPct: ORC_ESC_IMPOSTO_PADRAO
@@ -15547,7 +15565,7 @@ function renderOrcamentos(){
         <button class="btn btn-sm" onclick="abrirAnaliseST()" title="Descobrir, pelas notas dos seus fornecedores, quais produtos têm substituição tributária">📥 Notas de Compra (ST)</button>
       </div>
       <div class="table-wrap">
-        <table class="data-table">
+        <table class="data-table" id="orc-tabela">
           <thead><tr id="orc-lista-cabecalho"></tr></thead>
           <tbody id="orc-lista-body"></tbody>
         </table>
@@ -16130,6 +16148,10 @@ function renderOrcamentos(){
     document.getElementById('orc-crediario-help').innerHTML = `💡 ${n}x de ${fmtMoney(valorParcela)}, vencendo todo dia ${dia}, começando no mês seguinte à data do orçamento.`;
   }
   document.getElementById('orc-tem-comissao').addEventListener('change', atualizarResumoOrcamento);
+  /* orçamento novo: já vem com o vendedor de quem está logado (26/11/2026);
+     rascunho e "Editar" põem o vendedor deles por cima disso */
+  (()=>{ const sel = document.getElementById('orc-vendedor'); const padrao = orcVendedorPadrao();
+    if(sel && !sel.value.trim() && padrao){ definirVendedor('orc-vendedor', padrao); orcVendedorMudou(); } })();
   document.getElementById('orc-acrescimo-valor').addEventListener('input', atualizarResumoOrcamento);
   document.getElementById('orc-acrescimo-valor').addEventListener('input', atualizarResumoBoletoOrcamento);
   document.getElementById('orc-desconto-tipo').addEventListener('change', (e)=>{
@@ -17922,6 +17944,55 @@ function orcFiltroVendedorHtml(){
   </div>`;
 }
 
+/* JANELINHA DO "VER MAIS" (26/11/2026): abre ao lado do botão, uma só por
+   vez; clicou fora, rolou a tela ou clicou num botão dela, fecha. */
+function orcVerMaisPosicionar(det){
+  const lista = det.querySelector('.acoes-ver-mais-lista');
+  const sum = det.querySelector('summary');
+  if(!lista || !sum) return;
+  const r = sum.getBoundingClientRect();
+  lista.style.visibility = 'hidden'; lista.style.left = '0px'; lista.style.top = '0px';
+  const lw = lista.offsetWidth, lh = lista.offsetHeight;
+  /* de lado: à esquerda do botão (a coluna Ações é a última); se não couber, embaixo */
+  let left = r.left - lw - 8;
+  if(left < 8) left = Math.max(8, Math.min(window.innerWidth - lw - 8, r.right - lw));
+  let top = r.top - 8;
+  if(top + lh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - lh - 8);
+  lista.style.left = left + 'px'; lista.style.top = top + 'px'; lista.style.visibility = '';
+}
+function orcVerMaisFecharTodos(exceto){
+  document.querySelectorAll('details.acoes-ver-mais[open]').forEach(d=>{ if(d !== exceto) d.open = false; });
+}
+document.addEventListener('toggle', ev=>{
+  const d = ev.target;
+  if(!(d instanceof HTMLElement) || !d.classList || !d.classList.contains('acoes-ver-mais') || !d.open) return;
+  orcVerMaisFecharTodos(d);
+  orcVerMaisPosicionar(d);
+}, true);
+document.addEventListener('click', ev=>{
+  const dentro = ev.target.closest && ev.target.closest('details.acoes-ver-mais');
+  if(!dentro){ orcVerMaisFecharTodos(null); return; }
+  /* clicou num botão da janelinha: faz a ação e fecha */
+  if(ev.target.closest('.acoes-ver-mais-lista button')) setTimeout(()=>{ dentro.open = false; }, 0);
+}, true);
+window.addEventListener('scroll', ()=>orcVerMaisFecharTodos(null), true);
+window.addEventListener('resize', ()=>orcVerMaisFecharTodos(null));
+
+/* VENDEDOR PADRÃO DE CADA ACESSO (26/11/2026): "o Geraldo já vem com o do
+   Geraldo, o Neto com o do Neto" — quem está logado já vem escolhido no
+   orçamento novo; dá pra trocar. Sem login reconhecido, fica em branco. */
+function orcVendedorPadrao(){
+  let eu = '';
+  try{ eu = String((typeof licQuemSouEu === 'function' && licQuemSouEu()) || '').trim().toUpperCase(); }catch(e){}
+  if(!eu) return '';
+  const lista = (typeof getVendedoresUnicos === 'function' ? getVendedoresUnicos() : VENDEDORES_PADRAO);
+  const semAcento = t => String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().trim();
+  const e = semAcento(eu);
+  return lista.find(v=>semAcento(v) === e)
+      || lista.find(v=>e.split(/\s+/).includes(semAcento(v)) || e.startsWith(semAcento(v)))
+      || '';
+}
+
 /* contagem do prazo de envio, em tempo real */
 function orcDataHoraCurta(iso){
   const d = new Date(iso);
@@ -18177,7 +18248,7 @@ function renderListaOrcamentos(){
     if(orcAbaAtual==='entrega') cols.push('Quando sai');
     cols.push('Observação','Ações');
     cabecalho.innerHTML = cols.map((c,i)=>
-      `<th${i===4?' class="num"':''}>${escapeHtml(c)}</th>`).join('');
+      `<th${i===4?' class="num"':(c==='Status'?' class="centro"':'')}>${escapeHtml(c)}</th>`).join('');
   }
 
   const busca = normalizarBusca((document.getElementById('orc-lista-busca')||{}).value || '');
@@ -18253,10 +18324,10 @@ function renderListaOrcamentos(){
       <tr style="${corVend ? `box-shadow:inset 4px 0 0 ${corVend};` : ''}">
         <td>${o.numero!=null ? '#'+escapeHtml(String(o.numero)) : '—'}</td>
         <td>${fmtDate(o.data)}</td>
-        <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
+        <td class="orc-cli" title="${escapeAttr(cliente?cliente.nome:'')}">${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
         <td>${o.vendedor ? `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:${corVend||'#888'};">${escapeHtml(o.vendedor)}</span>` : '<span style="color:var(--ink-faint);">—</span>'}</td>
         <td class="num">${fmtMoney(c.bruto)}</td>
-        <td>${celulaStatus}</td>
+        <td class="centro">${celulaStatus}</td>
         ${mostraQuandoSai ? `<td>
           <select onchange="orcDefinirQuandoSai('${o.id}', this.value)" style="padding:4px 6px;font-size:12px;border-radius:6px;${quando.urgente?'background:#FBF0DC;color:#8A5A10;font-weight:600;':''}">
             <option value="">${escapeHtml(quando.texto)}</option>
@@ -18320,7 +18391,7 @@ function orcAcoesDaLinha(o, sit){
         <div class="acoes-ver-mais-lista">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
           <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
-          <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
+          <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">📋 Ver os itens</button>
           ${o.escolar && o.emailEnvio ? `<button class="btn btn-sm" onclick="orcVerEmail('${o.id}')" title="${escapeAttr(o.emailEnvio)}">✉️ E-mail</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
           <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
@@ -18329,7 +18400,7 @@ function orcAcoesDaLinha(o, sit){
                     <button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`
                  : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${sit==='cancelada' ? '' : nfeBotoesOrcamento(o)}`}
           ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer entrega</button>` : ''}
-          ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">Excluir</button>` : ''}
+          ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">🗑️ Excluir</button>` : ''}
         </div>
       </details>
     </div>`;
@@ -36325,7 +36396,8 @@ function licDescartadas(){
    ========================================================= */
 const LIC_NOMES_USUARIO = {
   'mizuvendas':   'GILBERTO',
-  'mizuvendas01': 'NETO'
+  'mizuvendas01': 'NETO',
+  'geraldomine2': 'GERALDO'
 };
 
 function licFiltrarCaptou(quem){
@@ -65632,7 +65704,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 17:00';
+const SISTEMA_VERSAO = '26/11/2026 18:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
