@@ -18379,6 +18379,8 @@ function orcAcoesDaLinha(o, sit){
   }
   if(sit==='entrega'){
     extras.push(`<button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na loja</button>`);
+    /* 26/11/2026: "permitir imprimir controle de entrega também" em Em entrega */
+    extras.push(`<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`);
   }
   const jaConvertido = sit==='concluida' || sit==='cancelada';
   /* "pode esconder tudo, deixar apenas Ver mais" (26/11/2026): o botão
@@ -65718,7 +65720,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 19:00';
+const SISTEMA_VERSAO = '26/11/2026 20:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
