@@ -4,6 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mizu Materiais de Limpeza — Painel de Gestão</title>
+<!-- 26/11/2026: ícone da Mizu na aba e "instalar como aplicativo" (26/11/2026) -->
+<link rel="icon" type="image/png" href="icone-192.png">
+<link rel="apple-touch-icon" href="icone-192.png">
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#16323C">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Mizu ERP">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
@@ -1296,10 +1303,39 @@ body.orc-gaveta-travada{ overflow:hidden; }
     <!-- BUSCA RÁPIDA GERAL — fica visível em qualquer tela, fora das
          seções de página, pra achar produto/cliente/orçamento sem precisar
          trocar de aba primeiro -->
+    <div class="topo-linha">
     <div class="busca-global-wrap combo-wrap">
       <input type="text" id="busca-global-input" placeholder="🔍 Busca rápida — produto, cliente ou orçamento...">
       <div class="combo-dropdown" id="busca-global-dropdown"></div>
     </div>
+    <!-- 26/11/2026: sugestões de melhoria (print + marcação + áudio) -->
+    <div id="sug-botoes">
+      <button type="button" class="btn btn-sm" onclick="sugNova()" title="Tira o print desta tela pra você marcar o que quer mudar">📸 Sugerir melhoria</button>
+      <button type="button" class="btn btn-sm" onclick="navigateTo('sugestoes')" title="Ver as sugestões de todo mundo">💡 Sugestões<span class="sug-badge" id="sug-badge" style="display:none;"></span></button>
+    </div>
+    </div>
+
+    <!-- ============ SUGESTÕES (26/11/2026) ============ -->
+    <section class="page" id="page-sugestoes">
+      <div class="page-header">
+        <div>
+          <h2>💡 Sugestões de melhoria</h2>
+          <p class="subtitle">O que a equipe quer que mude no sistema — com print, marcação e áudio</p>
+        </div>
+      </div>
+      <div id="sugestoes-content"></div>
+    </section>
+
+    <!-- ============ RELATÓRIOS (26/11/2026) ============ -->
+    <section class="page" id="page-relatorios">
+      <div class="page-header">
+        <div>
+          <h2>📈 Relatórios</h2>
+          <p class="subtitle">Escolha o relatório</p>
+        </div>
+      </div>
+      <div id="relatorios-content"></div>
+    </section>
 
     <!-- ============ DASHBOARD ============ -->
     <section class="page active" id="page-dashboard">
@@ -2845,26 +2881,7 @@ document.querySelectorAll('.nav-item').forEach(item=>{
    Licitações e Proposta de Licitação. Enter abre a primeira; Esc limpa.
    Não mostra o que a permissão do usuário esconde. Sem acento conta igual. */
 function navBuscaNormal(t){ return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
-function navBuscaFiltrar(texto){
-  const q = navBuscaNormal(texto);
-  const itens = [...document.querySelectorAll('.sidebar .nav-item[data-page]')];
-  const visiveis = [];
-  itens.forEach(a=>{
-    const casa = !q || navBuscaNormal(a.textContent).includes(q);
-    a.classList.toggle('nav-filtro-oculto', !casa);
-    if(casa && !a.hidden && a.style.display !== 'none') visiveis.push(a);
-  });
-  /* título de seção some quando nada dela aparece */
-  document.querySelectorAll('.sidebar .nav-section-label').forEach(lbl=>{
-    let el = lbl.nextElementSibling, algum = false;
-    while(el && !el.classList.contains('nav-section-label') && !el.classList.contains('sidebar-footer')){
-      if(el.matches && el.matches('.nav-item[data-page]') && !el.classList.contains('nav-filtro-oculto') && !el.hidden) algum = true;
-      el = el.nextElementSibling;
-    }
-    lbl.classList.toggle('nav-filtro-oculto', !!q && !algum);
-  });
-  return visiveis;
-}
+/* navBuscaFiltrar: refeito no bloco do MENU NOVO (26/11/2026) */
 function navBuscaIniciar(){
   const campo = document.getElementById('nav-busca');
   if(!campo || campo.dataset.ligado) return;
@@ -2909,12 +2926,1057 @@ function navigateTo(page){
   try{ document.body.classList.toggle('bal-foco',
          (page === 'balanco' || page === 'motorista') && typeof balEhCelular === 'function' && balEhCelular()); }catch(e){}
   RENDERERS[page] && RENDERERS[page]();
+  if(typeof menuDepoisDeNavegar === 'function') menuDepoisDeNavegar(page);
   /* trocar de tela nunca pode deixar a rolagem trancada atrás */
   if(typeof orcSoltarRolagemSeFechou === 'function') orcSoltarRolagemSeFechou();
   if(typeof revisarTabelasDaTela === 'function') setTimeout(revisarTabelasDaTela, 60);
 }
 
 const RENDERERS = {}; // preenchido nas próximas partes
+
+/* =========================================================
+   MENU NOVO (26/11/2026)
+   "O menu está ficando muito sobrecarregado" — eram 33 itens. Agora
+   são ~15: o que é parecido virou ABA dentro da mesma tela (Estoque ·
+   Conferência · Balanço), os 8 relatórios viraram uma tela de cartões,
+   Financeiro e Mais nascem fechados, e cada pessoa fixa seus ⭐
+   favoritos no topo.
+   NENHUMA tela sumiu: os <a.nav-item data-page> continuam todos no DOM
+   (a permissão por menu e o "Usuários" dependem deles) — os que viraram
+   aba só ficam escondidos (.nav-sub) e aparecem quando se procura no
+   menu.
+   ========================================================= */
+const MENU_RELATORIOS = ['analise-vendas','vendas-cliente','sugestao-compra','imposto-simples',
+  'saude-margem','auditoria','rentabilidade-canal','historico-precos'];
+const MENU_GRUPOS = [
+  {sec:'Dia a dia', itens:[
+    {id:'g-dash',  ic:'📊', rot:'Dashboard',  membros:['dashboard','lembretes']},
+    {id:'orcamentos'},
+    {id:'g-log',   ic:'🚚', rot:'Logística',  membros:['logistica','motorista']},
+    {id:'g-lic',   ic:'🏛️', rot:'Licitações', membros:['licitacoes','proposta-licitacao']}
+  ]},
+  {sec:'Cadastros', itens:[
+    {id:'clientes'}, {id:'produtos'},
+    {id:'g-forn',  ic:'🏭', rot:'Fornecedores', membros:['fornecedores','locais-compra']}
+  ]},
+  {sec:'Estoque', itens:[
+    {id:'g-notas', ic:'📥', rot:'Notas de compra', membros:['entrada-nota','distribuicao']},
+    {id:'g-est',   ic:'📦', rot:'Estoque', membros:['estoque','conferencia','balanco']}
+  ]},
+  {sec:'Financeiro', fechado:true, itens:[
+    {id:'caixa'},
+    {id:'g-contas',  ic:'💳', rot:'Contas',  membros:['despesas','receber']},
+    {id:'g-acertos', ic:'💵', rot:'Acertos', membros:['repasses','haver','vale']},
+    {id:'fechamento-mes'}
+  ]},
+  {sec:'Mais', fechado:true, itens:[
+    {id:'g-rel', ic:'📈', rot:'Relatórios', hub:true, membros:['relatorios'].concat(MENU_RELATORIOS)},
+    {id:'g-sis', ic:'⚙️', rot:'Sistema', membros:['armazenamento','usuarios']}
+  ]}
+];
+const MENU_ABA_ROTULO = {
+  dashboard:'📊 Painel', lembretes:'📌 Lembretes',
+  logistica:'🚚 Logística', motorista:'📱 Motorista',
+  licitacoes:'🏛️ Licitações', 'proposta-licitacao':'⚖️ Proposta de licitação',
+  fornecedores:'🏭 Fornecedores', 'locais-compra':'📍 Locais de compra',
+  'entrada-nota':'📥 Entrada de nota', distribuicao:'📨 Notas na Receita',
+  estoque:'📊 Estoque', conferencia:'📋 Conferência', balanco:'📦 Balanço',
+  despesas:'💳 A pagar', receber:'💰 A receber',
+  repasses:'🔁 Repasses', haver:'💵 Haver de clientes', vale:'🎫 Vale de funcionários',
+  armazenamento:'💾 Armazenamento', usuarios:'👥 Usuários'
+};
+const MENU_REL_DESC = {
+  'analise-vendas':'Quanto vendeu, por período, produto e vendedor',
+  'vendas-cliente':'Quem compra mais e quem sumiu',
+  'sugestao-compra':'O que está acabando e quanto comprar',
+  'imposto-simples':'Imposto do mês e faixa do Simples',
+  'saude-margem':'Produtos vendidos com margem baixa',
+  'auditoria':'Quem mexeu em quê, e quando',
+  'rentabilidade-canal':'Lucro por canal: balcão, entrega, licitação',
+  'historico-precos':'Como o preço de compra mudou'
+};
+
+function menuNav(p){ return document.querySelector('.sidebar .nav-item[data-page="'+p+'"]'); }
+function menuItem(id){
+  for(const s of MENU_GRUPOS) for(const it of s.itens) if(it.id === id) return it;
+  return null;
+}
+function menuGrupoDaPagina(page){
+  for(const s of MENU_GRUPOS) for(const it of s.itens){
+    if(it.membros && it.membros.indexOf(page) >= 0) return it;
+  }
+  return null;
+}
+function menuPodeVer(p){
+  if(p === 'relatorios') return MENU_RELATORIOS.some(r=>menuPodeVer(r));
+  const a = menuNav(p);
+  return !!a && !a.hidden;
+}
+function menuMembrosVisiveis(gid){
+  const it = menuItem(gid);
+  return it ? it.membros.filter(menuPodeVer) : [];
+}
+
+function menuEstilo(){
+  if(document.getElementById('menu-novo-estilo')) return;
+  const s = document.createElement('style'); s.id = 'menu-novo-estilo';
+  s.textContent = `
+.sidebar .nav-sub{display:none;}
+.sidebar .nav-fora{display:none !important;}
+.sidebar.menu-buscando .nav-sub:not(.nav-filtro-oculto):not([hidden]):not(.nav-fora){display:flex;padding-left:30px;}
+.sidebar .menu-sec{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:#7F949C;padding:12px 20px 4px;cursor:pointer;user-select:none;font-weight:700;}
+.sidebar .menu-sec:hover{color:#fff;}
+.sidebar .menu-sec-seta{transition:transform .15s;font-size:11px;}
+.sidebar .menu-sec.fechado .menu-sec-seta{transform:rotate(-90deg);}
+.sidebar .menu-sec-corpo.fechado{display:none;}
+.sidebar.menu-buscando .menu-sec-corpo.fechado{display:block;}
+.sidebar.menu-buscando #menu-favoritos{display:none;}
+.sidebar .menu-fav-cab{cursor:default;color:#F0C27A;}
+.sidebar .menu-estrela{margin-left:auto;opacity:0;font-size:13px;padding:0 2px;cursor:pointer;color:#F0C27A;line-height:1;}
+.sidebar .nav-badge ~ .menu-estrela{margin-left:6px;}
+.sidebar .nav-badge[style*="display: none"] ~ .menu-estrela,.sidebar .nav-badge[style*="display:none"] ~ .menu-estrela{margin-left:auto;}
+.sidebar .nav-item:hover .menu-estrela,.sidebar .menu-estrela.on{opacity:1;}
+@media (hover:none){ .sidebar .menu-estrela{opacity:.5;} }
+.menu-abas{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px;padding:4px;background:#E9EEF1;border-radius:10px;width:fit-content;max-width:100%;}
+.menu-abas button{border:0;background:transparent;padding:7px 14px;border-radius:8px;font:inherit;font-size:13px;cursor:pointer;color:var(--ink-soft,#55666d);display:flex;align-items:center;gap:4px;}
+.menu-abas button:hover{background:rgba(255,255,255,.6);}
+.menu-abas button.on{background:#fff;color:var(--ink,#1d2b30);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.12);}
+.menu-abas .nav-badge{margin-left:4px;}
+.rel-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px;}
+.rel-card{background:#fff;border:1px solid var(--border,#dde3e6);border-radius:12px;padding:16px;cursor:pointer;display:flex;gap:12px;align-items:flex-start;text-align:left;font:inherit;}
+.rel-card:hover{border-color:var(--primary,#2e7d5b);box-shadow:0 2px 10px rgba(0,0,0,.08);}
+.rel-card .rel-ic{font-size:22px;line-height:1;}
+.rel-card b{display:block;font-size:14.5px;margin-bottom:3px;}
+.rel-card span.rel-desc{font-size:12.5px;color:var(--ink-soft,#55666d);}
+.topo-linha{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0 0 16px;flex-wrap:wrap;}
+.topo-linha .busca-global-wrap{margin:0;flex:1 1 260px;}
+#sug-botoes{display:flex;gap:6px;flex-shrink:0;}
+#sug-botoes .btn{white-space:nowrap;}
+.sug-badge{background:var(--negative,#C4483D);color:#fff;border-radius:9px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:4px;}
+#sug-modal,#sug-zoom{position:fixed;inset:0;background:rgba(10,20,25,.6);z-index:3000;display:flex;align-items:flex-start;justify-content:center;overflow:auto;padding:24px 12px;}
+#sug-zoom{align-items:center;cursor:zoom-out;}
+#sug-zoom img{max-width:96vw;max-height:94vh;border-radius:8px;background:#fff;}
+.sug-caixa{background:#fff;border-radius:14px;max-width:980px;width:100%;padding:18px 20px;box-shadow:0 10px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;gap:12px;}
+.sug-caixa h3{margin:0;font-size:18px;}
+.sug-caixa textarea{width:100%;box-sizing:border-box;min-height:80px;padding:10px;border:1px solid var(--border,#dde3e6);border-radius:8px;font:inherit;font-size:14px;}
+.sug-cv-wrap{border:1px solid var(--border,#dde3e6);border-radius:10px;background:#f5f7f8;padding:6px;text-align:center;}
+#sug-cv{max-width:100%;max-height:52vh;cursor:crosshair;touch-action:none;display:block;margin:0 auto;}
+.sug-linha{display:flex;gap:8px;flex-wrap:wrap;align-items:center;font-size:13px;}
+.sug-tipo label{border:1px solid var(--border,#dde3e6);border-radius:18px;padding:6px 12px;cursor:pointer;display:flex;gap:6px;align-items:center;}
+.sug-tipo label.on{border-color:var(--primary,#2e7d5b);background:#EAF5EF;font-weight:700;}
+.sug-tipo input{display:none;}
+.sug-gravando{color:#C4483D;font-weight:700;}
+.sug-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;}
+.sug-card{background:#fff;border:1px solid var(--border,#dde3e6);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:8px;}
+.sug-card.erro{border-left:4px solid #C4483D;}
+.sug-card .sug-img{width:100%;height:170px;object-fit:cover;object-position:top left;border-radius:8px;cursor:zoom-in;border:1px solid var(--border,#dde3e6);background:#f5f7f8;}
+.sug-card .sug-texto{font-size:14px;white-space:pre-wrap;}
+.sug-card audio{width:100%;height:36px;}
+.sug-chips{display:flex;gap:6px;flex-wrap:wrap;}
+.sug-chip{border:1px solid var(--border,#dde3e6);background:#fff;border-radius:16px;padding:5px 12px;font-size:12.5px;cursor:pointer;font:inherit;}
+.sug-chip.on{background:var(--primary,#2e7d5b);color:#fff;border-color:var(--primary,#2e7d5b);}
+.sug-meta{font-size:12px;color:var(--ink-soft,#55666d);}
+.sug-erro-msg{color:#C4483D;font-size:13px;}
+.sug-resposta{background:#F3F7F9;border-radius:8px;padding:8px 10px;font-size:13px;}
+`;
+  document.head.appendChild(s);
+}
+
+function menuFechadosLer(){
+  try{ return JSON.parse(localStorage.getItem('mizu_menu_fechados') || 'null') || null; }catch(e){ return null; }
+}
+function menuSecFechada(sec){
+  const m = menuFechadosLer();
+  if(m && Object.prototype.hasOwnProperty.call(m, sec)) return !!m[sec];
+  const s = MENU_GRUPOS.find(x=>x.sec === sec);
+  return !!(s && s.fechado);
+}
+function menuSecAlternar(sec){
+  const m = menuFechadosLer() || {};
+  m[sec] = !menuSecFechada(sec);
+  try{ localStorage.setItem('mizu_menu_fechados', JSON.stringify(m)); }catch(e){}
+  menuAjustar();
+}
+
+function menuFavChave(){
+  let quem = 'local';
+  try{ if(typeof nuvemUsuario !== 'undefined' && nuvemUsuario) quem = String(nuvemUsuario.email || nuvemUsuario.login || nuvemUsuario.nome || 'local').toLowerCase(); }catch(e){}
+  return 'mizu_menu_favoritos::' + quem;
+}
+function menuFavoritos(){
+  try{ const v = JSON.parse(localStorage.getItem(menuFavChave()) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
+}
+function menuFavAlternar(id){
+  const f = menuFavoritos();
+  const i = f.indexOf(id);
+  if(i >= 0) f.splice(i, 1); else f.push(id);
+  try{ localStorage.setItem(menuFavChave(), JSON.stringify(f)); }catch(e){}
+  menuAjustar();
+}
+function menuEstrela(el, id){
+  const st = document.createElement('span');
+  st.className = 'menu-estrela'; st.dataset.fav = id;
+  st.title = 'Fixar nos favoritos';
+  st.textContent = '☆';
+  st.addEventListener('click', ev=>{ ev.preventDefault(); ev.stopPropagation(); menuFavAlternar(id); });
+  el.appendChild(st);
+}
+function menuIrEntrada(id){
+  const it = menuItem(id);
+  if(it && it.membros) menuAbrirGrupo(id); else navigateTo(id);
+}
+function menuAbrirGrupo(gid){
+  const it = menuItem(gid);
+  if(!it) return;
+  if(it.hub){ navigateTo('relatorios'); return; }
+  const vis = menuMembrosVisiveis(gid);
+  if(vis.length) navigateTo(vis[0]);
+}
+function menuRotuloEntrada(id){
+  const it = menuItem(id);
+  if(it && it.membros) return { ic: it.ic, rot: it.rot };
+  const a = menuNav(id);
+  const ic = a && a.querySelector('.ic') ? a.querySelector('.ic').textContent : '•';
+  let rot = a ? a.textContent : id;
+  rot = rot.replace(ic, '').replace(/[☆★]/g, '').replace(/\s+/g, ' ').trim();
+  const b = a && a.querySelector('.nav-badge');
+  if(b && b.textContent) rot = rot.replace(b.textContent, '').trim();
+  return { ic, rot };
+}
+
+let MENU_MONTADO = false;
+function menuMontar(){
+  const barra = document.querySelector('.sidebar');
+  const rodape = barra && barra.querySelector('.sidebar-footer');
+  if(!barra || !rodape) return;
+  menuEstilo();
+  if(!MENU_MONTADO){
+    barra.querySelectorAll('.nav-section-label').forEach(l=>l.remove());
+    const fav = document.createElement('div');
+    fav.id = 'menu-favoritos';
+    barra.insertBefore(fav, rodape);
+    MENU_GRUPOS.forEach(sec=>{
+      const cab = document.createElement('div');
+      cab.className = 'menu-sec'; cab.dataset.sec = sec.sec;
+      cab.innerHTML = '<span>' + sec.sec + '</span><span class="menu-sec-seta">▾</span>';
+      cab.addEventListener('click', ()=>menuSecAlternar(sec.sec));
+      barra.insertBefore(cab, rodape);
+      const corpo = document.createElement('div');
+      corpo.className = 'menu-sec-corpo'; corpo.dataset.sec = sec.sec;
+      barra.insertBefore(corpo, rodape);
+      sec.itens.forEach(it=>{
+        if(!it.membros){
+          const a = menuNav(it.id);
+          if(a){ a.dataset.entrada = it.id; corpo.appendChild(a); menuEstrela(a, it.id); }
+          return;
+        }
+        const g = document.createElement('a');
+        g.href = '#'; g.className = 'nav-item nav-grupo';
+        g.dataset.grupo = it.id; g.dataset.entrada = it.id;
+        g.innerHTML = '<span class="ic">' + it.ic + '</span> <span class="menu-rot">' + it.rot
+          + '</span><span class="nav-badge menu-grupo-badge" style="display:none;"></span>';
+        g.addEventListener('click', e=>{ e.preventDefault(); menuAbrirGrupo(it.id); });
+        corpo.appendChild(g);
+        menuEstrela(g, it.id);
+        it.membros.forEach(p=>{
+          const a = menuNav(p);
+          if(a){ a.classList.add('nav-sub'); corpo.appendChild(a); }
+        });
+      });
+    });
+    MENU_MONTADO = true;
+  }
+  menuAjustar();
+  const ativa = document.querySelector('.page.active');
+  if(ativa) menuAbas(ativa.id.replace('page-', ''));
+}
+
+/* Acolhe o que nasce depois (o "Usuários" é criado quando o dono entra)
+   e esconde o que não tem lugar no menu (Orçamento 2 TESTE). */
+function menuAcolher(){
+  const barra = document.querySelector('.sidebar');
+  const rodape = barra && barra.querySelector('.sidebar-footer');
+  if(!barra || !rodape || !MENU_MONTADO) return;
+  barra.querySelectorAll(':scope > .nav-section-label').forEach(l=>l.remove());
+  barra.querySelectorAll('.nav-item[data-page]').forEach(a=>{
+    if(a.closest('.menu-sec-corpo')) return;
+    const g = menuGrupoDaPagina(a.dataset.page);
+    const ent = g && barra.querySelector('.nav-grupo[data-grupo="' + g.id + '"]');
+    if(ent){ a.classList.add('nav-sub'); ent.parentNode.appendChild(a); }
+    else { a.classList.add('nav-sub', 'nav-fora'); barra.insertBefore(a, rodape); }
+  });
+}
+
+function menuAjustar(){
+  if(!MENU_MONTADO) return;
+  menuAcolher();
+  const barra = document.querySelector('.sidebar');
+  barra.querySelectorAll('.nav-grupo').forEach(g=>{
+    g.hidden = menuMembrosVisiveis(g.dataset.grupo).length === 0;
+  });
+  barra.querySelectorAll('.menu-sec-corpo').forEach(corpo=>{
+    const sec = corpo.dataset.sec;
+    const algum = [...corpo.querySelectorAll('.nav-item[data-entrada]')].some(a=>!a.hidden);
+    const cab = barra.querySelector('.menu-sec[data-sec="' + sec + '"]');
+    const fechado = menuSecFechada(sec);
+    corpo.classList.toggle('fechado', fechado);
+    if(cab){ cab.classList.toggle('fechado', fechado); cab.hidden = !algum; }
+    corpo.hidden = !algum;
+  });
+  /* favoritos */
+  const favs = menuFavoritos();
+  barra.querySelectorAll('.menu-estrela').forEach(st=>{
+    const on = favs.indexOf(st.dataset.fav) >= 0;
+    st.classList.toggle('on', on); st.textContent = on ? '★' : '☆';
+    st.title = on ? 'Tirar dos favoritos' : 'Fixar nos favoritos';
+  });
+  const caixa = document.getElementById('menu-favoritos');
+  if(caixa){
+    const vis = favs.filter(id=>{
+      const ent = barra.querySelector('.menu-sec-corpo [data-entrada="' + id + '"]');
+      return ent && !ent.hidden;
+    });
+    caixa.innerHTML = vis.length ? '<div class="menu-sec menu-fav-cab"><span>⭐ Favoritos</span></div>' : '';
+    vis.forEach(id=>{
+      const r = menuRotuloEntrada(id);
+      const a = document.createElement('a');
+      a.href = '#'; a.className = 'nav-item menu-fav'; a.dataset.fav = id;
+      a.innerHTML = '<span class="ic">' + r.ic + '</span> ' + r.rot;
+      a.addEventListener('click', e=>{ e.preventDefault(); menuIrEntrada(id); });
+      caixa.appendChild(a);
+    });
+  }
+  const ativa = document.querySelector('.page.active');
+  if(ativa) menuMarcarAtivo(ativa.id.replace('page-', ''));
+  menuBadges();
+}
+
+function menuMarcarAtivo(page){
+  const g = menuGrupoDaPagina(page);
+  document.querySelectorAll('.sidebar .nav-grupo').forEach(a=>a.classList.toggle('active', !!g && a.dataset.grupo === g.id));
+  document.querySelectorAll('.sidebar .menu-fav').forEach(a=>a.classList.toggle('active', a.dataset.fav === page || (!!g && a.dataset.fav === g.id)));
+}
+
+function menuBadgeNum(p){
+  const a = menuNav(p);
+  const b = a && a.querySelector('.nav-badge');
+  if(!b || b.style.display === 'none' || a.hidden) return 0;
+  const n = parseInt(String(b.textContent).replace(/\D/g, ''), 10);
+  return isNaN(n) ? 0 : n;
+}
+function menuBadges(){
+  document.querySelectorAll('.sidebar .nav-grupo').forEach(g=>{
+    const it = menuItem(g.dataset.grupo);
+    const soma = it ? it.membros.reduce((t,p)=>t + menuBadgeNum(p), 0) : 0;
+    const b = g.querySelector('.menu-grupo-badge');
+    if(b){ b.textContent = soma > 99 ? '99+' : String(soma); b.style.display = soma ? '' : 'none'; }
+  });
+  if(typeof sugAtualizarBadge === 'function') sugAtualizarBadge();
+}
+
+/* As abas no alto da tela: Estoque · Conferência · Balanço */
+function menuAbas(page){
+  document.querySelectorAll('.menu-abas').forEach(x=>x.remove());
+  const sec = document.getElementById('page-' + page);
+  const g = menuGrupoDaPagina(page);
+  if(!sec || !g) return;
+  const barra = document.createElement('div');
+  barra.className = 'menu-abas';
+  if(g.hub){
+    if(page === 'relatorios') return;
+    const r = menuRotuloEntrada(page);
+    barra.innerHTML = '<button type="button" data-ir="relatorios">← Todos os relatórios</button>'
+      + '<button type="button" class="on">' + r.ic + ' ' + r.rot + '</button>';
+  }else{
+    const vis = menuMembrosVisiveis(g.id);
+    if(vis.length < 2) return;
+    barra.innerHTML = vis.map(p=>{
+      const n = menuBadgeNum(p);
+      return '<button type="button" data-ir="' + p + '" class="' + (p === page ? 'on' : '') + '">'
+        + (MENU_ABA_ROTULO[p] || p) + (n ? '<span class="nav-badge">' + n + '</span>' : '') + '</button>';
+    }).join('');
+  }
+  barra.querySelectorAll('button[data-ir]').forEach(b=>b.addEventListener('click', ()=>{
+    if(b.dataset.ir !== page) navigateTo(b.dataset.ir);
+  }));
+  sec.insertBefore(barra, sec.firstChild);
+}
+
+function menuDepoisDeNavegar(page){
+  if(!MENU_MONTADO) return;
+  try{ menuMarcarAtivo(page); menuAbas(page); }catch(e){ console.warn(e); }
+}
+
+/* PROCURAR NO MENU — refeito pro menu novo: acha também o que virou aba
+   ("balan" mostra Balanço, mesmo escondido dentro de Estoque). */
+function navBuscaFiltrar(texto){
+  const q = navBuscaNormal(texto);
+  const barra = document.querySelector('.sidebar');
+  if(!barra) return [];
+  barra.classList.toggle('menu-buscando', !!q);
+  const visiveis = [];
+  barra.querySelectorAll('.menu-sec-corpo .nav-item').forEach(a=>{
+    if(a.classList.contains('nav-fora')) return;
+    let txt = a.textContent;
+    if(a.dataset.page && MENU_ABA_ROTULO[a.dataset.page]) txt += ' ' + MENU_ABA_ROTULO[a.dataset.page];
+    const casa = !q || navBuscaNormal(txt).includes(q);
+    a.classList.toggle('nav-filtro-oculto', !casa);
+    const aparece = casa && !a.hidden && (q ? true : !a.classList.contains('nav-sub'));
+    if(aparece && q) visiveis.push(a);
+  });
+  barra.querySelectorAll('.menu-sec-corpo').forEach(corpo=>{
+    const algum = [...corpo.querySelectorAll('.nav-item')].some(a=>!a.hidden && !a.classList.contains('nav-filtro-oculto') && !a.classList.contains('nav-fora'));
+    const cab = barra.querySelector('.menu-sec[data-sec="' + corpo.dataset.sec + '"]');
+    if(cab) cab.classList.toggle('nav-filtro-oculto', !!q && !algum);
+  });
+  if(!q) return [...barra.querySelectorAll('.menu-sec-corpo .nav-item[data-entrada]')].filter(a=>!a.hidden);
+  return visiveis;
+}
+
+/* =========================================================
+   RELATÓRIOS — uma tela com os 8 em cartões
+   ========================================================= */
+function renderRelatoriosHub(){
+  const box = document.getElementById('relatorios-content');
+  if(!box) return;
+  const lista = MENU_RELATORIOS.filter(menuPodeVer);
+  box.innerHTML = lista.length ? '<div class="rel-cards">' + lista.map(p=>{
+    const r = menuRotuloEntrada(p);
+    const n = menuBadgeNum(p);
+    return '<button type="button" class="rel-card" data-rel="' + p + '"><span class="rel-ic">' + r.ic + '</span><span><b>' + r.rot
+      + (n ? ' <span class="nav-badge" style="margin-left:4px;">' + n + '</span>' : '') + '</b><span class="rel-desc">'
+      + (MENU_REL_DESC[p] || '') + '</span></span></button>';
+  }).join('') + '</div>' : '<p class="help-text">Nenhum relatório liberado pra você.</p>';
+  box.querySelectorAll('[data-rel]').forEach(b=>b.addEventListener('click', ()=>navigateTo(b.dataset.rel)));
+}
+RENDERERS['relatorios'] = renderRelatoriosHub;
+
+/* =========================================================
+   SUGESTÕES DE MELHORIA (26/11/2026)
+   "Tirar um print no sistema, marcar o que eu quero que altere e
+   escrever uma observação — os funcionários também, pra no fim da
+   semana a gente sentar e estudar." Com áudio. Todos veem tudo; só o
+   dono muda a situação.
+   O registro (texto, quem, tela, votos) é uma coleção normal do STATE
+   e anda pela nuvem como qualquer outra. O print e o áudio NÃO entram no
+   STATE (estourariam o localStorage): ficam no IndexedDB do aparelho e
+   sobem pro mesmo balde "fotos" do Supabase, em fotos/sugestoes/.
+   ========================================================= */
+const SUG_SITUACOES = [
+  {id:'nova',  rot:'🆕 Nova'},
+  {id:'fazer', rot:'🛠️ Vamos fazer'},
+  {id:'feito', rot:'✅ Feito'},
+  {id:'nao',   rot:'🚫 Não vamos fazer'}
+];
+const SUG_MIDIA_CACHE = {};
+const SUG_APAGAR_MIDIA_DIAS = 60;
+let sugFiltro = { sit:'abertas', periodo:'tudo', tipo:'' };
+let SUG_EDIT = null;   // a sugestão sendo montada no quadro
+let sugGrav = null;    // a gravação de áudio
+
+function sugLista(){ if(!Array.isArray(STATE.sugestoes)) STATE.sugestoes = []; return STATE.sugestoes; }
+function sugQuem(){
+  try{ const n = typeof licQuemSouEu === 'function' ? licQuemSouEu() : null; if(n) return n; }catch(e){}
+  return 'EU';
+}
+function sugSouDono(){
+  return typeof nuvemUsuario === 'undefined' || !nuvemUsuario || !!nuvemUsuario.dono;
+}
+function sugEsc(t){ return String(t == null ? '' : t).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function sugTelaAtual(){
+  const s = document.querySelector('.page.active');
+  const id = s ? s.id.replace('page-', '') : '';
+  let nome = '';
+  if(id === 'relatorios') nome = 'Relatórios';
+  else if(id === 'sugestoes') nome = 'Sugestões';
+  else if(MENU_ABA_ROTULO[id]) nome = MENU_ABA_ROTULO[id].replace(/^\S+\s/, '');
+  else { const r = menuRotuloEntrada(id); nome = r.rot || id; }
+  return { id, nome };
+}
+
+function sugIdb(modo, chave, valor){
+  return new Promise((resolve, reject)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-sugestoes', 1); }catch(e){ return reject(e); }
+    req.onupgradeneeded = ()=>{ if(!req.result.objectStoreNames.contains('midia')) req.result.createObjectStore('midia'); };
+    req.onerror = ()=>reject(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx;
+      try{ tx = db.transaction('midia', modo === 'get' ? 'readonly' : 'readwrite'); }catch(e){ return reject(e); }
+      const st = tx.objectStore('midia');
+      const op = modo === 'get' ? st.get(chave) : modo === 'del' ? st.delete(chave) : st.put(valor, chave);
+      op.onsuccess = ()=>resolve(op.result);
+      op.onerror = ()=>reject(op.error);
+    };
+  });
+}
+function sugCaminho(id, tipo){
+  return (typeof FOTO_BUCKET !== 'undefined' ? FOTO_BUCKET : 'fotos') + '/sugestoes/'
+    + String(id).replace(/[^A-Za-z0-9_-]/g, '_') + (tipo === 'print' ? '.jpg' : '.audio');
+}
+function sugNuvemPode(){ return typeof fotoPodeNuvem === 'function' && fotoPodeNuvem() && typeof nuvemFetch === 'function'; }
+
+async function sugSubirMidia(s){
+  if(!sugNuvemPode()) return false;
+  let mudou = false;
+  for(const tipo of ['print', 'audio']){
+    if(!(tipo === 'print' ? s.temPrint : s.temAudio) || s.midiaApagada) continue;
+    if(s.subiu && s.subiu[tipo]) continue;
+    const blob = await sugIdb('get', tipo + ':' + s.id).catch(()=>null);
+    if(!blob) continue;
+    try{
+      const r = await nuvemFetch('/storage/v1/object/' + sugCaminho(s.id, tipo), {
+        method:'POST',
+        headers:{ 'Content-Type': blob.type || (tipo === 'print' ? 'image/jpeg' : 'audio/webm'), 'x-upsert':'true' },
+        body: blob
+      });
+      if(r.ok){ s.subiu = Object.assign({}, s.subiu || {}, { [tipo]: true }); mudou = true; }
+    }catch(e){ console.warn('sugestão: não subiu', e); }
+  }
+  return mudou;
+}
+let SUG_SUBINDO = false;
+async function sugSubirPendentes(){
+  if(SUG_SUBINDO || !sugNuvemPode()) return;
+  SUG_SUBINDO = true;
+  try{
+    let mudou = false;
+    for(const s of sugLista()){
+      const falta = (s.temPrint && !(s.subiu && s.subiu.print)) || (s.temAudio && !(s.subiu && s.subiu.audio));
+      if(falta && !s.midiaApagada && await sugSubirMidia(s)) mudou = true;
+    }
+    if(mudou) saveState();
+  }finally{ SUG_SUBINDO = false; }
+}
+async function sugMidiaBlob(s, tipo){
+  const k = tipo + ':' + s.id;
+  let blob = await sugIdb('get', k).catch(()=>null);
+  if(!blob && s.subiu && s.subiu[tipo] && sugNuvemPode()){
+    try{
+      const r = await nuvemFetch('/storage/v1/object/' + sugCaminho(s.id, tipo), { method:'GET' });
+      if(r.ok){ blob = await r.blob(); sugIdb('put', k, blob).catch(()=>{}); }
+    }catch(e){}
+  }
+  return blob || null;
+}
+async function sugMidiaUrl(s, tipo){
+  const k = tipo + ':' + s.id;
+  if(SUG_MIDIA_CACHE[k]) return SUG_MIDIA_CACHE[k];
+  const blob = await sugMidiaBlob(s, tipo);
+  if(!blob) return null;
+  return SUG_MIDIA_CACHE[k] = URL.createObjectURL(blob);
+}
+async function sugApagarMidia(s){
+  for(const tipo of ['print', 'audio']){
+    try{ await sugIdb('del', tipo + ':' + s.id); }catch(e){}
+    if(SUG_MIDIA_CACHE[tipo + ':' + s.id]){ try{ URL.revokeObjectURL(SUG_MIDIA_CACHE[tipo + ':' + s.id]); }catch(e){} delete SUG_MIDIA_CACHE[tipo + ':' + s.id]; }
+    if(s.subiu && s.subiu[tipo] && sugNuvemPode()){
+      try{ await nuvemFetch('/storage/v1/object/' + sugCaminho(s.id, tipo), { method:'DELETE' }); }catch(e){}
+    }
+  }
+}
+/* Pra não encher o 1 GB grátis: o print e o áudio do que já foi
+   resolvido (Feito / Não vamos fazer) há mais de 60 dias são apagados.
+   O texto fica pra sempre. Só roda no aparelho do dono. */
+async function sugLimparAntigas(){
+  if(!sugSouDono()) return;
+  const limite = Date.now() - SUG_APAGAR_MIDIA_DIAS * 86400000;
+  let mudou = false;
+  for(const s of sugLista()){
+    if((s.situacao === 'feito' || s.situacao === 'nao') && s.situacaoEm && Date.parse(s.situacaoEm) < limite
+       && (s.temPrint || s.temAudio) && !s.midiaApagada){
+      await sugApagarMidia(s);
+      s.midiaApagada = true; mudou = true;
+    }
+  }
+  if(mudou) saveState();
+}
+
+function sugAtualizarBadge(){
+  const b = document.getElementById('sug-badge');
+  if(!b) return;
+  const n = Array.isArray(STATE.sugestoes) ? STATE.sugestoes.filter(s=>s.situacao === 'nova').length : 0;
+  b.textContent = String(n);
+  b.style.display = n ? '' : 'none';
+}
+
+function sugCarregarHtml2canvas(){
+  if(window.html2canvas) return Promise.resolve(window.html2canvas);
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js';
+    s.onload = ()=>resolve(window.html2canvas);
+    s.onerror = ()=>reject(new Error('não carregou'));
+    document.head.appendChild(s);
+  });
+}
+async function sugTirarPrint(){
+  try{
+    const h2c = await sugCarregarHtml2canvas();
+    const larg = document.documentElement.clientWidth || window.innerWidth;
+    return await h2c(document.body, {
+      x: window.scrollX, y: window.scrollY,
+      width: larg, height: window.innerHeight,
+      windowWidth: larg, windowHeight: window.innerHeight,
+      scale: Math.min(1, 1400 / larg), useCORS: true, logging: false,
+      ignoreElements: el => el.id === 'sug-modal' || el.id === 'sug-zoom' || (el.classList && (el.classList.contains('toast') || el.id === 'toast-container'))
+    });
+  }catch(e){ console.warn('print', e); return null; }
+}
+
+async function sugNova(){
+  const tela = sugTelaAtual();
+  if(typeof showToast === 'function') showToast('📸 Tirando o print da tela…', 'info');
+  const cv = await sugTirarPrint();
+  sugAbrirQuadro(tela, cv);
+}
+
+function sugAbrirQuadro(tela, cvBase){
+  sugFecharQuadro();
+  SUG_EDIT = { tela, base: cvBase || null, tracos: [], tracoAtual: null, tipo: 'ideia' };
+  sugGrav = null;
+  const m = document.createElement('div');
+  m.id = 'sug-modal';
+  m.innerHTML = `<div class="sug-caixa" role="dialog" aria-label="Sugerir melhoria">
+    <h3>💡 Sugerir melhoria <span class="sug-meta">· tela: ${sugEsc(tela.nome || '—')}</span></h3>
+    <div class="sug-linha sug-tipo">
+      <label class="on"><input type="radio" name="sug-tipo" value="ideia" checked>💡 Ideia / melhoria</label>
+      <label><input type="radio" name="sug-tipo" value="erro">🐞 Deu erro</label>
+    </div>
+    <div id="sug-print-area"></div>
+    <textarea id="sug-texto" placeholder="O que você quer que mude? Ex.: este botão podia ficar em cima, perto do total"></textarea>
+    <div class="sug-linha" id="sug-audio"></div>
+    <div class="sug-erro-msg" id="sug-erro" style="display:none;"></div>
+    <div class="sug-linha" style="justify-content:flex-end;">
+      <button type="button" class="btn" id="sug-cancelar">Cancelar</button>
+      <button type="button" class="btn btn-primary" id="sug-enviar">✓ Enviar sugestão</button>
+    </div>
+  </div>`;
+  document.body.appendChild(m);
+  m.querySelectorAll('input[name="sug-tipo"]').forEach(r=>r.addEventListener('change', ()=>{
+    SUG_EDIT.tipo = r.value;
+    m.querySelectorAll('.sug-tipo label').forEach(l=>l.classList.toggle('on', l.querySelector('input').checked));
+  }));
+  m.querySelector('#sug-cancelar').addEventListener('click', sugFecharQuadro);
+  m.querySelector('#sug-enviar').addEventListener('click', sugEnviar);
+  m.querySelector('#sug-texto').addEventListener('input', ()=>{ const e = document.getElementById('sug-erro'); if(e) e.style.display = 'none'; });
+  sugPrintDesenharArea();
+  sugAudioDesenhar();
+}
+function sugFecharQuadro(){
+  if(sugGrav && sugGrav.rec && sugGrav.rec.state === 'recording'){ try{ sugGrav.cancelado = true; sugGrav.rec.stop(); }catch(e){} }
+  const m = document.getElementById('sug-modal');
+  if(m) m.remove();
+}
+
+function sugPrintDesenharArea(){
+  const area = document.getElementById('sug-print-area');
+  if(!area || !SUG_EDIT) return;
+  if(!SUG_EDIT.base){
+    area.innerHTML = `<div class="sug-linha sug-meta">Sem print.
+      <button type="button" class="btn btn-sm" id="sug-tirar-de-novo">📸 Tirar print da tela</button>
+      <button type="button" class="btn btn-sm" id="sug-anexar">📎 Usar uma imagem</button></div>
+      <input type="file" id="sug-arquivo" accept="image/*" style="display:none;">`;
+  }else{
+    area.innerHTML = `<div class="sug-cv-wrap"><canvas id="sug-cv"></canvas></div>
+      <div class="sug-linha sug-meta" style="margin-top:6px;">✏️ Marque com o mouse ou o dedo o que quer mudar.
+        <button type="button" class="btn btn-sm" id="sug-desfazer">↶ Desfazer</button>
+        <button type="button" class="btn btn-sm" id="sug-limpar">🧽 Limpar marcas</button>
+        <button type="button" class="btn btn-sm" id="sug-anexar">📎 Usar outra imagem</button>
+        <button type="button" class="btn btn-sm" id="sug-sem-print">🚫 Sem print</button></div>
+      <input type="file" id="sug-arquivo" accept="image/*" style="display:none;">`;
+    sugCanvasLigar();
+  }
+  const arq = area.querySelector('#sug-arquivo');
+  const bAnexar = area.querySelector('#sug-anexar');
+  if(bAnexar) bAnexar.addEventListener('click', ()=>arq.click());
+  arq.addEventListener('change', ()=>{
+    const f = arq.files && arq.files[0];
+    if(!f) return;
+    const img = new Image();
+    img.onload = ()=>{
+      const esc = Math.min(1, 1400 / img.width);
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * esc); cv.height = Math.round(img.height * esc);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(img.src);
+      SUG_EDIT.base = cv; SUG_EDIT.tracos = [];
+      sugPrintDesenharArea();
+    };
+    img.src = URL.createObjectURL(f);
+  });
+  const bDeNovo = area.querySelector('#sug-tirar-de-novo');
+  if(bDeNovo) bDeNovo.addEventListener('click', async ()=>{
+    const m = document.getElementById('sug-modal');
+    if(m) m.style.visibility = 'hidden';
+    const cv = await sugTirarPrint();
+    if(m) m.style.visibility = '';
+    if(cv){ SUG_EDIT.base = cv; SUG_EDIT.tracos = []; sugPrintDesenharArea(); }
+    else if(typeof showToast === 'function') showToast('Não consegui tirar o print (sem internet?). Use "📎 Usar uma imagem".', 'error');
+  });
+  const bSem = area.querySelector('#sug-sem-print');
+  if(bSem) bSem.addEventListener('click', ()=>{ SUG_EDIT.base = null; SUG_EDIT.tracos = []; sugPrintDesenharArea(); });
+  const bDesf = area.querySelector('#sug-desfazer');
+  if(bDesf) bDesf.addEventListener('click', ()=>{ SUG_EDIT.tracos.pop(); sugCanvasRedesenhar(); });
+  const bLimp = area.querySelector('#sug-limpar');
+  if(bLimp) bLimp.addEventListener('click', ()=>{ SUG_EDIT.tracos = []; sugCanvasRedesenhar(); });
+}
+function sugCanvasRedesenhar(cv){
+  cv = cv || document.getElementById('sug-cv');
+  if(!cv || !SUG_EDIT || !SUG_EDIT.base) return;
+  const b = SUG_EDIT.base;
+  if(cv.width !== b.width || cv.height !== b.height){ cv.width = b.width; cv.height = b.height; }
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(b, 0, 0);
+  const grossura = Math.max(3, Math.round(b.width / 260));
+  ctx.strokeStyle = '#E53935'; ctx.lineWidth = grossura; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  SUG_EDIT.tracos.forEach(t=>{
+    if(!t.length) return;
+    ctx.beginPath(); ctx.moveTo(t[0][0], t[0][1]);
+    if(t.length === 1) ctx.lineTo(t[0][0] + 0.1, t[0][1] + 0.1);
+    for(let i = 1; i < t.length; i++) ctx.lineTo(t[i][0], t[i][1]);
+    ctx.stroke();
+  });
+}
+function sugCanvasLigar(){
+  const cv = document.getElementById('sug-cv');
+  if(!cv) return;
+  sugCanvasRedesenhar(cv);
+  const ponto = ev=>{
+    const r = cv.getBoundingClientRect();
+    return [ (ev.clientX - r.left) * cv.width / r.width, (ev.clientY - r.top) * cv.height / r.height ];
+  };
+  cv.addEventListener('pointerdown', ev=>{
+    ev.preventDefault();
+    try{ cv.setPointerCapture(ev.pointerId); }catch(e){}
+    SUG_EDIT.tracoAtual = [ponto(ev)];
+    SUG_EDIT.tracos.push(SUG_EDIT.tracoAtual);
+    sugCanvasRedesenhar(cv);
+  });
+  cv.addEventListener('pointermove', ev=>{
+    if(!SUG_EDIT.tracoAtual) return;
+    SUG_EDIT.tracoAtual.push(ponto(ev));
+    sugCanvasRedesenhar(cv);
+  });
+  const fim = ()=>{ SUG_EDIT.tracoAtual = null; };
+  cv.addEventListener('pointerup', fim);
+  cv.addEventListener('pointercancel', fim);
+  cv.addEventListener('pointerleave', fim);
+}
+
+function sugAudioDesenhar(){
+  const box = document.getElementById('sug-audio');
+  if(!box) return;
+  const g = sugGrav;
+  if(g && g.rec && g.rec.state === 'recording'){
+    const s = Math.round((Date.now() - g.inicio) / 1000);
+    box.innerHTML = `<span class="sug-gravando">● Gravando… ${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}</span>
+      <button type="button" class="btn btn-sm" id="sug-gravar">⏹ Parar</button>
+      <span class="sug-meta">(até 3 minutos)</span>`;
+  }else if(g && g.blob){
+    box.innerHTML = `🎙️ <audio controls src="${g.url}"></audio>
+      <button type="button" class="btn btn-sm" id="sug-apagar-audio">🗑️ Apagar áudio</button>
+      <button type="button" class="btn btn-sm" id="sug-gravar">🎙️ Gravar de novo</button>`;
+  }else{
+    box.innerHTML = `<button type="button" class="btn btn-sm" id="sug-gravar">🎙️ Gravar áudio</button>
+      <span class="sug-meta">Se for mais fácil falar do que escrever.</span>`;
+  }
+  const bg = box.querySelector('#sug-gravar');
+  if(bg) bg.addEventListener('click', sugGravarAlternar);
+  const ba = box.querySelector('#sug-apagar-audio');
+  if(ba) ba.addEventListener('click', ()=>{ if(sugGrav && sugGrav.url) URL.revokeObjectURL(sugGrav.url); sugGrav = null; sugAudioDesenhar(); });
+}
+async function sugGravarAlternar(){
+  if(sugGrav && sugGrav.rec && sugGrav.rec.state === 'recording'){ sugGrav.rec.stop(); return; }
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined'){
+    showToast('Este navegador não grava áudio.', 'error'); return;
+  }
+  let stream;
+  try{ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  catch(e){ showToast('O navegador não deixou usar o microfone. Libere no cadeado ao lado do endereço do site.', 'error'); return; }
+  const tipo = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus']
+    .find(t=>MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(t)) || '';
+  let rec;
+  try{ rec = new MediaRecorder(stream, tipo ? { mimeType: tipo, audioBitsPerSecond: 24000 } : {}); }
+  catch(e){ rec = new MediaRecorder(stream); }
+  const partes = [];
+  const g = { rec, inicio: Date.now(), blob: null, url: null, seg: 0 };
+  rec.ondataavailable = e=>{ if(e.data && e.data.size) partes.push(e.data); };
+  rec.onstop = ()=>{
+    stream.getTracks().forEach(t=>t.stop());
+    clearInterval(g.timer); clearTimeout(g.limite);
+    if(g.cancelado) return;
+    g.blob = new Blob(partes, { type: rec.mimeType || tipo || 'audio/webm' });
+    g.url = URL.createObjectURL(g.blob);
+    g.seg = Math.round((Date.now() - g.inicio) / 1000);
+    sugAudioDesenhar();
+  };
+  g.timer = setInterval(sugAudioDesenhar, 500);
+  g.limite = setTimeout(()=>{ if(rec.state === 'recording') rec.stop(); }, 180000);
+  if(sugGrav && sugGrav.url) URL.revokeObjectURL(sugGrav.url);
+  sugGrav = g;
+  rec.start(1000);
+  sugAudioDesenhar();
+}
+
+function sugCompor(){
+  const cv = document.createElement('canvas');
+  cv.width = SUG_EDIT.base.width; cv.height = SUG_EDIT.base.height;
+  sugCanvasRedesenhar(cv);
+  return cv;
+}
+async function sugEnviar(){
+  if(!SUG_EDIT) return;
+  const erro = document.getElementById('sug-erro');
+  const avisar = t=>{ if(erro){ erro.textContent = t; erro.style.display = ''; } };
+  if(sugGrav && sugGrav.rec && sugGrav.rec.state === 'recording'){ avisar('Pare a gravação antes de enviar.'); return; }
+  const texto = (document.getElementById('sug-texto').value || '').trim();
+  const temAudio = !!(sugGrav && sugGrav.blob);
+  if(!texto && !temAudio){ avisar('Escreva ou grave um áudio dizendo o que você quer que mude.'); return; }
+  const bt = document.getElementById('sug-enviar');
+  if(bt){ bt.disabled = true; bt.textContent = 'Enviando…'; }
+  const id = 'sug_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+  let printBlob = null;
+  try{
+    if(SUG_EDIT.base){
+      const cv = sugCompor();
+      printBlob = await new Promise(r=>cv.toBlob(r, 'image/jpeg', 0.62));
+      if(printBlob) await sugIdb('put', 'print:' + id, printBlob);
+    }
+    if(temAudio) await sugIdb('put', 'audio:' + id, sugGrav.blob);
+  }catch(e){ console.warn(e); }
+  const s = {
+    id, tipo: SUG_EDIT.tipo || 'ideia', texto,
+    tela: SUG_EDIT.tela.id, telaNome: SUG_EDIT.tela.nome,
+    autor: sugQuem(), criadoEm: new Date().toISOString(),
+    situacao: 'nova', votos: [],
+    temPrint: !!printBlob, temAudio, audioSeg: temAudio ? sugGrav.seg : 0,
+    printKB: printBlob ? Math.round(printBlob.size / 1024) : 0,
+    audioKB: temAudio ? Math.round(sugGrav.blob.size / 1024) : 0,
+    subiu: {}
+  };
+  sugLista().unshift(s);
+  saveState();
+  sugGrav = null;
+  sugFecharQuadro();
+  showToast('💡 Sugestão enviada. Obrigado!', 'success');
+  sugAtualizarBadge();
+  const ativa = document.querySelector('.page.active');
+  if(ativa && ativa.id === 'page-sugestoes') renderSugestoes();
+  sugSubirMidia(s).then(m=>{ if(m) saveState(); }).catch(()=>{});
+}
+
+/* ---------- a tela de Sugestões ---------- */
+function sugInicioSemana(){
+  const d = new Date(); d.setHours(0,0,0,0);
+  const dia = (d.getDay() + 6) % 7; // segunda = 0
+  d.setDate(d.getDate() - dia);
+  return d.getTime();
+}
+function sugFiltradas(){
+  const ini = sugInicioSemana();
+  return sugLista().filter(s=>{
+    if(sugFiltro.sit === 'abertas' && !(s.situacao === 'nova' || s.situacao === 'fazer')) return false;
+    if(sugFiltro.sit !== 'abertas' && sugFiltro.sit !== 'todas' && s.situacao !== sugFiltro.sit) return false;
+    if(sugFiltro.periodo === 'semana' && Date.parse(s.criadoEm) < ini) return false;
+    if(sugFiltro.tipo && (s.tipo || 'ideia') !== sugFiltro.tipo) return false;
+    return true;
+  }).sort((a,b)=>{
+    const va = (a.votos || []).length, vb = (b.votos || []).length;
+    if(sugFiltro.sit === 'abertas' && va !== vb) return vb - va;
+    return String(b.criadoEm).localeCompare(String(a.criadoEm));
+  });
+}
+function sugDataCurta(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return '';
+  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+}
+function renderSugestoes(){
+  const box = document.getElementById('sugestoes-content');
+  if(!box) return;
+  sugSubirPendentes();
+  sugLimparAntigas();
+  const todas = sugLista();
+  const conta = id=> id === 'abertas' ? todas.filter(s=>s.situacao === 'nova' || s.situacao === 'fazer').length
+                    : id === 'todas' ? todas.length : todas.filter(s=>s.situacao === id).length;
+  const chips = [{id:'abertas', rot:'📂 Em aberto'}].concat(SUG_SITUACOES, [{id:'todas', rot:'Todas'}])
+    .map(c=>`<button type="button" class="sug-chip ${sugFiltro.sit === c.id ? 'on' : ''}" data-sit="${c.id}">${c.rot} · ${conta(c.id)}</button>`).join('');
+  const lista = sugFiltradas();
+  const dono = sugSouDono();
+  const eu = sugQuem();
+  box.innerHTML = `
+    <div class="sug-linha" style="margin-bottom:10px;">
+      <button type="button" class="btn btn-primary" id="sug-nova-aqui">📸 Nova sugestão</button>
+      <button type="button" class="btn" id="sug-copiar">📋 Copiar resumo pro Claude</button>
+      <button type="button" class="btn" id="sug-pacote">📦 Baixar com prints e áudios</button>
+    </div>
+    <div class="sug-chips" style="margin-bottom:8px;">${chips}</div>
+    <div class="sug-linha" style="margin-bottom:14px;">
+      <select id="sug-periodo"><option value="tudo">Qualquer data</option><option value="semana" ${sugFiltro.periodo === 'semana' ? 'selected' : ''}>Só desta semana</option></select>
+      <select id="sug-tipo-filtro"><option value="">Ideias e erros</option><option value="ideia" ${sugFiltro.tipo === 'ideia' ? 'selected' : ''}>💡 Só ideias</option><option value="erro" ${sugFiltro.tipo === 'erro' ? 'selected' : ''}>🐞 Só erros</option></select>
+      <span class="sug-meta">${lista.length} sugest${lista.length === 1 ? 'ão' : 'ões'}${sugFiltro.sit === 'abertas' ? ' · as mais votadas primeiro' : ''}</span>
+    </div>
+    ${lista.length ? '<div class="sug-cards">' + lista.map(s=>{
+      const votos = s.votos || [];
+      const votei = votos.indexOf(eu) >= 0;
+      const sit = SUG_SITUACOES.find(x=>x.id === s.situacao) || SUG_SITUACOES[0];
+      const podeApagar = dono || s.autor === eu;
+      return `<div class="sug-card ${s.tipo === 'erro' ? 'erro' : ''}" data-id="${sugEsc(s.id)}">
+        ${s.temPrint && !s.midiaApagada ? `<img class="sug-img" alt="Print da tela ${sugEsc(s.telaNome)}" data-midia="print">` : ''}
+        <div class="sug-meta">${s.tipo === 'erro' ? '🐞 Erro' : '💡 Ideia'} · <b>${sugEsc(s.autor)}</b> · ${sugDataCurta(s.criadoEm)} · tela <b>${sugEsc(s.telaNome || s.tela || '—')}</b></div>
+        ${s.texto ? `<div class="sug-texto">${sugEsc(s.texto)}</div>` : ''}
+        ${s.temAudio && !s.midiaApagada ? `<audio controls preload="none" data-midia="audio"></audio>` : ''}
+        ${s.midiaApagada ? `<div class="sug-meta">(print e áudio apagados depois de ${SUG_APAGAR_MIDIA_DIAS} dias resolvida)</div>` : ''}
+        ${s.resposta && !dono ? `<div class="sug-resposta">💬 <b>Resposta:</b> ${sugEsc(s.resposta)}</div>` : ''}
+        ${dono ? `<input type="text" class="sug-resp-campo" placeholder="💬 Responder (todos veem)" value="${sugEsc(s.resposta || '')}" style="padding:6px 8px;border:1px solid var(--border,#dde3e6);border-radius:6px;font:inherit;font-size:13px;">` : ''}
+        <div class="sug-linha">
+          <button type="button" class="btn btn-sm sug-votar" title="Eu também quero isso">${votei ? '👍 Você apoiou' : '👍 Eu também'} · ${votos.length}</button>
+          ${dono ? `<select class="sug-sit">${SUG_SITUACOES.map(x=>`<option value="${x.id}" ${x.id === s.situacao ? 'selected' : ''}>${x.rot}</option>`).join('')}</select>`
+                 : `<span class="sug-meta">${sit.rot}</span>`}
+          ${podeApagar ? `<button type="button" class="btn btn-sm sug-apagar" title="Apagar esta sugestão" style="margin-left:auto;">🗑️</button>` : ''}
+        </div>
+      </div>`;
+    }).join('') + '</div>'
+    : `<div class="card" style="text-align:center;padding:30px;"><div style="font-size:30px;">💡</div>
+        <p style="margin:8px 0 4px;font-weight:700;">Nenhuma sugestão aqui</p>
+        <p class="help-text" style="margin:0;">Achou algo pra melhorar em qualquer tela? Clique em <b>📸 Sugerir melhoria</b>, no alto da tela.</p></div>`}`;
+
+  box.querySelector('#sug-nova-aqui').addEventListener('click', sugNova);
+  box.querySelector('#sug-copiar').addEventListener('click', sugCopiarResumo);
+  box.querySelector('#sug-pacote').addEventListener('click', sugBaixarPacote);
+  box.querySelectorAll('[data-sit]').forEach(b=>b.addEventListener('click', ()=>{ sugFiltro.sit = b.dataset.sit; renderSugestoes(); }));
+  box.querySelector('#sug-periodo').addEventListener('change', e=>{ sugFiltro.periodo = e.target.value; renderSugestoes(); });
+  box.querySelector('#sug-tipo-filtro').addEventListener('change', e=>{ sugFiltro.tipo = e.target.value; renderSugestoes(); });
+  box.querySelectorAll('.sug-card').forEach(card=>{
+    const s = sugLista().find(x=>x.id === card.dataset.id);
+    if(!s) return;
+    const img = card.querySelector('img[data-midia]');
+    if(img){
+      sugMidiaUrl(s, 'print').then(u=>{ if(u) img.src = u; else img.replaceWith(Object.assign(document.createElement('div'), { className:'sug-meta', textContent:'(o print ainda não chegou neste aparelho)' })); });
+      img.addEventListener('click', ()=>sugZoom(img.src));
+    }
+    const au = card.querySelector('audio[data-midia]');
+    if(au) sugMidiaUrl(s, 'audio').then(u=>{ if(u) au.src = u; else au.replaceWith(Object.assign(document.createElement('div'), { className:'sug-meta', textContent:'(o áudio ainda não chegou neste aparelho)' })); });
+    const bv = card.querySelector('.sug-votar');
+    if(bv) bv.addEventListener('click', ()=>{
+      s.votos = Array.isArray(s.votos) ? s.votos : [];
+      const i = s.votos.indexOf(eu);
+      if(i >= 0) s.votos.splice(i, 1); else s.votos.push(eu);
+      saveState(); renderSugestoes();
+    });
+    const ss = card.querySelector('.sug-sit');
+    if(ss) ss.addEventListener('change', ()=>{
+      s.situacao = ss.value; s.situacaoEm = new Date().toISOString(); s.situacaoPor = eu;
+      saveState(); renderSugestoes();
+    });
+    const rc = card.querySelector('.sug-resp-campo');
+    if(rc) rc.addEventListener('change', ()=>{ s.resposta = rc.value.trim(); saveState(); showToast('Resposta guardada.', 'success'); });
+    const ba = card.querySelector('.sug-apagar');
+    if(ba) ba.addEventListener('click', async ()=>{
+      if(!confirm('Apagar esta sugestão? O print e o áudio também somem.')) return;
+      await sugApagarMidia(s);
+      STATE.sugestoes = sugLista().filter(x=>x.id !== s.id);
+      saveState(); renderSugestoes(); sugAtualizarBadge();
+    });
+  });
+  sugAtualizarBadge();
+}
+RENDERERS['sugestoes'] = renderSugestoes;
+
+function sugZoom(src){
+  if(!src) return;
+  const z = document.createElement('div');
+  z.id = 'sug-zoom';
+  z.innerHTML = '<img alt="Print ampliado">';
+  z.querySelector('img').src = src;
+  z.addEventListener('click', ()=>z.remove());
+  document.body.appendChild(z);
+}
+function sugResumoTexto(lista){
+  const linhas = ['SUGESTÕES DO SISTEMA MIZU — ' + new Date().toLocaleDateString('pt-BR'), ''];
+  lista.forEach((s, i)=>{
+    const sit = (SUG_SITUACOES.find(x=>x.id === s.situacao) || SUG_SITUACOES[0]).rot;
+    linhas.push((i + 1) + '. ' + (s.tipo === 'erro' ? '[ERRO] ' : '[IDEIA] ') + 'Tela: ' + (s.telaNome || s.tela || '—')
+      + ' · ' + s.autor + ' · ' + sugDataCurta(s.criadoEm) + ' · ' + sit
+      + ((s.votos || []).length ? ' · 👍 ' + s.votos.length + ' (' + s.votos.join(', ') + ')' : ''));
+    if(s.texto) linhas.push('   ' + s.texto.replace(/\n/g, '\n   '));
+    const extras = [];
+    if(s.temPrint && !s.midiaApagada) extras.push('print ' + (i + 1) + '.jpg');
+    if(s.temAudio && !s.midiaApagada) extras.push('áudio ' + (i + 1) + ' (' + (s.audioSeg || 0) + 's)');
+    if(extras.length) linhas.push('   (tem ' + extras.join(' e ') + ')');
+    if(s.resposta) linhas.push('   Resposta: ' + s.resposta);
+    linhas.push('');
+  });
+  return linhas.join('\n');
+}
+async function sugCopiarResumo(){
+  const txt = sugResumoTexto(sugFiltradas());
+  try{ await navigator.clipboard.writeText(txt); showToast('📋 Resumo copiado. É só colar na conversa com o Claude.', 'success'); }
+  catch(e){
+    const t = document.createElement('textarea'); t.value = txt; document.body.appendChild(t); t.select();
+    try{ document.execCommand('copy'); showToast('📋 Resumo copiado.', 'success'); }catch(e2){ showToast('Não consegui copiar.', 'error'); }
+    t.remove();
+  }
+}
+async function sugBaixarPacote(){
+  const lista = sugFiltradas();
+  if(!lista.length){ showToast('Nenhuma sugestão nesse filtro.', 'error'); return; }
+  if(typeof JSZip === 'undefined'){ showToast('Sem internet pra montar o pacote. Use "Copiar resumo".', 'error'); return; }
+  showToast('📦 Montando o pacote…', 'info');
+  const zip = new JSZip();
+  zip.file('resumo.txt', sugResumoTexto(lista));
+  for(let i = 0; i < lista.length; i++){
+    const s = lista[i];
+    if(s.temPrint && !s.midiaApagada){ const b = await sugMidiaBlob(s, 'print'); if(b) zip.file('print ' + (i + 1) + '.jpg', b); }
+    if(s.temAudio && !s.midiaApagada){
+      const b = await sugMidiaBlob(s, 'audio');
+      if(b) zip.file('audio ' + (i + 1) + (/mp4/.test(b.type) ? '.m4a' : /ogg/.test(b.type) ? '.ogg' : '.webm'), b);
+    }
+  }
+  const blob = await zip.generateAsync({ type:'blob' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sugestoes-mizu-' + new Date().toISOString().slice(0, 10) + '.zip';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 5000);
+}
+
+/* liga tudo: menu, botões do topo, contador */
+function menuNovoIniciar(){
+  try{ menuMontar(); }catch(e){ console.warn('menu novo', e); }
+  sugAtualizarBadge();
+  setInterval(()=>{ try{ menuBadges(); }catch(e){} }, 4000);
+  setInterval(()=>{ try{ sugSubirPendentes(); }catch(e){} }, 90000);
+  /* "Instalar como aplicativo" (26/11/2026): o sw.js não guarda cache,
+     só habilita o navegador a oferecer a instalação. */
+  try{
+    if('serviceWorker' in navigator && location.protocol === 'https:') navigator.serviceWorker.register('sw.js').catch(()=>{});
+  }catch(e){}
+}
+let APP_INSTALAR = null;
+window.addEventListener('beforeinstallprompt', ev=>{
+  ev.preventDefault();
+  APP_INSTALAR = ev;
+  const rod = document.querySelector('.sidebar-footer');
+  if(!rod || document.getElementById('btn-instalar-app')) return;
+  const b = document.createElement('button');
+  b.id = 'btn-instalar-app';
+  b.textContent = '📲 Instalar o Mizu ERP neste aparelho';
+  b.style.cssText = 'background:rgba(79,195,224,0.16);border-color:rgba(79,195,224,0.35);color:#9EDCF0;font-weight:700;';
+  b.addEventListener('click', async ()=>{
+    if(!APP_INSTALAR) return;
+    APP_INSTALAR.prompt();
+    try{ await APP_INSTALAR.userChoice; }catch(e){}
+    APP_INSTALAR = null; b.remove();
+  });
+  rod.insertBefore(b, rod.firstChild);
+});
+window.addEventListener('appinstalled', ()=>{ const b = document.getElementById('btn-instalar-app'); if(b) b.remove(); });
+/* depois que o script inteiro rodou (nuvemUsuario, STATE e companhia já existem) */
+setTimeout(menuNovoIniciar, 0);
+
 
 /* =========================================================
    CARDS COLAPSÁVEIS (minimizar qualquer seção clicando no título)
@@ -65720,7 +66782,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 20:00';
+const SISTEMA_VERSAO = '26/11/2026 21:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -66174,6 +67236,8 @@ function nuvemMenus(){
 }
 
 function temAcesso(pagina){
+  if(pagina === 'sugestoes') return true;               // sugestões: todo mundo vê (26/11/2026)
+  if(pagina === 'relatorios') return MENU_RELATORIOS.some(r=>temAcesso(r));
   if(pagina === 'orcamentos2') pagina = 'orcamentos';   // o modelo em teste segue a permissão de Orçamentos
   if(!nuvemUsuario) return true;          // sistema sem nuvem ligada
   if(nuvemUsuario.dono) return true;
@@ -66197,6 +67261,7 @@ function nuvemAplicarPermissoes(){
     }
     rotulo.hidden = !temAlgum;
   });
+  if(typeof menuAjustar === 'function') menuAjustar();
 
   const ativa = document.querySelector('.page.active');
   const atual = ativa ? ativa.id.replace('page-', '') : '';
@@ -67749,6 +68814,7 @@ function nuvemMontarMenuUsuarios(){
   main.appendChild(pagina);
 
   RENDERERS['usuarios'] = renderUsuarios;
+  if(typeof menuAjustar === 'function') menuAjustar();
 }
 
 async function renderUsuarios(){

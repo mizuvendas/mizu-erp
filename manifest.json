@@ -1,0 +1,16 @@
+{
+  "name": "Mizu ERP — Mizu Materiais de Limpeza",
+  "short_name": "Mizu ERP",
+  "description": "Painel de gestão da Mizu Materiais de Limpeza",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#16323C",
+  "theme_color": "#16323C",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "icone-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icone-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
