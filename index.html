@@ -570,12 +570,17 @@ table.data-table{ width:100%; font-size:13px; }
 .acoes-ver-mais-lista .btn{ width:100%; justify-content:flex-start; text-align:left; border:none;
   background:transparent; box-shadow:none; padding:7px 10px; font-size:13px; border-radius:6px; }
 .acoes-ver-mais-lista .btn:hover{ background:var(--primary-soft); }
+.acoes-ver-mais-lista .btn.acao-principal{ font-weight:700; color:var(--primary); background:var(--primary-soft);
+  margin-bottom:3px; }
 .acoes-ver-mais-lista .btn.btn-danger{ color:var(--negative); background:transparent; margin-top:3px;
   border-top:1px solid var(--border); border-radius:0 0 6px 6px; }
 .acoes-ver-mais-lista .btn.btn-danger:hover{ background:#FBEAE8; }
 /* a lista de orçamentos mais enxuta, pra caber em qualquer tela */
 #orc-tabela thead th, #orc-tabela tbody td{ padding:7px 8px; }
-#orc-tabela td.orc-cli{ max-width:min(340px, 26vw); overflow:hidden; text-overflow:ellipsis; }
+/* o nome do cliente ocupa a sobra da linha (sem espaço vago à direita) e
+   só corta com … quando não cabe */
+#orc-tabela{ width:100%; }
+#orc-tabela td.orc-cli{ width:100%; max-width:0; min-width:150px; overflow:hidden; text-overflow:ellipsis; }
 #orc-tabela th.centro, #orc-tabela td.centro{ text-align:center; }
 
 .badge{
@@ -18356,39 +18361,35 @@ function orcAcoesDaLinha(o, sit){
   const nota = (typeof nfeNotaDoOrcamento === 'function') ? nfeNotaDoOrcamento(o.id) : null;
   const statusEntrega = o.statusEntrega || 'nenhum';
 
-  /* --- APROVADOS: a nota e a entrega, nada mais --- */
+  /* 26/11/2026: "algumas coisas não ficaram escondidas em Ver mais" — em
+     TODA situação, na linha fica só o botão principal (o próximo passo);
+     o resto vai pra janelinha do Ver mais, primeiro os desta situação. */
+  let principal = orcAcaoPrincipal(o, sit);
+  const extras = [];
   if(sit==='aprovado'){
-    const bts = [];
     if(nota){
-      bts.push(`<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')" title="Protocolo ${escapeAttr(String(nota.protocolo||''))}">⬇️ Nota nº ${nota.numero}</button>`);
-      bts.push(`<button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>`);
-      bts.push(`<button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`);
+      principal = `<button class="btn btn-sm btn-primary" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`;
     }else{
       const nc = nfeNotaCanceladaDoOrcamento(o.id);
-      if(nc) bts.push(nfeBotoesNotaCancelada(nc));
-      bts.push(`<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 ${nc?'Emitir outra nota':'Gerar nota fiscal'}</button>`);
-      bts.push(`<button class="btn btn-sm" onclick="verEspelhoNfe('${o.id}', 55)" title="Monta a nota sem enviar — dá pra abrir e baixar em PDF pra conferir antes">👁 Espelho</button>`);
+      principal = `<button class="btn btn-sm btn-primary" onclick="abrirOpcoesFecharVenda('${o.id}')">🧾 ${nc?'Emitir outra nota':'Gerar nota fiscal'}</button>`;
+      if(nc) extras.push(nfeBotoesNotaCancelada(nc));
+      extras.push(`<button class="btn btn-sm" onclick="verEspelhoNfe('${o.id}', 55)" title="Monta a nota sem enviar — dá pra abrir e baixar em PDF pra conferir antes">👁 Espelho</button>`);
+      extras.push(`<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`);
     }
-    bts.push(`<button class="btn btn-sm" onclick="abrirOpcoesControleEntrega('${o.id}')">📦 Controle de entrega</button>`);
-    return `<div class="cell-actions">${bts.join('')}</div>`;
   }
-
-  /* --- EM ENTREGA: chegou ou o cliente veio buscar --- */
   if(sit==='entrega'){
-    return `<div class="cell-actions">
-      <button class="btn btn-sm btn-primary" onclick="marcarEntregaConcluida('${o.id}')">✅ Entregue</button>
-      <button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na loja</button>
-    </div>`;
+    extras.push(`<button class="btn btn-sm" onclick="marcarRetiradaOrcamento('${o.id}')">🏪 Retirado na loja</button>`);
   }
-
-  /* --- as outras abas: o passo natural + o resto escondido --- */
   const jaConvertido = sit==='concluida' || sit==='cancelada';
+  /* "pode esconder tudo, deixar apenas Ver mais" (26/11/2026): o botão
+     principal vira o PRIMEIRO item da janelinha, em destaque */
   return `
     <div>
-      ${orcAcaoPrincipal(o, sit)}
       <details class="acoes-ver-mais">
         <summary></summary>
         <div class="acoes-ver-mais-lista">
+          ${principal ? principal.replace('class="btn btn-sm btn-primary"', 'class="btn btn-sm acao-principal"') : ''}
+          ${extras.join('')}
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
           <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
           <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">📋 Ver os itens</button>
@@ -18398,7 +18399,7 @@ function orcAcoesDaLinha(o, sit){
           ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button>
                     <button class="btn btn-sm" onclick="nfeBaixarXmlDaNota('${nota.chave}')">⬇️ XML</button>
                     <button class="btn btn-sm" onclick="abrirCancelarNota('${nota.chave}')" style="color:var(--negative);">🚫 Cancelar nota</button>`
-                 : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${sit==='cancelada' ? '' : nfeBotoesOrcamento(o)}`}
+                 : (sit==='aprovado' ? '' : `${(()=>{ const nc = nfeNotaCanceladaDoOrcamento(o.id); return nc ? nfeBotoesNotaCancelada(nc) : ''; })()}${sit==='cancelada' ? '' : nfeBotoesOrcamento(o)}`)}
           ${(statusEntrega==='entregue'||statusEntrega==='retirado') ? `<button class="btn btn-sm" onclick="desfazerEntregaOrcamento('${o.id}')">↩️ Desfazer entrega</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm btn-danger" onclick="excluirOrcamento('${o.id}')">🗑️ Excluir</button>` : ''}
         </div>
@@ -18527,15 +18528,28 @@ function orcDesenharAbas(){
   const soma = (ids)=>ids.reduce((s,o)=>{
     const c = calcularVenda(o); return s + c.bruto;
   }, 0);
-  const aguardando = orcDaAba('aguardando');
-  const aprovados  = orcDaAba('aprovados');
-  const entrega    = orcDaAba('entrega');
-  const concluidas = (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao && orcSituacao(o)==='concluida');
+  /* 26/11/2026: "aqui sempre mostrar o mês atual" — os 4 cartões contam só
+     os orçamentos do mês corrente (a venda concluída conta pela data da
+     venda). As abas e a lista continuam com tudo. */
+  const mesAtual = todayISO().slice(0, 7);
+  const doMes = o=>{
+    let d = String(o.data || '');
+    if(orcSituacao(o) === 'concluida' && o.vendaGeradaId){
+      const v = (STATE.vendas||[]).find(x=>x.id === o.vendaGeradaId);
+      if(v && v.data) d = String(v.data);
+    }
+    return d.slice(0, 7) === mesAtual;
+  };
+  const nomeMes = new Date(mesAtual + '-15T12:00:00').toLocaleDateString('pt-BR', { month:'long' });
+  const aguardando = orcDaAba('aguardando').filter(doMes);
+  const aprovados  = orcDaAba('aprovados').filter(doMes);
+  const entrega    = orcDaAba('entrega').filter(doMes);
+  const concluidas = (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao && orcSituacao(o)==='concluida').filter(doMes);
   const dados = [
-    { rotulo:'Aguardando o cliente', n:aguardando.length, v:fmtMoney(soma(aguardando))+' em jogo', borda:'#C98A2C' },
-    { rotulo:'Aprovados',            n:aprovados.length,  v:fmtMoney(soma(aprovados))+' pra faturar', borda:'#2E7D5B' },
-    { rotulo:'Em entrega',           n:entrega.length,    v:fmtMoney(soma(entrega))+' a caminho', borda:'#0081A7' },
-    { rotulo:'Vendas concluídas',    n:concluidas.length, v:fmtMoney(soma(concluidas))+' no total', borda:'#1B4B5A' }
+    { rotulo:`Aguardando o cliente · ${nomeMes}`, n:aguardando.length, v:fmtMoney(soma(aguardando))+' em jogo', borda:'#C98A2C' },
+    { rotulo:`Aprovados · ${nomeMes}`,            n:aprovados.length,  v:fmtMoney(soma(aprovados))+' pra faturar', borda:'#2E7D5B' },
+    { rotulo:`Em entrega · ${nomeMes}`,           n:entrega.length,    v:fmtMoney(soma(entrega))+' a caminho', borda:'#0081A7' },
+    { rotulo:`Vendas concluídas · ${nomeMes}`,    n:concluidas.length, v:fmtMoney(soma(concluidas))+' no mês', borda:'#1B4B5A' }
   ];
   cartoes.innerHTML = dados.map(d=>`
     <div class="orc-cartao" style="border-left:4px solid ${d.borda};">
@@ -65704,7 +65718,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 18:00';
+const SISTEMA_VERSAO = '26/11/2026 19:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
