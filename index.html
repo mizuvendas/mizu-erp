@@ -13632,6 +13632,15 @@ function orcEscHtml(){
         ${campo('Prazo de entrega', `<input type="text" id="esc-prazo" value="${att(e.prazoEntrega)}" onchange="orcEscCampo('prazoEntrega',this.value)">`)}
         ${campo('⏰ Prazo pra ENVIAR o orçamento', `<input type="datetime-local" id="esc-prazo-envio" value="${att(e.prazoEnvio||'')}" onchange="orcEscCampo('prazoEnvio',this.value)">
             <div class="help-text" style="margin:2px 0 0;">até quando a escola recebe — aparece contando em "Orçamentos lançados"</div>`)}
+        ${(()=>{ /* 26/11/2026: e-mail pra enviar o orçamento — vem do cadastro da escola, se tiver */
+          const cli = (STATE.clientes||[]).find(x=>x.id === e.clienteId);
+          const doCadastro = cli && cli.email ? String(cli.email).trim() : '';
+          const valor = e.emailEnvio != null && e.emailEnvio !== '' ? e.emailEnvio : doCadastro;
+          return campo('✉️ E-mail pra enviar o orçamento', `<input type="email" id="esc-email" value="${att(valor)}" placeholder="email@escola.com" onchange="orcEscCampo('emailEnvio',this.value)">
+            ${cli && valor && valor !== doCadastro ? `<label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:3px;font-weight:400;">
+              <input type="checkbox" id="esc-email-salvar" ${e.salvarEmailCliente?'checked':''} onchange="orcEscCampo('salvarEmailCliente',this.checked)" style="width:auto;"> salvar também no cadastro da escola</label>` : ''}
+            ${doCadastro && valor === doCadastro ? '<div class="help-text" style="margin:2px 0 0;">veio do cadastro da escola</div>' : ''}`);
+        })()}
       </div>
       <div class="field" style="margin-top:8px;"><label>Observações</label>
         <textarea id="esc-obs" rows="2" onchange="orcEscCampo('observacoes',this.value)">${escapeHtml(e.observacoes||'')}</textarea></div>
@@ -13690,6 +13699,39 @@ function orcEscHtml(){
     </div>`;
 }
 
+/* o e-mail que fica no orçamento: o digitado, ou o do cadastro da escola.
+   Se ela marcou "salvar também no cadastro", grava na escola. */
+function orcEscEmailFinal(e){
+  const cli = (STATE.clientes||[]).find(x=>x.id === e.clienteId);
+  const digitado = String(e.emailEnvio || '').trim();
+  const final = digitado || (cli && cli.email ? String(cli.email).trim() : '');
+  if(cli && digitado && e.salvarEmailCliente) cli.email = digitado;
+  return final;
+}
+/* "Ver mais" → ✉️ E-mail: mostra e copia (sem abrir programa de e-mail) */
+function orcVerEmail(id){
+  const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+  if(!o || !o.emailEnvio) return;
+  document.getElementById('modal-orc-email')?.remove();
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open'; m.id = 'modal-orc-email';
+  m.innerHTML = `<div class="modal-box" style="max-width:min(440px,94vw);">
+      <h3 style="margin-top:0;">✉️ E-mail do orçamento nº ${escapeHtml(String(o.numero||''))}</h3>
+      <div class="field"><input type="text" id="orc-email-campo" readonly value="${escapeAttr(o.emailEnvio)}" style="font-size:15px;"></div>
+      <div class="modal-actions">
+        <button class="btn" onclick="document.getElementById('modal-orc-email').remove()">Fechar</button>
+        <button class="btn btn-primary" id="orc-email-copiar">📋 Copiar</button>
+      </div></div>`;
+  document.body.appendChild(m);
+  m.addEventListener('click', ev=>{ if(ev.target === m) m.remove(); });
+  m.querySelector('#orc-email-copiar').onclick = async ()=>{
+    try{ await navigator.clipboard.writeText(o.emailEnvio); }
+    catch(e){ const c = m.querySelector('#orc-email-campo'); c.select(); try{ document.execCommand('copy'); }catch(e2){} }
+    showToast('E-mail copiado: ' + o.emailEnvio, 'success');
+    m.remove();
+  };
+}
+
 function orcEscCampo(campo, valor){
   const e = orcEsc();
   e[campo] = ['numero','validadeDias'].includes(campo) ? parseInt(valor, 10) || '' : valor;
@@ -13699,7 +13741,9 @@ function orcEscCampo(campo, valor){
       .sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')))[0];
     if(ult){ e.responsavel = ult.responsavel; e.cargo = e.cargo || ult.cargoResponsavel || ''; }
   }
-  if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId'].includes(campo)) orcEscDesenhar();
+  /* trocou de escola: o e-mail passa a vir do cadastro da escola nova */
+  if(campo === 'clienteId'){ e.emailEnvio = ''; e.salvarEmailCliente = false; }
+  if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId','emailEnvio'].includes(campo)) orcEscDesenhar();
 }
 
 /* "pra pesquisar o cliente não dá certo" (18/11/2026): a lista de escolas
@@ -13952,6 +13996,7 @@ function orcEscSalvar(){
     observacoes: String(e.observacoes || '').trim(), vendedor: e.vendedor,
     prazoEntrega: String(e.prazoEntrega || '').trim(), numeroPesquisa: String(e.numeroPesquisa || '').trim(),
     prazoEnvio: String(e.prazoEnvio || '').trim(),
+    emailEnvio: orcEscEmailFinal(e),
     responsavel: String(e.responsavel || '').trim(), cargoResponsavel: String(e.cargo || '').trim(),
     temComissao: orcEscNum(e.comissaoPct) > 0,
     itens, escolar
@@ -13983,7 +14028,7 @@ function orcEscEditar(id){
   const s = o.escolar;
   ORC_ESC = {
     id: o.id, numero: o.numero, clienteId: o.clienteId, data: o.data, validadeDias: o.validadeDias || 7,
-    vendedor: o.vendedor || '', prazoEntrega: o.prazoEntrega || '', prazoEnvio: o.prazoEnvio || '', responsavel: o.responsavel || '',
+    vendedor: o.vendedor || '', prazoEntrega: o.prazoEntrega || '', prazoEnvio: o.prazoEnvio || '', emailEnvio: o.emailEnvio || '', responsavel: o.responsavel || '',
     cargo: o.cargoResponsavel || '', numeroPesquisa: o.numeroPesquisa || '', observacoes: o.observacoes || '',
     itens: (s.itens || []).map(it=>({ ...it })), pctTodos: s.pctTodos != null ? s.pctTodos : '',
     freteFornecedor: s.freteFornecedor || 0, freteCliente: s.freteCliente || 0,
@@ -17845,7 +17890,9 @@ function licAbrirDoOrcamento(licId, tela){
    "nos orçamentos de cada funcionário mude a cor de cada um e permita
     filtrar só de um" — filtro no canto direito das abas, com as cores.
    ========================================================= */
-const ORC_CORES_VENDEDOR = { NETO:'#1F6FB2', GILBERTO:'#2E7D5B', GERALDO:'#D9822B' };
+/* NETO era azul e se perdia no azul do sistema (26/11/2026: "mude a cor do
+   Neto pra que também destaque") — agora magenta, diferente de tudo na tela */
+const ORC_CORES_VENDEDOR = { NETO:'#D81B60', GILBERTO:'#2E7D5B', GERALDO:'#D9822B' };
 const ORC_CORES_RESERVA = ['#8E44AD', '#C0392B', '#16A085', '#7F8C8D', '#B7950B'];
 function orcCorVendedor(nome){
   const n = String(nome||'').trim().toUpperCase();
@@ -17898,9 +17945,11 @@ function orcContagemPrazo(prazo){
 }
 function orcPrazoEnvioHtml(o){
   const c = orcContagemPrazo(o.prazoEnvio);
-  return `<div><span class="orc-contagem" data-prazo="${escapeAttr(o.prazoEnvio)}" style="font-weight:700;color:${c.cor};">${escapeHtml(c.texto)}</span>
-    <div class="help-text" style="margin:0;">enviar até ${escapeHtml(orcDataHoraCurta(o.prazoEnvio))}</div>
-    <button class="btn btn-sm" style="margin-top:4px;" onclick="orcMarcarEnviado('${o.id}')">✓ Enviei</button></div>`;
+  /* numa linha só — "ficou muito grossa a linha, quero do mesmo tamanho das
+     outras" (26/11/2026). O "enviar até" fica no passar do mouse. */
+  return `<span style="white-space:nowrap;display:inline-flex;align-items:center;gap:6px;" title="enviar até ${escapeAttr(orcDataHoraCurta(o.prazoEnvio))}">
+    <span class="orc-contagem" data-prazo="${escapeAttr(o.prazoEnvio)}" style="font-weight:700;color:${c.cor};">${escapeHtml(c.texto)}</span>
+    <button class="btn btn-sm" style="padding:1px 8px;font-size:11.5px;line-height:1.5;" onclick="orcMarcarEnviado('${o.id}')">✓ Enviei</button></span>`;
 }
 function orcMarcarEnviado(id){
   const o = (STATE.orcamentos||[]).find(x=>x.id === id);
@@ -18272,6 +18321,7 @@ function orcAcoesDaLinha(o, sit){
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
           <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
           <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">Ver os itens</button>
+          ${o.escolar && o.emailEnvio ? `<button class="btn btn-sm" onclick="orcVerEmail('${o.id}')" title="${escapeAttr(o.emailEnvio)}">✉️ E-mail</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
           <button class="btn btn-sm" onclick="duplicarOrcamento('${o.id}')">📄 Duplicar</button>
           ${nota ? `<button class="btn btn-sm" onclick="nfeBaixarPdfDaNota('${nota.chave}')">⬇️ Nota nº ${nota.numero}</button>
@@ -65582,7 +65632,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 16:00';
+const SISTEMA_VERSAO = '26/11/2026 17:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
