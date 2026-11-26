@@ -1122,6 +1122,12 @@ body.orc-gaveta-travada{ overflow:hidden; }
       <p>Painel interno · uso offline</p>
     </div>
 
+    <!-- 26/11/2026: "nesse menu aba de pesquisa para pesquisar itens do menu" -->
+    <div class="nav-busca" style="padding:0 14px 8px;">
+      <input type="search" id="nav-busca" placeholder="🔍 Procurar no menu" autocomplete="off"
+        style="width:100%;box-sizing:border-box;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:inherit;font:inherit;font-size:13px;outline:none;">
+    </div>
+
     <div class="nav-section-label">Visão Geral</div>
     <a class="nav-item active" data-page="dashboard" href="#">
       <span class="ic">📊</span> Dashboard
@@ -2811,6 +2817,52 @@ document.querySelectorAll('.nav-item').forEach(item=>{
     navigateTo(page);
   });
 });
+
+/* PROCURAR NO MENU (26/11/2026): digita "lici" e o menu mostra só
+   Licitações e Proposta de Licitação. Enter abre a primeira; Esc limpa.
+   Não mostra o que a permissão do usuário esconde. Sem acento conta igual. */
+function navBuscaNormal(t){ return String(t||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().trim(); }
+function navBuscaFiltrar(texto){
+  const q = navBuscaNormal(texto);
+  const itens = [...document.querySelectorAll('.sidebar .nav-item[data-page]')];
+  const visiveis = [];
+  itens.forEach(a=>{
+    const casa = !q || navBuscaNormal(a.textContent).includes(q);
+    a.classList.toggle('nav-filtro-oculto', !casa);
+    if(casa && !a.hidden && a.style.display !== 'none') visiveis.push(a);
+  });
+  /* título de seção some quando nada dela aparece */
+  document.querySelectorAll('.sidebar .nav-section-label').forEach(lbl=>{
+    let el = lbl.nextElementSibling, algum = false;
+    while(el && !el.classList.contains('nav-section-label') && !el.classList.contains('sidebar-footer')){
+      if(el.matches && el.matches('.nav-item[data-page]') && !el.classList.contains('nav-filtro-oculto') && !el.hidden) algum = true;
+      el = el.nextElementSibling;
+    }
+    lbl.classList.toggle('nav-filtro-oculto', !!q && !algum);
+  });
+  return visiveis;
+}
+function navBuscaIniciar(){
+  const campo = document.getElementById('nav-busca');
+  if(!campo || campo.dataset.ligado) return;
+  campo.dataset.ligado = '1';
+  if(!document.getElementById('nav-busca-estilo')){
+    const s = document.createElement('style'); s.id = 'nav-busca-estilo';
+    s.textContent = '.sidebar .nav-filtro-oculto{display:none !important;} #nav-busca::placeholder{color:rgba(255,255,255,.55);}';
+    document.head.appendChild(s);
+  }
+  campo.addEventListener('input', ()=>navBuscaFiltrar(campo.value));
+  campo.addEventListener('keydown', ev=>{
+    if(ev.key === 'Enter'){
+      ev.preventDefault();
+      const primeiro = navBuscaFiltrar(campo.value)[0];
+      if(primeiro){ campo.value = ''; navBuscaFiltrar(''); primeiro.click(); }
+    }else if(ev.key === 'Escape'){
+      campo.value = ''; navBuscaFiltrar(''); campo.blur();
+    }
+  });
+}
+if(document.readyState === 'loading') document.addEventListener('DOMContentLoaded', navBuscaIniciar); else setTimeout(navBuscaIniciar, 0);
 
 function navigateTo(page){
   // Sai da tela de Orçamentos sem ter clicado em salvar? Guarda
@@ -17824,6 +17876,39 @@ const ORC_SITUACAO_ROTULO = {
    concluída são consequência, não escolha */
 const ORC_SITUACOES_ESCOLHIVEIS = ['aguardando','aprovado','entrega','recusado'];
 
+/* 26/11/2026: "em vez de aparecer venda concluída, aparece o número da
+   nota" — a Observação da venda concluída diz COMO ela saiu:
+   🧾 NF-e nº 31 · 📦 Venda comodato (algum item é do comodato) ·
+   🧾 Venda com recibo (sem nota; o nome foi ela que escolheu).
+   Se a nota sai depois, troca sozinho pro número. */
+function orcVendaTemComodato(o){
+  return (o.itens||[]).some(it=>{
+    const p = it.produtoId ? (STATE.produtos||[]).find(x=>x.id === it.produtoId) : null;
+    return !!(p && p.comodato);
+  });
+}
+/* Venda balcão (26/11/2026): "no futuro vai ter um computador só do
+   balcão, na frente da loja". Esse painel vai gravar o.canal = 'balcao';
+   até lá, venda pro CONSUMIDOR FINAL também conta como balcão. */
+function orcVendaEhBalcao(o){
+  if(o.canal === 'balcao') return true;
+  const c = (STATE.clientes||[]).find(x=>x.id === o.clienteId);
+  return !!(c && (c.consumidorFinal === true || String(c.nome||'').trim().toLowerCase() === 'consumidor final'));
+}
+function orcObservacaoVendaConcluida(o){
+  const nota = (typeof nfeNotaDoOrcamento === 'function') ? nfeNotaDoOrcamento(o.id) : null;
+  const comodato = orcVendaTemComodato(o);
+  const balcao = orcVendaEhBalcao(o);
+  if(nota){
+    const extra = [balcao ? 'balcão' : '', comodato ? 'comodato' : ''].filter(Boolean).join(' · ');
+    return `<span style="color:var(--positive);font-weight:600;">🧾 NF-e nº ${escapeHtml(String(nota.numero||''))}</span>`
+      + (extra ? `<span class="help-text" style="margin:0 0 0 4px;">· ${extra}</span>` : '');
+  }
+  if(balcao) return '<span style="color:var(--positive);font-weight:600;">🏪 Venda balcão</span>';
+  if(comodato) return '<span style="color:var(--positive);font-weight:600;">📦 Venda comodato</span>';
+  return '<span style="color:var(--positive);font-weight:600;">🧾 Venda com recibo</span>';
+}
+
 function orcSelo(sit){
   const r = ORC_SITUACAO_ROTULO[sit] || ORC_SITUACAO_ROTULO.aguardando;
   return `<span class="badge" style="${r.cor}">${r.texto}</span>`;
@@ -18017,7 +18102,7 @@ function renderListaOrcamentos(){
       ? `<span style="color:var(--negative);font-weight:600;">🚫 Nota nº ${escapeHtml(String(notaCancelada.numero||''))} cancelada</span>`
         + (jaConvertido ? '<div class="help-text" style="margin:0;">venda concluída</div>' : '')
       : (jaConvertido
-          ? '<span style="color:var(--positive);font-weight:600;">✅ Venda concluída</span>'
+          ? orcObservacaoVendaConcluida(o)
           : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o) : '<span style="color:var(--ink-faint);">—</span>'));
 
     return `
@@ -35066,6 +35151,8 @@ function licProcurarParecidos(descricao, marca, ignorarItemId){
    ========================================================= */
 function renderPortalLicitacoes(){
   licInjetarEstilo();
+  /* as que vieram sem descrição: tenta completar sozinho (máx. a cada 5 min) */
+  setTimeout(()=>{ try{ licCompletarIncompletas(false); }catch(e){} }, 1500);
   licArrumarLinksAntigos();
   licMigrarCertidoesAntigas();
   inicializarFiltrosDataLicitacoes();
@@ -36130,22 +36217,172 @@ function licPedacosDoLink(txt){
    sem dizer pra onde) e toda dispensa colada vinha "sem descrição".
    O endereço que funciona é o de consulta pública (/api/consulta/v1/...);
    o antigo fica de reserva, caso volte. */
-const LIC_PNCP_ENDERECOS = [
-  p => `https://pncp.gov.br/api/consulta/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`,
-  p => `https://pncp.gov.br/api/pncp/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`
+/* 26/11/2026: dispensa publicada há poucos minutos (Porangatu, 9:06) ainda
+   não está na consulta — ela responde "não cadastrada". A BUSCA do PNCP
+   (a mesma do site) já tem. Agora são três lugares, um depois do outro:
+   consulta → busca → endereço antigo. */
+function licControleDe(p){ return `${p.cnpj}-1-${String(p.seq).padStart(6,'0')}/${p.ano}`; }
+
+/* a busca devolve outros nomes de campo: converte pro formato da consulta */
+function licDaBuscaPncp(it){
+  const prim = v => Array.isArray(v) ? (v[0] || '') : (v || '');
+  return {
+    numeroControlePNCP: it.numero_controle_pncp,
+    numeroCompra: it.numero, anoCompra: it.ano,
+    objetoCompra: it.description || it.title || '',
+    informacaoComplementar: it.informacao_complementar || '',
+    orgaoEntidade: { razaoSocial: it.orgao_nome, cnpj: it.orgao_cnpj },
+    unidadeOrgao: { nomeUnidade: it.unidade_nome, municipioNome: it.municipio_nome, ufSigla: it.uf, codigoIbge: it.codigo_ibge },
+    modalidadeNome: it.modalidade_licitacao_nome, modoDisputaNome: it.modo_disputa_nome,
+    situacaoCompraNome: it.situacao_nome,
+    amparoLegal: { nome: prim(it.amparo_legal_nome) },
+    srp: !!it.srp,
+    valorTotalEstimado: it.valor_total_estimado || 0,
+    /* na busca, o período de propostas vem como "vigência" quando o
+       recebimento está vazio (conferido com a de Porangatu: 01/12 a 04/12) */
+    dataAberturaProposta: it.data_inicio_recebimento_propostas || it.data_inicio_vigencia || null,
+    dataEncerramentoProposta: it.data_fim_recebimento_propostas || it.data_fim_vigencia || null,
+    dataPublicacaoPncp: it.data_publicacao_pncp || '',
+    usuarioNome: it.usuario_nome || '',
+    linkSistemaOrigem: it.link_sistema_origem || '',
+    linkProcessoEletronico: it.link_processo_eletronico || ''
+  };
+}
+
+const LIC_PNCP_FONTES = [
+  { nome:'consulta', url: p => `https://pncp.gov.br/api/consulta/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`,
+    ler: d => (d && typeof d === 'object' && !Array.isArray(d) && (d.objetoCompra || d.numeroControlePNCP || d.orgaoEntidade)) ? d : null },
+  { nome:'busca', url: p => `https://pncp.gov.br/api/search/?tipos_documento=edital&pagina=1&tam_pagina=10&q=${encodeURIComponent(licControleDe(p))}`,
+    ler: (d, p) => { const it = d && Array.isArray(d.items) ? d.items.find(x=>x && x.numero_controle_pncp === licControleDe(p)) : null;
+                     return it ? licDaBuscaPncp(it) : null; } },
+  { nome:'antigo', url: p => `https://pncp.gov.br/api/pncp/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`,
+    ler: d => (d && typeof d === 'object' && !Array.isArray(d) && (d.objetoCompra || d.numeroControlePNCP || d.orgaoEntidade)) ? d : null }
 ];
 async function licBuscarNoPncp(p){
-  let ultimoErro = null;
-  for(const fazUrl of LIC_PNCP_ENDERECOS){
+  let semResposta = 0, ultimo = '';
+  for(const f of LIC_PNCP_FONTES){
     try{
-      const r = await fetch(fazUrl(p), { headers:{ 'Accept':'application/json' } });
-      if(!r.ok){ ultimoErro = new Error('o PNCP respondeu ' + r.status); continue; }
-      const d = await r.json();
-      if(d && typeof d === 'object' && (d.objetoCompra || d.numeroControlePNCP || d.orgaoEntidade)) return d;
-      ultimoErro = new Error('o PNCP respondeu vazio');
-    }catch(e){ ultimoErro = e; }
+      const r = await fetch(f.url(p), { headers:{ 'Accept':'application/json' } });
+      if(!r.ok){ ultimo = 'o PNCP respondeu ' + r.status; continue; }
+      const d = f.ler(await r.json(), p);
+      if(d) return d;
+    }catch(e){ semResposta++; ultimo = e.message || 'sem resposta'; }
   }
-  throw ultimoErro || new Error('sem resposta');
+  /* todos responderam e nenhum achou = o link está errado (ou a dispensa
+     acabou de sair); nenhum respondeu = sem internet / PNCP fora do ar */
+  const err = new Error(semResposta === LIC_PNCP_FONTES.length ? ultimo : 'não achei essa dispensa no PNCP');
+  err.naoAchou = semResposta < LIC_PNCP_FONTES.length;
+  throw err;
+}
+
+/* Itens e arquivos do edital, direto do PNCP (26/11/2026). Os arquivos só
+   como lista com link: o PNCP não deixa o navegador baixar o arquivo. */
+async function licBuscarExtrasPncp(o){
+  const p = licPedacosDoLink(o.numeroControlePNCP || o.linkPncp || '');
+  if(!p) return false;
+  const base = `https://pncp.gov.br/api/pncp/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`;
+  let mudou = false;
+  try{
+    const r = await fetch(base + '/itens?pagina=1&tamanhoPagina=100', { headers:{ 'Accept':'application/json' } });
+    const d = r.ok ? await r.json() : null;
+    if(Array.isArray(d)){
+      o.itensPncp = d.map(it=>({ n: it.numeroItem, descricao: String(it.descricao||'').trim(), qtd: Number(it.quantidade)||0,
+        unidade: it.unidadeMedida || '', valorUnit: Number(it.valorUnitarioEstimado)||0, valorTotal: Number(it.valorTotal)||0 }));
+      mudou = true;
+    }
+  }catch(e){}
+  try{
+    const r = await fetch(base + '/arquivos', { headers:{ 'Accept':'application/json' } });
+    const d = r.ok ? await r.json() : null;
+    if(Array.isArray(d)){
+      o.arquivosPncp = d.filter(a=>a && a.statusAtivo !== false).map(a=>({ titulo: a.titulo || a.tipoDocumentoNome || 'Documento',
+        tipo: a.tipoDocumentoNome || '', url: a.url || a.uri || '' }));
+      mudou = true;
+    }
+  }catch(e){}
+  return mudou;
+}
+
+function licPncpExtrasHtml(o){
+  const itens = o.itensPncp || [], arqs = o.arquivosPncp || [];
+  if(!itens.length && !arqs.length) return '';
+  return `<div class="lic-pncp-extras" style="margin-top:6px;font-size:12.5px;">
+    ${itens.length ? `<details><summary style="cursor:pointer;">📋 ${itens.length} ite${itens.length===1?'m':'ns'} no PNCP</summary>
+      <ol style="margin:4px 0 4px 18px;padding:0;">${itens.map(it=>`<li>${fmtNum(it.qtd)} ${escapeHtml(it.unidade)} — ${escapeHtml(it.descricao.slice(0,160))}${it.descricao.length>160?'…':''}${it.valorTotal>0?` <span style="color:var(--ink-faint);">· ${fmtMoney(it.valorTotal)}</span>`:''}</li>`).join('')}</ol>
+    </details>` : ''}
+    ${arqs.length ? `<details><summary style="cursor:pointer;">📎 ${arqs.length} arquivo${arqs.length===1?'':'s'} do edital</summary>
+      <div style="display:flex;flex-direction:column;gap:2px;margin:4px 0 4px 18px;">${arqs.map(a=> a.url
+        ? `<a href="${escapeAttr(a.url)}" target="_blank" rel="noopener">${escapeHtml(a.titulo)} ↗</a>`
+        : `<span>${escapeHtml(a.titulo)}</span>`).join('')}</div>
+    </details>` : ''}
+  </div>`;
+}
+
+/* "sem descrição" = veio só com o link (PNCP fora do ar, ou a dispensa
+   ainda não estava na consulta) */
+function licIncompleta(o){
+  return !!o && (o.incompletaPncp === true || /^\(sem descrição/.test(String(o.objeto||'')));
+}
+
+/* Completa uma que veio vazia: preenche SÓ o que falta. Análise, arquivos
+   anexados, itens da proposta e documentos dela não são tocados. */
+async function licCompletarDoPncp(o){
+  const p = licPedacosDoLink(o.numeroControlePNCP || o.linkPncp || '');
+  if(!p) return false;
+  const novo = licDaApiPncp(await licBuscarNoPncp(p), p);
+  const vazio = v => v == null || v === '' || v === 0 || /^\(sem descrição/.test(String(v));
+  ['objeto','orgao','unidade','municipioNome','uf','codigoIbge','complemento','modalidadeNome','modoDisputa',
+   'situacao','amparoLegal','valorEstimado','dataAbertura','dataEncerramentoProposta','dataPublicacao',
+   'plataforma','linkSistemaOrigem','linkProcesso'].forEach(k=>{
+    if(vazio(o[k]) && !vazio(novo[k])) o[k] = novo[k];
+  });
+  if(novo.srp && !o.srp) o.srp = true;
+  if(/^\d+\/\d{4}$/.test(String(o.numero||'')) && novo.numero) o.numero = novo.numero;
+  delete o.incompletaPncp;
+  await licBuscarExtrasPncp(o);
+  return true;
+}
+
+let licCompletandoAgora = false, licCompletarUltima = 0;
+/* tenta de novo sozinho: ao abrir Licitações (no máx. a cada 5 min) e a cada 30 min */
+async function licCompletarIncompletas(forcar){
+  if(licCompletandoAgora) return 0;
+  if(!forcar && Date.now() - licCompletarUltima < 5*60*1000) return 0;
+  licCompletarUltima = Date.now();
+  const todas = [...(STATE.licitacoesRevisao||[]), ...(typeof licTodas === 'function' ? licTodas() : [])];
+  const faltam = todas.filter(licIncompleta);
+  if(!faltam.length) return 0;
+  licCompletandoAgora = true;
+  let feitas = 0;
+  try{
+    for(const o of faltam){
+      try{ if(await licCompletarDoPncp(o)) feitas++; }catch(e){}
+    }
+  }finally{ licCompletandoAgora = false; }
+  if(feitas){
+    saveState();
+    if(typeof licCalcularDistancias === 'function') try{ licCalcularDistancias(); }catch(e){}
+    if(document.getElementById('licitacoes-content')) try{ renderPortalLicitacoes(); }catch(e){}
+    showToast(`${feitas} dispensa${feitas===1?'':'s'} que tinha${feitas===1?'':'m'} vindo sem descrição foi${feitas===1?'':'ram'} completada${feitas===1?'':'s'} com os dados do PNCP.`, 'success');
+  }
+  return feitas;
+}
+setInterval(()=>{ try{ licCompletarIncompletas(true); }catch(e){} }, 30*60*1000);
+
+async function licBuscarDeNovo(id){
+  const o = [...(STATE.licitacoesRevisao||[]), ...licTodas()].find(x=>x.id === id);
+  if(!o) return;
+  showToast('Buscando no PNCP...', 'info');
+  try{
+    await licCompletarDoPncp(o);
+    saveState();
+    if(typeof licCalcularDistancias === 'function') try{ licCalcularDistancias(); }catch(e){}
+    renderPortalLicitacoes();
+    showToast('Pronto — completei com os dados do PNCP.', 'success');
+  }catch(e){
+    showToast(e.naoAchou ? 'O PNCP ainda não tem essa dispensa. Confira o link — se ela acabou de ser publicada, o sistema tenta de novo sozinho.'
+                         : 'Não consegui falar com o PNCP agora (' + (e.message||'sem resposta') + '). Tento de novo sozinho.', 'error');
+  }
 }
 
 /* A resposta da API tem nomes um pouco diferentes dos da planilha.
@@ -36256,15 +36493,21 @@ async function licTrazerPorLink(){
     let o = null, aviso = '';
     try{
       o = licDaApiPncp(await licBuscarNoPncp(p), p);
+      caixa.innerHTML = '<div class="help-text">Achei. Trazendo os itens e os arquivos do edital...</div>';
+      await licBuscarExtrasPncp(o);
     }catch(e){
-      /* sem internet, ou o PNCP fora do ar: cria com o que o link diz */
+      /* sem internet, PNCP fora do ar, ou a dispensa ainda não está lá:
+         cria com o que o link diz e o sistema tenta completar sozinho */
       o = { id: uid('licop'),
             numeroControlePNCP: `${p.cnpj}-1-${String(p.seq).padStart(6,'0')}/${p.ano}`,
-            numero: `${p.seq}/${p.ano}`, orgao:'', objeto:'(sem descrição — não consegui falar com o PNCP)',
-            cnpjOrgao:p.cnpj, valorEstimado:0, historico:[], origem:'link',
+            numero: `${p.seq}/${p.ano}`, orgao:'',
+            objeto: e.naoAchou ? '(sem descrição — o PNCP ainda não tem essa dispensa)' : '(sem descrição — não consegui falar com o PNCP)',
+            cnpjOrgao:p.cnpj, valorEstimado:0, historico:[], origem:'link', incompletaPncp: true,
             linkPncp: linkEditalPNCP(p.cnpj, p.ano, p.seq) };
       o.linkEdital = o.linkPncp;
-      aviso = 'não consegui falar com o PNCP (' + (e.message||'sem resposta') + '). Trouxe só o link — abra e confira.';
+      aviso = e.naoAchou
+        ? 'não achei essa dispensa no PNCP — confira o link. Se ela acabou de ser publicada, o sistema tenta de novo sozinho e completa.'
+        : 'não consegui falar com o PNCP (' + (e.message||'sem resposta') + '). Trouxe só o link — o sistema tenta de novo sozinho.';
     }
 
     const chave = licChaveOportunidade(o);
@@ -36300,13 +36543,19 @@ async function licTrazerPorLink(){
          e abre com um clique. */
       const achada = (STATE.licitacoesRevisao||[]).find(x=>licChaveOportunidade(x)===chave)
                   || licTodas().find(x=>licChaveOportunidade(x)===chave);
+      /* colou de novo uma que tinha vindo vazia: completa agora, sem
+         mexer na análise nem nos arquivos dela */
+      let completou = false;
+      if(achada && licIncompleta(achada) && !aviso){
+        try{ await licCompletarDoPncp(achada); completou = true; saveState(); }catch(e){}
+      }
       const naTriagem = (STATE.licitacoesRevisao||[]).some(x=>x===achada);
       const aba = naTriagem ? 'oportunidades' : ((LIC_ETAPAS[(achada||{}).etapa]||{}).aba || 'analise');
       const ondeEsta = naTriagem ? 'na triagem, esperando você decidir'
                                  : ((LIC_ETAPAS[(achada||{}).etapa]||{}).rotulo || 'no sistema');
       linhasRes.push(`<div class="lic-doc aviso"><div>
         <b>${escapeHtml(((achada||o).objeto||'').slice(0,60))}</b>
-        <small>já está no sistema — ${escapeHtml(ondeEsta)}${estavaDescartada?'. Tirei da lista de descartadas.':''}</small>
+        <small>já está no sistema — ${escapeHtml(ondeEsta)}${estavaDescartada?'. Tirei da lista de descartadas.':''}${completou?'. Estava sem descrição: completei com os dados do PNCP (a análise e os arquivos dela continuam).':''}</small>
         ${achada ? `<button class="btn btn-sm" style="margin-top:6px;"
           onclick="licLevarAte('${achada.id}','${aba}')">Me leve até ela →</button>`:''}
       </div></div>`);
@@ -36609,6 +36858,9 @@ function licCartaoOportunidade(o){
 
       ${ver.complemento && o.complemento
         ? `<details class="compl"><summary>Informação complementar</summary><div>${escapeHtml(o.complemento)}</div></details>` : ''}
+
+      ${licPncpExtrasHtml(o)}
+      ${licIncompleta(o) ? `<button class="btn btn-sm" style="margin-top:6px;" onclick="licBuscarDeNovo('${o.id}')">🔄 Buscar de novo no PNCP</button>` : ''}
 
       ${ver.links ? `<div class="links">
         ${links.map(l=> l.u
@@ -38244,6 +38496,8 @@ function licPainelAnalise(){
               ${l.captadoPor?`<div class="lic-captou">👤 captada por <b>${escapeHtml(l.captadoPor)}</b>${l.captadoEm?` · ${fmtDate(String(l.captadoEm).slice(0,10))}`:''}</div>`:''}
               ${licTarjasComoParticipar(l, true)}
               ${licLinksHtml(l)}
+              ${licPncpExtrasHtml(l)}
+              ${licIncompleta(l) ? `<button class="btn btn-sm" style="margin-top:6px;" onclick="licBuscarDeNovo('${l.id}')">🔄 Buscar de novo no PNCP</button>` : ''}
               <div class="lic-tags">
                 ${pronta
                   ? `<span class="lic-tag selo-pronta">✓ análise pronta</span>`
@@ -65102,7 +65356,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 09:00';
+const SISTEMA_VERSAO = '26/11/2026 11:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
