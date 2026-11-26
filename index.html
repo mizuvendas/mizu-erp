@@ -13501,7 +13501,7 @@ let ORC_ESC = null;
 function orcEscNovo(){
   return {
     id: null, numero: proximoNumeroOrcamento(), clienteId: '', data: todayISO(), validadeDias: 7,
-    vendedor: '', prazoEntrega: prazoEntregaPadrao(), responsavel: '', cargo: '', numeroPesquisa: '',
+    vendedor: '', prazoEntrega: prazoEntregaPadrao(), prazoEnvio: '', responsavel: '', cargo: '', numeroPesquisa: '',
     observacoes: '', itens: [], pctTodos: '',
     freteFornecedor: 0, freteCliente: 0,
     comissaoPct: ORC_ESC_COMISSAO_PADRAO, impostoPct: ORC_ESC_IMPOSTO_PADRAO
@@ -13630,6 +13630,8 @@ function orcEscHtml(){
         ${campo('Cargo', `<input type="text" id="esc-cargo" value="${att(e.cargo)}" onchange="orcEscCampo('cargo',this.value)">`)}
         ${campo('Nº de pesquisa', `<input type="text" id="esc-pesquisa" value="${att(e.numeroPesquisa)}" onchange="orcEscCampo('numeroPesquisa',this.value)">`)}
         ${campo('Prazo de entrega', `<input type="text" id="esc-prazo" value="${att(e.prazoEntrega)}" onchange="orcEscCampo('prazoEntrega',this.value)">`)}
+        ${campo('⏰ Prazo pra ENVIAR o orçamento', `<input type="datetime-local" id="esc-prazo-envio" value="${att(e.prazoEnvio||'')}" onchange="orcEscCampo('prazoEnvio',this.value)">
+            <div class="help-text" style="margin:2px 0 0;">até quando a escola recebe — aparece contando em "Orçamentos lançados"</div>`)}
       </div>
       <div class="field" style="margin-top:8px;"><label>Observações</label>
         <textarea id="esc-obs" rows="2" onchange="orcEscCampo('observacoes',this.value)">${escapeHtml(e.observacoes||'')}</textarea></div>
@@ -13949,6 +13951,7 @@ function orcEscSalvar(){
     numero, clienteId: e.clienteId, data: e.data, validadeDias: parseInt(e.validadeDias, 10) || 7,
     observacoes: String(e.observacoes || '').trim(), vendedor: e.vendedor,
     prazoEntrega: String(e.prazoEntrega || '').trim(), numeroPesquisa: String(e.numeroPesquisa || '').trim(),
+    prazoEnvio: String(e.prazoEnvio || '').trim(),
     responsavel: String(e.responsavel || '').trim(), cargoResponsavel: String(e.cargo || '').trim(),
     temComissao: orcEscNum(e.comissaoPct) > 0,
     itens, escolar
@@ -13980,7 +13983,7 @@ function orcEscEditar(id){
   const s = o.escolar;
   ORC_ESC = {
     id: o.id, numero: o.numero, clienteId: o.clienteId, data: o.data, validadeDias: o.validadeDias || 7,
-    vendedor: o.vendedor || '', prazoEntrega: o.prazoEntrega || '', responsavel: o.responsavel || '',
+    vendedor: o.vendedor || '', prazoEntrega: o.prazoEntrega || '', prazoEnvio: o.prazoEnvio || '', responsavel: o.responsavel || '',
     cargo: o.cargoResponsavel || '', numeroPesquisa: o.numeroPesquisa || '', observacoes: o.observacoes || '',
     itens: (s.itens || []).map(it=>({ ...it })), pctTodos: s.pctTodos != null ? s.pctTodos : '',
     freteFornecedor: s.freteFornecedor || 0, freteCliente: s.freteCliente || 0,
@@ -17837,7 +17840,87 @@ function licAbrirDoOrcamento(licId, tela){
    resto do sistema — relatórios, caixa, estoque — continua lendo os
    mesmos campos de sempre.
    ========================================================= */
+/* =========================================================
+   VENDEDOR COM COR + FILTRO + PRAZO DE ENVIO (26/11/2026)
+   "nos orçamentos de cada funcionário mude a cor de cada um e permita
+    filtrar só de um" — filtro no canto direito das abas, com as cores.
+   ========================================================= */
+const ORC_CORES_VENDEDOR = { NETO:'#1F6FB2', GILBERTO:'#2E7D5B', GERALDO:'#D9822B' };
+const ORC_CORES_RESERVA = ['#8E44AD', '#C0392B', '#16A085', '#7F8C8D', '#B7950B'];
+function orcCorVendedor(nome){
+  const n = String(nome||'').trim().toUpperCase();
+  if(!n) return '';
+  if(ORC_CORES_VENDEDOR[n]) return ORC_CORES_VENDEDOR[n];
+  let h = 0; for(const ch of n) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return ORC_CORES_RESERVA[h % ORC_CORES_RESERVA.length];
+}
+let orcFiltroVendedor = '';
+try{ orcFiltroVendedor = localStorage.getItem('mizu_orc_filtro_vendedor') || ''; }catch(e){}
+function orcFiltrarVendedor(nome){
+  orcFiltroVendedor = (orcFiltroVendedor === nome) ? '' : nome;
+  try{ localStorage.setItem('mizu_orc_filtro_vendedor', orcFiltroVendedor); }catch(e){}
+  renderListaOrcamentos();
+}
+function orcFiltroVendedorHtml(){
+  const naAba = orcDaAba(orcAbaAtual);
+  const nomes = (typeof getVendedoresUnicos === 'function' ? getVendedoresUnicos() : VENDEDORES_PADRAO).map(n=>String(n).trim().toUpperCase());
+  if(orcFiltroVendedor && !nomes.includes(orcFiltroVendedor)) nomes.push(orcFiltroVendedor);
+  const qtd = n => naAba.filter(o=>String(o.vendedor||'').trim().toUpperCase() === n).length;
+  const btn = (rot, n, cor, on, valor) => `<button type="button" onclick="orcFiltrarVendedor('${escapeAttr(valor)}')" title="${valor ? 'Só os orçamentos de ' + escapeAttr(rot) : 'Todos os vendedores'}"
+      style="padding:6px 11px;border-radius:999px;font:inherit;font-size:12.5px;font-weight:700;cursor:pointer;
+      border:2px solid ${cor};${on ? `background:${cor};color:#fff;` : `background:#fff;color:${cor};`}">${escapeHtml(rot)}${n!=null ? ` <span style="opacity:.8;font-weight:600;">${n}</span>` : ''}</button>`;
+  return `<div class="orc-filtro-vendedor" style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+    ${btn('Todos', null, '#1B4B5A', !orcFiltroVendedor, '')}
+    ${nomes.map(n=>btn(n, qtd(n), orcCorVendedor(n), orcFiltroVendedor === n, n)).join('')}
+  </div>`;
+}
+
+/* contagem do prazo de envio, em tempo real */
+function orcDataHoraCurta(iso){
+  const d = new Date(iso);
+  if(isNaN(d)) return '';
+  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+}
+function orcContagemPrazo(prazo){
+  const alvo = new Date(prazo).getTime();
+  if(isNaN(alvo)) return { texto:'prazo inválido', cor:'var(--ink-faint)' };
+  let ms = alvo - Date.now();
+  const passou = ms < 0; ms = Math.abs(ms);
+  const min = Math.floor(ms / 60000), dias = Math.floor(min / 1440), h = Math.floor((min % 1440) / 60), m = min % 60;
+  const partes = [];
+  if(dias) partes.push(dias + (dias === 1 ? ' dia' : ' dias'));
+  if(h || dias) partes.push(h + ' h');
+  partes.push(m + ' min');
+  const t = partes.join(' ');
+  if(passou) return { texto:'⚠️ prazo passou há ' + t, cor:'var(--negative)' };
+  if(min < 24*60) return { texto:'⏰ faltam ' + t, cor:'#C26A00' };
+  return { texto:'⏰ faltam ' + t, cor:'#5B3A99' };
+}
+function orcPrazoEnvioHtml(o){
+  const c = orcContagemPrazo(o.prazoEnvio);
+  return `<div><span class="orc-contagem" data-prazo="${escapeAttr(o.prazoEnvio)}" style="font-weight:700;color:${c.cor};">${escapeHtml(c.texto)}</span>
+    <div class="help-text" style="margin:0;">enviar até ${escapeHtml(orcDataHoraCurta(o.prazoEnvio))}</div>
+    <button class="btn btn-sm" style="margin-top:4px;" onclick="orcMarcarEnviado('${o.id}')">✓ Enviei</button></div>`;
+}
+function orcMarcarEnviado(id){
+  const o = (STATE.orcamentos||[]).find(x=>x.id === id);
+  if(!o) return;
+  o.enviadoEm = new Date().toISOString();
+  saveState();
+  showToast('Marcado como enviado — foi pra "Aguardando o cliente".', 'success');
+  renderListaOrcamentos();
+}
+/* atualiza as contagens na tela a cada 20 s, sem redesenhar a lista */
+setInterval(()=>{
+  document.querySelectorAll('.orc-contagem[data-prazo]').forEach(el=>{
+    const c = orcContagemPrazo(el.dataset.prazo);
+    if(el.textContent !== c.texto) el.textContent = c.texto;
+    el.style.color = c.cor;
+  });
+}, 20000);
+
 const ORC_ABAS = [
+  { id:'a_enviar',   rotulo:'⏰ A enviar' },
   { id:'aguardando', rotulo:'Aguardando o cliente' },
   { id:'aprovados',  rotulo:'Aprovados' },
   { id:'entrega',    rotulo:'Em entrega' },
@@ -17859,11 +17942,16 @@ function orcSituacao(o){
   if(['separacao','em_rota'].includes(o.statusEntrega)) return 'entrega';
   if(o.status==='recusado') return 'recusado';
   if(o.status==='aprovado') return 'aprovado';
+  /* 26/11/2026: orçamento ESCOLAR finalizado não quer dizer enviado —
+     "estamos aguardando dar o dia pra enviar". Com prazo de envio e sem
+     o "✓ Enviei", fica em "A enviar"; depois vai pra Aguardando o cliente. */
+  if(o.escolar && o.prazoEnvio && !o.enviadoEm) return 'a_enviar';
   return 'aguardando';   // pendente, enviado, expirado
 }
 
 const ORC_SITUACAO_ROTULO = {
   rascunho:   { texto:'Rascunho',            cor:'background:#EEEEEE;color:#666666;' },
+  a_enviar:   { texto:'⏰ A enviar',          cor:'background:#EFE7FB;color:#5B3A99;' },
   aguardando: { texto:'Aguardando cliente',  cor:'background:#FBF0DC;color:#8A5A10;' },
   aprovado:   { texto:'Aprovado',            cor:'background:#E7F4EE;color:#2E7D5B;' },
   entrega:    { texto:'Em entrega',          cor:'background:#E6F1FB;color:#185FA5;' },
@@ -17939,6 +18027,7 @@ function orcDaAba(aba){
   const todos = (STATE.orcamentos||[]).filter(o=>!o.origemLicitacao);
   if(aba==='todos') return todos;
   if(aba==='rascunhos')  return todos.filter(o=>orcSituacao(o)==='rascunho');
+  if(aba==='a_enviar')   return todos.filter(o=>orcSituacao(o)==='a_enviar');
   if(aba==='aguardando') return todos.filter(o=>orcSituacao(o)==='aguardando');
   if(aba==='aprovados')  return todos.filter(o=>orcSituacao(o)==='aprovado');
   if(aba==='entrega')    return todos.filter(o=>orcSituacao(o)==='entrega');
@@ -18047,6 +18136,8 @@ function renderListaOrcamentos(){
   if(setaOrdem) setaOrdem.textContent = orcamentoListaOrdemData==='desc' ? '▼' : '▲';
 
   let lista = orcDaAba(orcAbaAtual);
+  /* filtro por vendedor (26/11/2026) — o canto direito das abas */
+  if(orcFiltroVendedor) lista = lista.filter(o=>String(o.vendedor||'').trim().toUpperCase() === orcFiltroVendedor);
 
   /* A busca vale em qualquer aba — pedido dela pra achar na lista de
      Todos sem ficar rolando: número, cliente, vendedor ou produto. */
@@ -18086,7 +18177,7 @@ function renderListaOrcamentos(){
 
     /* O selinho de status é editável na própria linha — menos pra venda
        concluída e rascunho, que são consequência e não escolha. */
-    const celulaStatus = (jaConvertido || sit==='rascunho')
+    const celulaStatus = (jaConvertido || sit==='rascunho' || sit==='a_enviar')
       ? orcSelo(sit)
       : `<select onchange="orcMudarSituacao('${o.id}', this.value)" style="padding:4px 6px;font-size:12.5px;border-radius:6px;${ORC_SITUACAO_ROTULO[sit].cor}border:1px solid currentColor;font-weight:600;">
           ${ORC_SITUACOES_ESCOLHIVEIS.map(s=>`<option value="${s}" ${sit===s?'selected':''}>${ORC_SITUACAO_ROTULO[s].texto}</option>`).join('')}
@@ -18103,14 +18194,18 @@ function renderListaOrcamentos(){
         + (jaConvertido ? '<div class="help-text" style="margin:0;">venda concluída</div>' : '')
       : (jaConvertido
           ? orcObservacaoVendaConcluida(o)
-          : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o) : '<span style="color:var(--ink-faint);">—</span>'));
+          : (sit==='a_enviar' ? orcPrazoEnvioHtml(o)
+          : (statusEntrega!=='nenhum' ? rotuloStatusEntrega(o)
+          : (o.escolar && o.enviadoEm ? `<span style="color:var(--positive);font-weight:600;">✓ Enviado ${escapeHtml(orcDataHoraCurta(o.enviadoEm))}</span>`
+          : '<span style="color:var(--ink-faint);">—</span>'))));
+    const corVend = orcCorVendedor(o.vendedor);
 
     return `
-      <tr>
+      <tr style="${corVend ? `box-shadow:inset 4px 0 0 ${corVend};` : ''}">
         <td>${o.numero!=null ? '#'+escapeHtml(String(o.numero)) : '—'}</td>
         <td>${fmtDate(o.data)}</td>
         <td>${escapeHtml(cliente?cliente.nome:'(cliente removido)')}</td>
-        <td>${o.vendedor ? escapeHtml(o.vendedor) : '<span style="color:var(--ink-faint);">—</span>'}</td>
+        <td>${o.vendedor ? `<span style="display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:700;color:#fff;background:${corVend||'#888'};">${escapeHtml(o.vendedor)}</span>` : '<span style="color:var(--ink-faint);">—</span>'}</td>
         <td class="num">${fmtMoney(c.bruto)}</td>
         <td>${celulaStatus}</td>
         ${mostraQuandoSai ? `<td>
@@ -18300,9 +18395,11 @@ function orcDesenharAbas(){
   caixa.innerHTML = ORC_ABAS.map(a=>{
     const on = orcAbaAtual===a.id;
     const n = cont[a.id] || 0;
+    /* "A enviar" só aparece quando tem orçamento escolar esperando o dia */
+    if(a.id === 'a_enviar' && !n && !on) return '';
     return `<button type="button" class="orc-aba${on?' on':''}" onclick="orcIrParaAba('${a.id}')">
       <span>${a.rotulo}</span><span class="n">${n}</span></button>`;
-  }).join('');
+  }).join('') + orcFiltroVendedorHtml();
 
   const cartoes = document.getElementById('orc-cartoes');
   if(!cartoes) return;
@@ -65485,7 +65582,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 14:00';
+const SISTEMA_VERSAO = '26/11/2026 16:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
