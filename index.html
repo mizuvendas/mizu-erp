@@ -22070,7 +22070,7 @@ function renderMotorista(){
   const pct = roteiro.length ? Math.round(feitas * 100 / roteiro.length) : 0;
   const rota = motoristaLinkRotaInteira(roteiro);
   const mapa = p=>{ const l = roteiroLinkMaps(p); return l ? `<a class="mot-btn-mapa" href="${escapeAttr(l)}" target="_blank" rel="noopener">🗺️ Abrir no Google Maps</a>` : ''; };
-  const cartoes = roteiro.map((p, i)=>{
+  const cartoesLista = roteiro.map((p, i)=>{
     const s = motoristaSituacao(p);
     if(p.tipo === 'coleta'){
       const agr = (p.itens||[]).reduce((acc,it)=>{ acc[it.nome] = (acc[it.nome]||0) + Number(it.qtd||0); return acc; }, {});
@@ -22119,7 +22119,18 @@ function renderMotorista(){
         : `<input class="mot-rec" id="mot-rec-${escapeAttr(p.orcamentoId)}" placeholder="Quem recebeu? (opcional)" value="${escapeAttr(m.recebidoPor||'')}">
            <button class="mot-entregar" onclick="motoristaMarcarEntrega('${escapeAttr(p.orcamentoId)}', true)">✓ Entregue</button>`}
     </div>`;
-  }).join('');
+  });
+  /* 26/11/2026: "ele marcou que entregou o Alberto Filho, mas continua lá,
+     transparente — pode confundir". Na frente, só o que falta (na ordem da
+     rota); o que já foi feito vai pro fim, numa parte fechada. */
+  const pendentes = [], feitasHtml = [];
+  roteiro.forEach((p, i)=>{ (motoristaSituacao(p).feita ? feitasHtml : pendentes).push(cartoesLista[i]); });
+  const cartoes = (pendentes.length ? pendentes.join('')
+      : `<div class="mot-cartao" style="text-align:center;font-size:16px;padding:22px 16px;">✅ Tudo feito por hoje!</div>`)
+    + (feitasHtml.length ? `<details class="mot-feitas" ${motFeitasAberto?'open':''} ontoggle="motFeitasAberto=this.open"
+        style="margin-top:14px;background:#fff;border-radius:14px;padding:10px 12px;">
+        <summary style="font-size:16px;font-weight:700;cursor:pointer;color:var(--positive);">✓ Já feitas hoje (${feitasHtml.length})</summary>
+        <div style="margin-top:10px;">${feitasHtml.join('')}</div></details>` : '');
   box.innerHTML = est + `
     <button class="btn btn-sm bal-voltar-menu" style="margin:0 0 8px;" onclick="balMostrarMenu()">☰ Menu</button>
     <div class="mot-topo">
@@ -22131,6 +22142,7 @@ function renderMotorista(){
     ${cartoes}`;
 }
 RENDERERS['motorista'] = renderMotorista;
+let motFeitasAberto = false;
 
 /* O RETORNO, na Logística dela: o que o motorista já marcou */
 function motoristaRetornoHtml(){
@@ -65473,7 +65485,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 13:00';
+const SISTEMA_VERSAO = '26/11/2026 14:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
