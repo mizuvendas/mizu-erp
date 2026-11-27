@@ -3918,6 +3918,8 @@ function renderSugestoes(){
     if(ba) ba.addEventListener('click', async ()=>{
       if(!confirm('Apagar esta sugestão? O print e o áudio também somem.')) return;
       await sugApagarMidia(s);
+      /* ela já confirmou: a nuvem não pergunta de novo (26/11/2026) */
+      if(typeof nuvemAutorizarExclusoes === 'function') nuvemAutorizarExclusoes(60);
       STATE.sugestoes = sugLista().filter(x=>x.id !== s.id);
       saveState(); renderSugestoes(); sugAtualizarBadge();
     });
@@ -38086,10 +38088,12 @@ function licPainelOportunidades(){
         <button class="btn" onclick="licAbrirCamposCartao()" title="Escolher o que aparece em cada oportunidade">⚙️ O que mostrar</button>
         <button class="btn" onclick="licAbrirPorLink()" title="Colar o endereço de uma dispensa do PNCP">🔗 Trazer pelo link</button>
         <button class="btn" onclick="licNovaCotacao()">✏️ Cotação sem edital</button>
-        <button class="btn btn-primary" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
+        <button class="btn btn-primary" id="lic-btn-buscar-pncp" onclick="licBuscarPncpAgora(false)" title="Faz a mesma pesquisa do site do PNCP (Dispensa · Goiás · recebendo proposta) e traz o que é novo">🔄 Buscar no PNCP agora</button>
+        <button class="btn" onclick="document.getElementById('lic-arquivo-pncp').click()">📥 Importar arquivo do PNCP</button>
         <input type="file" id="lic-arquivo-pncp" accept=".xlsx,.xls,.csv,.json" style="display:none;">
       </div>
     </div>
+    <div style="margin:-4px 0 12px;">${licBuscaPncpResumoHtml()}</div>
 
     <div class="kpi-row">
       <div class="kpi-card"><div class="kpi-label">Aguardando triagem</div><div class="kpi-value">${lista.length}</div><div class="kpi-sub">importadas, não decididas</div></div>
@@ -39559,7 +39563,19 @@ async function licImportarArquivoPNCP(file){
       linhas = XLSX.utils.sheet_to_json(ws, { defval:'' });
     }
     if(linhas.length===0){ showToast('O arquivo não tem nenhuma linha de dados.','error'); return; }
+    licImportarLinhasPNCP(linhas, { origem:'pncp-arquivo' });
+  }catch(e){
+    console.error(e);
+    showToast('Não consegui ler esse arquivo. Confira se é o arquivo de resultados que o PNCP exporta (.csv ou .xlsx).','error');
+  }
+}
 
+/* A CONFERÊNCIA DA IMPORTAÇÃO, usada pelo arquivo E pela busca automática
+   (26/11/2026) — os dois passam exatamente pelo mesmo crivo. */
+function licImportarLinhasPNCP(linhas, opcoes){
+  opcoes = opcoes || {};
+  {
+    if(!linhas || !linhas.length){ if(!opcoes.silencioso) showToast('O PNCP não devolveu nenhuma dispensa agora.','info'); return { novas:0, repetidas:0, puladas:0, encerradas:0 }; }
     /* Mapeia os cabeçalhos: primeiro o mapa exato do PNCP, depois o
        adivinhador pro que sobrar. */
     const mapa = {};
@@ -39574,12 +39590,14 @@ async function licImportarArquivoPNCP(file){
     });
     if(!mapa.objeto && !mapa.orgao){
       showToast('Não reconheci as colunas desse arquivo. Baixe o arquivo de resultados direto no PNCP (.csv ou .xlsx).','error');
-      return;
+      return null;
     }
 
     const jaTem = new Set();
     (STATE.licitacoesRevisao||[]).forEach(o=>jaTem.add(licChaveOportunidade(o)));
     licTodas().forEach(o=>jaTem.add(licChaveOportunidade(o)));
+    /* o que está na lixeira também não volta sozinho (26/11/2026) */
+    licLixeira().forEach(x=>{ if(x && x.registro) jaTem.add(licChaveOportunidade(x.registro)); });
     const descartadas = new Set(licDescartadas());
 
     let novas=0, repetidas=0, puladas=0, encerradas=0;
@@ -39611,7 +39629,7 @@ async function licImportarArquivoPNCP(file){
         situacao: txt('situacao'),
         valorEstimado: licValorPlanilha(v('valor')),
         obs: '', historico: [],
-        origem: 'pncp-arquivo',
+        origem: opcoes.origem || 'pncp-arquivo',
         numeroControlePNCP: txt('controle') || null,
         modalidadeNome: txt('modalidade'),
         modoDisputa: txt('disputa'),
@@ -39657,14 +39675,134 @@ async function licImportarArquivoPNCP(file){
     if(repetidas) partes.push(`${repetidas} já estava${repetidas===1?'':'m'} aqui`);
     if(puladas) partes.push(`${puladas} você já tinha descartado`);
     if(encerradas) partes.push(`${encerradas} com prazo já vencido`);
-    showToast(partes.join(' · '), novas>0?'success':'info');
+    if(!opcoes.silencioso) showToast((opcoes.origem === 'pncp-busca' ? 'PNCP: ' : '') + partes.join(' · '), novas>0?'success':'info');
 
     if(novas>0 && licQuantosSemDistancia()>0) licCalcularDistancias();
-  }catch(e){
-    console.error(e);
-    showToast('Não consegui ler esse arquivo. Confira se é o arquivo de resultados que o PNCP exporta (.csv ou .xlsx).','error');
+    return { novas, repetidas, puladas, encerradas };
   }
 }
+
+/* =========================================================
+   BUSCA AUTOMÁTICA NO PNCP (26/11/2026)
+   "Todo dia eu abro o PNCP, filtro Dispensa + Goiás, baixo o arquivo e
+   anexo. Dá pra automatizar?" — e: "não quero perder o jeito que a gente
+   já faz, nem duplicar, nem voltar o que a gente descartou".
+   Como: a BUSCA do PNCP (a mesma que o site usa ao clicar em pesquisar;
+   responde em meio segundo — a consulta antiga levava 25 s por página e
+   era barrada, por isso a busca online foi abandonada lá atrás) devolve
+   os resultados; cada um vira uma LINHA com as MESMAS colunas do arquivo
+   que ela baixa, e entra por licImportarLinhasPNCP — a mesmíssima
+   conferência do arquivo: número de controle do PNCP como chave, pula o
+   que já está na triagem/análise, o que foi descartado e o que está na
+   lixeira. O arquivo continua lá, igual.
+   Automático: a cada 3 h enquanto algum aparelho estiver aberto; a hora
+   da última busca anda pela nuvem (config.licBuscaPncp), então duas
+   máquinas não buscam a mesma coisa.
+   ========================================================= */
+const LIC_BUSCA_INTERVALO_MS = 3 * 3600 * 1000;
+let LIC_BUSCA_RODANDO = false;
+
+function licBuscaParaLinha(it){
+  const iso = v => v ? String(v) : '';
+  const link = it.item_url ? 'https://pncp.gov.br/app/editais/' + String(it.item_url).replace(/^\/?compras\//, '') : '';
+  return {
+    'Número de Controle PNCP da Contratação': it.numero_controle_pncp || '',
+    'Número da Contratação': it.numero || '',
+    'Ano da Contratação': it.ano || '',
+    'Nome da Situação da Contratação': it.situacao_nome || '',
+    'CNPJ do Órgão/Entidade da Contratação': it.orgao_cnpj || '',
+    'Razão Social do Órgão/Entidade da Contratação': it.orgao_nome || '',
+    'Nome da Unidade Compradora/Vendedora da Contratação': it.unidade_nome || '',
+    'Código IBGE do Município da Unidade Compradora/Vendedora': it.codigo_ibge || '',
+    'Nome do Município da Unidade': it.municipio_nome || '',
+    'Sigla UF da Unidade Compradora/Vendedora': it.uf || '',
+    'Nome do Instrumento Convocatório da Contratação': it.tipo_nome || '',
+    'Nome do Amparo Legal da Contratação': Array.isArray(it.amparo_legal_nome) ? (it.amparo_legal_nome[0] || '') : (it.amparo_legal_nome || ''),
+    'Nome da Modalidade da Contratação': it.modalidade_licitacao_nome || '',
+    'Nome do Modo de Disputa da Contratação': it.modo_disputa_nome || '',
+    'Data/Hora Início de Recebimento de Propostas/Lances': iso(it.data_inicio_recebimento_propostas || it.data_inicio_vigencia),
+    'Data/Hora Fim do Recebimento de Propostas/Lances': iso(it.data_fim_recebimento_propostas || it.data_fim_vigencia),
+    'Indicador SRP da Contratação': it.srp ? 'Sim' : 'Não',
+    'Valor Total Estimado/Avaliado da Contratação': Number(it.valor_total_estimado) || 0,
+    'Descrição do Objeto da Contratação': it.description || it.title || '',
+    'Informação Complementar da Contratação': it.informacao_complementar || '',
+    'Data de Publicação no PNCP': iso(it.data_publicacao_pncp),
+    'Nome do usuário da plataforma que publicou/atualizou a Contratação': it.usuario_nome || '',
+    'Link para detalhamento da Contratação no Portal': link,
+    'Link plataforma de origem': it.link_sistema_origem || '',
+    'Link Processo Eletrônico': it.link_processo_eletronico || ''
+  };
+}
+
+function licBuscaPncpUrl(pagina){
+  return 'https://pncp.gov.br/api/search/?tipos_documento=edital&ordenacao=-data&pagina=' + pagina
+    + '&tam_pagina=100&status=recebendo_proposta&modalidades=8&ufs=GO';
+}
+
+async function licBuscarPncpAgora(automatico){
+  if(LIC_BUSCA_RODANDO){ if(!automatico) showToast('Já estou buscando no PNCP…', 'info'); return null; }
+  LIC_BUSCA_RODANDO = true;
+  const bt = document.getElementById('lic-btn-buscar-pncp');
+  if(bt){ bt.disabled = true; bt.textContent = '⏳ Buscando no PNCP…'; }
+  STATE.config = STATE.config || {};
+  try{
+    const linhas = [];
+    let pagina = 1, total = 0;
+    do{
+      const r = await fetch(licBuscaPncpUrl(pagina), { headers:{ 'Accept':'application/json' } });
+      if(!r.ok) throw new Error('o PNCP respondeu ' + r.status);
+      const d = await r.json();
+      (d.items || []).forEach(it=>{ if(it && !it.cancelado) linhas.push(licBuscaParaLinha(it)); });
+      total = Number(d.total) || 0;
+      pagina++;
+    }while((pagina - 1) * 100 < total && pagina <= 20);
+    const res = licImportarLinhasPNCP(linhas, { silencioso: !!automatico, origem: 'pncp-busca' });
+    STATE.config.licBuscaPncp = { quando: new Date().toISOString(), achadas: linhas.length, novas: res ? res.novas : 0,
+      por: (typeof sugQuem === 'function' ? sugQuem() : ''), erro: null };
+    saveState();
+    if(automatico && res && res.novas > 0 && typeof mostrarNotificacaoGlobal === 'function'){
+      mostrarNotificacaoGlobal('🏛️ Dispensas novas no PNCP',
+        `${res.novas} dispensa${res.novas===1?'':'s'} nova${res.novas===1?'':'s'} de Goiás na triagem.`, 'info', ()=>navigateTo('licitacoes'));
+    }
+    return res;
+  }catch(e){
+    console.warn('[pncp busca]', e);
+    STATE.config.licBuscaPncp = Object.assign({}, STATE.config.licBuscaPncp || {}, { erro: String(e.message || e), erroEm: new Date().toISOString() });
+    saveState();
+    showToast('Não consegui buscar no PNCP agora (' + (e.message || 'sem resposta') + '). Se precisar, importe o arquivo como sempre.', 'error');
+    return null;
+  }finally{
+    LIC_BUSCA_RODANDO = false;
+    if(typeof renderPortalLicitacoes === 'function' && document.getElementById('page-licitacoes') && document.getElementById('page-licitacoes').classList.contains('active')) renderPortalLicitacoes();
+  }
+}
+
+function licBuscaPncpResumoHtml(){
+  const b = (STATE.config || {}).licBuscaPncp;
+  if(!b || !b.quando) return '<span class="help-text" style="margin:0;">O PNCP é conferido sozinho a cada 3 horas (Dispensa · Goiás · recebendo proposta).</span>';
+  const d = new Date(b.quando);
+  const quando = d.toLocaleDateString('pt-BR') === new Date().toLocaleDateString('pt-BR')
+    ? 'hoje às ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' })
+    : d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+  const erro = b.erro && b.erroEm && Date.parse(b.erroEm) > Date.parse(b.quando)
+    ? ` · <span style="color:var(--negative);">a última tentativa falhou — importe o arquivo se precisar</span>` : '';
+  return `<span class="help-text" style="margin:0;">🔄 PNCP conferido ${quando}${b.por ? ' (' + escapeHtml(b.por) + ')' : ''}: ${b.achadas} dispensa${b.achadas===1?'':'s'} de Goiás, ${b.novas} nova${b.novas===1?'':'s'}. Confere de novo sozinho a cada 3 h.${erro}</span>`;
+}
+
+/* a cada 3 h, em qualquer aparelho aberto (a marca de hora vem da nuvem) */
+function licBuscaPncpVerificar(){
+  try{
+    if(typeof temAcesso === 'function' && !temAcesso('licitacoes')) return;
+    if(!navigator.onLine) return;
+    const b = (STATE.config || {}).licBuscaPncp;
+    const ultima = b && b.quando ? Date.parse(b.quando) : 0;
+    const erroRecente = b && b.erroEm && Date.now() - Date.parse(b.erroEm) < 30 * 60000;
+    if(Date.now() - ultima >= LIC_BUSCA_INTERVALO_MS && !erroRecente) licBuscarPncpAgora(true);
+  }catch(e){ console.warn(e); }
+}
+/* só no site de verdade (https): aberto como arquivo (testes, cópia local) não busca sozinho */
+if(location.protocol === 'https:') setTimeout(()=>{ licBuscaPncpVerificar(); setInterval(licBuscaPncpVerificar, 10 * 60000); }, 45000);
+
 
 /* Leitor de CSV que respeita aspas — o objeto da contratação vem cheio
    de ponto e vírgula dentro das aspas, e um split simples picava a linha
@@ -66843,7 +66981,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 21:45';
+const SISTEMA_VERSAO = '26/11/2026 22:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -67514,21 +67652,49 @@ function nuvemMotivoDeSegurar(exclusoes){
   return null;
 }
 
+/* nomes que ela reconhece pras coleções que não estavam nas listas (26/11/2026) */
+const NUVEM_NOMES_EXTRA = { sugestoes:'Sugestões', conferenciaLinhas:'Balanço (contagem)', orcamentos:'Orçamentos',
+  vendas:'Vendas', clientes:'Clientes', produtos:'Produtos', fornecedores:'Fornecedores', despesas:'Despesas',
+  contasReceber:'Contas a receber', vales:'Vale de funcionários', lembretes:'Lembretes', notasFiscais:'Notas fiscais',
+  roteirosMotorista:'Roteiros do motorista', paradasAvulsas:'Paradas avulsas', locaisCompra:'Locais de compra' };
 function nuvemNomeColecao(c){
   return (typeof REPESCA_NOMES==='object' && REPESCA_NOMES[c])
       || (typeof ARMAZ_NOMES==='object' && ARMAZ_NOMES[c])
-      || c;
+      || NUVEM_NOMES_EXTRA[c]
+      || String(c).replace(/([a-z])([A-Z])/g, '$1 $2').replace(/^./, x=>x.toUpperCase());
+}
+
+/* QUAL FOI APAGADO (26/11/2026): "ele precisa mostrar o que eu realmente
+   apaguei — e se eu apaguei várias e uma eu queria ter?". A janela
+   agora lista CADA registro, com o que dá pra reconhecer (a cópia dele
+   vem da BASE que este aparelho guarda — mizu-nuvem-base), e cada um tem
+   uma caixinha: marcado = apaguei mesmo; desmarcado = traz de volta. */
+function nuvemDescreverRegistro(colecao, d, id){
+  if(!d || typeof d !== 'object') return 'registro ' + id;
+  const achar = (lista, chave)=> (Array.isArray(STATE[lista]) && chave) ? (STATE[lista].find(x=>x.id === chave) || {}) : {};
+  const partes = [];
+  if(d.numero != null && d.numero !== '') partes.push('#' + d.numero);
+  const cli = d.clienteNome || achar('clientes', d.clienteId).nome;
+  if(cli) partes.push(cli);
+  let nome = d.nome || d.descricao || d.titulo || d.objeto || d.produtoNome || d.nomeProduto || d.texto || d.razaoSocial || '';
+  if(!nome && d.produtoId) nome = achar('produtos', d.produtoId).nome || '';
+  if(nome) partes.push(String(nome).replace(/\s+/g, ' ').slice(0, 80));
+  const qtd = d.qtd != null ? d.qtd : (d.quantidade != null ? d.quantidade : (d.qtdBipada != null ? d.qtdBipada : null));
+  if(qtd != null && qtd !== '') partes.push(qtd + ' un.');
+  const valor = d.valor != null ? d.valor : (d.valorTotal != null ? d.valorTotal : (d.total != null ? d.total : null));
+  if(typeof valor === 'number' && isFinite(valor)) partes.push('R$ ' + valor.toLocaleString('pt-BR', { minimumFractionDigits:2, maximumFractionDigits:2 }));
+  const data = d.data || d.vencimento || d.criadoEm || d.dataEmissao || '';
+  if(data){ const dt = new Date(String(data).length === 10 ? data + 'T12:00:00' : data); if(!isNaN(dt)) partes.push(dt.toLocaleDateString('pt-BR')); }
+  return partes.length ? partes.join(' · ') : 'registro ' + id;
 }
 
 function nuvemAvisarExclusoes(linhas, motivo){
   if(document.getElementById('modal-exclusao-massa')) return;
-  const porColecao = {};
-  linhas.forEach(r=>{ porColecao[r.colecao] = (porColecao[r.colecao]||0) + 1; });
   const m = document.createElement('div');
   m.className = 'modal-overlay open';
   m.id = 'modal-exclusao-massa';
   m.innerHTML = `
-    <div class="modal-box" style="max-width:min(640px,95vw);">
+    <div class="modal-box" style="max-width:min(680px,95vw);">
       <h3 style="margin-top:0;color:var(--negative);">⚠️ Segurei uma exclusão</h3>
 
       <div class="lic-doc falta" style="display:block;">
@@ -67550,44 +67716,65 @@ function nuvemAvisarExclusoes(linhas, motivo){
         }</small>
       </div>
 
-      <p class="help-text" style="margin:10px 0 4px;">Está na fila pra ser apagado nas <b>duas máquinas</b>:</p>
-      <div class="lic-doc aviso" style="display:block;">
-        ${Object.keys(porColecao).map(c=>`<div>· <b>${escapeHtml(nuvemNomeColecao(c))}</b> — ${porColecao[c]} registro${porColecao[c]===1?'':'s'}</div>`).join('')}
+      <p class="help-text" style="margin:12px 0 6px;"><b>Nada foi apagado até agora.</b> Estes estão na fila pra sair das <b>duas máquinas</b>.
+        <b>Desmarque</b> o que você quer de volta:</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+        <button type="button" class="btn btn-sm" id="exc-todos">☑ Marcar todos</button>
+        <button type="button" class="btn btn-sm" id="exc-nenhum">☐ Desmarcar todos</button>
       </div>
-
-      <p class="help-text"><b>Nada foi apagado até agora.</b>
-        <b>Buscar de volta</b> desfaz o pedido e traz o que está na nuvem — é o certo quando você não
-        reconhece essa lista. <b>Eu apaguei mesmo</b> manda apagar nas duas máquinas, sem volta.</p>
-      <div class="modal-actions">
-        <button class="btn btn-primary" id="exc-buscar">Não apaguei — buscar de volta</button>
-        <button class="btn btn-danger" id="exc-confirmar">Eu apaguei mesmo, pode mandar</button>
+      <div id="exc-lista" style="max-height:44vh;overflow-y:auto;border:1px solid var(--border);border-radius:8px;">
+        ${linhas.map((r,i)=>`<label class="exc-item" style="display:flex;gap:10px;align-items:flex-start;padding:9px 12px;border-bottom:1px solid #f0f2f3;cursor:pointer;">
+            <input type="checkbox" data-i="${i}" checked style="width:18px;height:18px;margin-top:2px;flex-shrink:0;">
+            <span style="min-width:0;"><b style="font-size:12px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:.3px;">${escapeHtml(nuvemNomeColecao(r.colecao))}</b>
+            <span class="exc-desc" data-i="${i}" style="display:block;font-size:14px;">carregando…</span></span></label>`).join('')}
+      </div>
+      <p class="help-text" id="exc-resumo" style="margin:8px 0 12px;"></p>
+      <div class="modal-actions" style="flex-wrap:wrap;">
+        <button class="btn" id="exc-depois">Decidir depois</button>
+        <button class="btn" id="exc-buscar">Não apaguei nada — buscar tudo de volta</button>
+        <button class="btn btn-primary" id="exc-confirmar">Confirmar</button>
       </div>
     </div>`;
   document.body.appendChild(m);
-  m.querySelector('#exc-confirmar').onclick = ()=>{
-    nuvemExclusoesLiberadas = true;
-    m.remove();
-    showToast('Certo — as exclusões vão subir no próximo sincronismo.','info');
-    nuvemSincronizar(true);
+
+  const caixas = ()=>[...m.querySelectorAll('#exc-lista input[type=checkbox]')];
+  const resumo = ()=>{
+    const ap = caixas().filter(c=>c.checked).length, volta = linhas.length - ap;
+    m.querySelector('#exc-resumo').innerHTML = (ap ? `🗑️ <b>${ap}</b> ${ap===1?'vai ser apagado':'vão ser apagados'} nas duas máquinas, sem volta.` : '')
+      + (ap && volta ? '<br>' : '') + (volta ? `↩️ <b>${volta}</b> volta${volta===1?'':'m'} da nuvem.` : '');
+    const bt = m.querySelector('#exc-confirmar');
+    bt.textContent = !volta ? 'Confirmar — apagar ' + (ap===1 ? 'este' : 'os ' + ap)
+                   : !ap ? 'Confirmar — trazer tudo de volta'
+                   : 'Confirmar — apagar ' + ap + ' e trazer ' + volta + ' de volta';
+    bt.className = 'btn ' + (ap && !volta ? 'btn-danger' : 'btn-primary');
   };
-  /* Antes este botão só fechava a janela — e no dia seguinte o sistema
-     perguntava de novo, porque o espelho continuava dizendo que os
-     registros existiam. Agora ele conserta: tira essas chaves do
-     espelho (param de virar exclusão) e volta a marca pro começo, pra
-     o próximo baixar trazer tudo da nuvem de novo. */
-  m.querySelector('#exc-buscar').onclick = async ()=>{
+  caixas().forEach(c=>c.addEventListener('change', resumo));
+  m.querySelector('#exc-todos').onclick = ()=>{ caixas().forEach(c=>c.checked = true); resumo(); };
+  m.querySelector('#exc-nenhum').onclick = ()=>{ caixas().forEach(c=>c.checked = false); resumo(); };
+  resumo();
+
+  /* o que era cada um: vem da cópia guardada neste aparelho */
+  (async ()=>{
+    let base = {};
+    try{ base = await nuvemBaseLer(linhas.map(r=>r._chave).filter(Boolean)); }catch(e){}
+    linhas.forEach((r,i)=>{
+      const el = m.querySelector('.exc-desc[data-i="' + i + '"]');
+      if(el) el.textContent = nuvemDescreverRegistro(r.colecao, base[r._chave], r.id);
+    });
+  })();
+
+  /* trazer de volta: tira as chaves do espelho (deixam de ser exclusão) e
+     volta a marca pro começo, pra o próximo baixar trazer da nuvem */
+  const trazerDeVolta = async (lista, recarregar)=>{
     const espelho = nuvemLerEspelho();
-    linhas.forEach(r=>{ if(r._chave) delete espelho[r._chave]; });
+    lista.forEach(r=>{ if(r._chave) delete espelho[r._chave]; });
     nuvemGravarEspelho(espelho);
     try{ localStorage.setItem(NUVEM_MARCA, '1970-01-01T00:00:00Z'); localStorage.removeItem(NUVEM_MARCA + '_chave'); }catch(e){}
-    nuvemExclusoesSeguradas = null;
-    m.remove();
     showToast('Buscando de volta o que está na nuvem…','info');
     try{
       const n = await nuvemBaixar();
       if(n){
-        showToast(`${n} registro${n===1?'':'s'} conferido${n===1?'':'s'} com a nuvem. Vou recarregar a tela.`,'success');
-        setTimeout(()=>location.reload(), 1600);
+        if(recarregar){ showToast(`${n} registro${n===1?'':'s'} conferido${n===1?'':'s'} com a nuvem. Vou recarregar a tela.`,'success'); setTimeout(()=>location.reload(), 1600); }
       }else{
         showToast('A nuvem também não tem esses registros. Use "🔎 Devolver o que sumiu" com um backup de quando eles existiam.','error');
       }
@@ -67595,6 +67782,40 @@ function nuvemAvisarExclusoes(linhas, motivo){
       console.error(e);
       showToast('Não consegui falar com a nuvem agora. Nada foi apagado — dá pra tentar de novo depois.','error');
     }
+  };
+
+  m.querySelector('#exc-depois').onclick = ()=>{ m.remove(); showToast('Tudo bem — nada foi apagado. Pergunto de novo no próximo sincronismo.','info'); };
+  m.querySelector('#exc-buscar').onclick = async ()=>{
+    nuvemExclusoesSeguradas = null;
+    m.remove();
+    await trazerDeVolta(linhas, true);
+  };
+  m.querySelector('#exc-confirmar').onclick = async ()=>{
+    const marcadas = caixas().filter(c=>c.checked).map(c=>linhas[+c.dataset.i]);
+    const voltam = linhas.filter(r=>marcadas.indexOf(r) < 0);
+    nuvemExclusoesSeguradas = null;
+    m.remove();
+    if(!marcadas.length){ await trazerDeVolta(voltam, true); return; }
+    /* os que voltam saem do espelho ANTES de subir: assim não viram exclusão */
+    if(voltam.length){
+      const espelho = nuvemLerEspelho();
+      voltam.forEach(r=>{ if(r._chave) delete espelho[r._chave]; });
+      nuvemGravarEspelho(espelho);
+    }
+    nuvemExclusoesLiberadas = true;
+    showToast(`Apagando ${marcadas.length} nas duas máquinas…`,'info');
+    /* se um sincronismo já está rodando, espera ele acabar — senão o
+       pedido de apagar seria pulado e o "trazer de volta" logo abaixo
+       devolveria também o que ela mandou apagar */
+    for(let i = 0; i < 60 && nuvemSincronizando; i++) await new Promise(r=>setTimeout(r, 1000));
+    try{ await nuvemSincronizar(true); }catch(e){ console.error(e); }
+    if(nuvemUltimoErro){
+      showToast('Não consegui falar com a nuvem pra apagar. Nada foi apagado — o que estava na fila volta, e dá pra apagar de novo depois.','error');
+      await trazerDeVolta(voltam, true);
+      return;
+    }
+    if(voltam.length) await trazerDeVolta(voltam, true);
+    else showToast('Pronto — apagado nas duas máquinas.','success');
   };
 }
 
