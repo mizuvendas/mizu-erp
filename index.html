@@ -35600,7 +35600,9 @@ const LIC_ABAS = [
   { id:'propostas',     rotulo:'Prontas pra enviar' },
   { id:'enviadas',      rotulo:'Enviadas' },
   { id:'perdidas',      rotulo:'Não ganhamos' },
-  { id:'produtos',      rotulo:'Produtos de licitação' }
+  { id:'produtos',      rotulo:'Produtos de licitação' },
+  /* 26/11/2026: "bem do lado direito" — as que o prazo passou, enviadas ou não */
+  { id:'encerradas',    rotulo:'⏱️ Encerradas' }
 ];
 
 /* Etapa de cada licitação dentro do portal. A aba onde ela aparece sai
@@ -36557,7 +36559,8 @@ function renderPortalLicitacoes(){
     propostas: licPainelPropostas,
     enviadas: licPainelEnviadas,
     perdidas: licPainelPerdidas,
-    produtos: licPainelProdutos
+    produtos: licPainelProdutos,
+    encerradas: licPainelEncerradas
   }[licAba] || licPainelOportunidades;
 
   box.innerHTML = `
@@ -36588,12 +36591,13 @@ function renderPortalLicitacoes(){
 function licContagemAbas(){
   return {
     oportunidades: (STATE.licitacoesRevisao||[]).length,
-    analise:       licPorEtapa(['analise']).length,
-    precificacao:  licPorEtapa(['precificacao']).length,
-    propostas:     licPorEtapa(['proposta']).length,
-    enviadas:      licPorEtapa(['enviada','ganhou','ganhou_parcial','entregue']).length,
+    analise:       licPorEtapaAbertas(['analise']).length,
+    precificacao:  licPorEtapaAbertas(['precificacao']).length,
+    propostas:     licPorEtapaAbertas(['proposta']).length,
+    enviadas:      licPorEtapaAbertas(['enviada']).length + licPorEtapa(['ganhou','ganhou_parcial','entregue']).length,
     perdidas:      licPorEtapa(['perdeu','desistiu']).length,
-    produtos:      licHistoricoProdutos().length
+    produtos:      licHistoricoProdutos().length,
+    encerradas:    licEncerradas().length
   };
 }
 
@@ -36615,9 +36619,10 @@ function licAlertaDaAba(id){
     }).length;
     return apertadas ? { classe:'urgente', quantos:apertadas, porque:'pronta e o prazo encerra em menos de 48h' } : null;
   }
-  if(id==='enviadas'){
-    const cobrar = licTodas().filter(licPrecisaCobrar).length;
-    return cobrar ? { classe:'atencao', quantos:cobrar, porque:'sem retorno há dias — vale cobrar' } : null;
+  /* 26/11/2026: a enviada com prazo vencido mora em Encerradas — o "vale cobrar" foi junto */
+  if(id==='encerradas'){
+    const cobrar = licEncerradas().filter(l=>licPrecisaCobrar(l) && !licEncTemResultado(l)).length;
+    return cobrar ? { classe:'atencao', quantos:cobrar, porque:'enviada, sem resultado há dias — vale cobrar' } : null;
   }
   return null;
 }
@@ -37486,12 +37491,33 @@ function licPrazoApertado(){
   }).sort((a,b)=> new Date(a.dataEncerramentoProposta||a.dataAbertura) - new Date(b.dataEncerramentoProposta||b.dataAbertura));
 }
 
+/* "esses lembretes não precisa ficar todos abertos assim" (26/11/2026):
+   fica numa linha só, fechado; clicou, abre a lista. Lembra como ela
+   deixou. Quando entra uma dispensa NOVA no aperto, a linha pisca uma vez. */
+function licAvisoPrazoAberto(){ try{ return localStorage.getItem('mizu_lic_aviso_prazo_aberto') === '1'; }catch(e){ return false; } }
+function licAvisoPrazoAlternar(det){ try{ localStorage.setItem('mizu_lic_aviso_prazo_aberto', det.open ? '1' : '0'); }catch(e){} }
 function licAvisoPrazo(){
   const urgentes = licPrazoApertado();
   if(urgentes.length===0) return '';
-  return `<div class="lic-doc falta" style="display:block;margin-bottom:12px;">
-    <b>⏰ ${urgentes.length} dispensa${urgentes.length===1?'':'s'} encerra${urgentes.length===1?'':'m'} em menos de 2 dias e a proposta não foi enviada</b>
-    ${urgentes.slice(0,4).map(l=>{
+  let vistos = [];
+  try{ vistos = JSON.parse(localStorage.getItem('mizu_lic_aviso_prazo_vistos') || '[]') || []; }catch(e){}
+  const novo = urgentes.some(l=>vistos.indexOf(l.id) < 0);
+  try{ localStorage.setItem('mizu_lic_aviso_prazo_vistos', JSON.stringify(urgentes.map(l=>l.id))); }catch(e){}
+  if(!document.getElementById('lic-aviso-prazo-estilo')){
+    const s = document.createElement('style'); s.id = 'lic-aviso-prazo-estilo';
+    s.textContent = `.lic-aviso-prazo > summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.lic-aviso-prazo > summary::-webkit-details-marker{display:none;}
+.lic-aviso-prazo > summary .ver{margin-left:auto;font-size:12.5px;font-weight:700;color:var(--negative);white-space:nowrap;}
+.lic-aviso-prazo[open] > summary .ver::after{content:' ▾';} .lic-aviso-prazo:not([open]) > summary .ver::after{content:' ▸';}
+.lic-aviso-prazo.pisca{animation:licPisca 1.2s ease 2;}
+@keyframes licPisca{0%,100%{box-shadow:none;}50%{box-shadow:0 0 0 4px rgba(196,72,61,.35);}}`;
+    document.head.appendChild(s);
+  }
+  return `<details class="lic-doc falta lic-aviso-prazo ${novo ? 'pisca' : ''}" style="display:block;margin-bottom:12px;padding-top:8px;padding-bottom:8px;"
+      ${licAvisoPrazoAberto() ? 'open' : ''} ontoggle="licAvisoPrazoAlternar(this)">
+    <summary><b>⏰ ${urgentes.length} dispensa${urgentes.length===1?'':'s'} encerra${urgentes.length===1?'':'m'} em menos de 2 dias e a proposta não foi enviada</b>
+      <span class="ver">ver</span></summary>
+    ${urgentes.slice(0,8).map(l=>{
       const p = licPrazoInfo(l);
       const et = LIC_ETAPAS[l.etapa]||{};
       return `<div style="margin-top:6px;font-size:12.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
@@ -37502,8 +37528,8 @@ function licAvisoPrazo(){
         <button class="btn btn-sm" onclick="licAbrir('${l.id}','${l.etapa==='proposta'?'proposta':l.etapa==='precificacao'?'precificar':'processo'}')">Abrir</button>
       </div>`;
     }).join('')}
-    ${urgentes.length>4?`<div style="margin-top:6px;font-size:12px;color:var(--ink-faint);">e mais ${urgentes.length-4}.</div>`:''}
-  </div>`;
+    ${urgentes.length>8?`<div style="margin-top:6px;font-size:12px;color:var(--ink-faint);">e mais ${urgentes.length-8}.</div>`:''}
+  </details>`;
 }
 
 function licAvisoCertidoes(){
@@ -39798,10 +39824,242 @@ function licBuscaPncpVerificar(){
     const ultima = b && b.quando ? Date.parse(b.quando) : 0;
     const erroRecente = b && b.erroEm && Date.now() - Date.parse(b.erroEm) < 30 * 60000;
     if(Date.now() - ultima >= LIC_BUSCA_INTERVALO_MS && !erroRecente) licBuscarPncpAgora(true);
+    /* e o resultado das encerradas que ainda esperam (26/11/2026) */
+    setTimeout(()=>{ try{ licResultadosVerificar(); }catch(e){} }, 20000);
   }catch(e){ console.warn(e); }
 }
 /* só no site de verdade (https): aberto como arquivo (testes, cópia local) não busca sozinho */
 if(location.protocol === 'https:') setTimeout(()=>{ licBuscaPncpVerificar(); setInterval(licBuscaPncpVerificar, 10 * 60000); }, 45000);
+
+/* =========================================================
+   ENCERRADAS + RESULTADO DO PNCP (26/11/2026)
+   "Coloquei em análise semana passada, não mexi, e encerrou. Ela vai
+   pro menu bem do lado direito — as que enviamos e as que não
+   enviamos — e lá eu atualizo pra ver se já saiu o resultado."
+   · Toda dispensa em Análise / Precificação / Prontas pra enviar /
+     Enviada (aguardando) cujo prazo PASSOU sai da aba de origem e vem
+     pra "⏱️ Encerradas", dizendo de onde veio.
+   · "🔄 Buscar resultados no PNCP": item por item, o PNCP diz a situação
+     (Homologado, Deserto, Fracassado…), quem ganhou e por quanto. Se o
+     vencedor tem o CNPJ da Mizu: 🏆 Ganhamos.
+   · Sozinho, na mesma rotina de 3 h da busca de dispensas, confere as
+     que ainda esperam resultado; quando sai, avisa.
+   Só PNCP (pedido dela: outros portais ficam pra depois).
+   ========================================================= */
+const MIZU_CNPJ = '46836769000145';
+const LIC_ENC_ETAPAS = ['analise','precificacao','proposta','enviada'];
+let licEncFiltro = 'todas';
+let LIC_RES_RODANDO = false;
+
+function licEstaEncerrada(l){ try{ return !!licPrazoInfo(l).encerrada; }catch(e){ return false; } }
+function licPorEtapaAbertas(etapas){ return licPorEtapa(etapas).filter(l=>!licEstaEncerrada(l)); }
+function licEncerradas(){
+  return licPorEtapa(LIC_ENC_ETAPAS).filter(licEstaEncerrada)
+    .sort((a,b)=>String(b.dataEncerramentoProposta||'').localeCompare(String(a.dataEncerramentoProposta||'')));
+}
+function licEncEnviada(l){ return l.etapa === 'enviada'; }
+function licEncTemResultado(l){ return !!(l.resultadoPncp && l.resultadoPncp.temResultado); }
+
+/* busca o resultado de UMA dispensa no PNCP */
+async function licResultadoPncp(l){
+  const p = licPedacosDoLink(l.numeroControlePNCP || l.linkPncp || '');
+  if(!p) return null;
+  const base = `https://pncp.gov.br/api/pncp/v1/orgaos/${p.cnpj}/compras/${p.ano}/${p.seq}`;
+  const r = await fetch(base + '/itens?pagina=1&tamanhoPagina=100', { headers:{ 'Accept':'application/json' } });
+  if(!r.ok) throw new Error('o PNCP respondeu ' + r.status);
+  const itens = await r.json();
+  if(!Array.isArray(itens)) throw new Error('resposta estranha do PNCP');
+  const saida = [];
+  for(const it of itens){
+    const linha = { n: it.numeroItem, descricao: String(it.descricao||'').trim(), qtd: Number(it.quantidade)||0,
+      unidade: it.unidadeMedida || '', situacao: it.situacaoCompraItemNome || '', vencedores: [] };
+    if(it.temResultado){
+      try{
+        const rr = await fetch(base + `/itens/${it.numeroItem}/resultados`, { headers:{ 'Accept':'application/json' } });
+        const res = rr.ok ? await rr.json() : [];
+        (Array.isArray(res) ? res : []).forEach(x=>linha.vencedores.push({
+          empresa: String(x.nomeRazaoSocialFornecedor||'').trim(), cnpj: String(x.niFornecedor||'').replace(/\D/g,''),
+          valorUnit: Number(x.valorUnitarioHomologado)||0, qtd: Number(x.quantidadeHomologada)||0,
+          total: Number(x.valorTotalHomologado)||0 }));
+      }catch(e){}
+    }
+    saida.push(linha);
+  }
+  const comResultado = saida.filter(x=>x.vencedores.length).length;
+  const nossos = saida.filter(x=>x.vencedores.some(v=>v.cnpj === MIZU_CNPJ)).length;
+  const situacoes = [...new Set(saida.map(x=>x.situacao).filter(Boolean))];
+  return {
+    conferidoEm: new Date().toISOString(),
+    temResultado: comResultado > 0 || (saida.length > 0 && saida.every(x=>/deserto|fracassad|cancelad|anulad|revogad/i.test(x.situacao))),
+    itens: saida, comResultado, nossos, situacoes
+  };
+}
+
+async function licBuscarResultados(lista, automatico){
+  if(LIC_RES_RODANDO){ if(!automatico) showToast('Já estou buscando os resultados…', 'info'); return 0; }
+  LIC_RES_RODANDO = true;
+  const bt = document.getElementById('lic-enc-buscar');
+  if(bt){ bt.disabled = true; bt.textContent = '⏳ Buscando resultados…'; }
+  let saiu = 0, falhas = 0;
+  const novos = [];
+  try{
+    for(const l of lista){
+      try{
+        const antes = licEncTemResultado(l);
+        const res = await licResultadoPncp(l);
+        if(!res) continue;
+        l.resultadoPncp = res;
+        if(res.temResultado && !antes){ saiu++; novos.push(l); }
+      }catch(e){ falhas++; if(l.resultadoPncp) l.resultadoPncp.erroEm = new Date().toISOString(); }
+      await new Promise(r=>setTimeout(r, 250));
+    }
+    STATE.config = STATE.config || {};
+    STATE.config.licResultadosEm = new Date().toISOString();
+    saveState();
+    if(!automatico){
+      showToast(lista.length ? `${lista.length} conferida${lista.length===1?'':'s'} no PNCP · ${saiu} com resultado novo`
+        + (falhas ? ` · ${falhas} não respondeu` : '') : 'Nenhuma encerrada pra conferir.', saiu ? 'success' : 'info');
+    }else if(novos.length && typeof mostrarNotificacaoGlobal === 'function'){
+      const l = novos[0];
+      mostrarNotificacaoGlobal('🏛️ Saiu resultado no PNCP',
+        novos.length === 1 ? `${(l.orgao||'').slice(0,60)} — ${l.resultadoPncp.nossos ? '🏆 a Mizu ganhou ' + l.resultadoPncp.nossos + ' item(ns)!' : 'veja quem ganhou'}`
+                           : `${novos.length} dispensas encerradas já têm resultado.`,
+        'info', ()=>{ navigateTo('licitacoes'); licIrAba('encerradas'); });
+    }
+    return saiu;
+  }finally{
+    LIC_RES_RODANDO = false;
+    const pag = document.getElementById('page-licitacoes');
+    if(pag && pag.classList.contains('active') && typeof renderPortalLicitacoes === 'function') renderPortalLicitacoes();
+  }
+}
+/* automático: as que ainda esperam, no máximo uma vez a cada 3 h cada uma */
+function licResultadosVerificar(){
+  try{
+    if(typeof temAcesso === 'function' && !temAcesso('licitacoes')) return;
+    if(!navigator.onLine) return;
+    const limite = Date.now() - LIC_BUSCA_INTERVALO_MS;
+    const lista = licEncerradas().filter(l=>!licEncTemResultado(l)
+      && (!l.resultadoPncp || Date.parse(l.resultadoPncp.conferidoEm||0) < limite)
+      && Date.now() - new Date(l.dataEncerramentoProposta||0).getTime() < 60*86400000);
+    if(lista.length) licBuscarResultados(lista.slice(0, 40), true);
+  }catch(e){ console.warn(e); }
+}
+
+/* o que o PNCP disse, pronto pro cartão */
+function licResultadoHtml(l){
+  const r = l.resultadoPncp;
+  if(!r) return `<div class="lic-doc" style="display:block;margin-top:8px;"><b>⏳ Ainda não conferi o resultado no PNCP</b>
+    <small>Clique em "🔄 Ver resultado" — ou espere: o sistema confere sozinho a cada 3 horas.</small></div>`;
+  const hora = new Date(r.conferidoEm);
+  const quando = hora.toLocaleDateString('pt-BR') + ' ' + hora.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+  if(!r.temResultado){
+    return `<div class="lic-doc" style="display:block;margin-top:8px;"><b>⏳ O PNCP ainda não tem o resultado</b>
+      <small>Conferido em ${quando}${r.situacoes.length ? ' · situação: ' + escapeHtml(r.situacoes.join(', ')) : ''}. Confiro de novo sozinho a cada 3 horas.</small></div>`;
+  }
+  const nossosItens = l.itens || [];
+  const mesmaOrdem = nossosItens.length === r.itens.length;
+  const cab = r.nossos
+    ? `<b style="color:var(--positive);">🏆 A Mizu ganhou ${r.nossos} de ${r.itens.length} ite${r.itens.length===1?'m':'ns'}</b>`
+    : `<b>📋 Resultado no PNCP — ${r.comResultado} de ${r.itens.length} ite${r.itens.length===1?'m':'ns'} com vencedor</b>`;
+  return `<div class="lic-doc ${r.nossos ? '' : 'aviso'}" style="display:block;margin-top:8px;">${cab}
+    <small>Conferido em ${quando}.</small>
+    <div class="table-wrap" style="margin-top:6px;"><table class="data-table">
+      <thead><tr><th>Item</th><th>Situação</th><th>Quem ganhou</th><th class="num">Vencedor un.</th>${mesmaOrdem ? '<th class="num">Nosso un.</th>' : ''}</tr></thead>
+      <tbody>${r.itens.map((it,i)=>{
+        const v = it.vencedores[0] || null;
+        const nosso = mesmaOrdem ? licPrecoUnit(nossosItens[i]) : 0;
+        const ehMizu = v && v.cnpj === MIZU_CNPJ;
+        return `<tr>
+          <td>${String(it.n).padStart(2,'0')} — ${escapeHtml(it.descricao.slice(0,60))}${it.descricao.length>60?'…':''}</td>
+          <td>${escapeHtml(it.situacao || '—')}</td>
+          <td>${v ? (ehMizu ? '<b style="color:var(--positive);">🏆 MIZU</b>' : escapeHtml(v.empresa)) : '—'}</td>
+          <td class="num">${v && v.valorUnit ? fmtMoney(v.valorUnit) : '—'}</td>
+          ${mesmaOrdem ? `<td class="num">${nosso > 0 ? fmtMoney(nosso) : '—'}</td>` : ''}
+        </tr>`;
+      }).join('')}</tbody></table></div></div>`;
+}
+
+/* "Perdemos" já com o preço de cada vencedor vindo do PNCP */
+function licEncPerdemos(id){
+  const l = licAchar(id); if(!l) return;
+  const r = l.resultadoPncp;
+  if(r && r.temResultado && (l.itens||[]).length === r.itens.length){
+    l.itens.forEach((it,i)=>{
+      const v = r.itens[i].vencedores[0];
+      if(v && v.cnpj !== MIZU_CNPJ && !(it.vencedor && licNumDireto(it.vencedor.precoUnit) > 0)){
+        it.vencedor = Object.assign({}, it.vencedor || {}, { empresa: v.empresa, precoUnit: v.valorUnit });
+      }
+    });
+    saveState();
+  }
+  licResultado(id, 'perdeu');
+}
+
+function licCartaoEncerrada(l){
+  const etapa = (LIC_ETAPAS[l.etapa] || {}).rotulo || l.etapa;
+  const enviada = licEncEnviada(l);
+  const fim = l.dataEncerramentoProposta ? new Date(l.dataEncerramentoProposta) : null;
+  return `<div class="lic-card">
+    <div class="lic-linha">
+      <div class="esq">
+        <span class="ctrl">${escapeHtml(l.numeroControlePNCP || l.numero || '')}</span>
+        <div class="obj">${escapeHtml(l.objeto||'')}</div>
+        <div class="meta">${escapeHtml(l.orgao||'')}${fim && !isNaN(fim) ? ` · encerrou ${fim.toLocaleDateString('pt-BR')}` : ''}</div>
+        <div style="margin-top:5px;">${enviada
+          ? '<span class="lic-tag" style="background:#E7F4EE;color:#2E7D5B;border-radius:12px;padding:2px 9px;font-size:12px;font-weight:700;">📤 Enviada</span>'
+          : `<span class="lic-tag" style="background:#FBF1E2;color:#9A6408;border-radius:12px;padding:2px 9px;font-size:12px;font-weight:700;">Não enviada — estava em ${escapeHtml(etapa)}</span>`}</div>
+        ${licLugarHtml(l)}
+        ${licLinksHtml(l)}
+        ${enviada && !licEncTemResultado(l) ? licAvisoCobrar(l) : ''}
+      </div>
+      <div class="dir">
+        <button class="btn btn-sm btn-primary" onclick="licBuscarResultados([licAchar('${l.id}')], false)">🔄 Ver resultado</button>
+        ${enviada ? `<button class="btn btn-sm" onclick="licResultado('${l.id}','ganhou')">🏆 Ganhamos</button>
+          <button class="btn btn-sm" onclick="licEncPerdemos('${l.id}')">Perdemos</button>`
+          : `<button class="btn btn-sm" onclick="licDesistir('${l.id}')">Não participamos</button>`}
+        <button class="btn btn-sm" onclick="licAbrir('${l.id}','processo')">Abrir</button>
+      </div>
+    </div>
+    ${licResultadoHtml(l)}
+  </div>`;
+}
+
+function licPainelEncerradas(){
+  const todas = licEncerradas();
+  const cont = {
+    todas: todas.length,
+    enviadas: todas.filter(licEncEnviada).length,
+    nao: todas.filter(l=>!licEncEnviada(l)).length,
+    com: todas.filter(licEncTemResultado).length,
+    aguardando: todas.filter(l=>!licEncTemResultado(l)).length
+  };
+  const filtros = [['todas','Todas'],['enviadas','📤 Enviadas'],['nao','Não enviadas'],['com','✅ Com resultado'],['aguardando','⏳ Aguardando']];
+  const lista = todas.filter(l=> licEncFiltro === 'enviadas' ? licEncEnviada(l)
+    : licEncFiltro === 'nao' ? !licEncEnviada(l)
+    : licEncFiltro === 'com' ? licEncTemResultado(l)
+    : licEncFiltro === 'aguardando' ? !licEncTemResultado(l) : true);
+  const ult = (STATE.config||{}).licResultadosEm;
+  return `
+    <div class="lic-topo">
+      <div>
+        <h3>⏱️ Encerradas</h3>
+        <div class="sub">Dispensas que estavam em andamento (análise, precificação, prontas ou enviadas) e cujo prazo já passou.
+          Aqui você vê se o resultado já saiu no PNCP — quem ganhou e por quanto.</div>
+      </div>
+      <div class="acoes">
+        <button class="btn btn-primary" id="lic-enc-buscar" onclick="licBuscarResultados(licEncerradas(), false)">🔄 Buscar resultados no PNCP</button>
+      </div>
+    </div>
+    <div class="help-text" style="margin:-4px 0 10px;">${ult ? 'Última conferência: ' + new Date(ult).toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) + ' · ' : ''}O sistema confere sozinho a cada 3 horas as que ainda esperam resultado.</div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+      ${filtros.map(([id,rot])=>`<button class="btn btn-sm ${licEncFiltro===id?'btn-primary':''}" onclick="licEncFiltro='${id}';renderPortalLicitacoes();">${rot} · ${cont[id]}</button>`).join('')}
+    </div>
+    ${lista.length ? lista.map(licCartaoEncerrada).join('')
+      : `<div class="card"><div class="lic-vazio">${todas.length ? 'Nenhuma neste filtro.' : 'Nenhuma dispensa encerrada esperando resultado.'}</div></div>`}
+  `;
+}
+
 
 
 /* Leitor de CSV que respeita aspas — o objeto da contratação vem cheio
@@ -40071,7 +40329,7 @@ function licBuscarNaAnalise(v){
   }, 250);
 }
 function licPainelAnalise(){
-  const todas = licPorEtapa(['analise']);
+  const todas = licPorEtapaAbertas(['analise']);   /* as de prazo vencido vão pra Encerradas */
   const captadores = [...new Set(todas.map(l=>l.captadoPor).filter(Boolean))].sort();
   if(licFiltroCaptou && !captadores.includes(licFiltroCaptou)) licFiltroCaptou = '';
   const lista = licOrdenarLista(
@@ -40165,7 +40423,7 @@ function licDescartarProcesso(id){
    ABA 3 — PRECIFICAÇÃO (lista)
    ========================================================= */
 function licPainelPrecificacao(){
-  const lista = licPorEtapa(['precificacao']);
+  const lista = licPorEtapaAbertas(['precificacao']);
   return `
     <div class="lic-topo">
       <div>
@@ -40376,7 +40634,7 @@ function licCartaoPerdida(l){
    aba própria: é a lista do que falta FAZER hoje.
    ========================================================= */
 function licPainelPropostas(){
-  const lista = licOrdenarLista(licPorEtapa(['proposta']));
+  const lista = licOrdenarLista(licPorEtapaAbertas(['proposta']));
   /* a mais urgente primeiro: aqui prazo é dinheiro */
   lista.sort((a,b)=>String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9')));
   const correndo = lista.filter(l=>{
@@ -40406,7 +40664,7 @@ function licPainelPropostas(){
 }
 
 function licPainelEnviadas(){
-  const lista = licPorEtapa(['enviada','ganhou','ganhou_parcial','entregue']);
+  const lista = licPorEtapaAbertas(['enviada']).concat(licPorEtapa(['ganhou','ganhou_parcial','entregue']));
   const grupos = [
     { etapas:['enviada'],  titulo:'Enviadas — aguardando retorno' },
     { etapas:['ganhou','entregue'], titulo:'Ganhamos' },
@@ -66981,7 +67239,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 22:30';
+const SISTEMA_VERSAO = '26/11/2026 23:15';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
