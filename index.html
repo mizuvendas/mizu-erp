@@ -1324,6 +1324,12 @@ body.orc-gaveta-travada{ overflow:hidden; }
     </div>
     </div>
 
+    <!-- ============ INÍCIO (27/11/2026): logo + favoritos ============ -->
+    <section class="page" id="page-inicio">
+      <div class="page-header"><div><h2>Início</h2></div></div>
+      <div id="inicio-content"></div>
+    </section>
+
     <!-- ============ SUGESTÕES (26/11/2026) ============ -->
     <section class="page" id="page-sugestoes">
       <div class="page-header">
@@ -3249,6 +3255,7 @@ function menuAcolher(){
 function menuAjustar(){
   if(!MENU_MONTADO) return;
   menuAcolher();
+  if(typeof inicioAjustarGrupoDash === 'function') inicioAjustarGrupoDash();
   const barra = document.querySelector('.sidebar');
   barra.querySelectorAll('.nav-grupo').forEach(g=>{
     g.hidden = menuMembrosVisiveis(g.dataset.grupo).length === 0;
@@ -3293,6 +3300,7 @@ function menuAjustar(){
 }
 
 function menuMarcarAtivo(page){
+  const mi = document.getElementById('menu-inicio'); if(mi) mi.classList.toggle('active', page === 'inicio');
   const g = menuGrupoDaPagina(page);
   document.querySelectorAll('.sidebar .nav-grupo').forEach(a=>a.classList.toggle('active', !!g && a.dataset.grupo === g.id));
   document.querySelectorAll('.sidebar .menu-fav').forEach(a=>a.classList.toggle('active', a.dataset.fav === page || (!!g && a.dataset.fav === g.id)));
@@ -3990,6 +3998,10 @@ async function sugBaixarPacote(){
 /* liga tudo: menu, botões do topo, contador */
 function menuNovoIniciar(){
   try{ menuMontar(); }catch(e){ console.warn('menu novo', e); }
+  try{ inicioNoMenu(); menuAjustar(); }catch(e){ console.warn('inicio', e); }
+  /* ao abrir, todo mundo cai na tela Início (27/11/2026) — menos quando o
+     endereço já pede uma tela (o QR do balanço abre com #balanco) */
+  try{ if(!String(location.hash||'').replace('#','')) navigateTo('inicio'); }catch(e){ console.warn(e); }
   sugAtualizarBadge();
   setInterval(()=>{ try{ menuBadges(); }catch(e){} }, 4000);
   setInterval(()=>{ try{ sugSubirPendentes(); }catch(e){} }, 90000);
@@ -4033,6 +4045,183 @@ function appInstalarQuadro(){
   sec.insertBefore(q, abas ? abas.nextSibling : sec.firstChild);
 }
 window.addEventListener('appinstalled', ()=>{ APP_INSTALAR = null; appInstalarQuadro(); });
+
+/* =========================================================
+   TELA INÍCIO (27/11/2026)
+   "Todos os usuários: ao abrir, tela azul no tom da logo, a logo da
+   Mizu e embaixo os favoritos que cada um adicionou." O Dashboard
+   continua no menu pra quem tem acesso; quem não tem não vê.
+   ========================================================= */
+const INICIO_AZUL = '#0081A8';   /* o azul exato do fundo da logo: a logo some no fundo, sem quadrado */
+function inicioLogoSrc(){
+  const img = document.querySelector('.sidebar-brand .logo-mark img');
+  return img ? img.src : 'icone-512.png';
+}
+function renderInicio(){
+  const box = document.getElementById('inicio-content');
+  if(!box) return;
+  const barra = document.querySelector('.sidebar');
+  const favs = (typeof menuFavoritos === 'function' ? menuFavoritos() : []).filter(id=>{
+    const ent = barra && barra.querySelector('.menu-sec-corpo [data-entrada="' + id + '"]');
+    return ent && !ent.hidden;
+  });
+  let nome = '';
+  try{ nome = (typeof licQuemSouEu === 'function' && licQuemSouEu()) || ''; }catch(e){}
+  const h = new Date().getHours();
+  const saud = h < 12 ? 'Bom dia' : h < 18 ? 'Boa tarde' : 'Boa noite';
+  box.innerHTML = `<div class="inicio-azul">
+      <img class="inicio-logo" src="${inicioLogoSrc()}" alt="Mizu Materiais de Limpeza">
+      <div class="inicio-ola">${saud}${nome ? ', ' + escapeHtml(String(nome).split(' ')[0].charAt(0) + String(nome).split(' ')[0].slice(1).toLowerCase()) : ''}!</div>
+      ${favs.length ? `<div class="inicio-favs">${favs.map(id=>{
+          const r = menuRotuloEntrada(id);
+          return `<button type="button" class="inicio-fav" data-fav="${escapeAttr(id)}"><span class="ic">${r.ic}</span><span>${escapeHtml(r.rot)}</span></button>`;
+        }).join('')}</div>`
+        : `<div class="inicio-dica">Toque na ⭐ ao lado de um item do menu para ele aparecer aqui como atalho.</div>`}
+    </div>`;
+  box.querySelectorAll('[data-fav]').forEach(b=>b.addEventListener('click', ()=>menuIrEntrada(b.dataset.fav)));
+}
+RENDERERS['inicio'] = renderInicio;
+
+function inicioEstilo(){
+  if(document.getElementById('inicio-estilo')) return;
+  const s = document.createElement('style'); s.id = 'inicio-estilo';
+  s.textContent = `
+#page-inicio .page-header{display:none;}
+.inicio-azul{background:${INICIO_AZUL};border-radius:16px;min-height:calc(100vh - 140px);display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:22px;padding:40px 20px;color:#fff;text-align:center;}
+.inicio-logo{width:min(280px,64vw);height:auto;border-radius:0;}
+.inicio-ola{font-size:20px;font-weight:700;opacity:.95;}
+.inicio-favs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;width:min(760px,100%);}
+.inicio-fav{background:rgba(255,255,255,.14);border:1px solid rgba(255,255,255,.28);color:#fff;border-radius:14px;padding:16px 12px;font:inherit;
+  font-size:15px;font-weight:700;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:8px;}
+.inicio-fav:hover{background:rgba(255,255,255,.24);}
+.inicio-fav .ic{font-size:26px;line-height:1;}
+.inicio-dica{font-size:14px;opacity:.85;max-width:420px;}
+.sidebar .menu-inicio{margin-top:4px;}
+.sidebar .sidebar-brand{cursor:pointer;}
+body.cel .inicio-azul{min-height:calc(100vh - 170px);border-radius:14px;padding:30px 14px;}
+body.cel .inicio-favs{grid-template-columns:1fr 1fr;}
+`;
+  document.head.appendChild(s);
+}
+
+/* menu: "🏠 Início" no topo + a logo leva pra lá; o grupo Dashboard só
+   aparece como "Dashboard" pra quem tem o Dashboard (senão vira "📌 Lembretes") */
+function inicioNoMenu(){
+  inicioEstilo();
+  const barra = document.querySelector('.sidebar');
+  const fav = document.getElementById('menu-favoritos');
+  if(barra && fav && !document.getElementById('menu-inicio')){
+    const a = document.createElement('a');
+    a.href = '#'; a.id = 'menu-inicio'; a.className = 'nav-item menu-inicio';
+    a.innerHTML = '<span class="ic">🏠</span> Início';
+    a.addEventListener('click', e=>{ e.preventDefault(); navigateTo('inicio'); });
+    barra.insertBefore(a, fav);
+    const marca = barra.querySelector('.sidebar-brand');
+    if(marca) marca.addEventListener('click', ()=>navigateTo('inicio'));
+  }
+}
+function inicioAjustarGrupoDash(){
+  const g = document.querySelector('.sidebar .nav-grupo[data-grupo="g-dash"]');
+  if(!g) return;
+  const temDash = menuPodeVer('dashboard');
+  const it = menuItem('g-dash');
+  if(it){ it.rot = temDash ? 'Dashboard' : 'Lembretes'; it.ic = temDash ? '📊' : '📌'; }
+  const rot = g.querySelector('.menu-rot'), ic = g.querySelector('.ic');
+  if(rot) rot.textContent = it ? it.rot : 'Dashboard';
+  if(ic) ic.textContent = it ? it.ic : '📊';
+}
+
+/* =========================================================
+   ORÇAMENTO ASSINADO GUARDADO (27/11/2026)
+   "Assinei, e depois não tem como baixar o assinado — tenho que assinar
+   de novo e sai com outra data." Agora o PDF assinado fica guardado
+   (IndexedDB deste aparelho + nuvem: fotos/orcamentos-assinados/<id>.pdf)
+   e o Ver mais ganha "⬇️ Orçamento assinado (data)" — o MESMO arquivo.
+   ========================================================= */
+function assinadoIdb(modo, chave, valor){
+  return new Promise((ok, falha)=>{
+    let req;
+    try{ req = indexedDB.open('mizu-assinados', 1); }catch(e){ return falha(e); }
+    req.onupgradeneeded = ()=>{ if(!req.result.objectStoreNames.contains('pdf')) req.result.createObjectStore('pdf'); };
+    req.onerror = ()=>falha(req.error);
+    req.onsuccess = ()=>{
+      const db = req.result;
+      let tx; try{ tx = db.transaction('pdf', modo === 'get' ? 'readonly' : 'readwrite'); }catch(e){ return falha(e); }
+      const st = tx.objectStore('pdf');
+      const op = modo === 'get' ? st.get(chave) : st.put(valor, chave);
+      op.onsuccess = ()=>ok(op.result); op.onerror = ()=>falha(op.error);
+    };
+  });
+}
+function assinadoCaminho(id){ return (typeof FOTO_BUCKET !== 'undefined' ? FOTO_BUCKET : 'fotos') + '/orcamentos-assinados/' + String(id).replace(/[^A-Za-z0-9_-]/g, '_') + '.pdf'; }
+function assinadoDigital(o){
+  const base = { itens:(o.itens||[]).map(it=>[it.produtoId||it.nome, it.qtd, it.precoUnit, it.descontoUnit||0]), clienteId:o.clienteId,
+    d:[o.descontoTipo, o.descontoPct, o.descontoValor, o.acrescimoValor, o.acrescimoDesc] };
+  try{ return typeof nuvemDigital === 'function' ? nuvemDigital(JSON.stringify(base)) : JSON.stringify(base).length; }catch(e){ return ''; }
+}
+async function assinadoGuardar(o, blob){
+  try{ await assinadoIdb('put', o.id, blob); }catch(e){ console.warn('assinado idb', e); }
+  o.assinado = { em: new Date().toISOString(), digital: assinadoDigital(o), subiu: false, kb: Math.round((blob.size||0)/1024) };
+  saveState();
+  try{
+    if(typeof fotoPodeNuvem === 'function' && fotoPodeNuvem()){
+      const r = await nuvemFetch('/storage/v1/object/' + assinadoCaminho(o.id), {
+        method:'POST', headers:{ 'Content-Type':'application/pdf', 'x-upsert':'true' }, body: blob });
+      if(r.ok){ o.assinado.subiu = true; saveState(); }
+    }
+  }catch(e){ console.warn('assinado nuvem', e); }
+}
+async function assinadoBlob(o){
+  let b = null;
+  try{ b = await assinadoIdb('get', o.id); }catch(e){}
+  if(!b && o.assinado && o.assinado.subiu && typeof fotoPodeNuvem === 'function' && fotoPodeNuvem()){
+    try{ const r = await nuvemFetch('/storage/v1/object/' + assinadoCaminho(o.id), { method:'GET' });
+      if(r.ok){ b = await r.blob(); assinadoIdb('put', o.id, b).catch(()=>{}); } }catch(e){}
+  }
+  return b;
+}
+function assinadoDataCurta(iso){
+  const d = new Date(iso); if(isNaN(d)) return '';
+  return d.toLocaleDateString('pt-BR', { day:'2-digit', month:'2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+}
+async function orcBaixarAssinado(id){
+  const o = (STATE.orcamentos||[]).find(x=>x.id===id);
+  if(!o || !o.assinado) return;
+  const baixar = async ()=>{
+    const b = await assinadoBlob(o);
+    if(!b){ showToast('Não achei o PDF assinado neste aparelho nem na nuvem. Use "Assinar de novo".', 'error'); return; }
+    const cli = (STATE.clientes||[]).find(c=>c.id===o.clienteId);
+    const nome = `Orcamento${o.numero!=null ? ' N ' + o.numero : ''} - ${(cli ? cli.nome : '').replace(/[\\/:*?"<>|]/g, '')} - assinado.pdf`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(b); a.download = nome;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 8000);
+  };
+  if(o.assinado.digital && o.assinado.digital !== assinadoDigital(o)){
+    confirmAction('Este orçamento mudou depois da assinatura',
+      `O PDF assinado em ${assinadoDataCurta(o.assinado.em)} mostra a versão de antes da mudança (itens, preços ou desconto). Baixar mesmo assim? Se precisar da versão atual assinada, use "Assinar de novo".`,
+      baixar);
+    return;
+  }
+  baixar();
+}
+function orcAssinarDeNovo(id){
+  const o = (STATE.orcamentos||[]).find(x=>x.id===id);
+  if(!o) return;
+  if(!o.assinado){ gerarPdfOrcamentoAssinado(id); return; }
+  confirmAction('Assinar de novo',
+    `Já existe um PDF assinado em ${assinadoDataCurta(o.assinado.em)}. Assinar de novo cria um PDF com a data e a hora de agora, e ele passa a ser o guardado. Continuar?`,
+    ()=>gerarPdfOrcamentoAssinado(id));
+}
+function orcBotoesAssinado(o){
+  if(o && o.assinado){
+    return `<button class="btn btn-sm" title="Baixa o mesmo PDF assinado, com a data original" onclick="orcBaixarAssinado('${o.id}')">⬇️ Orçamento assinado (${assinadoDataCurta(o.assinado.em)})</button>
+      <button class="btn btn-sm" title="Gera um PDF assinado novo, com a data de agora" onclick="orcAssinarDeNovo('${o.id}')">✍️ Assinar de novo</button>`;
+  }
+  return `<button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>`;
+}
+
 /* depois que o script inteiro rodou (nuvemUsuario, STATE e companhia já existem) */
 setTimeout(menuNovoIniciar, 0);
 
@@ -4358,6 +4547,7 @@ function celTitulo(page){
     if(g && !g.hub && MENU_ABA_ROTULO[page]) nome = MENU_ABA_ROTULO[page].replace(/^\S+\s/, '');
     else if(page === 'relatorios') nome = 'Relatórios';
     else if(page === 'sugestoes') nome = 'Sugestões';
+    else if(page === 'inicio') nome = 'Mizu';
     else nome = menuRotuloEntrada(page).rot;
   }catch(e){}
   if(!nome){ const h = document.querySelector('#page-' + page + ' .page-header h2'); nome = h ? h.textContent.trim() : 'Mizu'; }
@@ -20070,7 +20260,7 @@ function orcAcoesDaLinha(o, sit){
           ${principal ? principal.replace('class="btn btn-sm btn-primary"', 'class="btn btn-sm acao-principal"') : ''}
           ${extras.join('')}
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
-          <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
+          ${orcBotoesAssinado(o)}
           <button class="btn btn-sm" onclick="verDetalheOrcamento('${o.id}')">📋 Ver os itens</button>
           ${o.escolar && o.emailEnvio ? `<button class="btn btn-sm" onclick="orcVerEmail('${o.id}')" title="${escapeAttr(o.emailEnvio)}">✉️ E-mail</button>` : ''}
           ${!jaConvertido ? `<button class="btn btn-sm" onclick="editarOrcamento('${o.id}')">✏️ Editar</button>` : ''}
@@ -21144,6 +21334,8 @@ async function gerarPdfOrcamentoAssinado(id){
     try{ r = await nfeChamar('/assinar-orcamento', { html }); }
     finally{ fecharCarregando(); }
     if(!r || !r.pdf) throw new Error('O servidor não devolveu o PDF.');
+    /* guarda o PDF assinado pra baixar de novo com a mesma data (27/11/2026) */
+    assinadoGuardar(orcamento, r.pdf).then(()=>{ try{ if(typeof renderListaOrcamentos === 'function') renderListaOrcamentos(); }catch(e){} });
     const nome = `Orcamento${orcamento.numero!=null ? ' N ' + orcamento.numero : ''} - ${(cliente ? cliente.nome : '').replace(/[\\/:*?"<>|]/g, '')} - assinado`.trim();
     nfeMostrarArquivos({
       titulo: 'Orçamento assinado',
@@ -21810,7 +22002,7 @@ function orc2AbrirPedido(id){
         </div>
         <div class="cell-actions" style="flex-wrap:wrap;">
           <button class="btn btn-sm" onclick="gerarPdfOrcamento('${o.id}')">📄 PDF do orçamento</button>
-          <button class="btn btn-sm" title="PDF assinado com o certificado digital da empresa" onclick="gerarPdfOrcamentoAssinado('${o.id}')">✍️ PDF assinado</button>
+          ${orcBotoesAssinado(o)}
           ${!orc2Convertido(o) ? `<button class="btn btn-sm" onclick="orc2Editar('${o.id}')">✏️ Editar</button>` : ''}
           ${['aprovado','separando','separado','rua'].includes(orc2Etapa(o)) ? `<button class="btn btn-sm" onclick="orc2Voltar('${o.id}')">↩️ Voltar etapa</button>` : ''}
           <button class="btn btn-sm" style="color:var(--negative);" onclick="orc2Excluir('${o.id}')">🗑️ Excluir</button>
@@ -67798,7 +67990,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 09:00';
+const SISTEMA_VERSAO = '27/11/2026 10:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
@@ -68253,6 +68445,7 @@ function nuvemMenus(){
 
 function temAcesso(pagina){
   if(pagina === 'sugestoes') return true;               // sugestões: todo mundo vê (26/11/2026)
+  if(pagina === 'inicio') return true;                  // tela Início: todo mundo (27/11/2026)
   if(pagina === 'relatorios') return MENU_RELATORIOS.some(r=>temAcesso(r));
   if(pagina === 'orcamentos2') pagina = 'orcamentos';   // o modelo em teste segue a permissão de Orçamentos
   if(!nuvemUsuario) return true;          // sistema sem nuvem ligada
