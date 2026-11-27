@@ -4054,10 +4054,11 @@ setTimeout(menuNovoIniciar, 0);
    - o "voltar" do celular fecha a janela aberta / volta a tela.
    ========================================================= */
 const CEL_BAIXO = [
-  { ic:'🏠', rot:'Início',     pg:'dashboard' },
+  /* 27/11/2026, pedido dela: Licitação no lugar de Início, Motorista no lugar de Entregas */
+  { ic:'🏛️', rot:'Licitação',  pg:'licitacoes' },
   { ic:'📋', rot:'Orçamentos', pg:'orcamentos' },
   { ic:'＋', rot:'Novo',       acao:'novo', pg:'orcamentos' },
-  { ic:'🚚', rot:'Entregas',   pg:'logistica' },
+  { ic:'📱', rot:'Motorista',  pg:'motorista' },
   { ic:'☰',  rot:'Menu',       acao:'menu' }
 ];
 let CEL_MONTADO = false;
@@ -4148,7 +4149,7 @@ body.cel table:not(.cel-mantem) td[data-rot]::before{content:attr(data-rot);disp
   text-transform:uppercase;letter-spacing:.3px;margin-bottom:1px;}
 body.cel table:not(.cel-mantem) td.cel-vazio{display:none !important;}
 body.cel table:not(.cel-mantem) td.cel-largo{flex-basis:100%;}
-body.cel table:not(.cel-mantem) td.cel-meio{flex:1 1 calc(50% - 8px);min-width:0;}
+body.cel table:not(.cel-mantem) td.cel-meio{flex:1 1 0;min-width:68px;}
 body.cel .modal-rapido-cabecalho{padding-right:66px !important;}
 body.cel table:not(.cel-mantem) td.cel-acoes{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
 body.cel table:not(.cel-mantem) td.cel-acoes::before{display:none;}
@@ -4159,7 +4160,8 @@ body.cel .aviso-rolagem{display:none !important;}
 body.cel #orc-tabela > tbody > tr{position:relative;padding-right:58px;}
 body.cel #orc-tabela td.orc-cli{order:-1;flex-basis:100%;font-size:16.5px;font-weight:700;max-width:100% !important;overflow:visible;white-space:normal !important;}
 body.cel #orc-tabela td.orc-cli::before{display:none;}
-body.cel #orc-tabela td.cel-acoes{position:absolute;top:6px;right:6px;flex-basis:auto;width:auto !important;}
+/* só o ⋯ vai pro canto do cartão; o prazo "faltam X" + Enviei fica na linha dele (27/11/2026) */
+body.cel #orc-tabela td.cel-vermais{position:absolute;top:6px;right:6px;flex-basis:auto;width:auto !important;}
 body.cel .acoes-ver-mais summary{min-height:42px;min-width:46px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;}
 body.cel .acoes-ver-mais summary::before{content:'⋯';}
 body.cel .orc-abas{top:calc(54px + env(safe-area-inset-top));gap:6px;padding:8px 0;}
@@ -4186,6 +4188,16 @@ body.cel .orc-gaveta-x{width:42px;height:42px;font-size:19px;}
 body.cel #sug-modal{padding:0;}
 body.cel #sug-modal .sug-caixa{border-radius:0;min-height:100%;padding:calc(14px + env(safe-area-inset-top)) 14px 24px;}
 body.cel #sug-cv{max-height:42vh;}
+/* orçamento no celular (27/11/2026): "Clássico | Escolar na mesma linha, menor";
+   qtd e preço lado a lado; unidade/qtd/preço do item numa linha; subtotal aparente */
+body.cel #orc-seletor-modelo .card{flex-wrap:nowrap !important;padding:8px !important;gap:6px !important;margin-bottom:10px;}
+body.cel #orc-seletor-modelo .help-text{display:none !important;}
+body.cel #orc-seletor-modelo button{flex:1 1 0;min-width:0;padding:7px 8px !important;text-align:center !important;}
+body.cel #orc-seletor-modelo button span + span{display:none !important;}
+body.cel .orc-gaveta .item-picker-row{grid-template-columns:minmax(0,1fr) minmax(0,1fr) !important;}
+body.cel .item-picker-row > *{grid-column:1 / -1;}
+body.cel .item-picker-row > :nth-child(2),body.cel .item-picker-row > :nth-child(3){grid-column:auto;}
+body.cel table:not(.cel-mantem) td[data-rot="Subtotal"],body.cel table:not(.cel-mantem) td[data-rot="Total"]{font-weight:800 !important;font-size:16px !important;color:var(--ink) !important;opacity:1 !important;}
 body.cel #toast,body.cel #notificacoes-globais{left:8px;right:8px;bottom:calc(84px + env(safe-area-inset-bottom));max-width:none;}
 body.cel.cel-digitando #toast,body.cel.cel-digitando #notificacoes-globais{bottom:12px;}
 body.cel #toast .toast-item{max-width:none;}
@@ -4288,12 +4300,10 @@ function celMontar(){
       }
     }
   });
-  document.addEventListener('focusout', ()=>{
-    setTimeout(()=>{
-      const a = document.activeElement;
-      if(!a || !a.matches || !a.matches('input,textarea,select')) document.body.classList.remove('cel-digitando');
-    }, 120);
-  });
+  document.addEventListener('focusout', ()=>setTimeout(celDigitandoConferir, 120));
+  /* "a barra de baixo sumiu": o campo onde ela digitava ficou escondido (fechou o
+     orçamento, trocou de aba) e o sistema achava que o teclado continuava aberto */
+  setInterval(celDigitandoConferir, 800);
   /* "Ver mais" aberto = véu escuro atrás */
   document.addEventListener('toggle', ev=>{
     const d = ev.target;
@@ -4313,6 +4323,17 @@ function celMontar(){
   window.addEventListener('popstate', celVoltar);
 }
 
+function celDigitandoConferir(){
+  if(!document.body.classList.contains('cel-digitando')) return;
+  const a = document.activeElement;
+  const visivel = a && a.matches && a.matches('input,textarea,select') && a.offsetParent !== null
+    && a.getBoundingClientRect().height > 0 && !a.closest('[aria-hidden="true"]')
+    && !a.closest('.orc-gaveta:not(.aberta)') && !a.closest('.page:not(.active)');
+  if(!visivel){
+    document.body.classList.remove('cel-digitando');
+    try{ if(a && a.blur && a !== document.body) a.blur(); }catch(e){}
+  }
+}
 function celFolhaVigiar(){
   document.body.classList.toggle('cel-folha-aberta', !!document.querySelector('details.acoes-ver-mais[open]'));
 }
@@ -4376,6 +4397,7 @@ function celRotularTabelas(){
         const vazio = !temControle && !temCampo && !td.querySelector('img,canvas,input') && !td.textContent.trim();
         td.classList.toggle('cel-vazio', vazio);
         const temVerMais = !!td.querySelector('details.acoes-ver-mais');
+        td.classList.toggle('cel-vermais', temVerMais);
         td.classList.toggle('cel-acoes', (temVerMais || (temControle && !temCampo && td.textContent.replace(/\s+/g,'').length < 80)) && !td.classList.contains('orc-cli'));
         /* campo de número (qtd, preço) cabe dois por linha; texto/lista ocupa a linha toda */
         const soNumero = temCampo && !td.querySelector('input:not([type=number]):not([type=checkbox]):not([type=radio]),select,textarea');
@@ -67774,7 +67796,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 08:00';
+const SISTEMA_VERSAO = '27/11/2026 08:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
