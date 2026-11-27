@@ -3448,6 +3448,16 @@ function sugTelaAtual(){
   else if(id === 'sugestoes') nome = 'Sugestões';
   else if(MENU_ABA_ROTULO[id]) nome = MENU_ABA_ROTULO[id].replace(/^\S+\s/, '');
   else { const r = menuRotuloEntrada(id); nome = r.rot || id; }
+  /* com janela aberta por cima, diz qual (27/11/2026) */
+  try{
+    const modais = [...document.querySelectorAll('.modal-overlay.open')];
+    const m = modais[modais.length - 1];
+    const tit = m && m.querySelector('h3, .modal-rapido-cabecalho h3');
+    if(tit && tit.textContent.trim()) nome += ' › ' + tit.textContent.replace(/\s+/g, ' ').trim().slice(0, 60);
+    else if(document.querySelector('.orc-gaveta.aberta')){
+      const t = document.getElementById('orc-gaveta-titulo'); nome += ' › ' + (t ? t.textContent.trim() : 'orçamento aberto');
+    }
+  }catch(e){}
   return { id, nome };
 }
 
@@ -3577,7 +3587,27 @@ async function sugTirarPrint(){
       width: larg, height: window.innerHeight,
       windowWidth: larg, windowHeight: window.innerHeight,
       scale: Math.min(1, 1400 / larg), useCORS: true, logging: false,
-      ignoreElements: el => el.id === 'sug-modal' || el.id === 'sug-zoom' || (el.classList && (el.classList.contains('toast') || el.id === 'toast-container'))
+      ignoreElements: el => el.id === 'sug-modal' || el.id === 'sug-zoom' || el.id === 'sug-flutuante' || (el.classList && (el.classList.contains('toast') || el.id === 'toast-container')),
+      /* "o print ficou todo bugado" (27/11/2026): a biblioteca do print erra
+         em duas coisas — conserta só na CÓPIA usada pra desenhar:
+         · sombra "inset" (a faixa do vendedor na linha) virava a linha
+           inteira pintada → vira borda à esquerda, da mesma cor;
+         · o conteúdo de <details> fechado (a janelinha do "⋯ Ver mais",
+           que é position:fixed) aparecia aberto em todas as linhas. */
+      onclone: doc => {
+        try{
+          doc.querySelectorAll('[style*="inset"]').forEach(el=>{
+            const sh = el.style.boxShadow || '';
+            if(!/inset/.test(sh)) return;
+            const cor = (sh.match(/(#[0-9a-f]{3,8}|rgba?\([^)]*\))/i) || [])[1];
+            el.style.boxShadow = 'none';
+            if(cor){ el.style.borderLeft = '4px solid ' + cor; }
+          });
+          const s = doc.createElement('style');
+          s.textContent = 'details:not([open]) > :not(summary){display:none !important;} *{text-shadow:none !important;}';
+          doc.head.appendChild(s);
+        }catch(e){ console.warn('print onclone', e); }
+      }
     });
   }catch(e){ console.warn('print', e); return null; }
 }
@@ -3943,6 +3973,31 @@ function renderSugestoes(){
   sugAtualizarBadge();
 }
 RENDERERS['sugestoes'] = renderSugestoes;
+
+/* 📸 DENTRO DAS JANELAS (27/11/2026): "em alguns lugares não aparece pra dar
+   sugestão" — com uma janela por cima (modal), o orçamento aberto (gaveta) ou
+   o balanço/motorista no celular, a barra do topo fica coberta. Aí aparece
+   um 📸 pequeno no canto de baixo, por cima de tudo. */
+function sugFlutuanteConferir(){
+  let b = document.getElementById('sug-flutuante');
+  const precisa = !document.getElementById('sug-modal') && !document.getElementById('sug-zoom') && (
+    !!document.querySelector('.modal-overlay.open') ||
+    !!document.querySelector('.orc-gaveta.aberta') ||
+    document.body.classList.contains('bal-foco'));
+  if(!precisa){ if(b) b.style.display = 'none'; return; }
+  if(!b){
+    b = document.createElement('button');
+    b.type = 'button'; b.id = 'sug-flutuante'; b.title = 'Sugerir melhoria (tira o print desta tela)';
+    b.textContent = '📸';
+    b.style.cssText = 'position:fixed;left:14px;bottom:14px;z-index:3600;width:46px;height:46px;border-radius:50%;border:1px solid var(--border,#dde3e6);'
+      + 'background:#fff;box-shadow:0 4px 14px rgba(0,0,0,.22);font-size:21px;cursor:pointer;display:flex;align-items:center;justify-content:center;';
+    b.addEventListener('click', ()=>sugNova());
+    document.body.appendChild(b);
+  }
+  b.style.bottom = (document.body.classList.contains('cel') && document.querySelector('#cel-orc-rodape.on')) ? 'calc(84px + env(safe-area-inset-bottom))' : '14px';
+  b.style.display = 'flex';
+}
+setInterval(()=>{ try{ sugFlutuanteConferir(); }catch(e){} }, 700);
 
 function sugZoom(src){
   if(!src) return;
@@ -5878,8 +5933,13 @@ function abrirFormCliente(id, onCriado){
               </select>
             </div>
             <div class="field">
-              <label>Contato (telefone/e-mail)</label>
+              <label>Telefone / contato</label>
               <input type="text" id="f-contato" value="${cliente?escapeAttr(cliente.contato||''):''}">
+            </div>
+            <div class="field">
+              <label>E-mail</label>
+              <input type="email" id="f-email" inputmode="email" autocomplete="email" placeholder="email@cliente.com"
+                     value="${cliente?escapeAttr(cliente.email||''):''}">
             </div>
             <div class="field">
               <label>Pessoa de contato</label>
@@ -6210,6 +6270,7 @@ function abrirFormCliente(id, onCriado){
       nacionalidade: document.getElementById('f-nacionalidade').value,
       contato: document.getElementById('f-contato').value.trim(),
       pessoaContato: document.getElementById('f-pessoa-contato').value.trim(),
+      email: (document.getElementById('f-email') ? document.getElementById('f-email').value.trim() : ''),
       /* cidade e endereco continuam gravados (o resto do sistema lê), mas
          agora são MONTADOS dos campos do endereço */
       cidade: montarEnderecoCliente().cidadeUf,
@@ -8755,6 +8816,8 @@ function ligarSugestaoCliente(selectId, placeholder){
       sub: cli ? [cli.nomeFantasia, cli.documento, cli.cidadeEstruturada || cli.cidade].filter(Boolean).join(' · ') : '',
       busca: normalizarBusca([op.textContent, cli && cli.nomeFantasia, cli && cli.documento,
                               cli && cli.cidade, cli && cli.cidadeEstruturada].filter(Boolean).join(' '))
+             /* 27/11/2026: "procurar por CNPJ com ponto ou sem ponto" — o número puro também entra */
+             + (cli && cli.documento ? ' ' + soDigitos(cli.documento) : '')
     };
   }
 
@@ -8868,7 +8931,9 @@ const CAMPOS_DE_CLIENTE = {
   'crm-cliente':        'Digite o nome do cliente...',
   'pdf-cliente-manual': 'Digite o nome do cliente...',
   'vc-filtro-cliente':  'Todos os clientes — ou digite um nome',
-  'lic-cliente':        'Digite qualquer parte do nome do órgão, o CNPJ ou a cidade...'
+  'lic-cliente':        'Digite qualquer parte do nome do órgão, o CNPJ ou a cidade...',
+  /* 27/11/2026: "a busca da escola não está igual à do cliente no orçamento" */
+  'esc-cliente':        'Digite o nome da escola, o CNPJ ou a cidade...'
 };
 
 function ligarBuscaDeClientes(){
@@ -15504,10 +15569,9 @@ function orcEscHtml(){
       <div class="form-grid">
         ${campo('Nº do Orçamento <span class="req">*</span>', `<input type="number" id="esc-numero" min="1" step="1" value="${att(e.numero)}" onchange="orcEscCampo('numero',this.value)">`)}
         ${campo('Escola <span class="req">*</span>', `
-            <!-- "pra pesquisar o cliente não dá certo, ele não deixa pesquisar"
-                 (18/11/2026): digite aqui e a lista abaixo filtra -->
-            <input type="text" id="esc-cliente-busca" placeholder="🔍 Digite pra procurar a escola (nome ou CNPJ)…" autocomplete="off"
-                   style="margin-bottom:5px;" oninput="orcEscFiltrarEscolas(this.value)">
+            <!-- 27/11/2026: a escola usa a MESMA busca de cliente do orçamento
+                 clássico (CAMPOS_DE_CLIENTE['esc-cliente']) — acha por qualquer
+                 pedaço do nome, CNPJ ou cidade -->
             <div style="display:flex;gap:6px;">
             <select id="esc-cliente" style="flex:1;min-width:140px;" onchange="orcEscCampo('clienteId',this.value)">
               <option value="">Selecione...</option>
@@ -15528,10 +15592,8 @@ function orcEscHtml(){
           const cli = (STATE.clientes||[]).find(x=>x.id === e.clienteId);
           const doCadastro = cli && cli.email ? String(cli.email).trim() : '';
           const valor = e.emailEnvio != null && e.emailEnvio !== '' ? e.emailEnvio : doCadastro;
-          return campo('✉️ E-mail pra enviar o orçamento', `<input type="email" id="esc-email" value="${att(valor)}" placeholder="email@escola.com" onchange="orcEscCampo('emailEnvio',this.value)">
-            ${cli && valor && valor !== doCadastro ? `<label style="display:flex;gap:6px;align-items:center;font-size:12px;margin-top:3px;font-weight:400;">
-              <input type="checkbox" id="esc-email-salvar" ${e.salvarEmailCliente?'checked':''} onchange="orcEscCampo('salvarEmailCliente',this.checked)" style="width:auto;"> salvar também no cadastro da escola</label>` : ''}
-            ${doCadastro && valor === doCadastro ? '<div class="help-text" style="margin:2px 0 0;">veio do cadastro da escola</div>' : ''}`);
+          return campo('✉️ E-mail pra enviar o orçamento', `<input type="email" id="esc-email" value="${att(valor)}" placeholder="email@escola.com" inputmode="email" autocomplete="email" onchange="orcEscCampo('emailEnvio',this.value)">
+            <div class="help-text" style="margin:2px 0 0;">${doCadastro && valor === doCadastro ? 'veio do cadastro da escola' : 'fica salvo também no cadastro da escola'}</div>`);
         })()}
       </div>
       <div class="field" style="margin-top:8px;"><label>Observações</label>
@@ -15597,7 +15659,8 @@ function orcEscEmailFinal(e){
   const cli = (STATE.clientes||[]).find(x=>x.id === e.clienteId);
   const digitado = String(e.emailEnvio || '').trim();
   const final = digitado || (cli && cli.email ? String(cli.email).trim() : '');
-  if(cli && digitado && e.salvarEmailCliente) cli.email = digitado;
+  /* 27/11/2026: o e-mail digitado no orçamento vai SEMPRE pro cadastro da escola */
+  if(cli && digitado && String(cli.email||'').trim() !== digitado) cli.email = digitado;
   return final;
 }
 /* "Ver mais" → ✉️ E-mail: mostra e copia (sem abrir programa de e-mail) */
@@ -15627,15 +15690,23 @@ function orcVerEmail(id){
 function orcEscCampo(campo, valor){
   const e = orcEsc();
   e[campo] = ['numero','validadeDias'].includes(campo) ? parseInt(valor, 10) || '' : valor;
-  /* escolheu a escola: traz o responsável que já tinha sido usado com ela */
-  if(campo === 'clienteId' && valor && !e.responsavel){
-    const ult = (STATE.orcamentos||[]).filter(o=>o.clienteId===valor && o.responsavel)
-      .sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')))[0];
-    if(ult){ e.responsavel = ult.responsavel; e.cargo = e.cargo || ult.cargoResponsavel || ''; }
+  /* escolheu (ou TROCOU) a escola: o responsável vem do cadastro dela
+     ("Pessoa de contato"); sem isso, do último orçamento DESSA escola.
+     27/11/2026: antes só preenchia se estivesse vazio — trocando de escola
+     ficava o responsável da escola anterior. */
+  if(campo === 'clienteId'){
+    const cli = (STATE.clientes||[]).find(c=>c.id === valor);
+    const ult = valor ? (STATE.orcamentos||[]).filter(o=>o.clienteId===valor && o.responsavel)
+      .sort((a,b)=>String(b.data||'').localeCompare(String(a.data||'')))[0] : null;
+    const doCadastro = cli && cli.pessoaContato ? String(cli.pessoaContato).trim() : '';
+    e.responsavel = doCadastro || (ult ? ult.responsavel : '');
+    e.cargo = (!doCadastro && ult) ? (ult.cargoResponsavel || '') : (doCadastro && ult && ult.responsavel === doCadastro ? (ult.cargoResponsavel || '') : '');
   }
   /* trocou de escola: o e-mail passa a vir do cadastro da escola nova */
   if(campo === 'clienteId'){ e.emailEnvio = ''; e.salvarEmailCliente = false; }
-  if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId','emailEnvio'].includes(campo)) orcEscDesenhar();
+  /* o e-mail NÃO redesenha a tela: redesenhar no meio da digitação jogava o
+     cursor pro começo do e-mail (27/11/2026) */
+  if(['freteFornecedor','freteCliente','comissaoPct','impostoPct','clienteId'].includes(campo)) orcEscDesenhar();
 }
 
 /* "pra pesquisar o cliente não dá certo" (18/11/2026): a lista de escolas
@@ -16511,7 +16582,8 @@ function orcBalcaoEscolherCliente(){
   const pintar = (termo) => {
     const t = normalizarBusca(termo || '');
     const lista = STATE.clientes
-      .filter(c => !t || normalizarBusca((c.nome || '') + ' ' + (c.documento || '')).includes(t))
+      .filter(c => !t || normalizarBusca((c.nome || '') + ' ' + (c.documento || '')).includes(t)
+        || (soDigitos(t).length >= 4 && /^[\d.\-\/\s]+$/.test(t) && soDigitos(c.documento).includes(soDigitos(t))))
       .slice(0, 12);
     document.getElementById('bc-lista').innerHTML = lista.length === 0
       ? `<div class="help-text">Nenhum cliente com esse nome.</div>`
@@ -35489,7 +35561,7 @@ async function executarBuscaOportunidadesPNCP(area, ufs, codigosParaBuscar, comb
         pdfLido: false,
         pdfErro: null
       };
-      STATE.licitacoesRevisao.push(licitacao);
+      if(!licitacao.importadaEm) licitacao.importadaEm = new Date().toISOString(); STATE.licitacoesRevisao.push(licitacao);
     });
 
     saveState();
@@ -38793,7 +38865,7 @@ async function licTrazerPorLink(){
       continue;
     }
     jaTem.add(chave);
-    STATE.licitacoesRevisao.push(o);
+    if(!o.importadaEm) o.importadaEm = new Date().toISOString(); STATE.licitacoesRevisao.push(o);
     novas++;
     if(!aviso) trazidasAgora.push(o.id); else trazidasAgora.push(null);
     linhasRes.push(`<div class="lic-doc ${aviso?'aviso':'ok'}"><div>
@@ -38840,6 +38912,12 @@ function licPainelOportunidades(){
   filtradas.sort((a,b)=>{
     if(licOrdem==='prazo') return String(a.dataEncerramentoProposta||'9').localeCompare(String(b.dataEncerramentoProposta||'9'));
     if(licOrdem==='valor') return (b.valorEstimado||0)-(a.valorEstimado||0);
+    /* 27/11/2026: "as últimas que a gente buscou" — quem entrou por último
+       primeiro; empate (ou as antigas, sem a hora) pela publicação no PNCP */
+    if(licOrdem==='recentes'){
+      const d = String(b.importadaEm||'').localeCompare(String(a.importadaEm||''));
+      return d || String(b.dataPublicacao||'').localeCompare(String(a.dataPublicacao||''));
+    }
     return (a.distanciaKm==null?99999:a.distanciaKm) - (b.distanciaKm==null?99999:b.distanciaKm);
   });
 
@@ -38891,6 +38969,7 @@ function licPainelOportunidades(){
           <option value="distancia" ${licOrdem==='distancia'?'selected':''}>Ordenar: mais perto primeiro</option>
           <option value="prazo" ${licOrdem==='prazo'?'selected':''}>Ordenar: encerra primeiro</option>
           <option value="valor" ${licOrdem==='valor'?'selected':''}>Ordenar: maior valor</option>
+          <option value="recentes" ${licOrdem==='recentes'?'selected':''}>Ordenar: mais recentes (últimas que entraram)</option>
         </select>
         ${jaVencidas>0 ? `<button class="btn btn-sm lic-tirar-vencidas" onclick="licTirarVencidas()">🗑️ Tirar as vencidas (${jaVencidas})</button>` : ''}
         ${filtradas.length>0 ? `<button class="btn btn-sm lic-marcar-todas" onclick="licMarcarTodas()">${filtradas.every(o=>licSelecionadas.has(o.id)) ? '☐ Desmarcar todas' : `☑ Marcar todas (${filtradas.length})`}</button>` : ''}
@@ -40411,6 +40490,7 @@ function licImportarLinhasPNCP(linhas, opcoes){
         valorEstimado: licValorPlanilha(v('valor')),
         obs: '', historico: [],
         origem: opcoes.origem || 'pncp-arquivo',
+        importadaEm: new Date().toISOString(),
         numeroControlePNCP: txt('controle') || null,
         modalidadeNome: txt('modalidade'),
         modoDisputa: txt('disputa'),
@@ -40446,7 +40526,7 @@ function licImportarLinhasPNCP(linhas, opcoes){
         o.distanciaKm = Math.round(distanciaKm(area.lat, area.lng, cache[ibge].lat, cache[ibge].lng));
       }
 
-      STATE.licitacoesRevisao.push(o);
+      if(!o.importadaEm) o.importadaEm = new Date().toISOString(); STATE.licitacoesRevisao.push(o);
       novas++;
     });
 
@@ -40666,6 +40746,8 @@ async function licBuscarResultados(lista, automatico){
         const res = await licResultadoPncp(l);
         if(!res) continue;
         l.resultadoPncp = res;
+        /* 27/11/2026: em "Não ganhamos", o preço do vencedor entra sozinho */
+        if(l.etapa === 'perdeu' || l.etapa === 'ganhou_parcial') licPreencherVencedoresDoPncp(l);
         if(res.temResultado && !antes){ saiu++; novos.push(l); }
       }catch(e){ falhas++; if(l.resultadoPncp) l.resultadoPncp.erroEm = new Date().toISOString(); }
       await new Promise(r=>setTimeout(r, 250));
@@ -40696,9 +40778,13 @@ function licResultadosVerificar(){
     if(typeof temAcesso === 'function' && !temAcesso('licitacoes')) return;
     if(!navigator.onLine) return;
     const limite = Date.now() - LIC_BUSCA_INTERVALO_MS;
-    const lista = licEncerradas().filter(l=>!licEncTemResultado(l)
+    const espera = l=>!licEncTemResultado(l)
       && (!l.resultadoPncp || Date.parse(l.resultadoPncp.conferidoEm||0) < limite)
-      && Date.now() - new Date(l.dataEncerramentoProposta||0).getTime() < 60*86400000);
+      && Date.now() - new Date(l.dataEncerramentoProposta||0).getTime() < 60*86400000;
+    /* + as de "Não ganhamos" ainda sem o preço do vencedor (27/11/2026) */
+    const perdidasSemPreco = licPorEtapa(['perdeu']).filter(l=>(l.itens||[]).length
+      && !(l.itens||[]).some(it=>licNumDireto((it.vencedor||{}).precoUnit) > 0) && espera(l));
+    const lista = licEncerradas().filter(espera).concat(perdidasSemPreco);
     if(lista.length) licBuscarResultados(lista.slice(0, 40), true);
   }catch(e){ console.warn(e); }
 }
@@ -40737,19 +40823,25 @@ function licResultadoHtml(l){
       }).join('')}</tbody></table></div></div>`;
 }
 
+/* preço do vencedor vindo do PNCP, só onde ainda está em branco (o que ela
+   anotou à mão fica). Devolve quantos itens preencheu. */
+function licPreencherVencedoresDoPncp(l){
+  const r = l && l.resultadoPncp;
+  if(!r || !r.temResultado || (l.itens||[]).length !== r.itens.length) return 0;
+  let n = 0;
+  l.itens.forEach((it,i)=>{
+    const v = r.itens[i].vencedores[0];
+    if(v && v.cnpj !== MIZU_CNPJ && v.valorUnit > 0 && !(it.vencedor && licNumDireto(it.vencedor.precoUnit) > 0)){
+      it.vencedor = Object.assign({}, it.vencedor || {}, { empresa: v.empresa, precoUnit: v.valorUnit });
+      n++;
+    }
+  });
+  return n;
+}
 /* "Perdemos" já com o preço de cada vencedor vindo do PNCP */
 function licEncPerdemos(id){
   const l = licAchar(id); if(!l) return;
-  const r = l.resultadoPncp;
-  if(r && r.temResultado && (l.itens||[]).length === r.itens.length){
-    l.itens.forEach((it,i)=>{
-      const v = r.itens[i].vencedores[0];
-      if(v && v.cnpj !== MIZU_CNPJ && !(it.vencedor && licNumDireto(it.vencedor.precoUnit) > 0)){
-        it.vencedor = Object.assign({}, it.vencedor || {}, { empresa: v.empresa, precoUnit: v.valorUnit });
-      }
-    });
-    saveState();
-  }
+  if(licPreencherVencedoresDoPncp(l)) saveState();
   licResultado(id, 'perdeu');
 }
 
@@ -41336,6 +41428,7 @@ function licCartaoPerdida(l){
         ${licLugarHtml(l)}
         ${licLinksHtml(l)}
         ${l.resultadoObs?`<div class="help-text" style="margin-top:6px;">“${escapeHtml(l.resultadoObs)}”</div>`:''}
+        ${l.resultadoPncp ? licResultadoHtml(l) : ''}
       </div>
       <div class="dir">
         <div class="lic-valor">${fmtMoney(t.venda)}</div>
@@ -41343,6 +41436,7 @@ function licCartaoPerdida(l){
         ${l.valorResultado>0?`<div style="font-size:13px;color:var(--negative);font-family:var(--font-num);font-weight:600;margin-top:4px;">${fmtMoney(l.valorResultado)}</div>
           <div style="font-size:11.5px;color:var(--ink-faint);margin-top:-2px;">o vencedor</div>`:''}
         <button class="btn btn-sm btn-primary" onclick="licResultado('${l.id}','perdeu')">${comVencedor.length?'✎ Corrigir o preço do vencedor':'✎ Anotar o preço do vencedor'}</button>
+        ${licPedacosDoLink(l.numeroControlePNCP || l.linkPncp || '') ? `<button class="btn btn-sm" onclick="licBuscarResultados([licAchar('${l.id}')], false)" title="Busca no PNCP quem ganhou e por quanto, e preenche o preço do vencedor onde estiver em branco">🔄 Ver resultado no PNCP</button>` : ''}
         <button class="btn btn-sm" onclick="licAbrirAnalise('${l.id}')">📊 Análise</button>
         <button class="btn btn-sm" onclick="licAbrir('${l.id}','compra')">Ver o que aconteceu</button>
       </div>
@@ -67996,7 +68090,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 10:30';
+const SISTEMA_VERSAO = '27/11/2026 12:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
