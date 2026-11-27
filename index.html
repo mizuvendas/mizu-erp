@@ -3141,7 +3141,12 @@ function menuFavChave(){
   return 'mizu_menu_favoritos::' + quem;
 }
 function menuFavoritos(){
-  try{ const v = JSON.parse(localStorage.getItem(menuFavChave()) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; }
+  try{
+    const bruto = localStorage.getItem(menuFavChave());
+    /* quem nunca escolheu já começa com Orçamentos (27/11/2026) */
+    if(bruto == null) return ['orcamentos'];
+    const v = JSON.parse(bruto || '[]'); return Array.isArray(v) ? v : [];
+  }catch(e){ return []; }
 }
 function menuFavAlternar(id){
   const f = menuFavoritos();
@@ -3258,7 +3263,9 @@ function menuAjustar(){
   if(typeof inicioAjustarGrupoDash === 'function') inicioAjustarGrupoDash();
   const barra = document.querySelector('.sidebar');
   barra.querySelectorAll('.nav-grupo').forEach(g=>{
-    g.hidden = menuMembrosVisiveis(g.dataset.grupo).length === 0;
+    g.hidden = menuMembrosVisiveis(g.dataset.grupo).length === 0
+      /* 27/11/2026: sem o Dashboard liberado, o grupo some (nem "Lembretes" aparece) */
+      || (g.dataset.grupo === 'g-dash' && !menuPodeVer('dashboard'));
   });
   barra.querySelectorAll('.menu-sec-corpo').forEach(corpo=>{
     const sec = corpo.dataset.sec;
@@ -4124,9 +4131,8 @@ function inicioNoMenu(){
 function inicioAjustarGrupoDash(){
   const g = document.querySelector('.sidebar .nav-grupo[data-grupo="g-dash"]');
   if(!g) return;
-  const temDash = menuPodeVer('dashboard');
   const it = menuItem('g-dash');
-  if(it){ it.rot = temDash ? 'Dashboard' : 'Lembretes'; it.ic = temDash ? '📊' : '📌'; }
+  if(it){ it.rot = 'Dashboard'; it.ic = '📊'; }
   const rot = g.querySelector('.menu-rot'), ic = g.querySelector('.ic');
   if(rot) rot.textContent = it ? it.rot : 'Dashboard';
   if(ic) ic.textContent = it ? it.ic : '📊';
@@ -67990,7 +67996,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 10:00';
+const SISTEMA_VERSAO = '27/11/2026 10:30';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
