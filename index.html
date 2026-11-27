@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>Mizu Materiais de Limpeza — Painel de Gestão</title>
 <!-- 26/11/2026: ícone da Mizu na aba e "instalar como aplicativo" (26/11/2026) -->
 <link rel="icon" type="image/png" href="icone-192.png">
@@ -3346,6 +3346,7 @@ function menuAbas(page){
 function menuDepoisDeNavegar(page){
   if(!MENU_MONTADO) return;
   try{ menuMarcarAtivo(page); menuAbas(page); if(page === 'armazenamento') appInstalarQuadro(); }catch(e){ console.warn(e); }
+  try{ if(typeof celDepoisDeNavegar === 'function') celDepoisDeNavegar(page); }catch(e){ console.warn(e); }
 }
 
 /* PROCURAR NO MENU — refeito pro menu novo: acha também o que virou aba
@@ -4034,6 +4035,536 @@ function appInstalarQuadro(){
 window.addEventListener('appinstalled', ()=>{ APP_INSTALAR = null; appInstalarQuadro(); });
 /* depois que o script inteiro rodou (nuvemUsuario, STATE e companhia já existem) */
 setTimeout(menuNovoIniciar, 0);
+
+/* =========================================================
+   VERSÃO CELULAR (26/11/2026)
+   "Eu quero como se fosse o WhatsApp, um aplicativo do celular, e não
+   um navegador." "Sem rolar pro lado, sem tirar zoom." "E que isso não
+   influencie no computador."
+   Tudo aqui vale SÓ com body.cel, que o JS liga pela mesma régua do
+   balanço (balEhCelular: matchMedia de LAYOUT, que não muda quando o
+   iPhone afasta o zoom). No computador, nenhuma regra daqui se aplica.
+   - barra do topo (≡ título 🔍 📸 💡) e barra de atalhos embaixo;
+   - o menu vira gaveta que desliza da esquerda e fecha sozinha;
+   - TODA tabela vira lista de cartões (cada célula ganha o nome da
+     coluna em data-rot) — nada de rolar pro lado;
+   - formulário num campo por linha, letra 16px (o iPhone não dá zoom),
+     teclado de números onde é número;
+   - janelas em tela cheia; o "Ver mais" sobe de baixo;
+   - o "voltar" do celular fecha a janela aberta / volta a tela.
+   ========================================================= */
+const CEL_BAIXO = [
+  { ic:'🏠', rot:'Início',     pg:'dashboard' },
+  { ic:'📋', rot:'Orçamentos', pg:'orcamentos' },
+  { ic:'＋', rot:'Novo',       acao:'novo', pg:'orcamentos' },
+  { ic:'🚚', rot:'Entregas',   pg:'logistica' },
+  { ic:'☰',  rot:'Menu',       acao:'menu' }
+];
+let CEL_MONTADO = false;
+let CEL_VOLTANDO = false;
+
+function celAtivo(){ return document.body && document.body.classList.contains('cel'); }
+function celEhCelular(){
+  try{ if(typeof balEhCelular === 'function') return balEhCelular(); }catch(e){}
+  return (window.innerWidth || 0) < 760;
+}
+
+function celEstilo(){
+  if(document.getElementById('cel-estilo')) return;
+  const s = document.createElement('style'); s.id = 'cel-estilo';
+  s.textContent = `
+#cel-topo,#cel-baixo,#cel-veu{display:none;}
+body.cel{font-size:15px;}
+body.cel .app{display:block;}
+/* menu = gaveta */
+body.cel .sidebar,body.cel.bal-foco .sidebar{display:flex !important;position:fixed;top:0;left:0;bottom:0;height:100%;width:84vw;max-width:320px;z-index:2500;
+  transform:translateX(-105%);transition:transform .22s ease;padding-top:calc(14px + env(safe-area-inset-top));box-shadow:none;}
+body.cel.cel-menu-aberto .sidebar{transform:none;box-shadow:8px 0 30px rgba(0,0,0,.35);}
+body.cel .sidebar .nav-item{padding:11px 14px;font-size:15.5px;}
+body.cel .sidebar .menu-estrela{opacity:.55;font-size:16px;padding:4px;}
+body.cel #cel-veu{display:block;position:fixed;inset:0;background:rgba(10,20,25,.5);z-index:2400;opacity:0;pointer-events:none;transition:opacity .18s;}
+body.cel.cel-menu-aberto #cel-veu,body.cel.cel-folha-aberta #cel-veu{opacity:1;pointer-events:auto;}
+/* barra do topo */
+body.cel #cel-topo{display:flex;position:fixed;top:0;left:0;right:0;z-index:900;align-items:center;gap:2px;
+  height:calc(54px + env(safe-area-inset-top));padding:env(safe-area-inset-top) 4px 0;background:#12232B;color:#fff;}
+#cel-topo button{background:transparent;border:0;color:#fff;font-size:21px;width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;position:relative;flex-shrink:0;}
+#cel-topo button:active{background:rgba(255,255,255,.14);}
+#cel-titulo{flex:1;min-width:0;font-size:18px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding-left:2px;}
+#cel-topo .sug-badge{position:absolute;top:4px;right:2px;margin:0;}
+/* barra de baixo */
+body.cel #cel-baixo{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:900;background:#fff;border-top:1px solid var(--border);
+  justify-content:space-around;align-items:flex-start;padding:6px 4px calc(6px + env(safe-area-inset-bottom));}
+#cel-baixo button{background:transparent;border:0;display:flex;flex-direction:column;align-items:center;gap:2px;font-size:11px;color:var(--ink-soft);width:20%;padding:2px 0;}
+#cel-baixo button .i{font-size:22px;line-height:26px;}
+#cel-baixo button.on{color:var(--primary-escuro);font-weight:800;}
+#cel-baixo button.novo .i{background:var(--positive);color:#fff;width:50px;height:50px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:30px;margin-top:-24px;box-shadow:0 4px 12px rgba(46,125,91,.45);}
+body.cel.cel-digitando #cel-baixo{display:none;}
+/* conteúdo */
+body.cel .main{padding:calc(64px + env(safe-area-inset-top)) 12px calc(92px + env(safe-area-inset-bottom)) !important;}
+body.cel.cel-digitando .main{padding-bottom:30px !important;}
+body.cel .page-header{margin-bottom:12px;gap:8px;}
+body.cel .page-header h2{font-size:19px;}
+body.cel .page-header .subtitle{display:none;}
+body.cel .header-actions{width:100%;}
+body.cel .header-actions .btn{flex:1 1 auto;}
+body.cel .topo-linha{display:none;}
+body.cel.cel-busca-aberta .topo-linha{display:flex;position:fixed;top:calc(54px + env(safe-area-inset-top));left:0;right:0;z-index:899;background:#fff;
+  padding:8px 10px;margin:0;box-shadow:0 6px 16px rgba(0,0,0,.15);}
+body.cel .topo-linha #sug-botoes{display:none;}
+body.cel .busca-global-wrap{max-width:none;}
+body.cel .bal-voltar-menu{display:none !important;}
+body.cel .card{padding:12px;border-radius:12px;}
+body.cel .card h3{font-size:15px;}
+body.cel .kpi-row{grid-template-columns:1fr 1fr !important;gap:8px;}
+body.cel .kpi-card{padding:12px;}
+body.cel .kpi-value{font-size:19px;}
+body.cel .menu-abas{width:100%;}
+body.cel .menu-abas button{flex:1 1 auto;justify-content:center;padding:9px 10px;}
+/* nada passa da largura da tela */
+body.cel .main *, body.cel .modal-box *, body.cel .orc-gaveta *{max-width:100%;}
+body.cel .main [style*="display:flex"],body.cel .main [style*="display: flex"],
+body.cel .modal-box [style*="display:flex"],body.cel .orc-gaveta [style*="display:flex"]{flex-wrap:wrap !important;}
+body.cel .form-grid{grid-template-columns:minmax(0,1fr) !important;}
+body.cel .main [style*="grid-template-columns"],body.cel .modal-box [style*="grid-template-columns"],body.cel .orc-gaveta [style*="grid-template-columns"]{grid-template-columns:minmax(0,1fr) !important;}
+body.cel .field-full{grid-column:auto;}
+/* campos: letra 16px (sem zoom do iPhone) e do tamanho do dedo */
+body.cel input:not([type=checkbox]):not([type=radio]):not([type=range]),body.cel select,body.cel textarea{font-size:16px !important;min-height:44px;}
+body.cel .btn{min-height:42px;font-size:14.5px;}
+body.cel .btn-sm{min-height:38px;font-size:13.5px;}
+body.cel .form-actions,body.cel .modal-actions{flex-wrap:wrap;}
+body.cel .form-actions .btn,body.cel .modal-actions .btn{flex:1 1 auto;}
+/* TABELA VIRA CARTÃO */
+body.cel table:not(.cel-mantem){display:block !important;width:100% !important;max-width:100% !important;overflow:visible !important;}
+body.cel table:not(.cel-mantem) > thead{display:none !important;}
+body.cel table:not(.cel-mantem) > tbody,body.cel table:not(.cel-mantem) > tfoot{display:block;}
+body.cel table:not(.cel-mantem) > tbody > tr,body.cel table:not(.cel-mantem) > tfoot > tr,body.cel table:not(.cel-mantem) > tr{
+  display:flex;flex-wrap:wrap;align-items:flex-start;gap:4px 14px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin:0 0 9px;}
+body.cel table:not(.cel-mantem) > tbody > tr:nth-child(even){background:#fff;}
+body.cel table:not(.cel-mantem) > tfoot > tr{background:#F3F7F9;}
+body.cel table:not(.cel-mantem) td,body.cel table:not(.cel-mantem) th{display:block;border:none !important;padding:1px 0 !important;white-space:normal !important;
+  font-size:14.5px;min-width:0;max-width:100% !important;width:auto !important;text-align:left !important;background:transparent !important;}
+body.cel table:not(.cel-mantem) td[data-rot]::before{content:attr(data-rot);display:block;font-size:10.5px;font-weight:700;color:var(--ink-faint);
+  text-transform:uppercase;letter-spacing:.3px;margin-bottom:1px;}
+body.cel table:not(.cel-mantem) td.cel-vazio{display:none !important;}
+body.cel table:not(.cel-mantem) td.cel-largo{flex-basis:100%;}
+body.cel table:not(.cel-mantem) td.cel-meio{flex:1 1 calc(50% - 8px);min-width:0;}
+body.cel .modal-rapido-cabecalho{padding-right:66px !important;}
+body.cel table:not(.cel-mantem) td.cel-acoes{flex-basis:100%;display:flex;flex-wrap:wrap;gap:6px;align-items:center;}
+body.cel table:not(.cel-mantem) td.cel-acoes::before{display:none;}
+body.cel table:not(.cel-mantem) td.cel-acoes .btn{flex:1 1 auto;}
+body.cel .table-wrap{overflow:visible !important;box-shadow:none !important;}
+body.cel .aviso-rolagem{display:none !important;}
+/* orçamentos: o cliente em cima, grande; o ⋯ no canto */
+body.cel #orc-tabela > tbody > tr{position:relative;padding-right:58px;}
+body.cel #orc-tabela td.orc-cli{order:-1;flex-basis:100%;font-size:16.5px;font-weight:700;max-width:100% !important;overflow:visible;white-space:normal !important;}
+body.cel #orc-tabela td.orc-cli::before{display:none;}
+body.cel #orc-tabela td.cel-acoes{position:absolute;top:6px;right:6px;flex-basis:auto;width:auto !important;}
+body.cel .acoes-ver-mais summary{min-height:42px;min-width:46px;display:flex;align-items:center;justify-content:center;font-size:20px;font-weight:800;}
+body.cel .acoes-ver-mais summary::before{content:'⋯';}
+body.cel .orc-abas{top:calc(54px + env(safe-area-inset-top));gap:6px;padding:8px 0;}
+body.cel .orc-aba{padding:7px 11px;min-height:38px;font-size:13.5px;flex:1 1 auto;justify-content:center;}
+body.cel .orc-topo{flex-wrap:wrap;gap:8px;}
+body.cel #orc-btn-abrir-gaveta{width:100%;margin-left:0 !important;}
+body.cel #orc-lista-busca{max-width:none !important;flex-basis:100% !important;order:-1;}
+/* "Ver mais" sobe de baixo */
+body.cel .acoes-ver-mais-lista{position:fixed !important;left:0 !important;right:0 !important;top:auto !important;bottom:0 !important;width:100% !important;
+  max-width:100% !important;max-height:78vh;overflow-y:auto;border-radius:18px 18px 0 0 !important;z-index:2600 !important;
+  padding:16px 0 calc(14px + env(safe-area-inset-bottom)) !important;box-shadow:0 -6px 30px rgba(0,0,0,.25) !important;visibility:visible !important;}
+body.cel .acoes-ver-mais-lista::before{content:'';display:block;width:44px;height:5px;border-radius:3px;background:#ccd3d6;margin:-8px auto 8px;flex-shrink:0;}
+body.cel .acoes-ver-mais-lista .btn{font-size:16px !important;min-height:52px;padding:12px 22px !important;border-radius:0 !important;border-bottom:1px solid #f0f2f3 !important;}
+/* janelas em tela cheia */
+body.cel .modal-overlay{padding:0 !important;align-items:stretch !important;}
+body.cel .modal-box{max-width:100vw !important;width:100vw !important;max-height:100% !important;height:100% !important;border-radius:0 !important;
+  padding:calc(14px + env(safe-area-inset-top)) 14px calc(24px + env(safe-area-inset-bottom)) !important;}
+body.cel .modal-box .modal-actions{position:sticky;bottom:calc(-24px - env(safe-area-inset-bottom));background:#fff;padding:10px 0 12px;margin-top:10px;z-index:5;}
+body.cel .modal-x-global{width:40px;height:40px;min-width:40px;font-size:18px;}
+body.cel .orc-gaveta{width:100vw !important;}
+body.cel .orc-gaveta-topo{padding:calc(10px + env(safe-area-inset-top)) 12px 10px;}
+body.cel .orc-gaveta-corpo{padding:12px 10px 120px !important;}
+body.cel .orc-gaveta-x{width:42px;height:42px;font-size:19px;}
+body.cel #sug-modal{padding:0;}
+body.cel #sug-modal .sug-caixa{border-radius:0;min-height:100%;padding:calc(14px + env(safe-area-inset-top)) 14px 24px;}
+body.cel #sug-cv{max-height:42vh;}
+body.cel #toast,body.cel #notificacoes-globais{left:8px;right:8px;bottom:calc(84px + env(safe-area-inset-bottom));max-width:none;}
+body.cel.cel-digitando #toast,body.cel.cel-digitando #notificacoes-globais{bottom:12px;}
+body.cel #toast .toast-item{max-width:none;}
+body.cel .cell-actions,body.cel .acoes,body.cel .header-actions,body.cel .form-actions{flex-wrap:wrap !important;}
+body.cel .cell-actions .btn{flex:1 1 calc(50% - 6px);}
+body.cel .lic-topo{flex-wrap:wrap;}
+body.cel .lic-topo .acoes{width:100%;display:flex;gap:6px;}
+body.cel .lic-topo .acoes .btn{flex:1 1 calc(50% - 6px);font-size:13px !important;min-height:40px;padding:6px 6px;}
+body.cel .orc-cartoes{gap:6px;margin-bottom:10px;}
+body.cel .orc-cartao{flex-direction:row !important;flex-wrap:wrap;align-items:baseline;column-gap:6px;row-gap:0;padding:7px 10px !important;}
+body.cel .orc-cartao .rot{flex-basis:100%;font-size:9.5px !important;line-height:1.25;}
+body.cel .orc-cartao .num{font-size:18px !important;}
+body.cel .orc-cartao .sub{font-size:11px !important;}
+body.cel #orc-btn-abrir-gaveta{display:none !important;}
+body.cel .orc-topo{margin-bottom:6px;}
+body.cel #orc-lista-titulo{display:none;}
+body.cel #page-orcamentos .card > div:first-child > .btn-sm{flex:1 1 0;min-width:0;font-size:11.5px !important;min-height:34px;padding:4px 5px;white-space:normal;line-height:1.15;}
+body.cel .orc-gaveta,body.cel .orc-gaveta-corpo{overflow-x:clip !important;}
+body.cel .combo-wrap{min-width:0;width:100%;}
+body.cel .combo-wrap input{width:100% !important;box-sizing:border-box;}
+body.cel #orc-abas .orc-aba{flex:1 1 30%;font-size:12.5px;padding:6px 6px;min-height:36px;gap:5px;}
+body.cel #orc-abas .orc-aba .n{font-size:11px;padding:0 6px;}
+body.cel #orc-abas .orc-filtro-vendedor{width:100%;margin-left:0 !important;flex-wrap:nowrap !important;gap:4px;}
+body.cel #orc-abas .orc-filtro-vendedor button{flex:1 1 0;min-width:0;padding:5px 3px !important;font-size:12px !important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-width:1.5px !important;}
+body.cel .combo-dropdown{position:fixed !important;left:8px !important;right:8px !important;width:auto !important;min-width:0 !important;max-width:none !important;
+  max-height:48vh !important;overflow-y:auto !important;z-index:2700 !important;box-shadow:0 10px 30px rgba(0,0,0,.25);}
+body.cel .combo-dropdown *{white-space:normal !important;}
+body.cel .orc-cartoes{grid-template-columns:1fr 1fr !important;gap:8px;}
+body.cel .orc-cartao{padding:9px 11px;}
+body.cel .orc-cartao .rot{font-size:10px;}
+body.cel .orc-cartao .num{font-size:20px;}
+body.cel .orc-cartao .sub{font-size:11.5px;}
+body.cel .page-header > div:first-child > h2{display:none;}
+body.cel .page-header:not(:has(.btn,button,select,input)){display:none;}
+body.cel .item-picker-row{grid-template-columns:minmax(0,1fr) !important;}
+body.cel .item-picker-row > *,body.cel .form-grid > *{min-width:0 !important;}
+#cel-orc-rodape{display:none;}
+body.cel #cel-orc-rodape.on{display:flex;position:fixed;left:0;right:0;bottom:0;z-index:975;background:#fff;border-top:1px solid var(--border);
+  align-items:center;gap:8px;padding:8px 10px calc(8px + env(safe-area-inset-bottom));box-shadow:0 -4px 14px rgba(0,0,0,.08);}
+#cel-orc-rodape .tot{flex:1;min-width:0;font-size:12px;color:var(--ink-soft);line-height:1.2;}
+#cel-orc-rodape .tot b{display:block;font-size:17px;color:var(--ink);}
+#cel-orc-rodape .btn{min-height:46px;}
+body.cel.cel-digitando #cel-orc-rodape.on{position:sticky;}
+.cel-folha-cab{display:none;}
+body.cel .cel-folha-cab{display:block;padding:2px 22px 10px;font-weight:800;font-size:16px;border-bottom:1px solid #eef1f2;}
+body.cel .cel-folha-cab small{display:block;font-weight:400;font-size:12.5px;color:var(--ink-soft);}
+`;
+  document.head.appendChild(s);
+}
+
+function celMontar(){
+  if(CEL_MONTADO) return;
+  CEL_MONTADO = true;
+  celEstilo();
+  const topo = document.createElement('div');
+  topo.id = 'cel-topo';
+  topo.innerHTML = `<button type="button" id="cel-btn-menu" aria-label="Abrir o menu">≡</button>
+    <div id="cel-titulo">Mizu</div>
+    <button type="button" id="cel-btn-busca" aria-label="Procurar">🔍</button>
+    <button type="button" id="cel-btn-print" aria-label="Sugerir melhoria">📸</button>
+    <button type="button" id="cel-btn-sug" aria-label="Sugestões">💡<span class="sug-badge" id="cel-sug-badge" style="display:none;"></span></button>`;
+  document.body.appendChild(topo);
+  const veu = document.createElement('div'); veu.id = 'cel-veu';
+  document.body.appendChild(veu);
+  const baixo = document.createElement('nav'); baixo.id = 'cel-baixo';
+  baixo.innerHTML = CEL_BAIXO.map((b,i)=>`<button type="button" data-i="${i}" class="${b.acao === 'novo' ? 'novo' : ''}"><span class="i">${b.ic}</span>${b.rot}</button>`).join('');
+  document.body.appendChild(baixo);
+
+  topo.querySelector('#cel-btn-menu').addEventListener('click', ()=>celMenu(true));
+  topo.querySelector('#cel-btn-busca').addEventListener('click', celBusca);
+  topo.querySelector('#cel-btn-print').addEventListener('click', ()=>{ if(typeof sugNova === 'function') sugNova(); });
+  topo.querySelector('#cel-btn-sug').addEventListener('click', ()=>navigateTo('sugestoes'));
+  veu.addEventListener('click', ()=>{ celMenu(false); orcVerMaisFecharTodos(null); celFolhaVigiar(); });
+  baixo.querySelectorAll('button').forEach(bt=>bt.addEventListener('click', ()=>{
+    const b = CEL_BAIXO[+bt.dataset.i];
+    if(b.acao === 'menu'){ celMenu(true); return; }
+    if(b.acao === 'novo'){
+      navigateTo('orcamentos');
+      setTimeout(()=>{ const n = document.getElementById('orc-btn-abrir-gaveta'); if(n) n.click(); }, 120);
+      return;
+    }
+    navigateTo(b.pg);
+  }));
+  /* escolheu uma tela no menu: a gaveta fecha sozinha */
+  document.querySelector('.sidebar').addEventListener('click', ev=>{
+    if(!celAtivo()) return;
+    const a = ev.target.closest('.nav-item');
+    if(a && !ev.target.closest('.menu-estrela')) setTimeout(()=>celMenu(false), 60);
+  });
+  /* teclado aberto: some a barra de baixo, e o campo certo ganha o teclado de números */
+  document.addEventListener('focusin', ev=>{
+    if(!celAtivo()) return;
+    const el = ev.target;
+    if(!el || !el.matches) return;
+    if(el.matches('input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit]):not([type=file]),textarea,select')){
+      document.body.classList.add('cel-digitando');
+      if(el.matches('input[type=text],input:not([type])') && !el.hasAttribute('inputmode')){
+        const pista = ((el.id || '') + ' ' + (el.name || '') + ' ' + (el.className || '') + ' ' + (el.placeholder || '')).toLowerCase();
+        if(/(preco|preço|valor|qtd|quant|custo|desconto|frete|r\$|percent|%)/.test(pista) && !/(busca|procura|cliente|produto|nome)/.test(pista)) el.setAttribute('inputmode', 'decimal');
+      }
+    }
+  });
+  document.addEventListener('focusout', ()=>{
+    setTimeout(()=>{
+      const a = document.activeElement;
+      if(!a || !a.matches || !a.matches('input,textarea,select')) document.body.classList.remove('cel-digitando');
+    }, 120);
+  });
+  /* "Ver mais" aberto = véu escuro atrás */
+  document.addEventListener('toggle', ev=>{
+    const d = ev.target;
+    if(d && d.classList && d.classList.contains('acoes-ver-mais') && celAtivo()){
+      if(d.open) celEmpilhar('folha');
+      else if(!CEL_VOLTANDO && history.state && history.state.celTipo === 'folha' && !document.querySelector('details.acoes-ver-mais[open]')){ try{ history.back(); }catch(e){} }
+      setTimeout(celFolhaVigiar, 0);
+    }
+  }, true);
+  /* tabelas: dá o nome da coluna pra cada célula (vira cartão) */
+  let t = null;
+  new MutationObserver(()=>{
+    if(!celAtivo()) return;
+    clearTimeout(t); t = setTimeout(celRotularTabelas, 120);
+  }).observe(document.body, { childList:true, subtree:true });
+  /* voltar do celular */
+  window.addEventListener('popstate', celVoltar);
+}
+
+function celFolhaVigiar(){
+  document.body.classList.toggle('cel-folha-aberta', !!document.querySelector('details.acoes-ver-mais[open]'));
+}
+function celMenu(abrir){
+  if(!celAtivo()) return;
+  const estava = document.body.classList.contains('cel-menu-aberto');
+  document.body.classList.toggle('cel-menu-aberto', !!abrir);
+  if(abrir && !estava) celEmpilhar('menu');
+  if(!abrir && estava && !CEL_VOLTANDO && history.state && history.state.celTipo === 'menu'){ try{ history.back(); }catch(e){} }
+}
+function celBusca(){
+  const ab = !document.body.classList.contains('cel-busca-aberta');
+  document.body.classList.toggle('cel-busca-aberta', ab);
+  if(ab){ const i = document.getElementById('busca-global-input'); if(i){ i.focus(); } }
+}
+function celTitulo(page){
+  const el = document.getElementById('cel-titulo');
+  if(!el) return;
+  let nome = '';
+  try{
+    const g = menuGrupoDaPagina(page);
+    if(g && !g.hub && MENU_ABA_ROTULO[page]) nome = MENU_ABA_ROTULO[page].replace(/^\S+\s/, '');
+    else if(page === 'relatorios') nome = 'Relatórios';
+    else if(page === 'sugestoes') nome = 'Sugestões';
+    else nome = menuRotuloEntrada(page).rot;
+  }catch(e){}
+  if(!nome){ const h = document.querySelector('#page-' + page + ' .page-header h2'); nome = h ? h.textContent.trim() : 'Mizu'; }
+  el.textContent = nome;
+}
+function celMarcarBaixo(page){
+  const g = (typeof menuGrupoDaPagina === 'function') ? menuGrupoDaPagina(page) : null;
+  document.querySelectorAll('#cel-baixo button').forEach(bt=>{
+    const b = CEL_BAIXO[+bt.dataset.i];
+    const on = !b.acao && (b.pg === page || (g && g.membros.indexOf(b.pg) >= 0));
+    bt.classList.toggle('on', !!on);
+    if(b.pg) bt.hidden = (typeof temAcesso === 'function') && !temAcesso(b.pg);
+  });
+}
+function celRotularTabelas(){
+  document.querySelectorAll('table').forEach(tb=>{
+    if(tb.closest('.sidebar') || tb.classList.contains('cel-mantem')) return;
+    const cab = tb.tHead && tb.tHead.rows.length ? tb.tHead.rows[tb.tHead.rows.length - 1] : null;
+    const rots = [];
+    if(cab){
+      [...cab.cells].forEach(th=>{
+        const txt = th.textContent.replace(/\s+/g, ' ').replace(/[▲▼]/g, '').trim();
+        const n = th.colSpan || 1;
+        for(let i = 0; i < n; i++) rots.push(i === 0 ? txt : '');
+      });
+    }
+    const linhas = [...(tb.tBodies || [])].flatMap(b=>[...b.rows]).concat(tb.tFoot ? [...tb.tFoot.rows] : []);
+    linhas.forEach(tr=>{
+      let col = 0;
+      [...tr.cells].forEach(td=>{
+        const rot = rots[col] || '';
+        if(rot && td.colSpan <= 1){ if(td.dataset.rot !== rot) td.dataset.rot = rot; }
+        else if(td.dataset.rot) delete td.dataset.rot;
+        col += td.colSpan || 1;
+        const temControle = !!td.querySelector('button,.btn,details,a.btn');
+        const temCampo = !!td.querySelector('input:not([type=checkbox]):not([type=radio]),select,textarea');
+        const vazio = !temControle && !temCampo && !td.querySelector('img,canvas,input') && !td.textContent.trim();
+        td.classList.toggle('cel-vazio', vazio);
+        const temVerMais = !!td.querySelector('details.acoes-ver-mais');
+        td.classList.toggle('cel-acoes', (temVerMais || (temControle && !temCampo && td.textContent.replace(/\s+/g,'').length < 80)) && !td.classList.contains('orc-cli'));
+        /* campo de número (qtd, preço) cabe dois por linha; texto/lista ocupa a linha toda */
+        const soNumero = temCampo && !td.querySelector('input:not([type=number]):not([type=checkbox]):not([type=radio]),select,textarea');
+        td.classList.toggle('cel-meio', soNumero);
+        td.classList.toggle('cel-largo', (temCampo && !soNumero) || td.colSpan > 1 || td.textContent.trim().length > 40);
+      });
+    });
+  });
+}
+
+/* O "voltar" do celular: fecha o que está aberto (menu, Ver mais, janela,
+   orçamento) antes de sair da tela; sem nada aberto, volta pra tela
+   anterior do sistema em vez de sair dele. */
+function celEmpilhar(tipo){
+  if(!celAtivo() || CEL_VOLTANDO) return;
+  try{ history.pushState({ celPage: celPaginaAtual(), celTipo: tipo }, ''); }catch(e){}
+}
+function celPaginaAtual(){
+  const a = document.querySelector('.page.active');
+  return a ? a.id.replace('page-', '') : 'dashboard';
+}
+function celFecharAlgo(){
+  if(document.body.classList.contains('cel-menu-aberto')){ celMenu(false); return true; }
+  if(document.body.classList.contains('cel-busca-aberta')){ document.body.classList.remove('cel-busca-aberta'); return true; }
+  if(document.querySelector('details.acoes-ver-mais[open]')){ orcVerMaisFecharTodos(null); celFolhaVigiar(); return true; }
+  const zoom = document.getElementById('sug-zoom'); if(zoom){ zoom.remove(); return true; }
+  if(document.getElementById('sug-modal')){ sugFecharQuadro(); return true; }
+  const modais = [...document.querySelectorAll('.modal-overlay.open')];
+  if(modais.length){
+    const m = modais[modais.length - 1];
+    const x = m.querySelector('.modal-x-global, .modal-rapido-fechar-x, [data-fechar], .btn-cancelar');
+    if(x) x.click(); else m.classList.remove('open');
+    return true;
+  }
+  const gav = document.getElementById('orc-gaveta');
+  if(gav && gav.classList.contains('aberta')){ const x = document.getElementById('orc-btn-fechar-gaveta'); if(x){ x.click(); return true; } }
+  return false;
+}
+function celVoltar(ev){
+  if(!celAtivo()) return;
+  let fechou = false;
+  CEL_VOLTANDO = true;
+  try{ fechou = celFecharAlgo(); }finally{ CEL_VOLTANDO = false; }
+  if(fechou) return;
+  const st = ev.state;
+  if(st && st.celPage && st.celPage !== celPaginaAtual()){
+    CEL_VOLTANDO = true;
+    try{ navigateTo(st.celPage); }finally{ CEL_VOLTANDO = false; }
+  }
+}
+
+function celDepoisDeNavegar(page){
+  if(!celAtivo()) return;
+  celTitulo(page);
+  celMarcarBaixo(page);
+  document.body.classList.remove('cel-busca-aberta');
+  /* trocou de tela: o teclado de um campo da tela anterior não pode ficar "ligado" */
+  try{ const a = document.activeElement; if(a && a.blur && a.matches && a.matches('input,textarea,select')) a.blur(); }catch(e){}
+  document.body.classList.remove('cel-digitando');
+  if(!CEL_VOLTANDO){ try{ history.pushState({ celPage: page }, ''); }catch(e){} }
+  try{ window.scrollTo(0, 0); }catch(e){}
+  setTimeout(celRotularTabelas, 150);
+}
+
+function celAplicar(){
+  const eh = celEhCelular();
+  if(eh) celMontar();
+  const antes = celAtivo();
+  document.body.classList.toggle('cel', eh);
+  celViewport(eh);
+  if(eh){
+    const p = celPaginaAtual();
+    celTitulo(p); celMarcarBaixo(p); celRotularTabelas();
+    if(!antes){ try{ history.replaceState({ celPage: p }, ''); }catch(e){} }
+    const b1 = document.getElementById('sug-badge'), b2 = document.getElementById('cel-sug-badge');
+    if(b1 && b2){ b2.textContent = b1.textContent; b2.style.display = b1.style.display; }
+  }else{
+    document.body.classList.remove('cel-menu-aberto', 'cel-busca-aberta', 'cel-digitando', 'cel-folha-aberta');
+  }
+}
+function celIniciar(){
+  celAplicar();
+  let t = null;
+  window.addEventListener('resize', ()=>{ clearTimeout(t); t = setTimeout(celAplicar, 200); });
+  window.addEventListener('orientationchange', ()=>setTimeout(celAplicar, 300));
+  setInterval(()=>{
+    if(!celAtivo()) return;
+    const b1 = document.getElementById('sug-badge'), b2 = document.getElementById('cel-sug-badge');
+    if(b1 && b2){ b2.textContent = b1.textContent; b2.style.display = b1.style.display; }
+  }, 4000);
+}
+setTimeout(celIniciar, 0);
+
+/* zoom travado e lista de busca do tamanho da tela (26/11/2026):
+   "cliquei pra digitar e ele deu um zoom e cortou a tela". */
+function celViewport(liga){
+  const m = document.querySelector('meta[name=viewport]');
+  if(!m) return;
+  const base = 'width=device-width, initial-scale=1.0, viewport-fit=cover';
+  const quer = liga ? base + ', maximum-scale=1.0' : base;
+  if(m.getAttribute('content') !== quer) m.setAttribute('content', quer);
+}
+function celPosicionarCombo(el){
+  if(!celAtivo() || !el || !el.closest) return;
+  const wrap = el.closest('.combo-wrap');
+  const dd = wrap && wrap.querySelector('.combo-dropdown');
+  if(!dd) return;
+  const r = el.getBoundingClientRect();
+  const embaixo = window.innerHeight - r.bottom;
+  if(embaixo > 220 || embaixo > r.top){
+    dd.style.setProperty('top', Math.round(r.bottom + 4) + 'px', 'important');
+    dd.style.setProperty('bottom', 'auto', 'important');
+    dd.style.setProperty('max-height', Math.max(160, Math.round(embaixo - 14)) + 'px', 'important');
+  }else{
+    dd.style.setProperty('top', 'auto', 'important');
+    dd.style.setProperty('bottom', Math.round(window.innerHeight - r.top + 4) + 'px', 'important');
+    dd.style.setProperty('max-height', Math.max(160, Math.round(r.top - 14)) + 'px', 'important');
+  }
+}
+['focusin','input','click'].forEach(tipo=>document.addEventListener(tipo, ev=>{
+  const el = ev.target;
+  if(el && el.matches && el.matches('.combo-wrap input')) setTimeout(()=>celPosicionarCombo(el), 30);
+}, true));
+window.addEventListener('scroll', ()=>{
+  if(!celAtivo()) return;
+  const a = document.activeElement;
+  if(a && a.matches && a.matches('.combo-wrap input')) celPosicionarCombo(a);
+}, true);
+
+/* orçamento clássico no celular: total e Salvar sempre à vista embaixo */
+function celOrcRodape(){
+  let r = document.getElementById('cel-orc-rodape');
+  const gav = document.getElementById('orc-gaveta');
+  const corpo = gav && gav.querySelector('.orc-gaveta-corpo');
+  const pagOrc = document.getElementById('page-orcamentos');
+  const aberta = celAtivo() && gav && gav.classList.contains('aberta') && corpo && pagOrc && pagOrc.classList.contains('active');
+  const escolar = !!(corpo && corpo.classList.contains('orc-modo-escolar'));
+  if(!aberta){ if(r) r.classList.remove('on'); return; }
+  if(!r){
+    r = document.createElement('div'); r.id = 'cel-orc-rodape';
+    r.innerHTML = '<div class="tot">Total<b id="cel-orc-total">R$ 0,00</b></div>'
+      + '<button type="button" class="btn" id="cel-orc-pre">💾 Pré-venda</button>'
+      + '<button type="button" class="btn btn-primary" id="cel-orc-salvar">✓ Salvar</button>';
+    document.body.appendChild(r);
+    r.querySelector('#cel-orc-pre').addEventListener('click', ()=>{ const b = document.getElementById('orc-btn-salvar-pre-venda'); if(b) b.click(); });
+    r.querySelector('#cel-orc-salvar').addEventListener('click', ()=>{
+      const esc = document.querySelector('.orc-gaveta-corpo.orc-modo-escolar');
+      const b = document.getElementById(esc ? 'esc-salvar' : 'orc-btn-salvar'); if(b) b.click(); });
+  }
+  /* escolar: o Salvar dele; sem pré-venda */
+  r.querySelector('#cel-orc-pre').style.display = escolar ? 'none' : '';
+  if(escolar){
+    const be = document.getElementById('esc-salvar');
+    const t = document.getElementById('cel-orc-total');
+    const tot = document.querySelector('#orc-escolar [data-total-final], #orc-escolar .esc-total-final');
+    if(t) t.textContent = tot ? tot.textContent.trim() : 'Orçamento escolar';
+    const cs = document.getElementById('cel-orc-salvar');
+    if(cs) cs.textContent = '✓ ' + (be ? be.textContent.trim() : 'Salvar');
+    r.classList.add('on');
+    return;
+  }
+  const k = document.getElementById('orc-kpi-bruto');
+  const t = document.getElementById('cel-orc-total');
+  if(k && t) t.textContent = k.textContent;
+  const bs = document.getElementById('orc-btn-salvar');
+  const cs = document.getElementById('cel-orc-salvar');
+  if(bs && cs) cs.textContent = '✓ ' + (bs.textContent.trim() || 'Salvar').replace(/^Salvar Orçamento$/, 'Salvar');
+  r.classList.add('on');
+}
+setInterval(()=>{ try{ celOrcRodape(); }catch(e){} }, 700);
+/* "Ver mais" no celular: o nome do cliente no topo da folha */
+document.addEventListener('toggle', ev=>{
+  const d = ev.target;
+  if(!d || !d.classList || !d.classList.contains('acoes-ver-mais') || !d.open || !celAtivo()) return;
+  const lista = d.querySelector('.acoes-ver-mais-lista');
+  if(!lista || lista.querySelector('.cel-folha-cab')) return;
+  const tr = d.closest('tr');
+  if(!tr) return;
+  const cli = tr.querySelector('td.orc-cli');
+  const tds = [...tr.cells].filter(td=>!td.contains(d));
+  const titulo = (cli ? cli.textContent : (tds[0] ? tds[0].textContent : '')).replace(/\s+/g,' ').trim();
+  const sub = tds.filter(td=>td !== cli).map(td=>td.textContent.replace(/\s+/g,' ').trim()).filter(Boolean).slice(0, 3).join(' · ');
+  const cab = document.createElement('div'); cab.className = 'cel-folha-cab';
+  cab.innerHTML = '<span></span><small></small>';
+  cab.querySelector('span').textContent = titulo;
+  cab.querySelector('small').textContent = sub;
+  lista.insertBefore(cab, lista.firstChild);
+}, true);
+
 
 
 /* =========================================================
@@ -19100,8 +19631,12 @@ document.addEventListener('click', ev=>{
   /* clicou num botão da janelinha: faz a ação e fecha */
   if(ev.target.closest('.acoes-ver-mais-lista button')) setTimeout(()=>{ dentro.open = false; }, 0);
 }, true);
-window.addEventListener('scroll', ()=>orcVerMaisFecharTodos(null), true);
-window.addEventListener('resize', ()=>orcVerMaisFecharTodos(null));
+/* no celular a janelinha sobe de baixo e rola por dentro: rolar não fecha (26/11/2026) */
+window.addEventListener('scroll', ev=>{
+  if(document.body.classList.contains('cel')) return;
+  orcVerMaisFecharTodos(null);
+}, true);
+window.addEventListener('resize', ()=>{ if(!document.body.classList.contains('cel')) orcVerMaisFecharTodos(null); });
 
 /* VENDEDOR PADRÃO DE CADA ACESSO (26/11/2026): "o Geraldo já vem com o do
    Geraldo, o Neto com o do Neto" — quem está logado já vem escolhido no
@@ -67239,7 +67774,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 23:15';
+const SISTEMA_VERSAO = '27/11/2026 08:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
