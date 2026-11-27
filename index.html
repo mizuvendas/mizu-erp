@@ -1279,11 +1279,19 @@ body.orc-gaveta-travada{ overflow:hidden; }
       <span class="ic">💾</span> Armazenamento
     </a>
 
-    <div class="sidebar-footer">
+    <!-- RODAPÉ ENXUTO (26/11/2026): "achei que tomou muito espaço da barra
+         do menu" — fica uma linha só; backup, novidades e instalar moram no ⋯.
+         Os ids continuam os mesmos: quem já liga nesses botões não percebe. -->
+    <div class="sidebar-footer rodape-enxuto">
+      <div class="rodape-linha">
       <div class="status-conexao" id="status-conexao">
         <span class="status-dot" id="status-dot"></span>
         <span id="status-texto">Verificando conexão...</span>
       </div>
+      <button type="button" id="btn-rodape-mais" title="Backup, novidades e mais" aria-label="Backup, novidades e mais" onclick="rodapeMaisAlternar()">⋯</button>
+      </div>
+      <div class="rodape-mais" id="rodape-mais" hidden>
+      <button id="btn-instalar-app" type="button" style="display:none;background:rgba(79,195,224,0.16);border-color:rgba(79,195,224,0.35);color:#9EDCF0;font-weight:700;" onclick="appInstalarAgora()">📲 Instalar o Mizu ERP neste aparelho</button>
       <button id="btn-export" style="background:rgba(46,125,91,0.18);border-color:rgba(46,125,91,0.35);color:#8FD9B4;font-weight:700;">⬇ Exportar backup (.json)</button>
       <button id="btn-import">⬆ Importar backup (.json)</button>
       <!-- Devolve só o que sumiu, sem mexer no que está certo. É o caminho
@@ -1294,6 +1302,7 @@ body.orc-gaveta-travada{ overflow:hidden; }
       <input type="file" id="file-repescar" accept=".json" style="display:none;">
       <span id="last-saved">—</span>
       <button id="btn-novidades" onclick="abrirNovidades(null, 'Tudo que já mudou no sistema')" style="background:transparent;border-color:rgba(255,255,255,0.18);color:rgba(255,255,255,0.65);">✨ Novidades</button>
+      </div>
     </div>
   </aside>
 
@@ -3024,6 +3033,15 @@ function menuEstilo(){
 .sidebar .nav-sub{display:none;}
 .sidebar .nav-fora{display:none !important;}
 .sidebar.menu-buscando .nav-sub:not(.nav-filtro-oculto):not([hidden]):not(.nav-fora){display:flex;padding-left:30px;}
+.sidebar .rodape-enxuto{padding:8px 12px;}
+.sidebar .rodape-linha{display:flex;align-items:center;gap:6px;}
+.sidebar .rodape-linha .status-conexao{flex:1;min-width:0;margin:0;padding:6px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sidebar #btn-rodape-mais{width:34px;min-width:34px;height:30px;padding:0;margin:0;font-size:18px;line-height:1;font-weight:800;}
+.sidebar .rodape-mais{margin-top:8px;}
+.sidebar .rodape-mais #last-saved{display:block;margin:2px 2px 6px;}
+.sidebar .nav-busca{display:flex;gap:6px;align-items:center;}
+.sidebar #menu-todos{flex-shrink:0;height:33px;min-width:33px;padding:0 8px;border-radius:8px;border:1px solid rgba(255,255,255,.18);background:rgba(255,255,255,.08);color:#C9D4D8;font-size:15px;line-height:1;}
+.sidebar #menu-todos:hover{background:rgba(255,255,255,.16);color:#fff;}
 .sidebar .menu-sec{display:flex;align-items:center;justify-content:space-between;font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:#7F949C;padding:12px 20px 4px;cursor:pointer;user-select:none;font-weight:700;}
 .sidebar .menu-sec:hover{color:#fff;}
 .sidebar .menu-sec-seta{transition:transform .15s;font-size:11px;}
@@ -3032,11 +3050,12 @@ function menuEstilo(){
 .sidebar.menu-buscando .menu-sec-corpo.fechado{display:block;}
 .sidebar.menu-buscando #menu-favoritos{display:none;}
 .sidebar .menu-fav-cab{cursor:default;color:#F0C27A;}
-.sidebar .menu-estrela{margin-left:auto;opacity:0;font-size:13px;padding:0 2px;cursor:pointer;color:#F0C27A;line-height:1;}
+.sidebar .menu-estrela{margin-left:auto;opacity:.28;font-size:18px;padding:2px 4px;margin-right:-4px;cursor:pointer;color:#F0C27A;line-height:1;border-radius:6px;}
+.sidebar .menu-estrela:hover{background:rgba(255,255,255,.12);}
 .sidebar .nav-badge ~ .menu-estrela{margin-left:6px;}
 .sidebar .nav-badge[style*="display: none"] ~ .menu-estrela,.sidebar .nav-badge[style*="display:none"] ~ .menu-estrela{margin-left:auto;}
 .sidebar .nav-item:hover .menu-estrela,.sidebar .menu-estrela.on{opacity:1;}
-@media (hover:none){ .sidebar .menu-estrela{opacity:.5;} }
+@media (hover:none){ .sidebar .menu-estrela{opacity:.55;} }
 .menu-abas{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 16px;padding:4px;background:#E9EEF1;border-radius:10px;width:fit-content;max-width:100%;}
 .menu-abas button{border:0;background:transparent;padding:7px 14px;border-radius:8px;font:inherit;font-size:13px;cursor:pointer;color:var(--ink-soft,#55666d);display:flex;align-items:center;gap:4px;}
 .menu-abas button:hover{background:rgba(255,255,255,.6);}
@@ -3098,6 +3117,18 @@ function menuSecAlternar(sec){
   menuAjustar();
 }
 
+function menuTodosFechados(){ return MENU_GRUPOS.every(s=>menuSecFechada(s.sec)); }
+function menuTodosAlternar(){
+  const fechar = !menuTodosFechados();
+  const m = {};
+  MENU_GRUPOS.forEach(s=>{ m[s.sec] = fechar; });
+  try{ localStorage.setItem('mizu_menu_fechados', JSON.stringify(m)); }catch(e){}
+  menuAjustar();
+}
+function rodapeMaisAlternar(){
+  const m = document.getElementById('rodape-mais');
+  if(m) m.hidden = !m.hidden;
+}
 function menuFavChave(){
   let quem = 'local';
   try{ if(typeof nuvemUsuario !== 'undefined' && nuvemUsuario) quem = String(nuvemUsuario.email || nuvemUsuario.login || nuvemUsuario.nome || 'local').toLowerCase(); }catch(e){}
@@ -3152,6 +3183,14 @@ function menuMontar(){
   menuEstilo();
   if(!MENU_MONTADO){
     barra.querySelectorAll('.nav-section-label').forEach(l=>l.remove());
+    /* "uma opção pra esconder todos" (26/11/2026) */
+    const busca = barra.querySelector('.nav-busca');
+    if(busca && !document.getElementById('menu-todos')){
+      const bt = document.createElement('button');
+      bt.type = 'button'; bt.id = 'menu-todos';
+      bt.addEventListener('click', menuTodosAlternar);
+      busca.appendChild(bt);
+    }
     const fav = document.createElement('div');
     fav.id = 'menu-favoritos';
     barra.insertBefore(fav, rodape);
@@ -3223,6 +3262,8 @@ function menuAjustar(){
     if(cab){ cab.classList.toggle('fechado', fechado); cab.hidden = !algum; }
     corpo.hidden = !algum;
   });
+  const bt = document.getElementById('menu-todos');
+  if(bt){ const f = menuTodosFechados(); bt.textContent = f ? '⊞' : '⊟'; bt.title = f ? 'Abrir todos os grupos' : 'Fechar todos os grupos'; }
   /* favoritos */
   const favs = menuFavoritos();
   barra.querySelectorAll('.menu-estrela').forEach(st=>{
@@ -3304,7 +3345,7 @@ function menuAbas(page){
 
 function menuDepoisDeNavegar(page){
   if(!MENU_MONTADO) return;
-  try{ menuMarcarAtivo(page); menuAbas(page); }catch(e){ console.warn(e); }
+  try{ menuMarcarAtivo(page); menuAbas(page); if(page === 'armazenamento') appInstalarQuadro(); }catch(e){ console.warn(e); }
 }
 
 /* PROCURAR NO MENU — refeito pro menu novo: acha também o que virou aba
@@ -3956,24 +3997,39 @@ function menuNovoIniciar(){
   }catch(e){}
 }
 let APP_INSTALAR = null;
+/* "Instalar" (26/11/2026): ela achou deslocado no rodapé do menu — fica
+   num quadro no alto de Sistema › Armazenamento, só quando o Chrome oferece. */
 window.addEventListener('beforeinstallprompt', ev=>{
   ev.preventDefault();
   APP_INSTALAR = ev;
-  const rod = document.querySelector('.sidebar-footer');
-  if(!rod || document.getElementById('btn-instalar-app')) return;
-  const b = document.createElement('button');
-  b.id = 'btn-instalar-app';
-  b.textContent = '📲 Instalar o Mizu ERP neste aparelho';
-  b.style.cssText = 'background:rgba(79,195,224,0.16);border-color:rgba(79,195,224,0.35);color:#9EDCF0;font-weight:700;';
-  b.addEventListener('click', async ()=>{
-    if(!APP_INSTALAR) return;
-    APP_INSTALAR.prompt();
-    try{ await APP_INSTALAR.userChoice; }catch(e){}
-    APP_INSTALAR = null; b.remove();
-  });
-  rod.insertBefore(b, rod.firstChild);
+  appInstalarQuadro();
 });
-window.addEventListener('appinstalled', ()=>{ const b = document.getElementById('btn-instalar-app'); if(b) b.remove(); });
+async function appInstalarAgora(){
+  if(!APP_INSTALAR) return;
+  APP_INSTALAR.prompt();
+  try{ await APP_INSTALAR.userChoice; }catch(e){}
+  APP_INSTALAR = null; appInstalarQuadro();
+}
+function appInstalarQuadro(){
+  const bi = document.getElementById('btn-instalar-app');
+  if(bi) bi.style.display = APP_INSTALAR ? '' : 'none';
+  const sec = document.getElementById('page-armazenamento');
+  if(!sec) return;
+  const velho = document.getElementById('app-instalar-quadro');
+  if(!APP_INSTALAR){ if(velho) velho.remove(); return; }
+  if(velho) return;
+  const q = document.createElement('div');
+  q.id = 'app-instalar-quadro'; q.className = 'card';
+  q.style.cssText = 'display:flex;align-items:center;gap:14px;flex-wrap:wrap;border-left:4px solid var(--primary);';
+  q.innerHTML = '<div style="font-size:28px;">📲</div><div style="flex:1;min-width:200px;"><b>Instalar o Mizu ERP neste aparelho</b>'
+    + '<div class="help-text" style="margin:2px 0 0;">Ganha o ícone da Mizu na área de trabalho (ou na tela do celular) e abre como aplicativo, sem a barra do navegador.</div></div>'
+    + '<button type="button" class="btn btn-primary">Instalar</button>';
+  q.querySelector('button').addEventListener('click', appInstalarAgora);
+  const abas = sec.querySelector('.menu-abas');
+  if(!document.getElementById('page-armazenamento').classList.contains('active')) return;
+  sec.insertBefore(q, abas ? abas.nextSibling : sec.firstChild);
+}
+window.addEventListener('appinstalled', ()=>{ APP_INSTALAR = null; appInstalarQuadro(); });
 /* depois que o script inteiro rodou (nuvemUsuario, STATE e companhia já existem) */
 setTimeout(menuNovoIniciar, 0);
 
@@ -25102,17 +25158,22 @@ let abaixoMinFiltroMarca = '';
    atual, para prever em quantos dias o produto acaba e sugerir
    quanto comprar (baseado no ritmo de venda, não só no mínimo).
    ========================================================= */
-function calcularVelocidadeVenda(produtoId){
+/* LENTIDÃO DO ESTOQUE (26/11/2026): "cliquei em Estoque e travou". A
+   tabela "abaixo do mínimo" chamava getLinhasVenda() uma vez POR PRODUTO
+   (132 produtos × todas as vendas = ~10 s de tela congelada). Agora quem
+   chama em lote passa as linhas já calculadas (linhasProntas). */
+function calcularVelocidadeVenda(produtoId, linhasProntas){
   const hoje = todayISO();
   const dataLimite = addDays(hoje, -30);
-  const linhas = getLinhasVenda().filter(l=>l.produtoId===produtoId && l.data>=dataLimite && l.data<=hoje);
+  const linhas = (linhasProntas || getLinhasVenda()).filter(l=>l.produtoId===produtoId && l.data>=dataLimite && l.data<=hoje);
   const totalVendido = linhas.reduce((s,l)=>s+l.qtd,0);
   return totalVendido / 30; // unidades por dia, em média
 }
 
 function renderTabelaAbaixoMin(produtosAbaixoMinOriginal){
+  const linhasVenda = getLinhasVenda();
   let lista = produtosAbaixoMinOriginal.map(p=>{
-    const velocidadeDia = calcularVelocidadeVenda(p.id);
+    const velocidadeDia = calcularVelocidadeVenda(p.id, linhasVenda);
     const estoqueAtual = p.estoqueAtual||0;
     const diasParaAcabar = velocidadeDia>0 ? Math.floor(estoqueAtual/velocidadeDia) : null;
     // sugestão: repor o suficiente para cobrir 30 dias de venda no ritmo atual,
@@ -66782,7 +66843,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '26/11/2026 21:00';
+const SISTEMA_VERSAO = '26/11/2026 21:45';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
