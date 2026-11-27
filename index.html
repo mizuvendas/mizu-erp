@@ -38663,8 +38663,8 @@ function licPainelOportunidades(){
           Depois diga o que interessa — o que você descartar não volta.</div>
       </div>
       <div class="acoes">
-        ${(lista.length + licTodas().length + licDescartadas().length) > 0
-          ? `<button class="btn" onclick="licComecarDoZero()" title="Apaga tudo do portal de licitações e começa limpo">🧹 Começar do zero</button>` : ''}
+        <!-- "Começar do zero" saiu da tela (27/11/2026): "a gente vai acabar clicando
+             sem querer e apagar tudo". A função licComecarDoZero continua no sistema. -->
         <button class="btn" onclick="licAbrirLixeira()" title="Dispensas descartadas ou apagadas nos últimos 30 dias — dá pra restaurar">🗑️ Lixeira${licLixeira().length?` (${licLixeira().length})`:''}</button>
         <button class="btn" onclick="licAbrirCertidoes()">📎 Certidões</button>
         <button class="btn" onclick="licAbrirRepresentante()" title="Quem assina pela empresa — preenche uma vez">✍️ Representante</button>
@@ -40362,14 +40362,14 @@ async function licBuscarPncpAgora(automatico){
 
 function licBuscaPncpResumoHtml(){
   const b = (STATE.config || {}).licBuscaPncp;
-  if(!b || !b.quando) return '<span class="help-text" style="margin:0;">O PNCP é conferido sozinho a cada 3 horas (Dispensa · Goiás · recebendo proposta).</span>';
+  if(!b || !b.quando) return '<span class="help-text" style="margin:0;">Clique em "🔄 Buscar no PNCP agora" quando quiser (Dispensa · Goiás · recebendo proposta).</span>';
   const d = new Date(b.quando);
   const quando = d.toLocaleDateString('pt-BR') === new Date().toLocaleDateString('pt-BR')
     ? 'hoje às ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' })
     : d.toLocaleDateString('pt-BR') + ' ' + d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
   const erro = b.erro && b.erroEm && Date.parse(b.erroEm) > Date.parse(b.quando)
     ? ` · <span style="color:var(--negative);">a última tentativa falhou — importe o arquivo se precisar</span>` : '';
-  return `<span class="help-text" style="margin:0;">🔄 PNCP conferido ${quando}${b.por ? ' (' + escapeHtml(b.por) + ')' : ''}: ${b.achadas} dispensa${b.achadas===1?'':'s'} de Goiás, ${b.novas} nova${b.novas===1?'':'s'}. Confere de novo sozinho a cada 3 h.${erro}</span>`;
+  return `<span class="help-text" style="margin:0;">🔄 PNCP conferido ${quando}${b.por ? ' (' + escapeHtml(b.por) + ')' : ''}: ${b.achadas} dispensa${b.achadas===1?'':'s'} de Goiás, ${b.novas} nova${b.novas===1?'':'s'}.${erro}</span>`;
 }
 
 /* a cada 3 h, em qualquer aparelho aberto (a marca de hora vem da nuvem) */
@@ -40380,7 +40380,9 @@ function licBuscaPncpVerificar(){
     const b = (STATE.config || {}).licBuscaPncp;
     const ultima = b && b.quando ? Date.parse(b.quando) : 0;
     const erroRecente = b && b.erroEm && Date.now() - Date.parse(b.erroEm) < 30 * 60000;
-    if(Date.now() - ultima >= LIC_BUSCA_INTERVALO_MS && !erroRecente) licBuscarPncpAgora(true);
+    /* 27/11/2026: "quero que ele busque só na hora que eu pedir" — a busca de
+       dispensas não roda mais sozinha; só pelo botão "Buscar no PNCP agora". */
+    void ultima; void erroRecente;
     /* e o resultado das encerradas que ainda esperam (26/11/2026) */
     setTimeout(()=>{ try{ licResultadosVerificar(); }catch(e){} }, 20000);
   }catch(e){ console.warn(e); }
@@ -67796,7 +67798,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 08:30';
+const SISTEMA_VERSAO = '27/11/2026 09:00';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
