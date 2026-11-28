@@ -4320,7 +4320,9 @@ function ccPintarSinc(){
   const b = document.getElementById('cc-sinc'), a = document.getElementById('cc-aviso');
   if(!b || !a) return;
   const n = ccNaoSubiram();
-  b.hidden = !n;
+  /* o botão guarda o lugar dele (visibility): aparecer/sumir não pode mudar a
+     altura da barra — senão a lista pula a cada + (28/11/2026) */
+  b.hidden = false; b.style.visibility = n ? 'visible' : 'hidden';
   if(!b.disabled) b.textContent = 'Sincronizar (' + n + ')';
   if(n){
     a.textContent = (navigator.onLine === false ? 'Sem internet: ' : 'Ainda não subiu: ') + n + (n === 1 ? ' produto guardado' : ' produtos guardados') + ' só neste aparelho. Conecte e aperte Sincronizar antes de trocar de aparelho.';
@@ -4367,6 +4369,7 @@ function ccMontarTela(){
     abrirLeitorCodigoBarras(codigo=>ccAchouCodigo(codigo));   /* o mesmo leitor do Balanço: ao vivo, foto, zoom, flash, ler os números */
   });
   const lista = document.getElementById('cc-lista');
+  ['click','input','focusin'].forEach(ev=>lista.addEventListener(ev, ()=>{ CC_MEXEU = Date.now(); }, true));
   lista.addEventListener('click', e=>{
     const b = e.target.closest('button'); if(!b) return;
     if(b.dataset.acao === 'maislista'){ CC_LIMITE += 150; ccDesenharLista(); return; }
@@ -4396,7 +4399,15 @@ function ccMontarTela(){
   lista.addEventListener('keydown', e=>{ if(e.key === 'Enter' && e.target.matches('input.cc-q')) e.target.blur(); });
   /* barra fixa no celular: a lista começa logo abaixo dela */
   const topo = box.querySelector('.cc-top');
-  const ajusta = ()=>{ box.style.paddingTop = (getComputedStyle(topo).position === 'fixed' ? topo.offsetHeight + 4 : 0) + 'px'; };
+  /* se a barra mudar de altura mesmo assim, a página anda junto: o produto
+     que ela está contando fica parado no mesmo lugar da tela */
+  let padAntes = null;
+  const ajusta = ()=>{
+    const pad = getComputedStyle(topo).position === 'fixed' ? topo.offsetHeight + 4 : 0;
+    box.style.paddingTop = pad + 'px';
+    if(padAntes !== null && pad !== padAntes && window.scrollY > 0){ try{ window.scrollBy(0, pad - padAntes); }catch(e){} }
+    padAntes = pad;
+  };
   try{ new ResizeObserver(ajusta).observe(topo); }catch(e){}
   window.addEventListener('resize', ajusta); setTimeout(ajusta, 50);
 }
@@ -4621,10 +4632,17 @@ function ccxAbrirForm(id, codigoInicial){
   });
   setTimeout(()=>{ if(!x) $('#ccx-nome').focus(); }, 60);
 }
+/* o sincronismo redesenha a tela quando chega coisa da nuvem: enquanto ela
+   está apertando + / digitando (últimos 8 s), só atualiza os números de
+   cima — a lista fica parada embaixo do dedo */
+let CC_MEXEU = 0;
 function renderContagemComodato(){
   ccPrep(); ccEstilo();
   if(!document.getElementById('cc-lista')) ccMontarTela();
+  else if(Date.now() - CC_MEXEU < 8000){ ccContar(); return; }
+  const y = window.scrollY;
   ccDesenharLista();
+  if(y){ try{ window.scrollTo(0, y); }catch(e){} }
 }
 RENDERERS[CC_PAGINA] = renderContagemComodato;
 
@@ -4637,6 +4655,10 @@ function ccEstilo(){
   --cc-passou:#3c3489;--cc-passou-bg:#eeedfe;--cc-passou-bar:#7f77dd;--cc-venc:#633806;--cc-venc-bg:#faeeda;--cc-venc-bar:#ef9f27;--cc-linha:#dde3e6;}
 .cc-top{position:sticky;top:0;z-index:5;background:#fff;border:1px solid var(--cc-linha);border-radius:10px;padding:8px 10px;display:grid;gap:6px;}
 .cc-l1{display:flex;align-items:center;gap:8px;}.cc-l1 b{font-size:15px;flex:1;}
+.cc-aviso{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+body.cel .cc-l1 b{display:none;}
+body.cel .cc-prog{flex:1;}
+body.cel .cc-aviso{display:none!important;}
 .cc-prog{font-size:12px;color:#5d6a72;font-variant-numeric:tabular-nums;}
 .cc-sinc{background:var(--cc-falta-bg)!important;color:var(--cc-falta)!important;border-color:var(--cc-falta-bar)!important;font-weight:700;}
 .cc-bar{height:4px;background:var(--cc-linha);border-radius:3px;overflow:hidden;}.cc-bar i{display:block;height:4px;background:var(--cc-ok-bar);width:0;}
@@ -68644,7 +68666,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '28/11/2026 10:13';
+const SISTEMA_VERSAO = '28/11/2026 10:51';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
