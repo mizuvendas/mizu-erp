@@ -4299,7 +4299,7 @@ function ccCardHtml(it){
   return h;
 }
 function ccContar(){
-  const n = {falta:0, verde:0, vermelho:0, roxo:0, vencidos:0, todos:CC_ITENS.length};
+  const n = {falta:0, verde:0, vermelho:0, roxo:0, vencidos:0, fora:ccxVivos().length, todos:CC_ITENS.length};
   CC_ITENS.forEach(it=>{ const s = ccSitu(it); if(s === 'nao') n.falta++; else if(s === 'venc') n.vencidos++; else n[s]++; });
   Object.keys(n).forEach(k=>{ const el = document.getElementById('cc-c-' + k); if(el) el.textContent = n[k]; });
   const base = CC_ITENS.length - n.vencidos, feitos = base - n.falta;
@@ -4312,7 +4312,8 @@ function ccNaoSubiram(){
   try{
     if(typeof nuvemLerEspelho !== 'function' || typeof nuvemUsuario === 'undefined' || !nuvemUsuario) return 0;
     const esp = nuvemLerEspelho();
-    return ccLista().filter(r=>esp['contagemComodato|' + r.id] !== nuvemDigital(JSON.stringify(r))).length;
+    return ccLista().filter(r=>esp['contagemComodato|' + r.id] !== nuvemDigital(JSON.stringify(r))).length
+         + ccxLista().filter(r=>esp['contagemComodatoExtras|' + r.id] !== nuvemDigital(JSON.stringify(r))).length;
   }catch(e){ return 0; }
 }
 function ccPintarSinc(){
@@ -4333,11 +4334,12 @@ function ccMontarTela(){
   const box = document.getElementById('cc-content'); if(!box) return;
   box.innerHTML = `<div class="cc-top">
       <div class="cc-l1"><b>Contagem comodato</b><span class="cc-prog" id="cc-prog"></span>
-        <button type="button" class="btn btn-sm cc-sinc" id="cc-sinc" hidden>Sincronizar</button></div>
+        <button type="button" class="btn btn-sm cc-sinc" id="cc-sinc" hidden>Sincronizar</button>
+        <button type="button" class="btn btn-sm" id="cc-novo-fora" title="Produto que você achou e não está na planilha">➕ Fora da lista</button></div>
       <div class="cc-bar"><i id="cc-barra"></i></div>
       <div class="cc-seg" role="group" aria-label="Onde estou contando">${CC_LOCS.map(k=>`<button type="button" data-loc="${k}" aria-pressed="${k===CC_LOC}">${CC_NOME_LOC[k]}</button>`).join('')}</div>
       <div class="cc-busca"><input id="cc-busca" type="search" placeholder="Procurar: rodo silicone, dax G, 7898…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><button type="button" class="btn btn-sm cc-bipar" id="cc-bipar" title="Bipar pela câmera: aponte ou tire foto do código de barras">📷</button><button type="button" class="btn btn-sm" id="cc-limpa">Limpar</button></div>
-      <div class="cc-chips" id="cc-chips">${[['falta','Falta contar'],['verde','Verde'],['vermelho','Vermelho'],['roxo','Roxo'],['vencidos','Vencidos'],['todos','Todos']].map(([f,r])=>`<button type="button" class="cc-chip" data-f="${f}" aria-pressed="${f===CC_FILTRO}">${r} <b id="cc-c-${f}">0</b></button>`).join('')}</div>
+      <div class="cc-chips" id="cc-chips">${[['falta','Falta contar'],['verde','Verde'],['vermelho','Vermelho'],['roxo','Roxo'],['vencidos','Vencidos'],['fora','Fora da lista'],['todos','Todos']].map(([f,r])=>`<button type="button" class="cc-chip" data-f="${f}" aria-pressed="${f===CC_FILTRO}">${r} <b id="cc-c-${f}">0</b></button>`).join('')}</div>
       <div class="cc-aviso" id="cc-aviso" aria-live="polite"></div>
     </div>
     <div class="cc-tbl-h"><span>Item</span><span class="cc-num">Esperado</span><span class="cc-num">Depósito</span><span class="cc-num">Loja</span><span class="cc-num">Casa</span><span class="cc-num">Total</span><span>Situação</span></div>
@@ -4359,6 +4361,7 @@ function ccMontarTela(){
   busca.addEventListener('keydown', e=>{ if(e.key === 'Enter') busca.blur(); });
   document.getElementById('cc-limpa').addEventListener('click', ()=>{ busca.value = ''; CC_BUSCA = ''; CC_FIXOS.clear(); ccDesenharLista(); });
   document.getElementById('cc-sinc').addEventListener('click', ccSincronizar);
+  document.getElementById('cc-novo-fora').addEventListener('click', ()=>ccxAbrirForm(null, ''));
   document.getElementById('cc-bipar').addEventListener('click', ()=>{
     if(typeof abrirLeitorCodigoBarras !== 'function') return;
     abrirLeitorCodigoBarras(codigo=>ccAchouCodigo(codigo));   /* o mesmo leitor do Balanço: ao vivo, foto, zoom, flash, ler os números */
@@ -4367,7 +4370,16 @@ function ccMontarTela(){
   lista.addEventListener('click', e=>{
     const b = e.target.closest('button'); if(!b) return;
     if(b.dataset.acao === 'maislista'){ CC_LIMITE += 150; ccDesenharLista(); return; }
+    if(b.dataset.acao === 'novofora'){ ccxAbrirForm(null, b.dataset.cod || ''); return; }
     const card = b.closest('.cc-card'); if(!card) return;
+    if(card.dataset.x){
+      const id = card.dataset.x, x = ccxLista().find(r=>r.id === id); if(!x) return;
+      if(b.dataset.acao === 'xeditar' || b.dataset.acao === 'xfoto'){ ccxAbrirForm(id); return; }
+      const at = Number(x[CC_LOC]) || 0;
+      if(b.dataset.acao === 'xmais') ccxMudar(id, CC_LOC, at + 1);
+      if(b.dataset.acao === 'xmenos') ccxMudar(id, CC_LOC, Math.max(0, at - 1));
+      return;
+    }
     const l = Number(card.dataset.l);
     if(b.dataset.acao === 'abrir'){ CC_FIXOS.add(l); ccAtualizarCard(l); return; }
     const atual = Number(ccVal(l, CC_LOC)) || 0;
@@ -4376,8 +4388,10 @@ function ccMontarTela(){
   });
   lista.addEventListener('change', e=>{
     const i = e.target.closest('input.cc-q'); if(!i) return;
-    const l = Number(i.closest('.cc-card').dataset.l), k = i.dataset.k === 'loc' ? CC_LOC : i.dataset.k;
-    const t = i.value.replace(/\D/g, ''); ccMudar(l, k, t === '' ? null : Number(t));
+    const card = i.closest('.cc-card'), k = i.dataset.k === 'loc' ? CC_LOC : i.dataset.k;
+    const t = i.value.replace(/\D/g, ''), v = t === '' ? null : Number(t);
+    if(card.dataset.x){ ccxMudar(card.dataset.x, k, v); return; }
+    ccMudar(Number(card.dataset.l), k, v);
   });
   lista.addEventListener('keydown', e=>{ if(e.key === 'Enter' && e.target.matches('input.cc-q')) e.target.blur(); });
   /* barra fixa no celular: a lista começa logo abaixo dela */
@@ -4401,20 +4415,32 @@ function ccAchouCodigo(codigo){
   else if(achados.length > 1) showToast('Esse código está em ' + achados.length + ' produtos da planilha. Escolha o certo.', 'info');
   else{
     const lista = document.getElementById('cc-lista');
-    if(lista) lista.innerHTML = '<div class="cc-vazio">O código <b>' + escapeHtml(cod) + '</b> não está na planilha.<br>Procure pelo nome (apague o número e digite parte do nome).</div>';
-    showToast('Código ' + cod + ' não está na planilha. Procure pelo nome.', 'error');
+    if(ccxFiltrados().length){ showToast('Esse código já está nos itens fora da lista.', 'info'); return; }
+    if(lista) lista.innerHTML = '<div class="cc-vazio">O código <b>' + escapeHtml(cod) + '</b> não está na planilha.<br>Procure pelo nome (apague o número e digite parte do nome), ou:'
+      + '<br><button type="button" class="btn btn-primary" data-acao="novofora" data-cod="' + escapeAttr(cod) + '" style="margin-top:10px;">➕ Adicionar como item fora da lista</button></div>';
+    showToast('Código ' + cod + ' não está na planilha. Procure pelo nome ou adicione como fora da lista.', 'error');
   }
 }
 function ccDesenharLista(){
   const lista = document.getElementById('cc-lista'); if(!lista) return;
+  /* itens fora da lista: no filtro deles, ou quando a busca acha algum */
+  const fora = (CC_FILTRO === 'fora' || CC_BUSCA.trim()) ? ccxFiltrados() : [];
+  let hFora = '';
+  if(fora.length) hFora = '<div class="cc-forn cc-forn-fora">➕ Fora da lista (' + fora.length + ')</div>' + fora.map(ccxCardHtml).join('');
+  if(CC_FILTRO === 'fora'){
+    lista.innerHTML = hFora || '<div class="cc-vazio">Nenhum item fora da lista ainda.<br><button type="button" class="btn btn-primary" data-acao="novofora" style="margin-top:10px;">➕ Adicionar item fora da lista</button></div>';
+    ccxCarregarFotos(lista); ccContar(); return;
+  }
   const lst = ccFiltrados();
+  if(!lst.length && fora.length){ lista.innerHTML = hFora; ccxCarregarFotos(lista); ccContar(); return; }
   if(!lst.length){
     lista.innerHTML = '<div class="cc-vazio">' + (CC_BUSCA ? 'Nada encontrado para essa busca.' : 'Nenhum produto neste filtro.') + '</div>';
   }else{
     let h = '', f = null;
     lst.slice(0, CC_LIMITE).forEach(it=>{ if(it.f !== f){ f = it.f; h += '<div class="cc-forn">' + escapeHtml(f) + '</div>'; } h += ccCardHtml(it); });
     if(lst.length > CC_LIMITE) h += '<button type="button" class="btn btn-sm cc-maislista" data-acao="maislista">Mostrar mais (' + (lst.length - CC_LIMITE) + ' restantes)</button>';
-    lista.innerHTML = h;
+    lista.innerHTML = hFora + h;
+    if(hFora) ccxCarregarFotos(lista);
   }
   ccContar();
 }
@@ -4448,6 +4474,153 @@ async function ccSincronizar(){
   b.disabled = false; ccPintarSinc();
   if(!ccNaoSubiram()) showToast('Contagem sincronizada. Já aparece nos outros aparelhos.', 'success');
 }
+/* ---- FORA DA LISTA (28/11/2026) ----
+   "Tem a opção de adicionar, por favor. E se der, com foto. Apenas esses
+   que não estão cadastrados." Itens achados na contagem que não estão na
+   planilha da Ecoville: nome, código (pode bipar), foto e as quantidades
+   por local. Moram em STATE.contagemComodatoExtras (anda pela nuvem); a
+   foto vai pelo caminho das fotos do Balanço (IndexedDB 'mizu-fotos' +
+   balde fotos/ccx_<id>.jpg), sobe sozinha e funciona sem internet.
+   Apagar = marcar apagado (não some do STATE: o freio de exclusões da
+   nuvem não pergunta nada). */
+function ccxLista(){ if(!Array.isArray(STATE.contagemComodatoExtras)) STATE.contagemComodatoExtras = []; return STATE.contagemComodatoExtras; }
+function ccxVivos(){ return ccxLista().filter(x=>x && !x.apagado); }
+function ccxChaveFoto(x){ return 'ccx_' + x.id; }
+function ccxTotal(x){ return CC_LOCS.reduce((s,k)=>s + (Number(x[k])||0), 0); }
+function ccxFiltrados(){
+  const termos = ccNorm(CC_BUSCA).split(/[^a-z0-9]+/).filter(Boolean);
+  return ccxVivos().filter(x=>{
+    const n = ccNorm(x.nome || ''), c = String(x.codigo || '').replace(/^0+/, '');
+    return termos.every(t=>/^\d{4,}$/.test(t) ? c.includes(t.replace(/^0+/, '')) : n.includes(t));
+  });
+}
+function ccxCardHtml(x){
+  const v = k=>(x[k] === null || x[k] === undefined) ? '' : String(x[k]);
+  const q = (k, extra)=>'<input class="cc-q" data-k="' + k + '" inputmode="numeric" pattern="[0-9]*" enterkeyhint="done" autocomplete="off" aria-label="' + (k === 'loc' ? CC_NOME_LOC[CC_LOC] : CC_NOME_LOC[k]) + '" value="' + escapeAttr(v(k === 'loc' ? CC_LOC : k)) + '"' + (extra || '') + '>';
+  const tot = ccxTotal(x);
+  const res = '<span class="cc-res cc-res-fora"><b>' + tot + '</b>contado</span>';
+  let h = '<div class="cc-card cc-fora" data-x="' + escapeAttr(x.id) + '"><div class="cc-info"><div class="ccx-linha">';
+  h += '<button type="button" class="ccx-foto" data-acao="xfoto" aria-label="Foto">' + (x.temFoto ? '<img data-ccxfoto="' + escapeAttr(ccxChaveFoto(x)) + '" alt="">' : '📷') + '</button>';
+  h += '<div style="flex:1;min-width:0;"><div class="cc-nm">' + escapeHtml(x.nome || '(sem nome)') + ' <span class="cc-tag cc-tag-fora">FORA DA LISTA</span></div>';
+  h += '<div class="cc-sub">' + (x.codigo ? 'Código ' + escapeHtml(x.codigo) + ' · ' : '') + 'Dep ' + (x.dep ?? 0) + ' · Loja ' + (x.loja ?? 0) + ' · Casa ' + (x.casa ?? 0) + '</div></div>';
+  h += '<button type="button" class="btn btn-sm ccx-editar" data-acao="xeditar" title="Editar ou apagar">✏️</button></div>';
+  h += '<div class="cc-ctr"><button type="button" data-acao="xmenos" aria-label="Menos">−</button>' + q('loc', ' placeholder="0"') + '<button type="button" data-acao="xmais" aria-label="Mais">+</button><span class="cc-loc">' + CC_NOME_LOC[CC_LOC] + '</span>' + res + '</div>';
+  h += '</div><span class="cc-dk cc-num">—</span>';
+  CC_LOCS.forEach(k=>{ h += '<span class="cc-dk">' + q(k) + '</span>'; });
+  h += '<span class="cc-dk cc-num"><b>' + tot + '</b></span><span class="cc-dk">' + res + '</span></div>';
+  return h;
+}
+/* a foto vem do aparelho; se não estiver aqui, desce da nuvem (uma vez) */
+async function ccxCarregarFotos(raiz){
+  const imgs = (raiz || document).querySelectorAll('img[data-ccxfoto]');
+  for(const img of imgs){
+    const k = img.dataset.ccxfoto;
+    try{
+      let d = FOTO_CACHE[k];
+      if(d === undefined){
+        const g = await fotoIdb('get', k);
+        d = (g && (g.recortada || g.original)) || null;
+        if(!d && typeof fotoPodeNuvem === 'function' && fotoPodeNuvem()){ try{ d = await fotoBaixarUma(k); }catch(e){ d = null; } }
+        if(d) FOTO_CACHE[k] = d;
+      }
+      if(d) img.src = d;
+    }catch(e){}
+  }
+}
+let CCX_SALVAR_T = null;
+function ccxMudar(id, k, val){
+  const x = ccxLista().find(r=>r.id === id); if(!x) return;
+  x[k] = val; x.em = new Date().toISOString();
+  ccxAtualizarCard(id);
+  clearTimeout(CCX_SALVAR_T); CCX_SALVAR_T = setTimeout(()=>{ saveState(); ccPintarDepois(); }, 600);
+}
+function ccxAtualizarCard(id){
+  const el = document.querySelector('#cc-lista .cc-card[data-x="' + CSS.escape(id) + '"]');
+  const x = ccxLista().find(r=>r.id === id);
+  if(el && x){
+    const foco = document.activeElement, k = foco && el.contains(foco) ? foco.dataset.k : null;
+    const tmp = document.createElement('div'); tmp.innerHTML = ccxCardHtml(x);
+    const novo = tmp.firstElementChild; el.replaceWith(novo); ccxCarregarFotos(novo);
+    if(k){ const i = novo.querySelector('input[data-k="' + k + '"]'); if(i && i.offsetParent) i.focus(); }
+  }
+  ccContar();
+}
+/* foto: câmera do celular (ou arquivo), quadrada 600 como as do Balanço */
+function ccxLerFoto(arquivo){
+  return new Promise((ok, falha)=>{
+    const url = URL.createObjectURL(arquivo), img = new Image();
+    img.onload = ()=>{ try{ const c = fotoQuadrada(img, FOTO_LADO); ok(c.toDataURL('image/jpeg', 0.85)); }catch(e){ falha(e); } finally{ URL.revokeObjectURL(url); } };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); falha(new Error('foto')); };
+    img.src = url;
+  });
+}
+async function ccxGuardarFoto(x, dataUrl){
+  const k = ccxChaveFoto(x);
+  await fotoIdb('put', k, { recortada: dataUrl });
+  FOTO_CACHE[k] = dataUrl;
+  fotoVersaoLocalGravar(k, Date.now());
+  fotoEnfileirar(k);
+  try{ fotoSincronizar(); }catch(e){}
+}
+function ccxAbrirForm(id, codigoInicial){
+  const x = id ? ccxLista().find(r=>r.id === id) : null;
+  let fotoNova = null;
+  const m = document.createElement('div');
+  m.className = 'modal-overlay open'; m.id = 'ccx-modal';
+  m.innerHTML = `<div class="modal-box modal-box-rapido" style="width:min(460px,96vw);max-height:92vh;overflow-y:auto;">
+      <div class="modal-rapido-cabecalho"><div class="ic-rapido">➕</div><div><h3>${x ? 'Item fora da lista' : 'Adicionar item fora da lista'}</h3>
+        <div class="sub">Produto que você achou e não está na planilha da Ecoville.</div></div></div>
+      <div class="modal-rapido-corpo">
+        <div class="field"><label>Nome do produto *</label><input type="text" id="ccx-nome" autocomplete="off" style="font-size:16px;" placeholder="Ex.: Limpador com álcool Pérola 2L Ecoville"></div>
+        <div class="field"><label>Código de barras</label><div style="display:flex;gap:6px;"><input type="text" id="ccx-codigo" inputmode="numeric" autocomplete="off" style="flex:1;font-size:16px;" placeholder="Bipe ou digite"><button type="button" class="btn" id="ccx-bipar">📷 Bipar</button></div></div>
+        <div class="field"><label>Foto</label><div style="display:flex;gap:10px;align-items:center;">
+          <div class="ccx-foto ccx-foto-grande" id="ccx-previa">📷</div>
+          <label class="btn" style="cursor:pointer;">📸 Tirar ou escolher foto<input type="file" id="ccx-arquivo" accept="image/*" capture="environment" style="display:none;"></label></div></div>
+        <div class="field"><label>Quantidade</label><div class="ccx-qtds">${CC_LOCS.map(k=>`<label><span>${CC_NOME_LOC[k]}</span><input type="text" inputmode="numeric" pattern="[0-9]*" id="ccx-q-${k}" style="font-size:16px;text-align:center;"></label>`).join('')}</div></div>
+        <div class="help-text" id="ccx-erro" style="display:none;color:#b42318;"></div>
+        <div class="form-actions" style="flex-wrap:wrap;">
+          ${x ? '<button type="button" class="btn" id="ccx-apagar" style="margin-right:auto;color:#b42318;">🗑️ Apagar</button>' : ''}
+          <button type="button" class="btn" id="ccx-cancelar">Cancelar</button>
+          <button type="button" class="btn btn-primary" id="ccx-salvar">Salvar</button>
+        </div>
+      </div></div>`;
+  document.body.appendChild(m);
+  const $ = s=>m.querySelector(s);
+  $('#ccx-nome').value = x ? (x.nome || '') : '';
+  $('#ccx-codigo').value = x ? (x.codigo || '') : (codigoInicial || '');
+  CC_LOCS.forEach(k=>{ const v = x ? x[k] : (k === CC_LOC ? 1 : null); $('#ccx-q-' + k).value = (v === null || v === undefined) ? '' : String(v); });
+  if(x && x.temFoto){ const prev = $('#ccx-previa'); prev.innerHTML = '<img data-ccxfoto="' + escapeAttr(ccxChaveFoto(x)) + '" alt="">'; ccxCarregarFotos(prev); }
+  const fechar = ()=>m.remove();
+  $('#ccx-cancelar').addEventListener('click', fechar);
+  $('#ccx-bipar').addEventListener('click', ()=>{ if(typeof abrirLeitorCodigoBarras === 'function') abrirLeitorCodigoBarras(c=>{ $('#ccx-codigo').value = String(c || '').replace(/\D/g, ''); }); });
+  $('#ccx-arquivo').addEventListener('change', async e=>{
+    const f = e.target.files && e.target.files[0]; if(!f) return;
+    try{ fotoNova = await ccxLerFoto(f); $('#ccx-previa').innerHTML = '<img alt="" src="' + fotoNova + '">'; }
+    catch(err){ showToast('Não consegui abrir essa foto. Tente outra.', 'error'); }
+  });
+  if($('#ccx-apagar')) $('#ccx-apagar').addEventListener('click', ()=>{
+    if(!confirm('Apagar "' + (x.nome || 'este item') + '" da contagem?')) return;
+    x.apagado = true; x.em = new Date().toISOString(); saveState(); fechar(); ccDesenharLista(); ccPintarDepois();
+    showToast('Item apagado da contagem.', 'success');
+  });
+  $('#ccx-salvar').addEventListener('click', async ()=>{
+    const nome = $('#ccx-nome').value.trim();
+    if(!nome){ const er = $('#ccx-erro'); er.textContent = 'Escreva o nome do produto.'; er.style.display = ''; $('#ccx-nome').focus(); return; }
+    const reg = x || { id: 'X' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6) };
+    reg.nome = nome;
+    reg.codigo = $('#ccx-codigo').value.replace(/\D/g, '');
+    CC_LOCS.forEach(k=>{ const t = $('#ccx-q-' + k).value.replace(/\D/g, ''); reg[k] = t === '' ? null : Number(t); });
+    reg.em = new Date().toISOString();
+    if(fotoNova){ try{ await ccxGuardarFoto(reg, fotoNova); reg.temFoto = true; }catch(e){ showToast('A foto não foi guardada, o item sim.', 'error'); } }
+    if(!x) ccxLista().push(reg);
+    saveState(); fechar();
+    CC_FILTRO = 'fora'; CC_BUSCA = ''; const bu = document.getElementById('cc-busca'); if(bu) bu.value = '';
+    document.querySelectorAll('#cc-chips .cc-chip').forEach(c=>c.setAttribute('aria-pressed', String(c.dataset.f === 'fora')));
+    ccDesenharLista(); ccPintarDepois();
+    showToast(x ? 'Item atualizado.' : 'Item fora da lista adicionado.', 'success');
+  });
+  setTimeout(()=>{ if(!x) $('#ccx-nome').focus(); }, 60);
+}
 function renderContagemComodato(){
   ccPrep(); ccEstilo();
   if(!document.getElementById('cc-lista')) ccMontarTela();
@@ -4473,6 +4646,20 @@ function ccEstilo(){
 .cc-seg button[aria-pressed="true"]{background:#1b2328;color:#fff;font-weight:700;}
 .cc-busca{display:flex;gap:6px;}
 .cc-bipar{font-size:17px!important;padding:0 12px!important;}
+.cc-card.cc-fora{border-left-color:#0081a8;background:#f3fafc;}
+.cc-forn-fora{color:#0081a8;}
+.cc-tag-fora{background:#0081a8!important;color:#fff!important;}
+.cc-res-fora{background:#e3f2f7;color:#0b5a73;}
+.cc-chip[data-f="fora"]{color:#0081a8;}
+.ccx-linha{display:flex;gap:8px;align-items:flex-start;}
+.ccx-foto{width:44px;height:44px;flex:none;border:1px solid var(--cc-linha);border-radius:8px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:18px;overflow:hidden;padding:0;cursor:pointer;}
+.ccx-foto img{width:100%;height:100%;object-fit:cover;}
+.ccx-foto-grande{width:72px;height:72px;cursor:default;}
+.ccx-editar{padding:2px 8px!important;}
+.ccx-qtds{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+.ccx-qtds input{width:100%!important;min-width:0!important;box-sizing:border-box;}
+.ccx-qtds label{display:grid;gap:3px;font-size:12px;color:#5d6a72;text-align:center;}
+@media (min-width:820px){ body:not(.cel) .cc-fora .cc-sub{display:block!important;} }
 .cc-busca input{flex:1;min-width:0;height:36px;border:1px solid var(--cc-linha);border-radius:8px;font:inherit;font-size:16px;padding:0 10px;}
 .cc-chips{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;}.cc-chips::-webkit-scrollbar{display:none;}
 .cc-chip{flex:none;border:1px solid var(--cc-linha);background:#fff;border-radius:999px;font:inherit;font-size:11.5px;padding:4px 10px;cursor:pointer;white-space:nowrap;color:#1b2328;}
@@ -68457,7 +68644,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '28/11/2026 09:46';
+const SISTEMA_VERSAO = '28/11/2026 10:13';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
