@@ -4250,11 +4250,17 @@ function ccSitu(it){
   if(!ccContado(it.l)) return 'nao';
   const t = ccTotal(it.l); return t === it.e ? 'verde' : (t < it.e ? 'vermelho' : 'roxo');
 }
+function ccTemCodigoExato(z){ return CC_ITENS.some(it=>it.b && it.b.replace(/^0+/, '') === z); }
 /* busca: palavras em qualquer ordem; letra/número curto vale palavra inteira (o "G" do tamanho);
    número de 4+ dígitos procura também no código de barras */
 function ccCasa(it, termos){
   return termos.every(t=>{
-    if(/^\d{4,}$/.test(t)) return it.b.includes(t) || it._n.includes(t);
+    if(/^\d{4,}$/.test(t)){
+      const z = t.replace(/^0+/, ''), bz = it.b.replace(/^0+/, '');
+      /* código inteiro (bipado): só o produto com ESSE código, se existir; pedaço digitado: qualquer um que contenha */
+      if(t.length >= 12 && ccTemCodigoExato(z)) return bz === z;
+      return bz.includes(z) || it._n.includes(t);
+    }
     if(t.length <= 2) return it._p.has(t);
     return it._n.includes(t) || it._f.includes(t);
   });
@@ -4330,7 +4336,7 @@ function ccMontarTela(){
         <button type="button" class="btn btn-sm cc-sinc" id="cc-sinc" hidden>Sincronizar</button></div>
       <div class="cc-bar"><i id="cc-barra"></i></div>
       <div class="cc-seg" role="group" aria-label="Onde estou contando">${CC_LOCS.map(k=>`<button type="button" data-loc="${k}" aria-pressed="${k===CC_LOC}">${CC_NOME_LOC[k]}</button>`).join('')}</div>
-      <div class="cc-busca"><input id="cc-busca" type="search" placeholder="Procurar: rodo silicone, dax G, 7898…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><button type="button" class="btn btn-sm" id="cc-limpa">Limpar</button></div>
+      <div class="cc-busca"><input id="cc-busca" type="search" placeholder="Procurar: rodo silicone, dax G, 7898…" autocomplete="off" autocapitalize="off" spellcheck="false" enterkeyhint="search"><button type="button" class="btn btn-sm cc-bipar" id="cc-bipar" title="Bipar pela câmera: aponte ou tire foto do código de barras">📷</button><button type="button" class="btn btn-sm" id="cc-limpa">Limpar</button></div>
       <div class="cc-chips" id="cc-chips">${[['falta','Falta contar'],['verde','Verde'],['vermelho','Vermelho'],['roxo','Roxo'],['vencidos','Vencidos'],['todos','Todos']].map(([f,r])=>`<button type="button" class="cc-chip" data-f="${f}" aria-pressed="${f===CC_FILTRO}">${r} <b id="cc-c-${f}">0</b></button>`).join('')}</div>
       <div class="cc-aviso" id="cc-aviso" aria-live="polite"></div>
     </div>
@@ -4353,6 +4359,10 @@ function ccMontarTela(){
   busca.addEventListener('keydown', e=>{ if(e.key === 'Enter') busca.blur(); });
   document.getElementById('cc-limpa').addEventListener('click', ()=>{ busca.value = ''; CC_BUSCA = ''; CC_FIXOS.clear(); ccDesenharLista(); });
   document.getElementById('cc-sinc').addEventListener('click', ccSincronizar);
+  document.getElementById('cc-bipar').addEventListener('click', ()=>{
+    if(typeof abrirLeitorCodigoBarras !== 'function') return;
+    abrirLeitorCodigoBarras(codigo=>ccAchouCodigo(codigo));   /* o mesmo leitor do Balanço: ao vivo, foto, zoom, flash, ler os números */
+  });
   const lista = document.getElementById('cc-lista');
   lista.addEventListener('click', e=>{
     const b = e.target.closest('button'); if(!b) return;
@@ -4375,6 +4385,25 @@ function ccMontarTela(){
   const ajusta = ()=>{ box.style.paddingTop = (getComputedStyle(topo).position === 'fixed' ? topo.offsetHeight + 4 : 0) + 'px'; };
   try{ new ResizeObserver(ajusta).observe(topo); }catch(e){}
   window.addEventListener('resize', ajusta); setTimeout(ajusta, 50);
+}
+/* bipou: mostra o produto daquele código (ou avisa que não está na planilha) */
+function ccAchouCodigo(codigo){
+  const cod = String(codigo || '').replace(/\D/g, '');
+  if(!cod) return;
+  const z = cod.replace(/^0+/, '');
+  const achados = CC_ITENS.filter(it=>it.b && it.b.replace(/^0+/, '') === z);
+  const busca = document.getElementById('cc-busca');
+  CC_FIXOS.clear(); CC_LIMITE = 150;
+  CC_BUSCA = cod; if(busca) busca.value = cod;
+  ccDesenharLista();
+  try{ window.scrollTo(0, 0); }catch(e){}
+  if(achados.length === 1) showToast('Achei: ' + achados[0].n, 'success');
+  else if(achados.length > 1) showToast('Esse código está em ' + achados.length + ' produtos da planilha. Escolha o certo.', 'info');
+  else{
+    const lista = document.getElementById('cc-lista');
+    if(lista) lista.innerHTML = '<div class="cc-vazio">O código <b>' + escapeHtml(cod) + '</b> não está na planilha.<br>Procure pelo nome (apague o número e digite parte do nome).</div>';
+    showToast('Código ' + cod + ' não está na planilha. Procure pelo nome.', 'error');
+  }
 }
 function ccDesenharLista(){
   const lista = document.getElementById('cc-lista'); if(!lista) return;
@@ -4443,6 +4472,7 @@ function ccEstilo(){
 .cc-seg button+button{border-left:1px solid var(--cc-linha);}
 .cc-seg button[aria-pressed="true"]{background:#1b2328;color:#fff;font-weight:700;}
 .cc-busca{display:flex;gap:6px;}
+.cc-bipar{font-size:17px!important;padding:0 12px!important;}
 .cc-busca input{flex:1;min-width:0;height:36px;border:1px solid var(--cc-linha);border-radius:8px;font:inherit;font-size:16px;padding:0 10px;}
 .cc-chips{display:flex;gap:5px;overflow-x:auto;scrollbar-width:none;}.cc-chips::-webkit-scrollbar{display:none;}
 .cc-chip{flex:none;border:1px solid var(--cc-linha);background:#fff;border-radius:999px;font:inherit;font-size:11.5px;padding:4px 10px;cursor:pointer;white-space:nowrap;color:#1b2328;}
@@ -68427,7 +68457,7 @@ function armazBarra(usado, limite, cor){
 /* Carimbo da versão publicada. Serve pra ela conferir, sem adivinhação,
    se o navegador está mesmo com a versão nova: se a data aqui não for a
    que eu disse, é cache — Ctrl+Shift+R resolve. */
-const SISTEMA_VERSAO = '27/11/2026 18:52';
+const SISTEMA_VERSAO = '28/11/2026 09:46';
 
 async function renderArmazenamento(){
   const box = document.getElementById('armazenamento-content');
